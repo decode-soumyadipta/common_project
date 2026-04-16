@@ -1,0 +1,20 @@
+name: offline-3d-gis
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - numpy
+  - fastapi
+  - uvicorn
+  - sqlalchemy
+  - psycopg
+  - pydantic-settings
+  - rasterio
+  - pyproj
+  - pytest
+  - httpx
+  - pip:
+      - PySide6>=6.7,<7.0
+      - titiler.application>=0.21,<1.0
+      - -e .

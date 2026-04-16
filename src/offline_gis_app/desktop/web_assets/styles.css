@@ -1,0 +1,58 @@
+html,
+body,
+#app,
+#cesiumContainer {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: #101726;
+  color: #e6eefc;
+  font-family: sans-serif;
+}
+
+#status {
+  position: absolute;
+  z-index: 10;
+  margin: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+#scaleWidget {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 11;
+  min-width: 180px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #f3f7ff;
+  font-size: 12px;
+  text-align: center;
+}
+
+#scaleLabel {
+  margin-bottom: 4px;
+}
+
+#scaleBar {
+  display: block;
+  height: 4px;
+  min-width: 24px;
+  max-width: 140px;
+  margin: 0 auto;
+  background: #d7e2ff;
+  border-radius: 3px;
+}
+
+#scaleDetail {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #d1ddff;
+}
+

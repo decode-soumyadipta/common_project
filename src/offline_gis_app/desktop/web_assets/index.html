@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Offline 3D GIS Globe</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script>
+      window.CESIUM_BASE_URL = "./cesium/";
+    </script>
+    <link rel="stylesheet" href="./cesium/Widgets/widgets.css" />
+    <script src="./cesium/Cesium.js"></script>
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+    <script defer src="./bridge.js"></script>
+  </head>
+  <body>
+    <div id="app">
+      <div id="status">Waiting for local Cesium assets...</div>
+      <div id="scaleWidget" aria-label="Map scale">
+        <div id="scaleLabel">Scale</div>
+        <div id="scaleBar"></div>
+        <div id="scaleDetail">1 px = n/a</div>
+      </div>
+      <div id="cesiumContainer"></div>
+    </div>
+  </body>
+</html>
