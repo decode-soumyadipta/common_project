@@ -16,10 +16,27 @@
   <body>
     <div id="app">
       <div id="status">Waiting for local Cesium assets...</div>
-      <div id="scaleWidget" aria-label="Map scale">
-        <div id="scaleLabel">Scale</div>
-        <div id="scaleBar"></div>
-        <div id="scaleDetail">1 px = n/a</div>
+      <div id="sceneModeControl" aria-label="Scene mode toggle">
+        <span id="sceneMode2d">2D Map</span>
+        <label class="switch" for="sceneModeToggle">
+          <input id="sceneModeToggle" type="checkbox" checked />
+          <span class="slider"></span>
+        </label>
+        <span id="sceneMode3d">Globe</span>
+      </div>
+      <div id="edgeScaleTop" aria-label="Longitude scale">
+        <svg id="edgeScaleTopSvg" preserveAspectRatio="none"></svg>
+      </div>
+      <div id="edgeScaleLeft" aria-label="Latitude scale">
+        <svg id="edgeScaleLeftSvg" preserveAspectRatio="none"></svg>
+      </div>
+      <div id="demColorbar" aria-label="DEM elevation colorbar">
+        <div id="demColorbar-gradient"></div>
+        <div id="demColorbar-labels">
+          <div id="demColorbar-label-high"></div>
+          <div id="demColorbar-label-mid"></div>
+          <div id="demColorbar-label-low"></div>
+        </div>
       </div>
       <div id="cesiumContainer"></div>
     </div>

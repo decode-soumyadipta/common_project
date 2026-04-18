@@ -48,4 +48,23 @@ offline_gis.db
 # Generated Cesium runtime bundle (recreate via setup script)
 src/offline_gis_app/desktop/web_assets/cesium/
 
+# Generated offline world tile cache (recreate via setup script)
+src/offline_gis_app/desktop/web_assets/basemap/xyz/
 
+# Generated terrain-rgb cache (recreate via setup script)
+src/offline_gis_app/desktop/web_assets/basemap/terrain-rgb/
+
+# Generated quantized-mesh terrain pack (optional local install)
+src/offline_gis_app/desktop/web_assets/basemap/terrain/
+
+# Legacy/experimental offline 3D-tiles assets (not used by current runtime path)
+src/offline_gis_app/desktop/web_assets/basemap/3dtiles/
+
+# Optional boundary overlay data bundles (can be re-downloaded/rebuilt)
+src/offline_gis_app/desktop/web_assets/basemap/boundaries/
+
+
+grep_3dtiles.txt
+data_test/coal 14_2024_4.tif
+data_test/coal 14_2024_4.tif
+data_test/coal 14_2024_4.tif

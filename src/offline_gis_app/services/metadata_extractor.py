@@ -52,6 +52,18 @@ def ensure_overviews(path: Path) -> bool:
         return False
 
 
+def _is_valid_epsg4326_bounds(bounds: Bounds) -> bool:
+    """Return True when bounds are plausible lon/lat coordinates in EPSG:4326."""
+    return (
+        -180.0 <= bounds.min_x <= 180.0
+        and -180.0 <= bounds.max_x <= 180.0
+        and -90.0 <= bounds.min_y <= 90.0
+        and -90.0 <= bounds.max_y <= 90.0
+        and bounds.min_x < bounds.max_x
+        and bounds.min_y < bounds.max_y
+    )
+
+
 def _bounds_to_epsg4326(dataset) -> Bounds:
     try:
         from rasterio.warp import transform_bounds  # type: ignore
@@ -61,12 +73,18 @@ def _bounds_to_epsg4326(dataset) -> Bounds:
         ) from exc
 
     if dataset.crs is None:
-        return Bounds(
+        raw_bounds = Bounds(
             min_x=float(dataset.bounds.left),
             min_y=float(dataset.bounds.bottom),
             max_x=float(dataset.bounds.right),
             max_y=float(dataset.bounds.top),
         )
+        if not _is_valid_epsg4326_bounds(raw_bounds):
+            raise MetadataExtractorError(
+                "Raster CRS is missing and bounds are not valid EPSG:4326 lon/lat. "
+                "Define a CRS before ingest."
+            )
+        return raw_bounds
 
     left, bottom, right, top = transform_bounds(
         dataset.crs,
@@ -77,7 +95,13 @@ def _bounds_to_epsg4326(dataset) -> Bounds:
         dataset.bounds.top,
         densify_pts=21,
     )
-    return Bounds(min_x=float(left), min_y=float(bottom), max_x=float(right), max_y=float(top))
+    transformed_bounds = Bounds(min_x=float(left), min_y=float(bottom), max_x=float(right), max_y=float(top))
+    if not _is_valid_epsg4326_bounds(transformed_bounds):
+        raise MetadataExtractorError(
+            "Transformed bounds are invalid for EPSG:4326. "
+            f"Verify source CRS metadata: {dataset.crs}."
+        )
+    return transformed_bounds
 
 
 def extract_metadata(path: Path) -> RasterMetadata:

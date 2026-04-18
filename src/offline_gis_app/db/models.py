@@ -8,6 +8,8 @@ from offline_gis_app.db.base import Base
 
 
 class RasterKind(str, Enum):
+    """Supported raster source categories."""
+
     GEOTIFF = "geotiff"
     JPEG2000 = "jpeg2000"
     MBTILES = "mbtiles"
@@ -16,6 +18,8 @@ class RasterKind(str, Enum):
 
 
 class RasterAsset(Base):
+    """Catalog entry for an ingested raster source."""
+
     __tablename__ = "raster_assets"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -37,6 +41,8 @@ class RasterAsset(Base):
 
 
 class IngestJobStatus(str, Enum):
+    """Lifecycle states for background ingest jobs."""
+
     QUEUED = "queued"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -46,6 +52,8 @@ class IngestJobStatus(str, Enum):
 
 
 class IngestJobItemStatus(str, Enum):
+    """Processing states for individual files in an ingest job."""
+
     PENDING = "pending"
     PROCESSING = "processing"
     SUCCEEDED = "succeeded"
@@ -53,6 +61,8 @@ class IngestJobItemStatus(str, Enum):
 
 
 class IngestJob(Base):
+    """Top-level ingest queue job with progress counters and timestamps."""
+
     __tablename__ = "ingest_jobs"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -80,6 +90,8 @@ class IngestJob(Base):
 
 
 class IngestJobItem(Base):
+    """Per-file work item associated with an ingest job."""
+
     __tablename__ = "ingest_job_items"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
