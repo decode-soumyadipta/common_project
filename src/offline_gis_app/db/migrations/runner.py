@@ -55,6 +55,7 @@ def _ordered_migrations() -> list[tuple[str, MigrationFn]]:
     return [
         ("20260417_002_ingest_queue_indexes", _migration_ingest_queue_indexes),
         ("20260418_001_legacy_schema_backfill", _migration_legacy_schema_backfill),
+        ("20260419_001_raster_bounds_spatial_index", _migration_raster_bounds_spatial_index),
     ]
 
 
@@ -62,6 +63,7 @@ def _migration_description(version: str) -> str:
     descriptions = {
         "20260417_002_ingest_queue_indexes": "Add ingest queue state indexes",
         "20260418_001_legacy_schema_backfill": "Backfill missing legacy table columns for existing databases",
+        "20260419_001_raster_bounds_spatial_index": "Add PostGIS-backed spatial index for raster bounds search",
     }
     return descriptions.get(version, "migration")
 
@@ -99,6 +101,28 @@ def _migration_legacy_schema_backfill(conn: Connection) -> None:
     _ensure_column(conn, "raster_assets", "updated_at", "TIMESTAMP")
     _ensure_column(conn, "ingest_jobs", "updated_at", "TIMESTAMP")
     _ensure_column(conn, "ingest_job_items", "updated_at", "TIMESTAMP")
+
+
+def _migration_raster_bounds_spatial_index(conn: Connection) -> None:
+    """Create a PostGIS expression index to accelerate bounds intersection search."""
+    if conn.dialect.name != "postgresql":
+        return
+    if not _table_exists(conn, "raster_assets"):
+        return
+
+    has_postgis = conn.execute(text("SELECT to_regproc('st_geomfromtext') IS NOT NULL")).scalar()
+    if not has_postgis:
+        return
+
+    conn.execute(
+        text(
+            """
+            CREATE INDEX IF NOT EXISTS idx_raster_assets_bounds_geom_gist
+            ON raster_assets
+            USING GIST (ST_GeomFromText(bounds_wkt, 4326))
+            """
+        )
+    )
 
 
 def _ensure_column(conn: Connection, table_name: str, column_name: str, column_type: str) -> None:

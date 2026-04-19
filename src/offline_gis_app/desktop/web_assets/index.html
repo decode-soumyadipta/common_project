@@ -24,6 +24,14 @@
         </label>
         <span id="sceneMode3d">Globe</span>
       </div>
+      <div id="polygonToggleControl" aria-label="Polygon visibility toggle" style="display: none;">
+        <span id="polygonOff" style="flex: 1; text-align: center; font-size: 11px; font-weight: 600; color: #666;">Hide</span>
+        <label class="switch" for="polygonVisibilityToggle">
+          <input id="polygonVisibilityToggle" type="checkbox" checked />
+          <span class="slider"></span>
+        </label>
+        <span id="polygonOn" style="flex: 1; text-align: center; font-size: 11px; font-weight: 600; color: #27b46e;">Polygon</span>
+      </div>
       <div id="edgeScaleTop" aria-label="Longitude scale">
         <svg id="edgeScaleTopSvg" preserveAspectRatio="none"></svg>
       </div>
@@ -38,7 +46,28 @@
           <div id="demColorbar-label-low"></div>
         </div>
       </div>
+      <div id="searchBusyOverlay" aria-live="polite" aria-hidden="true">
+        <div id="searchBusyDialog" role="status" aria-label="Search in progress">
+          <div id="searchBusySpinner"></div>
+          <div id="searchBusyText">Searching tiles...</div>
+        </div>
+      </div>
       <div id="cesiumContainer"></div>
+      <div id="comparatorWindows" aria-hidden="true">
+        <div class="comparatorPane" id="comparatorPaneLeft">
+          <div class="comparatorTitle" id="comparatorTitleLeft">Left layer</div>
+          <div class="comparatorViewer" id="comparatorLeftViewer"></div>
+          <div class="comparatorCrosshair" id="comparatorCrosshairLeft"></div>
+          <div class="comparatorCoords" id="comparatorCoordsLeft">lon: ---, lat: ---</div>
+        </div>
+        <div class="comparatorDivider" aria-hidden="true"></div>
+        <div class="comparatorPane" id="comparatorPaneRight">
+          <div class="comparatorTitle" id="comparatorTitleRight">Right layer</div>
+          <div class="comparatorViewer" id="comparatorRightViewer"></div>
+          <div class="comparatorCrosshair" id="comparatorCrosshairRight"></div>
+          <div class="comparatorCoords" id="comparatorCoordsRight">lon: ---, lat: ---</div>
+        </div>
+      </div>
     </div>
   </body>
 </html>

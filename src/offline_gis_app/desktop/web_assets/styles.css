@@ -16,6 +16,113 @@ body,
   display: none;
 }
 
+#comparatorWindows {
+  position: absolute;
+  inset: 0;
+  display: none;
+  z-index: 26;
+  pointer-events: none;
+  background: transparent;
+}
+
+#comparatorWindows.active {
+  display: flex;
+}
+
+.comparatorPane {
+  position: relative;
+  flex: 1 1 0;
+  pointer-events: auto;
+  background: rgba(8, 14, 24, 0.06);
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.comparatorDivider {
+  width: 6px;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 0 0 1px rgba(200, 212, 228, 0.4);
+  pointer-events: none;
+}
+
+.comparatorViewer {
+  position: absolute;
+  inset: 0;
+}
+
+.comparatorTitle {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 4;
+  max-width: calc(100% - 16px);
+  padding: 3px 7px;
+  border-radius: 4px;
+  background: rgba(14, 22, 36, 0.58);
+  color: rgba(249, 252, 255, 0.94);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  font-weight: 600;
+  backdrop-filter: blur(2px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.comparatorCrosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 18px;
+  height: 18px;
+  margin-left: -9px;
+  margin-top: -9px;
+  z-index: 4;
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+.comparatorCrosshair::before,
+.comparatorCrosshair::after {
+  content: "";
+  position: absolute;
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.comparatorCrosshair::before {
+  left: 8px;
+  top: 0;
+  width: 2px;
+  height: 18px;
+}
+
+.comparatorCrosshair::after {
+  left: 0;
+  top: 8px;
+  width: 18px;
+  height: 2px;
+}
+
+.comparatorCoords {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  z-index: 4;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(8, 16, 28, 0.56);
+  color: rgba(243, 248, 255, 0.97);
+  font-family: "SF Mono", "Menlo", "Consolas", monospace;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.35);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+
 #sceneModeControl {
   position: absolute;
   top: 20px;
@@ -25,6 +132,24 @@ body,
   align-items: center;
   gap: 8px;
   padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.18);
+  color: #111111;
+  user-select: none;
+  pointer-events: auto;
+}
+
+#polygonToggleControl {
+  position: absolute;
+  top: 62px;
+  right: 12px;
+  z-index: 14;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
   border-radius: 999px;
   border: 1px solid rgba(0, 0, 0, 0.18);
   background: rgba(255, 255, 255, 0.94);
@@ -84,7 +209,9 @@ body,
 }
 
 .switch input:checked + .slider {
-  background-color: #bdbdbd;
+  background-color: #27b46e;
+  border-color: rgba(18, 110, 62, 0.8);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(39, 180, 110, 0.22);
 }
 
 .switch input:checked + .slider::before {
@@ -186,5 +313,63 @@ body,
 #demColorbar-label-mid,
 #demColorbar-label-low {
   line-height: 1;
+}
+
+#searchBusyOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 12, 20, 0.22);
+  pointer-events: auto;
+}
+
+#searchBusyOverlay.visible {
+  display: flex;
+}
+
+#searchBusyDialog {
+  min-width: 190px;
+  max-width: 280px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(16, 28, 46, 0.28);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#searchBusySpinner {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid #c9d5e8;
+  border-top-color: #1d66d1;
+  animation: searchBusySpin 0.85s linear infinite;
+  flex: 0 0 auto;
+}
+
+#searchBusyText {
+  color: #17263d;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.search-draw-cursor-active {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2720%27 height=%2720%27 viewBox=%270 0 24 24%27%3E%3Cpath fill=%22%23f4c430%22 stroke=%22%231a1a1a%22 stroke-width=%221.4%22 d=%22M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z%22/%3E%3Cpath fill=%22%231a1a1a%22 d=%22M20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83l3.75 3.75z%22/%3E%3C/svg%3E") 2 18, crosshair !important;
+}
+
+@keyframes searchBusySpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 

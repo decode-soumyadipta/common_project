@@ -46,13 +46,17 @@ def sample_profile(path: Path, line_points: list[tuple[float, float]], samples: 
     with _read_with_rasterio(path) as ds:
         dataset_points = _transform_line_points_to_dataset_crs(ds, world_points)
         values: list[float] = []
-        for index, (x, y) in enumerate(dataset_points):
+        for x, y in dataset_points:
             row, col = ds.index(x, y)
             if row < 0 or col < 0 or row >= ds.height or col >= ds.width:
-                raise ValueError(
-                    f"Profile point {index + 1} falls outside raster extent after CRS transform."
-                )
+                values.append(float("nan"))
+                continue
             pixel = ds.read(1, window=((row, row + 1), (col, col + 1)))
+            if pixel.size == 0:
+                values.append(float("nan"))
+                continue
             values.append(float(pixel[0, 0]))
+        if all(np.isnan(value) for value in values):
+            raise ValueError("Profile transect falls outside raster extent.")
     return values
 

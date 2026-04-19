@@ -50,6 +50,9 @@ class TiTilerManager:
         env = os.environ.copy()
         env["GDAL_DISABLE_READDIR_ON_OPEN"] = "EMPTY_DIR"
         env["GDAL_HTTP_MERGE_CONSECUTIVE_RANGES"] = "YES"
+        warning_filter = "ignore:invalid value encountered in cast:RuntimeWarning"
+        existing_filters = env.get("PYTHONWARNINGS", "").strip()
+        env["PYTHONWARNINGS"] = f"{existing_filters},{warning_filter}" if existing_filters else warning_filter
         self._process = subprocess.Popen(command, env=env)
         self._logger.warning("Auto-started TiTiler process pid=%s", self._process.pid)
 
