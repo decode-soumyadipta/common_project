@@ -35,7 +35,18 @@
   let comparatorModeEnabled = false;
   let comparatorLeftViewer = null;
   let comparatorRightViewer = null;
+  let comparatorLeftLayerType = null;
+  let comparatorRightLayerType = null;
   let comparatorCameraSyncLock = false;
+  let comparatorSyncFrameHandle = null;
+  let comparatorPendingSyncSource = null;
+  let comparatorActiveInputViewer = null;
+  let comparatorActiveInputReleaseTimer = null;
+  let comparatorDemRefreshTimer = null;
+  const COMPARATOR_DEM_REFRESH_DEBOUNCE_MS = 120;
+  const COMPARATOR_DEM_DEFAULT_PITCH = Cesium.Math.toRadians(-35.0);
+  const COMPARATOR_DEM_MIN_PITCH = Cesium.Math.toRadians(-80.0);
+  const COMPARATOR_DEM_MAX_PITCH = Cesium.Math.toRadians(-15.0);
   const layerDefinitions = new Map();
   const layerVisibilityState = new Map();
   const tileErrorSeen = new Set();
@@ -63,6 +74,11 @@
       north: 82.0,
     },
   };
+  const DEFAULT_STARTUP_CENTER_LON = 78.0;
+  const DEFAULT_STARTUP_CENTER_LAT = 22.0;
+  const DEFAULT_STARTUP_HEIGHT_M = 23000000.0;
+  const DEFAULT_STARTUP_HEADING = Cesium.Math.toRadians(0.0);
+  const DEFAULT_STARTUP_PITCH = Cesium.Math.toRadians(-89.0);
   const LOCAL_TERRAIN_RGB_ROOT = "./basemap/terrain-rgb";
   const LOCAL_TERRAIN_RGB_METADATA_URL = "./basemap/terrain-rgb/metadata.json";
   const AUTO_ATTACH_TERRAIN_RGB_PACK = false;
@@ -72,15 +88,48 @@
   const demVisual = {
     exaggeration: 2.0,
     hillshadeAlpha: 0.35,
-    azimuth: 45,
-    altitude: 45,
+  };
+  const DEM_HILLSHADE_AZIMUTH = 45;
+  const DEM_HILLSHADE_ALTITUDE = 45;
+  const imageryVisual = {
+    brightness: 1.0,
+    contrast: 1.0,
+  };
+  let comparatorSelectedPane = "left";
+  const comparatorPaneVisualState = {
+    left: {
+      imagery: {
+        brightness: imageryVisual.brightness,
+        contrast: imageryVisual.contrast,
+      },
+      dem: {
+        exaggeration: demVisual.exaggeration,
+        hillshadeAlpha: demVisual.hillshadeAlpha,
+        colorMode: "gray",
+      },
+    },
+    right: {
+      imagery: {
+        brightness: imageryVisual.brightness,
+        contrast: imageryVisual.contrast,
+      },
+      dem: {
+        exaggeration: demVisual.exaggeration,
+        hillshadeAlpha: demVisual.hillshadeAlpha,
+        colorMode: "gray",
+      },
+    },
+  };
+  const comparatorDemStyleRefreshVersion = {
+    left: 0,
+    right: 0,
   };
   let terrainDecodeCanvas = null;
   let terrainDecodeContext = null;
   let searchDrawMode = "none";
   const searchPolygonPoints = [];
+  let searchPolygonLocked = false;
   let searchCursorPoint = null;
-  const searchVertexEntities = [];
   let searchCursorEntity = null;
   let searchPreviewLineEntity = null;
   let searchPreviewPolygonEntity = null;
@@ -88,6 +137,8 @@
   let searchCursorOverlay = null;
   let lastSearchCursorScreenPosition = null;
   let polygonVisibilityEnabled = true;
+  let searchOverlayVisible = true;
+  let annotationVisibilityEnabled = true;
   let sceneModeControlEnabled = true;
   let currentSceneMode = "3d";
   let activeTileBounds = null;
@@ -195,36 +246,32 @@
     return cartesianToLonLat(getCartesianFromViewer(targetViewer, screenPosition));
   }
 
-  function applyCrosshairScreenPosition(crosshairElement, targetViewer, worldCartesian) {
+  function applyCrosshairScreenPosition(crosshairElement, targetViewer, screenPosition) {
     if (!crosshairElement) {
       return;
     }
-    let leftPx = 0.0;
-    let topPx = 0.0;
-    if (targetViewer && worldCartesian) {
-      const projected = Cesium.SceneTransforms.wgs84ToWindowCoordinates(targetViewer.scene, worldCartesian);
-      if (projected && Number.isFinite(projected.x) && Number.isFinite(projected.y)) {
-        leftPx = Number(projected.x);
-        topPx = Number(projected.y);
-      } else {
-        leftPx = targetViewer.canvas.clientWidth * 0.5;
-        topPx = targetViewer.canvas.clientHeight * 0.5;
-      }
+    let x = 0.0;
+    let y = 0.0;
+    if (screenPosition && Number.isFinite(screenPosition.x) && Number.isFinite(screenPosition.y)) {
+      x = Number(screenPosition.x);
+      y = Number(screenPosition.y);
+    } else if (targetViewer && targetViewer.canvas) {
+      x = targetViewer.canvas.clientWidth * 0.5;
+      y = targetViewer.canvas.clientHeight * 0.5;
     }
-    crosshairElement.style.left = `${leftPx.toFixed(2)}px`;
-    crosshairElement.style.top = `${topPx.toFixed(2)}px`;
+    crosshairElement.style.left = `${x.toFixed(2)}px`;
+    crosshairElement.style.top = `${y.toFixed(2)}px`;
   }
 
-  function updateComparatorCrosshair(lon, lat) {
+  function updateComparatorCrosshair(lon, lat, leftScreenPosition, rightScreenPosition) {
     const leftCrosshair = document.getElementById("comparatorCrosshairLeft");
     const rightCrosshair = document.getElementById("comparatorCrosshairRight");
     const leftCoords = document.getElementById("comparatorCoordsLeft");
     const rightCoords = document.getElementById("comparatorCoordsRight");
 
     const hasLonLat = Number.isFinite(lon) && Number.isFinite(lat);
-    const worldCartesian = hasLonLat ? Cesium.Cartesian3.fromDegrees(Number(lon), Number(lat), 0.0) : null;
-    applyCrosshairScreenPosition(leftCrosshair, comparatorLeftViewer, worldCartesian);
-    applyCrosshairScreenPosition(rightCrosshair, comparatorRightViewer, worldCartesian);
+    applyCrosshairScreenPosition(leftCrosshair, comparatorLeftViewer, leftScreenPosition || null);
+    applyCrosshairScreenPosition(rightCrosshair, comparatorRightViewer, rightScreenPosition || null);
 
     const text =
       hasLonLat
@@ -238,20 +285,354 @@
     }
   }
 
+  function updateComparatorCenterReadout(sourceViewer) {
+    if (!comparatorModeEnabled) {
+      return;
+    }
+    const targetViewer = sourceViewer || comparatorLeftViewer;
+    if (!targetViewer || !targetViewer.canvas) {
+      updateComparatorCrosshair(NaN, NaN);
+      return;
+    }
+    const center = new Cesium.Cartesian2(
+      targetViewer.canvas.clientWidth * 0.5,
+      targetViewer.canvas.clientHeight * 0.5,
+    );
+    const lonLat = getLonLatFromViewer(targetViewer, center);
+    updateComparatorCrosshair(lonLat ? lonLat.lon : NaN, lonLat ? lonLat.lat : NaN, null, null);
+  }
+
+  function sceneToWindowCoordinates(targetScene, worldCartesian) {
+    if (!targetScene || !worldCartesian || !Cesium.SceneTransforms) {
+      return null;
+    }
+    if (typeof Cesium.SceneTransforms.worldToWindowCoordinates === "function") {
+      return Cesium.SceneTransforms.worldToWindowCoordinates(targetScene, worldCartesian);
+    }
+    if (typeof Cesium.SceneTransforms.wgs84ToWindowCoordinates === "function") {
+      return Cesium.SceneTransforms.wgs84ToWindowCoordinates(targetScene, worldCartesian);
+    }
+    return null;
+  }
+
+  function projectCartesianToViewer(targetViewer, worldCartesian) {
+    if (!targetViewer || !worldCartesian) {
+      return null;
+    }
+    const projected = sceneToWindowCoordinates(targetViewer.scene, worldCartesian);
+    if (!projected || !Number.isFinite(projected.x) || !Number.isFinite(projected.y)) {
+      return null;
+    }
+    return new Cesium.Cartesian2(Number(projected.x), Number(projected.y));
+  }
+
+  function getComparatorDemPitchRadians() {
+    let pitch = Number(cameraOrbitPitch);
+    if (!Number.isFinite(pitch)) {
+      return COMPARATOR_DEM_DEFAULT_PITCH;
+    }
+    // If the source camera came from a 2D/top-down context, force a meaningful 3D tilt.
+    const nearNadir = Math.abs(pitch) >= Cesium.Math.toRadians(88.0);
+    if (nearNadir) {
+      return COMPARATOR_DEM_DEFAULT_PITCH;
+    }
+    return Math.max(COMPARATOR_DEM_MIN_PITCH, Math.min(COMPARATOR_DEM_MAX_PITCH, pitch));
+  }
+
+  function setComparatorDemCameraFromRectangle(targetViewer, focusRect, sourceHeading, sourceRangeMeters) {
+    if (!targetViewer || !focusRect) {
+      return;
+    }
+    const heading = Number.isFinite(sourceHeading) ? Number(sourceHeading) : 0.0;
+    const pitch = getComparatorDemPitchRadians();
+    const sphere = Cesium.BoundingSphere.fromRectangle3D(focusRect, Cesium.Ellipsoid.WGS84, 0.0);
+    const sourceRange = Number(sourceRangeMeters);
+    const derivedRange = Math.max(sphere.radius * 1.9, 900.0);
+    const range = Number.isFinite(sourceRange) && sourceRange > 50.0 ? Math.max(sourceRange, 900.0) : derivedRange;
+    targetViewer.camera.lookAt(
+      sphere.center,
+      new Cesium.HeadingPitchRange(heading, pitch, range),
+    );
+    targetViewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+  }
+
+  function getComparatorLayerTypeForViewer(targetViewer) {
+    if (targetViewer === comparatorLeftViewer) {
+      return comparatorLeftLayerType;
+    }
+    if (targetViewer === comparatorRightViewer) {
+      return comparatorRightLayerType;
+    }
+    return null;
+  }
+
+  function getComparatorDemViewer() {
+    if (comparatorLeftLayerType === "dem" && comparatorLeftViewer) {
+      return comparatorLeftViewer;
+    }
+    if (comparatorRightLayerType === "dem" && comparatorRightViewer) {
+      return comparatorRightViewer;
+    }
+    return null;
+  }
+
+  function syncComparatorTerrainProviders() {
+    const terrainProvider = viewer && viewer.terrainProvider ? viewer.terrainProvider : null;
+    if (!terrainProvider) {
+      return;
+    }
+    if (comparatorLeftViewer && comparatorLeftLayerType === "dem" && comparatorLeftViewer.terrainProvider !== terrainProvider) {
+      comparatorLeftViewer.terrainProvider = terrainProvider;
+    }
+    if (comparatorRightViewer && comparatorRightLayerType === "dem" && comparatorRightViewer.terrainProvider !== terrainProvider) {
+      comparatorRightViewer.terrainProvider = terrainProvider;
+    }
+  }
+
+  function cancelComparatorCameraSyncSchedule() {
+    if (comparatorSyncFrameHandle !== null) {
+      window.cancelAnimationFrame(comparatorSyncFrameHandle);
+      comparatorSyncFrameHandle = null;
+    }
+    comparatorPendingSyncSource = null;
+    comparatorActiveInputViewer = null;
+    if (comparatorActiveInputReleaseTimer !== null) {
+      window.clearTimeout(comparatorActiveInputReleaseTimer);
+      comparatorActiveInputReleaseTimer = null;
+    }
+  }
+
+  function markComparatorInputViewer(sourceViewer) {
+    if (!sourceViewer) {
+      return;
+    }
+    comparatorActiveInputViewer = sourceViewer;
+    if (comparatorActiveInputReleaseTimer !== null) {
+      window.clearTimeout(comparatorActiveInputReleaseTimer);
+      comparatorActiveInputReleaseTimer = null;
+    }
+    comparatorActiveInputReleaseTimer = window.setTimeout(function () {
+      comparatorActiveInputReleaseTimer = null;
+      comparatorActiveInputViewer = null;
+    }, 220);
+  }
+
+  function scheduleComparatorCameraSync(sourceViewer) {
+    if (!comparatorModeEnabled || !sourceViewer) {
+      return;
+    }
+    comparatorPendingSyncSource = sourceViewer;
+    if (comparatorSyncFrameHandle !== null) {
+      return;
+    }
+    comparatorSyncFrameHandle = window.requestAnimationFrame(function () {
+      comparatorSyncFrameHandle = null;
+      const source = comparatorPendingSyncSource;
+      comparatorPendingSyncSource = null;
+      if (!comparatorModeEnabled || !source) {
+        return;
+      }
+      const target = source === comparatorLeftViewer ? comparatorRightViewer : comparatorLeftViewer;
+      syncViewerCamera(source, target);
+      updateComparatorCenterReadout(source);
+    });
+  }
+
+  function lockComparatorFocusToCurrentView() {
+    if (!comparatorModeEnabled || !comparatorLeftViewer || !comparatorRightViewer) {
+      log("debug", "lockComparatorFocusToCurrentView: comparatorMode=" + comparatorModeEnabled + " left=" + !!comparatorLeftViewer + " right=" + !!comparatorRightViewer);
+      return;
+    }
+    const demPitch = getComparatorDemPitchRadians();
+    log("debug", "lockComparatorFocusToCurrentView: START leftType=" + comparatorLeftLayerType + " rightType=" + comparatorRightLayerType + " demPitch=" + demPitch);
+    
+    const sourceViewer = getComparatorDemViewer() || comparatorLeftViewer;
+    const sourceLayerType = getComparatorLayerTypeForViewer(sourceViewer);
+    const focusRect = sourceViewer.camera.computeViewRectangle(sourceViewer.scene.globe.ellipsoid);
+    if (!focusRect) {
+      log("debug", "lockComparatorFocusToCurrentView: focusRect is null!");
+      return;
+    }
+    
+    log("debug", "lockComparatorFocusToCurrentView: focusRect computed west=" + focusRect.west.toFixed(4) + " east=" + focusRect.east.toFixed(4) + " south=" + focusRect.south.toFixed(4) + " north=" + focusRect.north.toFixed(4));
+
+    comparatorCameraSyncLock = true;
+    log("debug", "lockComparatorFocusToCurrentView: Sync lock ACTIVATED");
+    
+    try {
+      // MORPH TO CORRECT SCENE MODE FIRST
+      log("debug", "lockComparatorFocusToCurrentView: About to morph left to " + (comparatorLeftLayerType === "dem" ? "3D" : "2D"));
+      log("debug", "lockComparatorFocusToCurrentView: About to morph right to " + (comparatorRightLayerType === "dem" ? "3D" : "2D"));
+      
+      setComparatorViewerModeByType(comparatorLeftViewer, comparatorLeftLayerType);
+      setComparatorViewerModeByType(comparatorRightViewer, comparatorRightLayerType);
+      
+      log("debug", "lockComparatorFocusToCurrentView: Morph complete, NOW setting camera views");
+
+      // NOW set view rectangles AFTER morphing to correct scene mode
+      if (comparatorLeftLayerType === "dem") {
+        log("debug", "lockComparatorFocusToCurrentView: Setting left viewer (DEM) tilted 3D view pitch=" + demPitch);
+        setComparatorDemCameraFromRectangle(comparatorLeftViewer, focusRect, comparatorLeftViewer.camera.heading);
+      } else {
+        log("debug", "lockComparatorFocusToCurrentView: Setting left viewer (IMAGERY) without pitch");
+        const leftDestination = resolveImagerySyncDestinationRectangle(focusRect, comparatorLeftViewer, sourceLayerType) || focusRect;
+        comparatorLeftViewer.camera.setView({ destination: leftDestination });
+      }
+
+      if (comparatorRightLayerType === "dem") {
+        log("debug", "lockComparatorFocusToCurrentView: Setting right viewer (DEM) tilted 3D view pitch=" + demPitch);
+        setComparatorDemCameraFromRectangle(comparatorRightViewer, focusRect, comparatorRightViewer.camera.heading);
+      } else {
+        log("debug", "lockComparatorFocusToCurrentView: Setting right viewer (IMAGERY) without pitch");
+        const rightDestination = resolveImagerySyncDestinationRectangle(focusRect, comparatorRightViewer, sourceLayerType) || focusRect;
+        comparatorRightViewer.camera.setView({ destination: rightDestination });
+      }
+      
+      log("debug", "lockComparatorFocusToCurrentView: Camera views set complete, keeping sync lock for 50ms");
+    } finally {
+      // Keep the lock active for a bit longer to prevent camera.changed events from overwriting our position
+      setTimeout(function () {
+        comparatorCameraSyncLock = false;
+        log("debug", "lockComparatorFocusToCurrentView: Sync lock RELEASED (after 50ms delay)");
+      }, 50);
+    }
+    
+    updateComparatorCenterReadout(sourceViewer);
+    requestSceneRender();
+    log("debug", "lockComparatorFocusToCurrentView: COMPLETE");
+  }
+
+  function setComparatorViewerModeByType(targetViewer, layerType) {
+    if (!targetViewer || !targetViewer.scene) {
+      log("debug", "setComparatorViewerModeByType: viewer or scene is null");
+      return;
+    }
+    const desiredMode = layerType === "dem" ? Cesium.SceneMode.SCENE3D : Cesium.SceneMode.SCENE2D;
+    const currentMode = targetViewer.scene.mode;
+    log("debug", "setComparatorViewerModeByType: viewer=" + (targetViewer === comparatorLeftViewer ? "LEFT" : "RIGHT") + " desired=" + (desiredMode === Cesium.SceneMode.SCENE3D ? "3D" : "2D") + " current=" + (currentMode === Cesium.SceneMode.SCENE3D ? "3D" : "2D"));
+    
+    if (currentMode !== desiredMode) {
+      log("debug", "setComparatorViewerModeByType: Mode change needed, calling morph");
+      if (desiredMode === Cesium.SceneMode.SCENE2D) {
+        targetViewer.scene.morphTo2D(0.0);
+        log("debug", "setComparatorViewerModeByType: Called morphTo2D");
+      } else {
+        targetViewer.scene.morphTo3D(0.0);
+        log("debug", "setComparatorViewerModeByType: Called morphTo3D");
+      }
+    } else {
+      log("debug", "setComparatorViewerModeByType: Mode already correct, skipping morph");
+    }
+  }
+
+  function rectangleWidthRadians(rectangle) {
+    if (!rectangle) {
+      return NaN;
+    }
+    let width = Number(rectangle.east) - Number(rectangle.west);
+    if (!Number.isFinite(width)) {
+      return NaN;
+    }
+    if (width < 0.0) {
+      width += Cesium.Math.TWO_PI;
+    }
+    return Math.max(1.0e-7, Math.min(Cesium.Math.TWO_PI, width));
+  }
+
+  function rectangleHeightRadians(rectangle) {
+    if (!rectangle) {
+      return NaN;
+    }
+    const height = Number(rectangle.north) - Number(rectangle.south);
+    if (!Number.isFinite(height)) {
+      return NaN;
+    }
+    return Math.max(1.0e-7, Math.min(Cesium.Math.PI, height));
+  }
+
+  function buildRectangleFromCenter(center, widthRadians, heightRadians) {
+    if (!center || !Number.isFinite(center.longitude) || !Number.isFinite(center.latitude)) {
+      return null;
+    }
+    const halfWidth = Math.max(5.0e-8, Number(widthRadians) * 0.5);
+    const halfHeight = Math.max(5.0e-8, Number(heightRadians) * 0.5);
+    const south = Cesium.Math.clamp(center.latitude - halfHeight, -Cesium.Math.PI_OVER_TWO + 1.0e-6, Cesium.Math.PI_OVER_TWO - 1.0e-6);
+    const north = Cesium.Math.clamp(center.latitude + halfHeight, -Cesium.Math.PI_OVER_TWO + 1.0e-6, Cesium.Math.PI_OVER_TWO - 1.0e-6);
+    const west = Cesium.Math.negativePiToPi(center.longitude - halfWidth);
+    const east = Cesium.Math.negativePiToPi(center.longitude + halfWidth);
+    return new Cesium.Rectangle(west, south, east, north);
+  }
+
+  function resolveImagerySyncDestinationRectangle(sourceRectangle, targetViewer, sourceLayerType) {
+    if (!sourceRectangle) {
+      return null;
+    }
+    if (!targetViewer || sourceLayerType !== "dem") {
+      return sourceRectangle;
+    }
+    const targetRectangle = targetViewer.camera && targetViewer.scene
+      ? targetViewer.camera.computeViewRectangle(targetViewer.scene.globe.ellipsoid)
+      : null;
+    if (!targetRectangle) {
+      return sourceRectangle;
+    }
+
+    const sourceWidth = rectangleWidthRadians(sourceRectangle);
+    const sourceHeight = rectangleHeightRadians(sourceRectangle);
+    const targetWidth = rectangleWidthRadians(targetRectangle);
+    const targetHeight = rectangleHeightRadians(targetRectangle);
+    if (!Number.isFinite(sourceWidth) || !Number.isFinite(sourceHeight) || !Number.isFinite(targetWidth) || !Number.isFinite(targetHeight)) {
+      return sourceRectangle;
+    }
+
+    // In DEM 3D mode, computeViewRectangle can spike during tilt/zoom and force 2D panes to jump out.
+    const minScale = 0.82;
+    const maxScale = 1.22;
+    const unclampedScale = sourceWidth / targetWidth;
+    const clampedScale = Cesium.Math.clamp(unclampedScale, minScale, maxScale);
+    if (Math.abs(clampedScale - unclampedScale) < 1.0e-6) {
+      return sourceRectangle;
+    }
+
+    const center = Cesium.Rectangle.center(sourceRectangle);
+    const width = targetWidth * clampedScale;
+    const height = targetHeight * clampedScale;
+    const resolved = buildRectangleFromCenter(center, width, height);
+    if (!resolved) {
+      return sourceRectangle;
+    }
+    log("debug", `Comparator imagery sync clamped scale=${unclampedScale.toFixed(3)}->${clampedScale.toFixed(3)}`);
+    return resolved;
+  }
+
   function syncViewerCamera(sourceViewer, targetViewer) {
     if (!sourceViewer || !targetViewer || comparatorCameraSyncLock) {
       return;
     }
+    syncComparatorTerrainProviders();
     comparatorCameraSyncLock = true;
     try {
       const sourceCamera = sourceViewer.camera;
-      targetViewer.camera.setView({
-        destination: sourceCamera.positionWC,
-        orientation: {
-          direction: sourceCamera.directionWC,
-          up: sourceCamera.upWC,
-        },
-      });
+      const sourceRectangle = sourceCamera.computeViewRectangle(sourceViewer.scene.globe.ellipsoid);
+      const sourceLayerType = getComparatorLayerTypeForViewer(sourceViewer);
+      const targetLayerType = getComparatorLayerTypeForViewer(targetViewer);
+      if (!sourceRectangle) {
+        return;
+      }
+      const sourceHeight = sourceCamera.positionCartographic && Number.isFinite(sourceCamera.positionCartographic.height)
+        ? Number(sourceCamera.positionCartographic.height)
+        : NaN;
+      const demSourceHeight = sourceLayerType === "dem" ? sourceHeight : NaN;
+      if (sourceRectangle) {
+        if (targetLayerType === "dem") {
+          setComparatorDemCameraFromRectangle(targetViewer, sourceRectangle, sourceCamera.heading, demSourceHeight);
+        } else {
+          const destinationRectangle = resolveImagerySyncDestinationRectangle(sourceRectangle, targetViewer, sourceLayerType) || sourceRectangle;
+          targetViewer.camera.setView({
+            destination: destinationRectangle,
+          });
+        }
+      }
       targetViewer.scene.requestRender();
     } finally {
       comparatorCameraSyncLock = false;
@@ -267,16 +648,52 @@
 
     comparatorLeftViewer.camera.changed.addEventListener(function () {
       if (comparatorModeEnabled) {
-        syncViewerCamera(comparatorLeftViewer, comparatorRightViewer);
+        if (comparatorActiveInputViewer && comparatorActiveInputViewer !== comparatorLeftViewer) {
+          return;
+        }
+        markComparatorInputViewer(comparatorLeftViewer);
+        scheduleComparatorCameraSync(comparatorLeftViewer);
       }
     });
     comparatorRightViewer.camera.changed.addEventListener(function () {
       if (comparatorModeEnabled) {
-        syncViewerCamera(comparatorRightViewer, comparatorLeftViewer);
+        if (comparatorActiveInputViewer && comparatorActiveInputViewer !== comparatorRightViewer) {
+          return;
+        }
+        markComparatorInputViewer(comparatorRightViewer);
+        scheduleComparatorCameraSync(comparatorRightViewer);
       }
     });
 
     function attachCursorBridge(container, sourceViewer) {
+      container.addEventListener(
+        "wheel",
+        function () {
+          if (comparatorModeEnabled) {
+            markComparatorInputViewer(sourceViewer);
+          }
+        },
+        { passive: true }
+      );
+      container.addEventListener("mousedown", function () {
+        if (comparatorModeEnabled) {
+          markComparatorInputViewer(sourceViewer);
+        }
+      });
+      container.addEventListener("pointerdown", function () {
+        if (comparatorModeEnabled) {
+          markComparatorInputViewer(sourceViewer);
+        }
+      });
+      container.addEventListener(
+        "touchstart",
+        function () {
+          if (comparatorModeEnabled) {
+            markComparatorInputViewer(sourceViewer);
+          }
+        },
+        { passive: true }
+      );
       container.addEventListener("mousemove", function (event) {
         if (!comparatorModeEnabled || !sourceViewer) {
           return;
@@ -287,8 +704,32 @@
         }
         const localX = event.clientX - rect.left;
         const localY = event.clientY - rect.top;
-        const lonLat = getLonLatFromViewer(sourceViewer, new Cesium.Cartesian2(localX, localY));
-        updateComparatorCrosshair(lonLat ? lonLat.lon : NaN, lonLat ? lonLat.lat : NaN);
+        const sourceScreenPosition = new Cesium.Cartesian2(localX, localY);
+        const sourceCartesian = getCartesianFromViewer(sourceViewer, sourceScreenPosition);
+        const sourceLonLat = sourceCartesian
+          ? cartesianToLonLat(sourceCartesian)
+          : getLonLatFromViewer(sourceViewer, sourceScreenPosition);
+
+        let leftScreenPosition = null;
+        let rightScreenPosition = null;
+        if (sourceViewer === comparatorLeftViewer) {
+          leftScreenPosition = sourceScreenPosition;
+          rightScreenPosition = sourceCartesian
+            ? projectCartesianToViewer(comparatorRightViewer, sourceCartesian)
+            : null;
+        } else {
+          rightScreenPosition = sourceScreenPosition;
+          leftScreenPosition = sourceCartesian
+            ? projectCartesianToViewer(comparatorLeftViewer, sourceCartesian)
+            : null;
+        }
+
+        updateComparatorCrosshair(
+          sourceLonLat ? sourceLonLat.lon : NaN,
+          sourceLonLat ? sourceLonLat.lat : NaN,
+          leftScreenPosition,
+          rightScreenPosition,
+        );
       });
     }
 
@@ -303,14 +744,219 @@
     return Cesium.Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north);
   }
 
-  function applyLayerDefinitionToViewer(targetViewer, definition) {
+  function getComparatorPaneViewer(paneKey) {
+    if (paneKey === "right") {
+      return comparatorRightViewer;
+    }
+    return comparatorLeftViewer;
+  }
+
+  function getComparatorPaneLayerType(paneKey) {
+    if (paneKey === "right") {
+      return comparatorRightLayerType;
+    }
+    return comparatorLeftLayerType;
+  }
+
+  function getComparatorPaneVisual(paneKey) {
+    if (paneKey === "right") {
+      return comparatorPaneVisualState.right;
+    }
+    return comparatorPaneVisualState.left;
+  }
+
+  function setComparatorPaneSelectionStyles(selectedPane) {
+    const leftPane = document.getElementById("comparatorPaneLeft");
+    const rightPane = document.getElementById("comparatorPaneRight");
+    if (leftPane) {
+      leftPane.classList.toggle("selected", selectedPane === "left");
+    }
+    if (rightPane) {
+      rightPane.classList.toggle("selected", selectedPane === "right");
+    }
+  }
+
+  function buildComparatorPaneSnapshot(paneKey) {
+    const paneState = getComparatorPaneVisual(paneKey);
+    if (!paneState) {
+      return null;
+    }
+    const layerType = getComparatorPaneLayerType(paneKey);
+    return {
+      pane: paneKey,
+      layer_type: layerType || "none",
+      imagery: {
+        brightness: Number(paneState.imagery.brightness) || 1.0,
+        contrast: Number(paneState.imagery.contrast) || 1.0,
+      },
+      dem: {
+        exaggeration: Number(paneState.dem.exaggeration) || 1.0,
+        hillshade_alpha: Number(paneState.dem.hillshadeAlpha) || 0.0,
+        color_mode: String(paneState.dem.colorMode || "gray"),
+      },
+    };
+  }
+
+  function notifyComparatorPaneState(paneKey) {
+    if (!bridge || !bridge.on_comparator_pane_state) {
+      return;
+    }
+    const snapshot = buildComparatorPaneSnapshot(paneKey);
+    if (!snapshot) {
+      return;
+    }
+    bridge.on_comparator_pane_state(JSON.stringify(snapshot));
+  }
+
+  function setSelectedComparatorPane(paneKey, notifyPanel) {
+    const normalized = paneKey === "right" ? "right" : "left";
+    comparatorSelectedPane = normalized;
+    setComparatorPaneSelectionStyles(normalized);
+    if (notifyPanel !== false) {
+      notifyComparatorPaneState(normalized);
+    }
+  }
+
+  function bindComparatorPaneSelectionHandlers() {
+    const leftPane = document.getElementById("comparatorPaneLeft");
+    const rightPane = document.getElementById("comparatorPaneRight");
+    if (leftPane && !leftPane.dataset.selectionBound) {
+      leftPane.dataset.selectionBound = "1";
+      leftPane.addEventListener("pointerdown", function () {
+        setSelectedComparatorPane("left", true);
+      });
+    }
+    if (rightPane && !rightPane.dataset.selectionBound) {
+      rightPane.dataset.selectionBound = "1";
+      rightPane.addEventListener("pointerdown", function () {
+        setSelectedComparatorPane("right", true);
+      });
+    }
+  }
+
+  function buildComparatorDemDrapeUrl(definition, demState) {
+    if (definition && typeof definition.xyzUrl === "string" && definition.xyzUrl) {
+      const baseQuery = definition.query && typeof definition.query === "object" ? { ...definition.query } : {};
+      baseQuery.resampling = "nearest";
+      baseQuery.colormap_name = String(demState.colorMode || baseQuery.colormap_name || "gray");
+      return buildUrlWithQuery(definition.xyzUrl, baseQuery);
+    }
+    return String((definition && definition.drapeUrl) || "");
+  }
+
+  function buildComparatorDemHillshadeUrl(definition, demState) {
+    if (definition && typeof definition.xyzUrl === "string" && definition.xyzUrl) {
+      const sourceQuery = definition.query && typeof definition.query === "object" ? definition.query : {};
+      const query = {
+        algorithm: "hillshade",
+        azimuth: DEM_HILLSHADE_AZIMUTH,
+        angle_altitude: DEM_HILLSHADE_ALTITUDE,
+        z_exaggeration: Math.max(0.1, Number(demState.exaggeration) || 1.0),
+        buffer: 4,
+      };
+      if (Object.prototype.hasOwnProperty.call(sourceQuery, "nodata")) {
+        query.nodata = sourceQuery.nodata;
+      }
+      return buildUrlWithQuery(definition.xyzUrl, query);
+    }
+    return String((definition && definition.hillshadeUrl) || "");
+  }
+
+  function logComparatorLayerStack(targetViewer, paneKey, context) {
+    if (!targetViewer || !targetViewer.imageryLayers) {
+      return;
+    }
+    const rows = [];
+    for (let idx = 0; idx < targetViewer.imageryLayers.length; idx += 1) {
+      const layer = targetViewer.imageryLayers.get(idx);
+      const isPrimary = layer === targetViewer.__comparatorPrimaryLayer;
+      const isHillshade = layer === targetViewer.__comparatorHillshadeLayer;
+      const role = isPrimary ? "primary" : (isHillshade ? "hillshade" : "background");
+      const alpha = Number(layer && layer.alpha);
+      const show = layer && layer.show === false ? "hidden" : "shown";
+      rows.push(`#${idx}:${role}:${show}:alpha=${Number.isFinite(alpha) ? alpha.toFixed(2) : "n/a"}`);
+    }
+    log("debug", `Comparator layer stack pane=${paneKey} context=${context} :: ${rows.join(" | ")}`);
+  }
+
+  function enforceComparatorDemLayerOrder(paneKey, targetViewer) {
+    if (!targetViewer || getComparatorPaneLayerType(paneKey) !== "dem") {
+      return;
+    }
+    const primaryLayer = targetViewer.__comparatorPrimaryLayer || null;
+    const hillshadeLayer = targetViewer.__comparatorHillshadeLayer || null;
+
+    if (primaryLayer && targetViewer.imageryLayers.indexOf(primaryLayer) >= 0) {
+      primaryLayer.show = true;
+      primaryLayer.alpha = 1.0;
+      targetViewer.imageryLayers.raiseToTop(primaryLayer);
+    }
+    if (hillshadeLayer && targetViewer.imageryLayers.indexOf(hillshadeLayer) >= 0) {
+      hillshadeLayer.show = true;
+      targetViewer.imageryLayers.raiseToTop(hillshadeLayer);
+    }
+    logComparatorLayerStack(targetViewer, paneKey, "enforce-dem-z-order");
+  }
+
+  function applyComparatorPaneVisualState(paneKey) {
+    const targetViewer = getComparatorPaneViewer(paneKey);
+    const paneState = getComparatorPaneVisual(paneKey);
+    const layerType = getComparatorPaneLayerType(paneKey);
+    if (!targetViewer || !paneState || !layerType) {
+      return;
+    }
+    if (layerType === "imagery") {
+      const imageryLayer = targetViewer.__comparatorPrimaryLayer || null;
+      if (imageryLayer) {
+        imageryLayer.brightness = Math.max(0.2, Number(paneState.imagery.brightness) || 1.0);
+        imageryLayer.contrast = Math.max(0.1, Number(paneState.imagery.contrast) || 1.0);
+      }
+    } else if (layerType === "dem") {
+      targetViewer.scene.verticalExaggeration = Math.max(0.1, Number(paneState.dem.exaggeration) || 1.0);
+      const primaryLayer = targetViewer.__comparatorPrimaryLayer || null;
+      if (primaryLayer) {
+        primaryLayer.alpha = 1.0;
+        primaryLayer.show = true;
+      }
+      const hsLayer = targetViewer.__comparatorHillshadeLayer || null;
+      if (hsLayer) {
+        hsLayer.alpha = Math.max(0.0, Math.min(0.35, (Number(paneState.dem.hillshadeAlpha) || 0.0) * 0.45));
+      }
+      enforceComparatorDemLayerOrder(paneKey, targetViewer);
+    }
+    targetViewer.scene.requestRender();
+  }
+
+  function applyLayerDefinitionToViewer(targetViewer, definition, paneKey) {
     if (!targetViewer || !definition) {
       return;
     }
+    const paneVisual = getComparatorPaneVisual(paneKey);
     const rectangle = rectangleFromBounds(definition.bounds || null);
+    targetViewer.__comparatorLayerKey = String(definition.key || "");
+    targetViewer.__comparatorPrimaryLayer = null;
+    targetViewer.__comparatorHillshadeLayer = null;
+
+    const fallbackBackgroundProvider = createNaturalEarthProvider();
+    const fallbackBackgroundLayer = targetViewer.imageryLayers.addImageryProvider(fallbackBackgroundProvider);
+    fallbackBackgroundLayer.alpha = 1.0;
+
+    const localBackgroundProvider = new Cesium.UrlTemplateImageryProvider({
+      url: `${LOCAL_SATELLITE_TILE_ROOT}/{z}/{x}/{y}.jpg`,
+      tilingScheme: new Cesium.WebMercatorTilingScheme(),
+      maximumLevel: LOCAL_SATELLITE_DEFAULT_MAX_LEVEL,
+      enablePickFeatures: false,
+    });
+    attachTileErrorHandler(localBackgroundProvider, `ComparatorBackground:${paneKey}:${definition.key || definition.label || "layer"}`);
+    const localBackgroundLayer = targetViewer.imageryLayers.addImageryProvider(localBackgroundProvider);
+    localBackgroundLayer.alpha = 1.0;
+
     if (definition.type === "dem") {
+      const demState = paneVisual ? paneVisual.dem : comparatorPaneVisualState.left.dem;
+      const drapeUrl = buildComparatorDemDrapeUrl(definition, demState);
+      const hillshadeUrl = buildComparatorDemHillshadeUrl(definition, demState);
       const demProvider = new Cesium.UrlTemplateImageryProvider({
-        url: definition.drapeUrl,
+        url: drapeUrl,
         maximumLevel: definition.maxLevel,
         minimumLevel: definition.minLevel,
         tilingScheme: new Cesium.WebMercatorTilingScheme(),
@@ -319,9 +965,10 @@
       });
       const demLayer = targetViewer.imageryLayers.addImageryProvider(demProvider);
       demLayer.alpha = 1.0;
-      if (definition.hillshadeUrl) {
+      targetViewer.__comparatorPrimaryLayer = demLayer;
+      if (hillshadeUrl) {
         const hsProvider = new Cesium.UrlTemplateImageryProvider({
-          url: definition.hillshadeUrl,
+          url: hillshadeUrl,
           maximumLevel: definition.maxLevel,
           minimumLevel: definition.minLevel,
           tilingScheme: new Cesium.WebMercatorTilingScheme(),
@@ -329,10 +976,13 @@
           rectangle: rectangle,
         });
         const hsLayer = targetViewer.imageryLayers.addImageryProvider(hsProvider);
-        hsLayer.alpha = Math.max(0.0, Math.min(1.0, Number(definition.hillshadeAlpha) || 0.0));
+        hsLayer.alpha = Math.max(0.0, Math.min(0.35, (Number(demState.hillshadeAlpha) || 0.0) * 0.45));
+        targetViewer.__comparatorHillshadeLayer = hsLayer;
       }
+      enforceComparatorDemLayerOrder(paneKey, targetViewer);
       return;
     }
+
     const provider = new Cesium.UrlTemplateImageryProvider({
       url: definition.url,
       maximumLevel: definition.maxLevel,
@@ -343,13 +993,18 @@
     });
     const layer = targetViewer.imageryLayers.addImageryProvider(provider);
     layer.alpha = 1.0;
+    if (paneVisual) {
+      layer.brightness = Math.max(0.2, Number(paneVisual.imagery.brightness) || 1.0);
+      layer.contrast = Math.max(0.1, Number(paneVisual.imagery.contrast) || 1.0);
+    }
+    targetViewer.__comparatorPrimaryLayer = layer;
   }
 
   function resetComparatorViewerLayers(targetViewer) {
     if (!targetViewer) {
       return;
     }
-    for (let idx = targetViewer.imageryLayers.length - 1; idx >= 1; idx -= 1) {
+    for (let idx = targetViewer.imageryLayers.length - 1; idx >= 0; idx -= 1) {
       const layer = targetViewer.imageryLayers.get(idx);
       targetViewer.imageryLayers.remove(layer, false);
     }
@@ -375,10 +1030,11 @@
     return [visibleKeys[0], visibleKeys[1]];
   }
 
-  function refreshComparatorLayers() {
+  function refreshComparatorLayers(options) {
     if (!comparatorModeEnabled || !comparatorLeftViewer || !comparatorRightViewer) {
       return;
     }
+    const preserveView = Boolean(options && options.preserveView);
     const [leftKey, rightKey] = resolveComparatorLayerKeys();
     if (!leftKey || !rightKey) {
       return;
@@ -391,8 +1047,15 @@
 
     resetComparatorViewerLayers(comparatorLeftViewer);
     resetComparatorViewerLayers(comparatorRightViewer);
-    applyLayerDefinitionToViewer(comparatorLeftViewer, leftDef);
-    applyLayerDefinitionToViewer(comparatorRightViewer, rightDef);
+    applyLayerDefinitionToViewer(comparatorLeftViewer, leftDef, "left");
+    applyLayerDefinitionToViewer(comparatorRightViewer, rightDef, "right");
+    comparatorLeftLayerType = String(leftDef.type || "imagery");
+    comparatorRightLayerType = String(rightDef.type || "imagery");
+    setComparatorViewerModeByType(comparatorLeftViewer, comparatorLeftLayerType);
+    setComparatorViewerModeByType(comparatorRightViewer, comparatorRightLayerType);
+    syncComparatorTerrainProviders();
+    applyComparatorPaneVisualState("left");
+    applyComparatorPaneVisualState("right");
 
     const leftTitle = document.getElementById("comparatorTitleLeft");
     const rightTitle = document.getElementById("comparatorTitleRight");
@@ -403,11 +1066,124 @@
       rightTitle.textContent = rightDef.label || "Right layer";
     }
 
-    if (viewer && comparatorLeftViewer) {
-      syncViewerCamera(viewer, comparatorLeftViewer);
-      syncViewerCamera(viewer, comparatorRightViewer);
+    if (!preserveView && viewer && comparatorLeftViewer) {
+      const leftRect = rectangleFromBounds(leftDef.bounds || null);
+      const rightRect = rectangleFromBounds(rightDef.bounds || null);
+      if (leftRect) {
+        comparatorLeftViewer.camera.setView({ destination: leftRect });
+      }
+      if (rightRect) {
+        comparatorRightViewer.camera.setView({ destination: rightRect });
+      }
+      syncViewerCamera(comparatorLeftViewer, comparatorRightViewer);
     }
+    if (!preserveView) {
+      lockComparatorFocusToCurrentView();
+    }
+    updateComparatorCenterReadout(getComparatorDemViewer() || comparatorLeftViewer);
+    setSelectedComparatorPane(comparatorSelectedPane, true);
+
+    enforceComparatorDemLayerOrder("left", comparatorLeftViewer);
+    enforceComparatorDemLayerOrder("right", comparatorRightViewer);
     requestSceneRender();
+  }
+
+  function scheduleComparatorDemRefresh(paneKey) {
+    if (comparatorDemRefreshTimer !== null) {
+      window.clearTimeout(comparatorDemRefreshTimer);
+      comparatorDemRefreshTimer = null;
+    }
+    const targetPane = paneKey === "right" ? "right" : "left";
+    comparatorDemRefreshTimer = window.setTimeout(function () {
+      comparatorDemRefreshTimer = null;
+      if (!comparatorModeEnabled) {
+        return;
+      }
+      const paneLayerType = getComparatorPaneLayerType(targetPane);
+      if (paneLayerType !== "dem") {
+        return;
+      }
+
+      const targetViewer = getComparatorPaneViewer(targetPane);
+      const paneState = getComparatorPaneVisual(targetPane);
+      const layerKey = targetPane === "right" ? swipeComparatorRightLayerKey : swipeComparatorLeftLayerKey;
+      const definition = layerKey ? layerDefinitions.get(layerKey) : null;
+      if (!targetViewer || !paneState || !definition || String(definition.type || "") !== "dem") {
+        return;
+      }
+      syncComparatorTerrainProviders();
+
+      const rectangle = rectangleFromBounds(definition.bounds || null);
+      const drapeUrl = buildComparatorDemDrapeUrl(definition, paneState.dem);
+      const hillshadeUrl = buildComparatorDemHillshadeUrl(definition, paneState.dem);
+      const oldPrimary = targetViewer.__comparatorPrimaryLayer || null;
+      const oldHillshade = targetViewer.__comparatorHillshadeLayer || null;
+
+      let insertIndex = targetViewer.imageryLayers.length;
+      if (oldPrimary) {
+        const primaryIndex = targetViewer.imageryLayers.indexOf(oldPrimary);
+        if (primaryIndex >= 0) {
+          insertIndex = primaryIndex;
+        }
+      }
+
+      const demProvider = new Cesium.UrlTemplateImageryProvider({
+        url: drapeUrl,
+        maximumLevel: definition.maxLevel,
+        minimumLevel: definition.minLevel,
+        tilingScheme: new Cesium.WebMercatorTilingScheme(),
+        enablePickFeatures: false,
+        rectangle: rectangle,
+      });
+      const newPrimary = targetViewer.imageryLayers.addImageryProvider(demProvider, insertIndex);
+      newPrimary.alpha = 1.0;
+      newPrimary.show = true;
+
+      let newHillshade = null;
+      if (hillshadeUrl) {
+        const hillshadeProvider = new Cesium.UrlTemplateImageryProvider({
+          url: hillshadeUrl,
+          maximumLevel: definition.maxLevel,
+          minimumLevel: definition.minLevel,
+          tilingScheme: new Cesium.WebMercatorTilingScheme(),
+          enablePickFeatures: false,
+          rectangle: rectangle,
+        });
+        newHillshade = targetViewer.imageryLayers.addImageryProvider(hillshadeProvider, insertIndex + 1);
+        newHillshade.show = true;
+      }
+
+      const refreshVersion = (Number(comparatorDemStyleRefreshVersion[targetPane]) || 0) + 1;
+      comparatorDemStyleRefreshVersion[targetPane] = refreshVersion;
+      window.setTimeout(function () {
+        const latestVersion = Number(comparatorDemStyleRefreshVersion[targetPane]) || 0;
+        const staleRefresh = latestVersion !== refreshVersion;
+        const comparatorInactive = !comparatorModeEnabled || getComparatorPaneLayerType(targetPane) !== "dem";
+        if (staleRefresh || comparatorInactive) {
+          if (newHillshade && targetViewer.imageryLayers.indexOf(newHillshade) >= 0) {
+            targetViewer.imageryLayers.remove(newHillshade, false);
+          }
+          if (targetViewer.imageryLayers.indexOf(newPrimary) >= 0) {
+            targetViewer.imageryLayers.remove(newPrimary, false);
+          }
+          return;
+        }
+
+        targetViewer.__comparatorPrimaryLayer = newPrimary;
+        targetViewer.__comparatorHillshadeLayer = newHillshade;
+        applyComparatorPaneVisualState(targetPane);
+
+        if (oldHillshade && targetViewer.imageryLayers.indexOf(oldHillshade) >= 0) {
+          targetViewer.imageryLayers.remove(oldHillshade, false);
+        }
+        if (oldPrimary && targetViewer.imageryLayers.indexOf(oldPrimary) >= 0) {
+          targetViewer.imageryLayers.remove(oldPrimary, false);
+        }
+        enforceComparatorDemLayerOrder(targetPane, targetViewer);
+        logComparatorLayerStack(targetViewer, targetPane, "post-color-refresh");
+        targetViewer.scene.requestRender();
+      }, 80);
+    }, COMPARATOR_DEM_REFRESH_DEBOUNCE_MS);
   }
 
   function setSwipeComparatorLayerKeys(leftLayerKey, rightLayerKey, leftLabel, rightLabel) {
@@ -433,6 +1209,8 @@
 
   function ensureComparatorViewers() {
     if (comparatorLeftViewer && comparatorRightViewer) {
+      bindComparatorPaneSelectionHandlers();
+      setComparatorPaneSelectionStyles(comparatorSelectedPane);
       return;
     }
     comparatorLeftViewer = new Cesium.Viewer("comparatorLeftViewer", {
@@ -469,13 +1247,21 @@
       animation: false,
       terrainProvider: new Cesium.EllipsoidTerrainProvider(),
     });
-    comparatorLeftViewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#1f4f7a");
-    comparatorRightViewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#1f4f7a");
+    comparatorLeftViewer.scene.globe.baseColor = Cesium.Color.BLACK;
+    comparatorRightViewer.scene.globe.baseColor = Cesium.Color.BLACK;
     comparatorLeftViewer.scene.backgroundColor = Cesium.Color.BLACK;
     comparatorRightViewer.scene.backgroundColor = Cesium.Color.BLACK;
     comparatorLeftViewer.scene.fxaa = false;
     comparatorRightViewer.scene.fxaa = false;
+    comparatorLeftViewer.scene.mode = Cesium.SceneMode.SCENE3D;
+    comparatorRightViewer.scene.mode = Cesium.SceneMode.SCENE3D;
+    comparatorLeftViewer.scene.verticalExaggeration = demVisual.exaggeration;
+    comparatorRightViewer.scene.verticalExaggeration = demVisual.exaggeration;
+    comparatorLeftViewer.camera.percentageChanged = 0.001;
+    comparatorRightViewer.camera.percentageChanged = 0.001;
     bindComparatorSyncHandlers();
+    bindComparatorPaneSelectionHandlers();
+    setComparatorPaneSelectionStyles(comparatorSelectedPane);
   }
 
   function getSwipeCandidateLayers() {
@@ -601,19 +1387,47 @@
     const next = Boolean(enabled);
     swipeComparatorEnabled = next;
     comparatorModeEnabled = next;
+    if (!next) {
+      cancelComparatorCameraSyncSchedule();
+    }
+    if (comparatorDemRefreshTimer !== null) {
+      window.clearTimeout(comparatorDemRefreshTimer);
+      comparatorDemRefreshTimer = null;
+    }
     const candidateCount = getSwipeCandidateLayers().length;
     ensureSwipeDivider();
     if (swipeDividerElement) {
       swipeDividerElement.style.display = "none";
     }
     if (next) {
+      for (const paneKey of ["left", "right"]) {
+        const paneState = getComparatorPaneVisual(paneKey);
+        if (!paneState) {
+          continue;
+        }
+        paneState.imagery.brightness = imageryVisual.brightness;
+        paneState.imagery.contrast = imageryVisual.contrast;
+        paneState.dem.exaggeration = demVisual.exaggeration;
+        paneState.dem.hillshadeAlpha = demVisual.hillshadeAlpha;
+        paneState.dem.colorMode = String(paneState.dem.colorMode || "gray");
+      }
       ensureComparatorViewers();
+      setSelectedComparatorPane(comparatorSelectedPane, false);
       setComparatorWindowsVisible(true);
       if (comparatorLeftViewer && comparatorRightViewer) {
         comparatorLeftViewer.resize();
         comparatorRightViewer.resize();
       }
       refreshComparatorLayers();
+      const bounds = activeTileBounds || lastLoadedBounds;
+      if (bounds && comparatorLeftViewer && comparatorRightViewer) {
+        const rect = Cesium.Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north);
+        comparatorLeftViewer.camera.setView({ destination: rect });
+        syncViewerCamera(comparatorLeftViewer, comparatorRightViewer);
+      }
+      lockComparatorFocusToCurrentView();
+      updateComparatorCenterReadout(getComparatorDemViewer() || comparatorLeftViewer);
+      notifyComparatorPaneState(comparatorSelectedPane);
       if (candidateCount < 2) {
         setStatus("Comparator enabled. Select two visible layers to render left and right panes.");
       } else {
@@ -621,7 +1435,7 @@
       }
     } else {
       setComparatorWindowsVisible(false);
-      setStatus("Swipe comparator disabled.");
+      setStatus("Comparator disabled.");
     }
     applySwipeComparatorSplit();
   }
@@ -924,9 +1738,6 @@
     }
     if (toggle) {
       toggle.disabled = !sceneModeControlEnabled;
-      if (!sceneModeControlEnabled) {
-        toggle.checked = true;
-      }
     }
   }
 
@@ -1100,7 +1911,7 @@
           parseDemHeightRange(activeDemContext.options).max,
           activeDemContext.options
         );
-        setSceneModeControlEnabled(false);
+        setSceneModeControlEnabled(true);
         setStatus("DEM layer shown.");
         log("info", "DEM layer shown key=" + layerKey);
       } else {
@@ -1357,6 +2168,29 @@
     }
     setActiveTileBounds(bounds);
     focusLoadedRegion(durationSeconds);
+  }
+
+  function applyDefaultStartupFocus() {
+    if (!viewer) {
+      return;
+    }
+    viewer.camera.cancelFlight();
+    viewer.camera.setView({
+      destination: Cesium.Cartesian3.fromDegrees(
+        DEFAULT_STARTUP_CENTER_LON,
+        DEFAULT_STARTUP_CENTER_LAT,
+        DEFAULT_STARTUP_HEIGHT_M
+      ),
+      orientation: {
+        heading: DEFAULT_STARTUP_HEADING,
+        pitch: DEFAULT_STARTUP_PITCH,
+        roll: 0.0,
+      },
+    });
+    cameraOrbitHeading = DEFAULT_STARTUP_HEADING;
+    cameraOrbitPitch = DEFAULT_STARTUP_PITCH;
+    cameraOrbitRange = DEFAULT_STARTUP_HEIGHT_M;
+    viewer.scene.requestRender();
   }
 
   function focusPreferredRegion3D(durationSeconds) {
@@ -1735,8 +2569,8 @@
     };
     const hillshadeQuery = {
       algorithm: "hillshade",
-      azimuth: demVisual.azimuth,
-      angle_altitude: demVisual.altitude,
+      azimuth: DEM_HILLSHADE_AZIMUTH,
+      angle_altitude: DEM_HILLSHADE_ALTITUDE,
       z_exaggeration: demVisual.exaggeration,
       buffer: 4,
     };
@@ -1759,6 +2593,8 @@
       key: activeDemContext.layerKey,
       label: String(activeDemContext.name || activeDemContext.layerKey || "DEM"),
       type: "dem",
+      xyzUrl: activeDemContext.xyzUrl,
+      query: { ...rasterQuery },
       drapeUrl: drapeUrl,
       hillshadeUrl: hillshadeUrl,
       minLevel: minLevel,
@@ -1781,9 +2617,18 @@
       activeDemTerrainSignature = terrainSignature;
     }
 
-    if (!activeDemDrapeLayer || activeDemDrapeUrl !== drapeUrl) {
+    // Always clean up hillshade when drape URL changes to ensure proper layer rebuild
+    const drapeUrlChanged = activeDemDrapeUrl !== drapeUrl;
+    if (drapeUrlChanged && activeDemHillshadeLayer) {
+      viewer.imageryLayers.remove(activeDemHillshadeLayer, false);
+      activeDemHillshadeLayer = null;
+      activeDemHillshadeUrl = null;
+    }
+
+    if (!activeDemDrapeLayer || drapeUrlChanged) {
       if (activeDemDrapeLayer) {
         viewer.imageryLayers.remove(activeDemDrapeLayer, false);
+        activeDemDrapeLayer = null;
       }
       const drapeProvider = new Cesium.UrlTemplateImageryProvider({
         url: drapeUrl,
@@ -1805,6 +2650,7 @@
       if (activeDemHillshadeLayer && activeDemHillshadeUrl !== hillshadeUrl) {
         viewer.imageryLayers.remove(activeDemHillshadeLayer, false);
         activeDemHillshadeLayer = null;
+        activeDemHillshadeUrl = null;
       }
       if (!activeDemHillshadeLayer) {
         const hillshadeProvider = new Cesium.UrlTemplateImageryProvider({
@@ -1830,15 +2676,18 @@
       activeDemHillshadeUrl = null;
     }
     applyDemSceneSettings();
+    // Ensure proper layer stacking: DEM layers (drape + hillshade) should be topmost
     if (activeDemDrapeLayer) {
       viewer.imageryLayers.raiseToTop(activeDemDrapeLayer);
     }
     if (activeDemHillshadeLayer) {
       viewer.imageryLayers.raiseToTop(activeDemHillshadeLayer);
     }
+    // Re-raise managed imagery layers to maintain proper ordering above DEM
+    // Note: This ensures other managed layers stay below the DEM visualization
     for (const layer of managedImageryLayers.values()) {
       if (layer && layer.show) {
-        viewer.imageryLayers.raiseToTop(layer);
+        viewer.imageryLayers.lowerToBottom(layer);
       }
     }
     updateBasemapBlendForCurrentMode();
@@ -1913,6 +2762,7 @@
     viewer.canvas.style.backgroundColor = "#000000";
     applyDefaultSceneSettings();
     tuneCameraController();
+    applyDefaultStartupFocus();
     window.addEventListener("error", function (event) {
       log("error", "Window error: " + (event && event.message ? event.message : "unknown"));
     });
@@ -2186,12 +3036,13 @@
     }
   }
 
-  function createNaturalEarthProvider() {
+  function createNaturalEarthProvider(rectangle) {
     return new Cesium.UrlTemplateImageryProvider({
       url: Cesium.buildModuleUrl("Assets/Textures/NaturalEarthII/{z}/{x}/{y}.jpg"),
       tilingScheme: new Cesium.GeographicTilingScheme(),
       maximumLevel: 2,
       enablePickFeatures: false,
+      rectangle: rectangle || undefined,
       credit: "NaturalEarthII (offline fallback)",
     });
   }
@@ -2451,8 +3302,11 @@
       const lat = lonLat.lat;
 
       if (searchDrawMode === "polygon") {
+        if (searchPolygonLocked) {
+          setStatus("Polygon restored. Clear geometry to start a new polygon.");
+          return;
+        }
         searchPolygonPoints.push({ lon: lon, lat: lat });
-        addSearchVertexMarker(lon, lat, Cesium.Color.CYAN);
         searchCursorPoint = null;
         updateSearchPolygonPreview();
         setStatus("Polygon draw: continue points, right-click or Finish to close");
@@ -2573,22 +3427,18 @@
   }
 
   function updatePolygonPreviewVisibility() {
-    for (const markerEntity of searchVertexEntities) {
-      if (markerEntity) {
-        markerEntity.show = polygonVisibilityEnabled;
-      }
-    }
+    const visible = polygonVisibilityEnabled && searchOverlayVisible;
     if (searchCursorEntity) {
-      searchCursorEntity.show = polygonVisibilityEnabled;
+      searchCursorEntity.show = visible;
     }
     if (searchPreviewLineEntity && searchPreviewLineEntity.polyline) {
-      searchPreviewLineEntity.polyline.show = polygonVisibilityEnabled && searchPolygonPoints.length >= 2;
+      searchPreviewLineEntity.polyline.show = visible && searchPolygonPoints.length >= 2;
     }
     if (searchPreviewPolygonEntity && searchPreviewPolygonEntity.polygon) {
-      searchPreviewPolygonEntity.polygon.show = polygonVisibilityEnabled && searchPolygonPoints.length >= 3;
+      searchPreviewPolygonEntity.polygon.show = visible && searchPolygonPoints.length >= 3;
     }
     if (searchAreaLabelEntity && searchAreaLabelEntity.label) {
-      searchAreaLabelEntity.label.show = polygonVisibilityEnabled && searchPolygonPoints.length >= 3;
+      searchAreaLabelEntity.label.show = visible && searchPolygonPoints.length >= 3;
     }
     if (searchPreviewLineEntity || searchPreviewPolygonEntity || searchAreaLabelEntity) {
       requestSceneRender();
@@ -2608,27 +3458,7 @@
     return getLonLatFromViewer(viewer, screenPosition);
   }
 
-  function addSearchVertexMarker(lon, lat, color) {
-    const entity = viewer.entities.add({
-      position: Cesium.Cartesian3.fromDegrees(lon, lat),
-      point: {
-        pixelSize: 8,
-        color: color || Cesium.Color.CYAN,
-        outlineColor: Cesium.Color.BLACK.withAlpha(0.7),
-        outlineWidth: 1,
-        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-      },
-    });
-    searchVertexEntities.push(entity);
-    requestSceneRender();
-  }
-
   function clearSearchEntities() {
-    while (searchVertexEntities.length > 0) {
-      const entity = searchVertexEntities.pop();
-      if (entity && viewer) viewer.entities.remove(entity);
-    }
     if (searchCursorEntity) {
       viewer.entities.remove(searchCursorEntity);
       searchCursorEntity = null;
@@ -2644,6 +3474,16 @@
     if (searchAreaLabelEntity) {
       viewer.entities.remove(searchAreaLabelEntity);
       searchAreaLabelEntity = null;
+    }
+    requestSceneRender();
+  }
+
+  function setAnnotationVisibility(visible) {
+    annotationVisibilityEnabled = Boolean(visible);
+    for (const entity of annotationEntities) {
+      if (entity) {
+        entity.show = annotationVisibilityEnabled;
+      }
     }
     requestSceneRender();
   }
@@ -2717,7 +3557,9 @@
     distanceMeasureAnchor = null;
     if (distanceMeasureModeEnabled && searchDrawMode === "polygon") {
       searchDrawMode = "none";
+      searchOverlayVisible = false;
       setSearchCursorEnabled(false);
+      updatePolygonPreviewVisibility();
     }
     clearMeasurementPreviewEntities();
     if (distanceMeasureModeEnabled) {
@@ -2737,7 +3579,9 @@
     }
     if (searchDrawMode === "polygon") {
       searchDrawMode = "none";
+      searchOverlayVisible = false;
       setSearchCursorEnabled(false);
+      updatePolygonPreviewVisibility();
       setStatus("Pan mode enabled.");
       requestSceneRender();
       return;
@@ -2878,7 +3722,7 @@
           material: Cesium.Color.CYAN,
           clampToGround: true,
           show: new Cesium.CallbackProperty(
-            () => polygonVisibilityEnabled && getSearchPreviewPoints().length >= 2,
+            () => polygonVisibilityEnabled && searchOverlayVisible && getSearchPreviewPoints().length >= 2,
             false,
           ),
         },
@@ -2898,7 +3742,7 @@
           material: Cesium.Color.CYAN.withAlpha(0.2),
           perPositionHeight: false,
           show: new Cesium.CallbackProperty(
-            () => polygonVisibilityEnabled && getSearchPreviewPoints().length >= 3,
+            () => polygonVisibilityEnabled && searchOverlayVisible && getSearchPreviewPoints().length >= 3,
             false,
           ),
         },
@@ -2922,7 +3766,7 @@
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
         show: new Cesium.CallbackProperty(
-          () => polygonVisibilityEnabled && Boolean(searchCursorPoint),
+          () => polygonVisibilityEnabled && searchOverlayVisible && Boolean(searchCursorPoint),
           false,
         ),
       });
@@ -2963,7 +3807,7 @@
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
           scale: 0.8,
           show: new Cesium.CallbackProperty(
-            () => polygonVisibilityEnabled && getSearchPreviewPoints().length >= 3,
+            () => polygonVisibilityEnabled && searchOverlayVisible && getSearchPreviewPoints().length >= 3,
             false,
           ),
         },
@@ -2982,11 +3826,6 @@
       return;
     }
     searchCursorPoint = null;
-    for (const markerEntity of searchVertexEntities) {
-      if (markerEntity && markerEntity.point) {
-        markerEntity.point.color = Cesium.Color.fromCssColorString("#31d18d");
-      }
-    }
     if (searchPreviewLineEntity && searchPreviewLineEntity.polyline) {
       searchPreviewLineEntity.polyline.material = Cesium.Color.fromCssColorString("#31d18d");
     }
@@ -2997,6 +3836,8 @@
 
     const polygonPayload = { points: searchPolygonPoints.slice() };
     searchDrawMode = "none";
+    searchPolygonLocked = true;
+    searchOverlayVisible = true;
     setSearchCursorEnabled(false);
     const polygonToggleControl = document.getElementById("polygonToggleControl");
     if (polygonToggleControl) {
@@ -3251,7 +4092,7 @@
         }
         clearManagedImageryLayers();
       }
-      setSceneModeControlEnabled(!(activeDemContext && activeDemContext.visible !== false));
+      setSceneModeControlEnabled(true);
       let providerUrl = xyzUrl;
       const extraQuery = options && options.query ? options.query : {};
       const qp = new URLSearchParams();
@@ -3353,7 +4194,7 @@
         clearManagedImageryLayers();
       }
       setSceneModeInternal("3d");
-      setSceneModeControlEnabled(false);
+      setSceneModeControlEnabled(true);
       syncSceneModeToggle("3d");
       const normalizedBounds = normalizeBounds(options && options.bounds ? options.bounds : null);
       if (normalizedBounds) {
@@ -3382,18 +4223,6 @@
           " currentSceneMode=" +
           currentSceneMode
       );
-      if (!sceneModeControlEnabled && String(mode || "").toLowerCase() === "2d") {
-        syncSceneModeToggle("3d");
-        sceneDebug("window.setSceneMode blocked 2d due to disabled scene mode control");
-        return;
-      }
-      if (activeDemContext && activeDemContext.visible !== false && String(mode || "").toLowerCase() === "2d") {
-        setSceneModeInternal("3d");
-        setStatus("DEM terrain requires 3D mode.");
-        sceneDebug("window.setSceneMode blocked 2d because DEM context is active");
-        log("warn", "Blocked 2D mode while DEM terrain is active");
-        return;
-      }
       setSceneModeInternal(mode);
     },
     setSceneModeControlEnabled: function (enabled) {
@@ -3403,9 +4232,26 @@
       setSearchBusy(active, message);
     },
     setDemColorMode: function (colormapName) {
-      setDemColorMode(colormapName);
+      const normalized = String(colormapName || "gray").toLowerCase() === "terrain" ? "terrain" : "gray";
+      if (comparatorModeEnabled) {
+        const paneState = getComparatorPaneVisual(comparatorSelectedPane);
+        if (!paneState) {
+          return;
+        }
+        paneState.dem.colorMode = normalized;
+        if (getComparatorPaneLayerType(comparatorSelectedPane) === "dem") {
+          scheduleComparatorDemRefresh(comparatorSelectedPane);
+        }
+        notifyComparatorPaneState(comparatorSelectedPane);
+        requestSceneRender();
+        return;
+      }
+      setDemColorMode(normalized);
     },
     setSwipeComparatorLayers: function (leftLayerKey, rightLayerKey, leftLabel, rightLabel) {
+      setSwipeComparatorLayerKeys(leftLayerKey, rightLayerKey, leftLabel, rightLabel);
+    },
+    setComparatorLayers: function (leftLayerKey, rightLayerKey, leftLabel, rightLabel) {
       setSwipeComparatorLayerKeys(leftLayerKey, rightLayerKey, leftLabel, rightLabel);
     },
     setLayerVisibility: function (layerKey, visible) {
@@ -3417,15 +4263,46 @@
     flyThroughBounds: function (west, south, east, north) {
       startFlyThroughBounds(west, south, east, north);
     },
-    setDemProperties: function (exaggeration, hillshadeAlpha, azimuth, altitude) {
-      demVisual.exaggeration = Math.max(0.1, Number(exaggeration) || 1.0);
-      demVisual.hillshadeAlpha = Math.max(0.0, Math.min(1.0, Number(hillshadeAlpha) || 0.0));
-      demVisual.azimuth = Math.max(0, Math.min(360, Number(azimuth) || 45));
-      demVisual.altitude = Math.max(0, Math.min(90, Number(altitude) || 45));
+    setDemProperties: function (exaggeration, hillshadeAlpha) {
+      const nextExaggeration = Math.max(0.1, Number(exaggeration) || 1.0);
+      const nextHillshadeAlpha = Math.max(0.0, Math.min(1.0, Number(hillshadeAlpha) || 0.0));
+
+      if (comparatorModeEnabled) {
+        if (comparatorDemRefreshTimer !== null) {
+          window.clearTimeout(comparatorDemRefreshTimer);
+          comparatorDemRefreshTimer = null;
+        }
+        const paneState = getComparatorPaneVisual(comparatorSelectedPane);
+        if (!paneState) {
+          return;
+        }
+        paneState.dem.exaggeration = nextExaggeration;
+        paneState.dem.hillshadeAlpha = nextHillshadeAlpha;
+        applyComparatorPaneVisualState(comparatorSelectedPane);
+        notifyComparatorPaneState(comparatorSelectedPane);
+        requestSceneRender();
+        log(
+          "info",
+          "Comparator DEM properties pane=" +
+            comparatorSelectedPane +
+            " exaggeration=" +
+            nextExaggeration.toFixed(2) +
+            " hillshade=" +
+            nextHillshadeAlpha.toFixed(2)
+        );
+        return;
+      }
+
+      demVisual.exaggeration = nextExaggeration;
+      demVisual.hillshadeAlpha = nextHillshadeAlpha;
       if (activeDemContext) {
         applyDemLayer();
       } else if (viewer) {
         viewer.scene.verticalExaggeration = demVisual.exaggeration;
+      }
+      if (comparatorLeftViewer && comparatorRightViewer) {
+        comparatorLeftViewer.scene.verticalExaggeration = demVisual.exaggeration;
+        comparatorRightViewer.scene.verticalExaggeration = demVisual.exaggeration;
       }
       requestSceneRender();
       log(
@@ -3433,18 +4310,39 @@
         "DEM properties exaggeration=" +
           demVisual.exaggeration.toFixed(2) +
           " hillshade=" +
-          demVisual.hillshadeAlpha.toFixed(2) +
-          " azimuth=" +
-          demVisual.azimuth +
-          " altitude=" +
-          demVisual.altitude
+          demVisual.hillshadeAlpha.toFixed(2)
       );
     },
     setImageryProperties: function (brightness, contrast) {
       if (!viewer) return;
-      const visibleManagedLayers = Array.from(managedImageryLayers.values()).filter((layer) => layer && layer.show);
       const nextBrightness = Math.max(0.2, brightness);
       const nextContrast = Math.max(0.1, contrast);
+
+      if (comparatorModeEnabled) {
+        const paneState = getComparatorPaneVisual(comparatorSelectedPane);
+        if (!paneState) {
+          return;
+        }
+        paneState.imagery.brightness = nextBrightness;
+        paneState.imagery.contrast = nextContrast;
+        applyComparatorPaneVisualState(comparatorSelectedPane);
+        notifyComparatorPaneState(comparatorSelectedPane);
+        log(
+          "debug",
+          "Comparator imagery properties pane=" +
+            comparatorSelectedPane +
+            " brightness=" +
+            nextBrightness +
+            " contrast=" +
+            nextContrast
+        );
+        requestSceneRender();
+        return;
+      }
+
+      imageryVisual.brightness = nextBrightness;
+      imageryVisual.contrast = nextContrast;
+      const visibleManagedLayers = Array.from(managedImageryLayers.values()).filter((layer) => layer && layer.show);
       if (visibleManagedLayers.length > 0) {
         for (const layer of visibleManagedLayers) {
           layer.brightness = nextBrightness;
@@ -3463,24 +4361,37 @@
     },
     rotateCamera: function (degrees) {
       if (!viewer) return;
+      log("debug", "rotateCamera: degrees=" + degrees + " comparatorMode=" + comparatorModeEnabled);
       const targetBounds = cameraOrbitBounds || activeTileBounds || lastLoadedBounds;
       if (targetBounds) {
+        log("debug", "rotateCamera: targetBounds found, syncing orbit");
         syncOrbitFromCurrentCamera(targetBounds);
         cameraOrbitHeading += Cesium.Math.toRadians(degrees);
+        log("debug", "rotateCamera: cameraOrbitHeading updated, calling applyCameraOrbitTarget");
         applyCameraOrbitTarget();
       } else {
+        log("debug", "rotateCamera: no targetBounds, rotating main viewer directly");
         viewer.camera.rotateRight(Cesium.Math.toRadians(degrees));
+      }
+      if (comparatorModeEnabled && comparatorLeftViewer && comparatorRightViewer) {
+        log("debug", "rotateCamera: Calling lockComparatorFocusToCurrentView");
+        lockComparatorFocusToCurrentView();
       }
       log("debug", "Rotate camera degrees=" + degrees);
     },
     setPitch: function (degrees) {
       if (!viewer) return;
+      log("debug", "setPitch: degrees=" + degrees);
       const targetBounds = cameraOrbitBounds || activeTileBounds || lastLoadedBounds;
       if (targetBounds) {
+        log("debug", "setPitch: targetBounds found, syncing orbit");
         syncOrbitFromCurrentCamera(targetBounds);
       }
       cameraOrbitPitch = Cesium.Math.toRadians(degrees);
+      log("debug", "setPitch: cameraOrbitPitch set to radians=" + cameraOrbitPitch);
+      
       if (!applyCameraOrbitTarget()) {
+        log("debug", "setPitch: applyCameraOrbitTarget returned false, setting main viewer camera");
         const camera = viewer.camera;
         camera.setView({
           destination: camera.position,
@@ -3491,6 +4402,7 @@
           },
         });
       }
+
       log("debug", "Set pitch degrees=" + degrees);
     },
     addAnnotation: function (text, lon, lat) {
@@ -3526,6 +4438,7 @@
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
+      anchorEntity.show = annotationVisibilityEnabled;
       anchorEntity._annotationId = annotationId;
       anchorEntity._annotationRole = "anchor";
 
@@ -3548,6 +4461,7 @@
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
+      labelEntity.show = annotationVisibilityEnabled;
       labelEntity._annotationId = annotationId;
       labelEntity._annotationRole = "label";
 
@@ -3565,6 +4479,7 @@
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
+      editEntity.show = annotationVisibilityEnabled;
       editEntity._annotationId = annotationId;
       editEntity._annotationRole = "edit";
       editEntity._annotationAnchorEntity = anchorEntity;
@@ -3581,6 +4496,9 @@
       clearAnnotationEntities();
       log("info", "Annotations cleared");
     },
+    setAnnotationVisibility: function (visible) {
+      setAnnotationVisibility(Boolean(visible));
+    },
     clearMeasurements: function () {
       setDistanceMeasureMode(false);
       clickedPoints.length = 0;
@@ -3593,7 +4511,9 @@
       clearAnnotationEntities();
       clearSearchEntities();
       searchPolygonPoints.length = 0;
+      searchPolygonLocked = false;
       searchCursorPoint = null;
+      searchOverlayVisible = true;
       emitSearchGeometry("none", {});
       setStatus("All overlays cleared");
       log("info", "All overlays cleared");
@@ -3617,11 +4537,22 @@
     },
     setSwipeComparator: function (enabled) {
       setSwipeComparatorEnabled(Boolean(enabled));
-      log("info", "Swipe comparator=" + String(Boolean(enabled)));
+      log("info", "Comparator=" + String(Boolean(enabled)));
+    },
+    setComparator: function (enabled) {
+      setSwipeComparatorEnabled(Boolean(enabled));
+      log("info", "Comparator=" + String(Boolean(enabled)));
+    },
+    requestComparatorPaneState: function () {
+      notifyComparatorPaneState(comparatorSelectedPane);
     },
     setSwipePosition: function (fraction) {
       setSwipePosition(Number(fraction));
-      log("debug", "Swipe comparator position=" + String(fraction));
+      log("debug", "Comparator position=" + String(fraction));
+    },
+    setComparatorPosition: function (fraction) {
+      setSwipePosition(Number(fraction));
+      log("debug", "Comparator position=" + String(fraction));
     },
     setDistanceMeasureMode: function (enabled) {
       setDistanceMeasureMode(Boolean(enabled));
@@ -3634,20 +4565,32 @@
     setSearchDrawMode: function (mode) {
       if (mode !== "polygon") {
         searchDrawMode = "none";
+        searchOverlayVisible = false;
         setSearchCursorEnabled(false);
+        updatePolygonPreviewVisibility();
+        const polygonToggleControl = document.getElementById("polygonToggleControl");
+        if (polygonToggleControl) {
+          polygonToggleControl.style.display = "none";
+        }
         setStatus("Search draw disabled");
         requestSceneRender();
         return;
       }
       searchDrawMode = "polygon";
+      searchOverlayVisible = true;
       polygonVisibilityEnabled = true;
       searchCursorPoint = null;
-      searchPolygonPoints.length = 0;
-      clearSearchEntities();
-      emitSearchGeometry("none", {});
       setPolygonPreviewVisible(true);
-      setSearchCursorEnabled(true);
-      setStatus("Polygon draw: click points, right-click or Finish to close");
+      setSearchCursorEnabled(!searchPolygonLocked);
+      const polygonToggleControl = document.getElementById("polygonToggleControl");
+      if (polygonToggleControl && searchPolygonPoints.length >= 3) {
+        polygonToggleControl.style.display = "flex";
+      }
+      if (searchPolygonLocked) {
+        setStatus("Polygon restored. Clear geometry to start a new polygon.");
+      } else {
+        setStatus("Polygon draw: click points, right-click or Finish to close");
+      }
       requestSceneRender();
     },
     finishSearchPolygon: function () {
@@ -3655,8 +4598,10 @@
     },
     clearSearchGeometry: function () {
       searchDrawMode = "none";
+      searchPolygonLocked = false;
       searchCursorPoint = null;
       searchPolygonPoints.length = 0;
+      searchOverlayVisible = true;
       polygonVisibilityEnabled = true;
       clearSearchEntities();
       emitSearchGeometry("none", {});

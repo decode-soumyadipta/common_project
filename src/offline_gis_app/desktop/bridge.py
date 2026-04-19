@@ -8,6 +8,7 @@ class WebBridge(QObject):
     measurementUpdated = Signal(float)
     jsLogReceived = Signal(str, str)
     searchGeometryChanged = Signal(str, str)
+    comparatorPaneStateChanged = Signal(str)
 
     @Slot(float, float)
     def on_map_click(self, lon: float, lat: float) -> None:
@@ -24,3 +25,7 @@ class WebBridge(QObject):
     @Slot(str, str)
     def on_search_geometry(self, geometry_type: str, payload_json: str) -> None:
         self.searchGeometryChanged.emit(geometry_type, payload_json)
+
+    @Slot(str)
+    def on_comparator_pane_state(self, payload_json: str) -> None:
+        self.comparatorPaneStateChanged.emit(payload_json)

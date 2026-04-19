@@ -130,7 +130,7 @@ class ClientCollapsibleSection(QFrame):
 
 
 class ControlPanel(QWidget):
-    """Desktop control panel widgets for ingest, search, display, and annotation tools."""
+    """Desktop control panel widgets for ingest, search, display, and measurement tools."""
 
     search_result_visibility_toggled = Signal(str, bool)
     visualization_tools_toggled = Signal(bool)
@@ -283,6 +283,7 @@ class ControlPanel(QWidget):
         self.search_buffer_m.setValue(250)
         self.search_buffer_m.setMaximumWidth(145)
         self.search_draw_polygon_btn = QPushButton("Draw")
+        self.search_draw_polygon_btn.setCheckable(True)
         self.search_finish_polygon_btn = QPushButton("Finish")
         self.search_clear_geometry_btn = QPushButton("Clear")
         self.search_from_draw_btn = QPushButton("Search")
@@ -438,18 +439,6 @@ class ControlPanel(QWidget):
         self.dem_hillshade_value = QLabel()
         self.dem_hillshade_value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.dem_hillshade_value.setMinimumWidth(64)
-        self.dem_azimuth_slider = QSlider(Qt.Orientation.Horizontal)
-        self.dem_azimuth_slider.setRange(0, 360)
-        self.dem_azimuth_slider.setValue(45)
-        self.dem_azimuth_value = QLabel()
-        self.dem_azimuth_value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.dem_azimuth_value.setMinimumWidth(64)
-        self.dem_altitude_slider = QSlider(Qt.Orientation.Horizontal)
-        self.dem_altitude_slider.setRange(5, 90)
-        self.dem_altitude_slider.setValue(45)
-        self.dem_altitude_value = QLabel()
-        self.dem_altitude_value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.dem_altitude_value.setMinimumWidth(64)
         self.dem_color_mode_combo = QComboBox()
         self.dem_color_mode_combo.addItem("White relief", "gray")
         self.dem_color_mode_combo.addItem("Color relief", "terrain")
@@ -515,16 +504,6 @@ class ControlPanel(QWidget):
         hillshade_layout.addWidget(self.dem_hillshade_slider, 1)
         hillshade_layout.addWidget(self.dem_hillshade_value)
         view_layout.addLayout(hillshade_layout)
-        azimuth_layout = QHBoxLayout()
-        azimuth_layout.addWidget(QLabel("Azimuth:"))
-        azimuth_layout.addWidget(self.dem_azimuth_slider, 1)
-        azimuth_layout.addWidget(self.dem_azimuth_value)
-        view_layout.addLayout(azimuth_layout)
-        altitude_layout = QHBoxLayout()
-        altitude_layout.addWidget(QLabel("Altitude:"))
-        altitude_layout.addWidget(self.dem_altitude_slider, 1)
-        altitude_layout.addWidget(self.dem_altitude_value)
-        view_layout.addLayout(altitude_layout)
         dem_color_layout = QHBoxLayout()
         dem_color_layout.addWidget(QLabel("Style:"))
         dem_color_layout.addWidget(self.dem_color_mode_combo, 1)
@@ -538,40 +517,9 @@ class ControlPanel(QWidget):
             self.pitch_slider,
             self.dem_exaggeration_slider,
             self.dem_hillshade_slider,
-            self.dem_azimuth_slider,
-            self.dem_altitude_slider,
         ):
             slider.valueChanged.connect(self._update_display_value_labels)
         self._update_display_value_labels()
-
-        self.annotation_edit = QLineEdit()
-        self.annotation_edit.setPlaceholderText("Text for latest clicked location")
-        self.add_annotation_btn = QPushButton("Add Annotation")
-        self.profile_samples = QSpinBox()
-        self.profile_samples.setRange(2, 5000)
-        self.profile_samples.setValue(200)
-        self.extract_profile_btn = QPushButton("Extract DEM Profile (last 2 clicks)")
-
-        self.annotation_box = QGroupBox("Add Annotation")
-        annotation_layout = QVBoxLayout(self.annotation_box)
-        annotation_layout.setSpacing(10)
-        annotation_layout.setContentsMargins(10, 10, 10, 10)
-        annotation_layout.addWidget(self.annotation_edit)
-        annotation_layout.addWidget(self.add_annotation_btn)
-        annotation_layout.addStretch()
-
-        self.profile_box = QGroupBox("Extract Profile")
-        profile_layout = QVBoxLayout(self.profile_box)
-        profile_layout.setSpacing(10)
-        profile_layout.setContentsMargins(10, 10, 10, 10)
-        samples_row = QHBoxLayout()
-        samples_row.setSpacing(8)
-        samples_row.addWidget(QLabel("Samples:"))
-        samples_row.addWidget(self.profile_samples)
-        samples_row.addStretch()
-        profile_layout.addLayout(samples_row)
-        profile_layout.addWidget(self.extract_profile_btn)
-        profile_layout.addStretch()
 
         self.click_label = QLabel("None")
         self.measure_label = QLabel("N/A")
@@ -636,21 +584,17 @@ class ControlPanel(QWidget):
         analysis_layout = QVBoxLayout(self.analysis_section)
         analysis_layout.setContentsMargins(8, 8, 8, 8)
         analysis_layout.setSpacing(10)
-        analysis_layout.addWidget(self.annotation_box)
-        analysis_layout.addWidget(self.profile_box)
         analysis_layout.addWidget(self.measurement_results_box)
         analysis_layout.addWidget(self.log_box, 1)
 
         self.sections.addItem(self.data_section, "Data")
         self.search_section_index = self.sections.addItem(self.search_section, "Search")
         self.sections.addItem(self.view_section, "Display")
-        self.sections.addItem(self.analysis_section, "Annotate")
+        self.sections.addItem(self.analysis_section, "Analysis")
 
         self._client_section_specs: list[tuple[str, QGroupBox, bool]] = [
             ("Search", self.search_box, True),
             ("Display", self.view_box, False),
-            ("Annotation", self.annotation_box, False),
-            ("Profile", self.profile_box, False),
             ("Assets", self.assets_box, False),
             ("Activity Log", self.log_box, False),
         ]
@@ -711,8 +655,6 @@ class ControlPanel(QWidget):
             # Hide client-only sections
             self.search_box.setVisible(False)
             self.view_box.setVisible(False)
-            self.annotation_box.setVisible(False)
-            self.profile_box.setVisible(False)
             self.log_box.setVisible(False)
             self.assets_box.setVisible(False)
 
@@ -730,8 +672,6 @@ class ControlPanel(QWidget):
             self.assets_box.setVisible(True)
             self.search_box.setVisible(True)
             self.view_box.setVisible(True)
-            self.annotation_box.setVisible(True)
-            self.profile_box.setVisible(True)
             self.log_box.setVisible(True)
 
             for collapsible, (_name, _section, expanded) in zip(
@@ -754,8 +694,6 @@ class ControlPanel(QWidget):
             self.uploaded_box.setVisible(False)
             self.search_box.setVisible(True)
             self.view_box.setVisible(True)
-            self.annotation_box.setVisible(True)
-            self.profile_box.setVisible(True)
             self.log_box.setVisible(True)
             self.assets_box.setVisible(True)
             self.sections.setCurrentIndex(self.search_section_index)
@@ -922,16 +860,12 @@ class ControlPanel(QWidget):
         pitch_degrees = int(self.pitch_slider.value())
         exaggeration_scale = self.dem_exaggeration_slider.value() / 100.0
         hillshade_percent = int(self.dem_hillshade_slider.value())
-        azimuth_degrees = int(self.dem_azimuth_slider.value())
-        altitude_degrees = int(self.dem_altitude_slider.value())
 
         self.brightness_value.setText(f"{brightness_scale:.2f}x")
         self.contrast_value.setText(f"{contrast_scale:.2f}x")
         self.pitch_value.setText(f"{pitch_degrees} deg")
         self.dem_exaggeration_value.setText(f"{exaggeration_scale:.2f}x")
         self.dem_hillshade_value.setText(f"{hillshade_percent}%")
-        self.dem_azimuth_value.setText(f"{azimuth_degrees} deg")
-        self.dem_altitude_value.setText(f"{altitude_degrees} deg")
 
     def log(self, message: str) -> None:
         self.status_box.append(message)
@@ -1200,6 +1134,11 @@ class ControlPanel(QWidget):
                 background: #dde3eb;
                 border: 1px solid #9ba7b6;
             }
+            QPushButton:disabled {
+                background: #dfe3e8;
+                color: #7b8592;
+                border: 1px solid #bcc5cf;
+            }
             QPushButton#searchPrimaryButton {
                 background: #0b66d6;
                 color: #ffffff;
@@ -1323,8 +1262,6 @@ class ControlPanel(QWidget):
             self.add_layer_btn,
             self.rotate_left_btn,
             self.rotate_right_btn,
-            self.add_annotation_btn,
-            self.extract_profile_btn,
         ):
             effect = QGraphicsDropShadowEffect(button)
             effect.setBlurRadius(1.0)

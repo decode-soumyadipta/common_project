@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 
 import httpx
 from pyproj import Transformer
-from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Qt, Signal
+from PySide6.QtCore import QObject, QRunnable, QSignalBlocker, QThreadPool, QTimer, Qt, Signal
 from PySide6.QtWidgets import QFileDialog
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
@@ -90,8 +90,8 @@ class DesktopController:
         self._measurement_pool = QThreadPool(panel)
         self._measurement_pool.setMaxThreadCount(1)
         self._swipe_comparator_enabled = False
-        self._hillshade_enabled = bool(self.panel.dem_hillshade_slider.value() > 0)
-        self._last_hillshade_strength_percent = max(20, int(self.panel.dem_hillshade_slider.value()))
+        self._comparator_selected_pane: str | None = None
+        self._comparator_selected_layer_type: str | None = None
         self._distance_measure_mode_enabled = False
         self._add_point_mode_enabled = False
         self._shadow_height_mode_enabled = False
@@ -99,6 +99,8 @@ class DesktopController:
         self._explicit_imagery_layer_visible = False
         self._explicit_dem_layer_visible = False
         self._last_distance_measurement_signature: tuple[float, float, float, float, float] | None = None
+        self._default_profile_samples = 200
+        self._default_annotation_text = "Point"
         self._last_profile_values: list[float] = []
         self._measurement_history: list[str] = []
         self._annotation_records: list[dict[str, object]] = []
@@ -164,8 +166,6 @@ class DesktopController:
         self.panel.contrast_slider.valueChanged.connect(self._on_visual_slider_changed)
         self.panel.dem_exaggeration_slider.valueChanged.connect(self._on_dem_slider_changed)
         self.panel.dem_hillshade_slider.valueChanged.connect(self._on_dem_slider_changed)
-        self.panel.dem_azimuth_slider.valueChanged.connect(self._on_dem_slider_changed)
-        self.panel.dem_altitude_slider.valueChanged.connect(self._on_dem_slider_changed)
         self.panel.dem_color_mode_combo.currentIndexChanged.connect(self._on_dem_color_mode_changed)
         self._connect_button(self.panel.apply_rgb_view_mode_btn.clicked, "Apply RGB View Mode", self.apply_rgb_view_mode)
         self._connect_button(self.panel.rotate_left_btn.clicked, "Rotate Left", lambda: self.rotate_camera(-10.0))
@@ -177,12 +177,11 @@ class DesktopController:
         self._connect_button(self.panel.search_clear_geometry_btn.clicked, "Clear Search Geometry", self.clear_search_geometry)
         self._connect_button(self.panel.search_from_draw_btn.clicked, "Search from Drawn Geometry", self.search_assets_from_drawn_geometry)
         self.panel.search_result_visibility_toggled.connect(self.toggle_search_result_visibility)
-        self._connect_button(self.panel.add_annotation_btn.clicked, "Add Annotation", self.add_annotation)
-        self._connect_button(self.panel.extract_profile_btn.clicked, "Extract DEM Profile", self.extract_dem_profile)
         self.bridge.mapClicked.connect(self.on_map_click)
         self.bridge.measurementUpdated.connect(self.on_measurement)
         self.bridge.jsLogReceived.connect(self.on_js_log)
         self.bridge.searchGeometryChanged.connect(self.on_search_geometry)
+        self.bridge.comparatorPaneStateChanged.connect(self.on_comparator_pane_state)
         self.panel.uploaded_assets_list.itemSelectionChanged.connect(self.preview_selected_uploaded_asset)
         self.panel.measurement_result_clear_selected_requested.connect(self.clear_selected_measurement_result)
         self.panel.measurement_result_clear_all_requested.connect(self.clear_all_measurement_results)
@@ -287,7 +286,7 @@ class DesktopController:
         finally:
             self.panel.set_search_busy(False)
 
-    def search_assets_from_drawn_geometry(self, *, auto_load_overlap: bool = False) -> None:
+    def search_assets_from_drawn_geometry(self) -> None:
         if not self._require_offline_endpoints("Drawn geometry search"):
             self.panel.set_search_busy(False)
             return
@@ -317,12 +316,6 @@ class DesktopController:
             )
             self.panel.set_search_busy(True, "Rendering results...", progress=80)
             self._apply_search_results(assets, label=f"Drawn {geometry_type} search")
-            if auto_load_overlap and assets:
-                first_asset = assets[0]
-                if isinstance(first_asset, dict):
-                    first_path = str(first_asset.get("file_path") or "")
-                    self._select_asset_in_combo(first_path)
-                    self.panel.log(f"Overlap preview loaded: {first_asset.get('file_name', 'asset')}")
             self.panel.set_search_busy(True, "Finalizing...", progress=97)
         except (KeyError, ValueError, TypeError):
             self.panel.log("Invalid drawn geometry payload.")
@@ -334,26 +327,46 @@ class DesktopController:
         finally:
             self.panel.set_search_busy(False)
 
-    def set_search_draw_mode(self) -> None:
+    def _set_search_draw_button_checked(self, checked: bool) -> None:
+        button = self.panel.search_draw_polygon_btn
+        if button.isChecked() != checked:
+            button.blockSignals(True)
+            button.setChecked(checked)
+            button.blockSignals(False)
+
+    def set_search_draw_mode(self, enabled: bool | None = None) -> None:
+        next_state = True if enabled is None else bool(enabled)
+        if not next_state:
+            self.clear_search_geometry()
+            self.panel.log("Polygon draw disabled.")
+            self._set_search_draw_button_checked(False)
+            return
         if self._distance_measure_mode_enabled:
             self._distance_measure_mode_enabled = False
             self._run_js_call("setDistanceMeasureMode", False)
         if self._add_point_mode_enabled:
             self._add_point_mode_enabled = False
+            self._set_annotation_overlay_visible(False)
         if self._shadow_height_mode_enabled:
             self._shadow_height_mode_enabled = False
         self._pan_mode_enabled = False
         self._run_js_call("setSearchDrawMode", "polygon")
+        self._set_search_draw_button_checked(True)
         self.panel.log("Polygon draw mode enabled.")
 
     def finish_search_polygon(self) -> None:
         self._run_js_call("finishSearchPolygon")
+        self._set_search_draw_button_checked(False)
 
     def clear_search_geometry(self) -> None:
         self._run_js_call("clearSearchGeometry")
         self.state.search_geometry_type = None
         self.state.search_geometry_payload = None
+        self._set_search_draw_button_checked(False)
         self.panel.log("Search geometry cleared.")
+
+    def _set_annotation_overlay_visible(self, visible: bool) -> None:
+        self._run_js_call("setAnnotationVisibility", bool(visible))
 
     @staticmethod
     def _coordinate_buffer_polygon(lon: float, lat: float, buffer_meters: float) -> list[tuple[float, float]]:
@@ -378,11 +391,64 @@ class DesktopController:
         self.panel.log(f"Search geometry updated: type={geometry_type}")
         if geometry_type == "polygon":
             self._update_coordinate_inputs_from_polygon(payload)
-            self.panel.set_search_busy(True, "Polygon ready. Starting overlap search...", progress=6)
-            QTimer.singleShot(
-                0,
-                lambda: self.search_assets_from_drawn_geometry(auto_load_overlap=True),
-            )
+            self.panel.log("Polygon ready. Click Search to run overlap scan.")
+
+    @staticmethod
+    def _set_slider_from_float_value(slider, raw_value: object, scale: float = 1.0) -> None:
+        if not isinstance(raw_value, (int, float)):
+            return
+        scaled = int(round(float(raw_value) * scale))
+        slider.setValue(max(slider.minimum(), min(slider.maximum(), scaled)))
+
+    def on_comparator_pane_state(self, payload_json: str) -> None:
+        try:
+            payload = json.loads(payload_json)
+        except json.JSONDecodeError:
+            self._logger.warning("Invalid comparator pane state payload JSON: %s", payload_json)
+            return
+
+        if not isinstance(payload, dict):
+            self._logger.warning("Invalid comparator pane state payload type: %s", type(payload).__name__)
+            return
+
+        pane = str(payload.get("pane") or "").strip().lower()
+        layer_type = str(payload.get("layer_type") or "").strip().lower()
+        if pane not in {"left", "right"}:
+            pane = "left"
+        self._comparator_selected_pane = pane
+        self._comparator_selected_layer_type = layer_type if layer_type in {"dem", "imagery"} else None
+
+        imagery = payload.get("imagery") if isinstance(payload.get("imagery"), dict) else {}
+        dem = payload.get("dem") if isinstance(payload.get("dem"), dict) else {}
+
+        blockers = [
+            QSignalBlocker(self.panel.brightness_slider),
+            QSignalBlocker(self.panel.contrast_slider),
+            QSignalBlocker(self.panel.dem_exaggeration_slider),
+            QSignalBlocker(self.panel.dem_hillshade_slider),
+            QSignalBlocker(self.panel.dem_color_mode_combo),
+        ]
+        try:
+            self._set_slider_from_float_value(self.panel.brightness_slider, imagery.get("brightness"), scale=100.0)
+            self._set_slider_from_float_value(self.panel.contrast_slider, imagery.get("contrast"), scale=100.0)
+            self._set_slider_from_float_value(self.panel.dem_exaggeration_slider, dem.get("exaggeration"), scale=100.0)
+            self._set_slider_from_float_value(self.panel.dem_hillshade_slider, dem.get("hillshade_alpha"), scale=100.0)
+
+            color_mode = str(dem.get("color_mode") or "").strip().lower()
+            if color_mode:
+                color_mode_index = self.panel.dem_color_mode_combo.findData(color_mode)
+                if color_mode_index >= 0:
+                    self.panel.dem_color_mode_combo.setCurrentIndex(color_mode_index)
+        finally:
+            del blockers
+
+        self.panel._update_display_value_labels()
+        self._apply_display_control_mode()
+        self._logger.debug(
+            "Comparator pane selected pane=%s type=%s",
+            self._comparator_selected_pane,
+            self._comparator_selected_layer_type,
+        )
 
     def _apply_search_results(self, assets: list[dict], label: str) -> None:
         self.panel.assets_combo.clear()
@@ -905,13 +971,6 @@ class DesktopController:
 
     def apply_rgb_view_mode(self) -> None:
         mode = str(self.panel.rgb_view_mode_combo.currentData() or "3d")
-        if self.state.active_layer_is_dem and mode == "2d":
-            self.panel.log("DEM is terrain-only. 2D mode is disabled for DEM; staying in 3D.")
-            self.panel.rgb_view_mode_combo.setCurrentIndex(0)
-            self._run_js_call("setSceneMode", "3d")
-            self._apply_display_control_mode()
-            return
-
         self._run_js_call("setSceneMode", mode)
         self._apply_display_control_mode()
         mode_label = "2D map" if mode == "2d" else "3D terrain"
@@ -939,29 +998,19 @@ class DesktopController:
     def apply_dem_settings(self, _checked: bool | None = None, log_to_panel: bool = True) -> None:
         exaggeration = self.panel.dem_exaggeration_slider.value() / 100.0
         hillshade_strength = self.panel.dem_hillshade_slider.value() / 100.0
-        azimuth = int(self.panel.dem_azimuth_slider.value())
-        altitude = int(self.panel.dem_altitude_slider.value())
-        self._run_js_call("setDemProperties", exaggeration, hillshade_strength, azimuth, altitude)
+        self._run_js_call("setDemProperties", exaggeration, hillshade_strength)
         if log_to_panel:
-            self.panel.log(
-                "Applied DEM settings "
-                f"exaggeration={exaggeration:.2f}, hillshade={hillshade_strength:.2f}, "
-                f"azimuth={azimuth}, altitude={altitude}"
-            )
+            self.panel.log("Applied DEM settings " f"exaggeration={exaggeration:.2f}, hillshade={hillshade_strength:.2f}")
             self._logger.info(
-                "Applied DEM settings exaggeration=%.2f hillshade=%.2f azimuth=%s altitude=%s",
+                "Applied DEM settings exaggeration=%.2f hillshade=%.2f",
                 exaggeration,
                 hillshade_strength,
-                azimuth,
-                altitude,
             )
             return
         self._logger.debug(
-            "Live DEM settings exaggeration=%.2f hillshade=%.2f azimuth=%s altitude=%s",
+            "Live DEM settings exaggeration=%.2f hillshade=%.2f",
             exaggeration,
             hillshade_strength,
-            azimuth,
-            altitude,
         )
 
     def apply_dem_color_mode(self, log_to_panel: bool = True) -> None:
@@ -1024,12 +1073,7 @@ class DesktopController:
         self._add_annotation_at(lon, lat)
 
     def _add_annotation_at(self, lon: float, lat: float) -> None:
-        text = self.panel.annotation_edit.text().strip()
-        if not text:
-            text = "Point"
-            self.panel.annotation_edit.setText(text)
-            self.panel.log("Annotation text was empty. Using default label 'Point'.")
-            self._logger.info("Annotation text missing; using default label '%s'", text)
+        text = self._default_annotation_text
         self._run_js_call("addAnnotation", text, lon, lat)
         self._annotation_records.append(
             {
@@ -1053,7 +1097,7 @@ class DesktopController:
             self.panel.log("Click two points on the globe to define transect.")
             self._logger.warning("Profile requested without two clicks")
             return
-        samples = int(self.panel.profile_samples.value())
+        samples = int(self._default_profile_samples)
         try:
             result = self.api.extract_profile(asset["file_path"], self.state.clicked_points[-2:], samples=samples)
         except httpx.HTTPError as exc:
@@ -1074,6 +1118,7 @@ class DesktopController:
         if group_name == "measurement":
             self._distance_measure_mode_enabled = False
             self._add_point_mode_enabled = False
+            self._set_annotation_overlay_visible(False)
             self._shadow_height_mode_enabled = False
             self._pan_mode_enabled = True
             self._run_js_call("setDistanceMeasureMode", False)
@@ -1086,15 +1131,13 @@ class DesktopController:
         if group_name == "visualization":
             if self._swipe_comparator_enabled:
                 self._swipe_comparator_enabled = False
-                self._run_js_call("setSwipeComparator", False)
+                self._run_js_call("setComparator", False)
             self.panel.log("Visualization toolbar disabled.")
 
     def handle_toolbar_action(self, action_label: str, checked: bool | None = None) -> bool | None:
         handlers: dict[str, Callable[[], None]] = {
             "Layer Compositor": self._toolbar_apply_layer_compositor,
-            "Hillshade": self._toolbar_apply_hillshade,
-            "Colour Relief": self._toolbar_set_color_relief,
-            "Swipe Comparator": self._toolbar_toggle_swipe_comparator,
+            "Comparator": self._toolbar_toggle_comparator,
             "Distance / Azimuth": self._toolbar_measure_distance,
             "Polygon Area": self._toolbar_measure_polygon_area,
             "Elevation Profile": self.extract_dem_profile,
@@ -1126,10 +1169,8 @@ class DesktopController:
         self.panel.log(f"Toolbar action: {action_label}")
         self._logger.info("Toolbar action triggered: %s", action_label)
         try:
-            if action_label == "Hillshade":
-                return self._toolbar_apply_hillshade(enabled=checked)
-            if action_label == "Swipe Comparator":
-                return self._toolbar_toggle_swipe_comparator(enabled=checked)
+            if action_label == "Comparator":
+                return self._toolbar_toggle_comparator(enabled=checked)
             if action_label == "Distance / Azimuth":
                 return self._toolbar_measure_distance(enabled=checked)
             if action_label == "Pan":
@@ -1146,7 +1187,7 @@ class DesktopController:
             self._logger.exception("Toolbar action failed: %s", action_label)
         return None
 
-    def available_swipe_layer_options(self) -> list[dict[str, object]]:
+    def available_comparator_layer_options(self) -> list[dict[str, object]]:
         options: list[dict[str, object]] = []
         for path, asset in self._search_result_assets_by_path.items():
             label = str(asset.get("file_name") or Path(path).name or "Layer")
@@ -1162,12 +1203,15 @@ class DesktopController:
             )
         return options
 
-    def apply_swipe_comparator_selection(self, selected_paths: list[str]) -> bool:
+    def available_swipe_layer_options(self) -> list[dict[str, object]]:
+        return self.available_comparator_layer_options()
+
+    def apply_comparator_selection(self, selected_paths: list[str]) -> bool:
         selected = [path for path in selected_paths if path in self._search_result_assets_by_path]
         if len(selected) < 2:
             self._swipe_comparator_enabled = False
-            self._run_js_call("setSwipeComparator", False)
-            self.panel.log("Swipe comparator disabled. Select at least two layers.")
+            self._run_js_call("setComparator", False)
+            self.panel.log("Comparator disabled. Select at least two layers.")
             return False
 
         left_path = selected[0]
@@ -1176,7 +1220,7 @@ class DesktopController:
         right_asset = self._search_result_assets_by_path.get(right_path) or {}
         left_label = str(left_asset.get("file_name") or Path(left_path).name or "Layer A")
         right_label = str(right_asset.get("file_name") or Path(right_path).name or "Layer B")
-        self._run_js_call("setSwipeComparatorLayers", left_path, right_path, left_label, right_label)
+        self._run_js_call("setComparatorLayers", left_path, right_path, left_label, right_label)
 
         selected_set = set(selected)
         for path in self._search_result_assets_by_path:
@@ -1184,25 +1228,10 @@ class DesktopController:
 
         self._sync_search_visibility_layers()
         self.panel.update_search_results(list(self._search_result_assets_by_path.values()), self._search_layer_visibility)
-        return self._toolbar_toggle_swipe_comparator(enabled=True)
+        return self._toolbar_toggle_comparator(enabled=True)
 
-    def get_dem_color_mode(self) -> str:
-        return str(self.panel.dem_color_mode_combo.currentData() or "gray")
-
-    def set_dem_color_mode(self, mode: str, *, log_to_panel: bool = True) -> bool:
-        if mode not in {"gray", "terrain"}:
-            mode = "gray"
-        if not self._selected_dem_path():
-            if log_to_panel:
-                self.panel.log("Colour relief requires a visible DEM layer.")
-            self._logger.warning("DEM color mode set requested without visible DEM")
-            return False
-
-        combo_index = self.panel.dem_color_mode_combo.findData(mode)
-        if combo_index >= 0 and self.panel.dem_color_mode_combo.currentIndex() != combo_index:
-            self.panel.dem_color_mode_combo.setCurrentIndex(combo_index)
-        self.apply_dem_color_mode(log_to_panel=log_to_panel)
-        return True
+    def apply_swipe_comparator_selection(self, selected_paths: list[str]) -> bool:
+        return self.apply_comparator_selection(selected_paths)
 
     def _visible_imagery_layer_paths(self) -> list[str]:
         visible_layers: list[str] = []
@@ -1243,18 +1272,27 @@ class DesktopController:
             return 1
         return 0
 
-    def swipe_comparator_candidate_count(self) -> int:
+    def comparator_candidate_count(self) -> int:
         return len(self._visible_imagery_layer_paths()) + self._visible_dem_layer_count()
 
-    def can_enable_swipe_comparator(self) -> bool:
-        return self.swipe_comparator_candidate_count() >= 2
+    def swipe_comparator_candidate_count(self) -> int:
+        return self.comparator_candidate_count()
 
-    def can_attempt_enable_swipe_comparator(self) -> bool:
-        if self.can_enable_swipe_comparator():
+    def can_enable_comparator(self) -> bool:
+        return self.comparator_candidate_count() >= 2
+
+    def can_enable_swipe_comparator(self) -> bool:
+        return self.can_enable_comparator()
+
+    def can_attempt_enable_comparator(self) -> bool:
+        if self.can_enable_comparator():
             return True
         return len(self._available_imagery_layer_paths()) >= 2
 
-    def _auto_enable_second_swipe_imagery_layer(self) -> bool:
+    def can_attempt_enable_swipe_comparator(self) -> bool:
+        return self.can_attempt_enable_comparator()
+
+    def _auto_enable_second_comparator_imagery_layer(self) -> bool:
         visible_imagery = self._visible_imagery_layer_paths()
         if len(visible_imagery) >= 2:
             return True
@@ -1279,9 +1317,12 @@ class DesktopController:
         if changed:
             self._sync_search_visibility_layers()
             self.panel.update_search_results(list(self._search_result_assets_by_path.values()), self._search_layer_visibility)
-            self.panel.log("Swipe comparator: enabled an additional visible raster layer for comparison.")
+            self.panel.log("Comparator: enabled an additional visible raster layer for comparison.")
 
-        return self.can_enable_swipe_comparator()
+        return self.can_enable_comparator()
+
+    def _auto_enable_second_swipe_imagery_layer(self) -> bool:
+        return self._auto_enable_second_comparator_imagery_layer()
 
     def _enqueue_distance_measurement(self, lon1: float, lat1: float, lon2: float, lat2: float) -> None:
         dem_path = self._selected_dem_path()
@@ -1379,73 +1420,48 @@ class DesktopController:
                 out.append((float(lon), float(lat)))
         return out if len(out) >= 3 else None
 
-    def _toolbar_set_color_relief(self) -> None:
-        current_mode = self.get_dem_color_mode()
-        target_mode = "terrain" if current_mode == "gray" else "gray"
-        self.set_dem_color_mode(target_mode, log_to_panel=True)
-        self._logger.info("Colour relief toggled mode=%s", target_mode)
-
-    def _toolbar_toggle_swipe_comparator(self, enabled: bool | None = None) -> bool:
-        candidate_count = self.swipe_comparator_candidate_count()
+    def _toolbar_toggle_comparator(self, enabled: bool | None = None) -> bool:
+        candidate_count = self.comparator_candidate_count()
         next_state = (not self._swipe_comparator_enabled) if enabled is None else bool(enabled)
 
         if next_state and candidate_count < 2:
-            if self._auto_enable_second_swipe_imagery_layer():
-                candidate_count = self.swipe_comparator_candidate_count()
+            if self._auto_enable_second_comparator_imagery_layer():
+                candidate_count = self.comparator_candidate_count()
 
         if next_state and candidate_count < 2:
-            self.panel.log("Swipe comparator needs at least two visible raster layers.")
+            self.panel.log("Comparator needs at least two visible raster layers.")
             self._swipe_comparator_enabled = False
             return False
 
         self._swipe_comparator_enabled = next_state
-        self._run_js_call("setSwipeComparator", self._swipe_comparator_enabled)
+        self._run_js_call("setComparator", self._swipe_comparator_enabled)
         if self._swipe_comparator_enabled:
-            self._run_js_call("setSwipePosition", 0.5)
-            self.panel.log("Swipe comparator enabled. Drag divider on map to compare georeferenced layers.")
-            self._logger.info("Swipe comparator enabled candidate_layers=%s", candidate_count)
+            self._run_js_call("setComparatorPosition", 0.5)
+            self._run_js_call("requestComparatorPaneState")
+            self.panel.log("Comparator enabled. Drag divider on map to compare georeferenced layers.")
+            self._logger.info("Comparator enabled candidate_layers=%s", candidate_count)
+            self._apply_display_control_mode()
             return True
-        self.panel.log("Swipe comparator disabled.")
-        self._logger.info("Swipe comparator disabled")
+
+        self._comparator_selected_pane = None
+        self._comparator_selected_layer_type = None
+        self.panel.log("Comparator disabled.")
+        self._logger.info("Comparator disabled")
+        self._apply_display_control_mode()
         return False
+
+    def _toolbar_toggle_swipe_comparator(self, enabled: bool | None = None) -> bool:
+        return self._toolbar_toggle_comparator(enabled=enabled)
 
     def _toolbar_apply_layer_compositor(self) -> None:
         self.apply_visual_settings(log_to_panel=True)
         self.panel.log("Layer compositor updated from current brightness/contrast controls.")
 
-    def _toolbar_apply_hillshade(self, enabled: bool | None = None) -> bool:
-        if not self._selected_dem_path():
-            self.panel.log("Hillshade requires a visible DEM layer.")
-            self._logger.warning("Hillshade requested without visible DEM")
-            self._hillshade_enabled = False
-            return False
-
-        next_state = (not self._hillshade_enabled) if enabled is None else bool(enabled)
-        current_slider = int(self.panel.dem_hillshade_slider.value())
-        if next_state:
-            target_value = current_slider if current_slider > 0 else self._last_hillshade_strength_percent
-            target_value = max(10, target_value)
-            self._last_hillshade_strength_percent = target_value
-            if current_slider != target_value:
-                self.panel.dem_hillshade_slider.setValue(target_value)
-            self.apply_dem_settings(log_to_panel=True)
-            self.panel.log("Hillshade enabled.")
-            self._hillshade_enabled = True
-            return True
-
-        if current_slider > 0:
-            self._last_hillshade_strength_percent = current_slider
-        if current_slider != 0:
-            self.panel.dem_hillshade_slider.setValue(0)
-        self.apply_dem_settings(log_to_panel=True)
-        self.panel.log("Hillshade disabled.")
-        self._hillshade_enabled = False
-        return False
-
     def _toolbar_measure_distance(self, enabled: bool | None = None) -> bool:
         self._distance_measure_mode_enabled = (not self._distance_measure_mode_enabled) if enabled is None else bool(enabled)
         if self._distance_measure_mode_enabled:
             self._add_point_mode_enabled = False
+            self._set_annotation_overlay_visible(False)
             self._shadow_height_mode_enabled = False
         self._pan_mode_enabled = not self._distance_measure_mode_enabled
         self._last_distance_measurement_signature = None
@@ -1474,6 +1490,7 @@ class DesktopController:
                 self._run_js_call("setDistanceMeasureMode", False)
             if self._add_point_mode_enabled:
                 self._add_point_mode_enabled = False
+                self._set_annotation_overlay_visible(False)
             if self._shadow_height_mode_enabled:
                 self._shadow_height_mode_enabled = False
             self._run_js_call("setSearchDrawMode", "none")
@@ -1616,6 +1633,7 @@ class DesktopController:
 
         self._distance_measure_mode_enabled = False
         self._add_point_mode_enabled = False
+        self._set_annotation_overlay_visible(False)
         self._pan_mode_enabled = False
         self.state.clicked_points.clear()
         self._run_js_call("setDistanceMeasureMode", False)
@@ -1628,6 +1646,7 @@ class DesktopController:
         next_state = (not self._add_point_mode_enabled) if enabled is None else bool(enabled)
         self._add_point_mode_enabled = next_state
         if not next_state:
+            self._set_annotation_overlay_visible(False)
             self.panel.log("Add Point tool disabled.")
             return False
 
@@ -1637,6 +1656,7 @@ class DesktopController:
         self._run_js_call("setDistanceMeasureMode", False)
         self._run_js_call("setSearchDrawMode", "none")
         self._run_js_call("setPanMode", False)
+        self._set_annotation_overlay_visible(True)
         self.panel.log("Add Point enabled. Click map to place annotation points.")
         return True
 
@@ -1652,6 +1672,7 @@ class DesktopController:
         self.state.search_geometry_payload = None
         self._distance_measure_mode_enabled = False
         self._add_point_mode_enabled = False
+        self._set_annotation_overlay_visible(False)
         self._shadow_height_mode_enabled = False
         self._pan_mode_enabled = True
         self._run_js_call("clearOverlays")
@@ -1716,6 +1737,7 @@ class DesktopController:
         if not polygon:
             self._distance_measure_mode_enabled = False
             self._add_point_mode_enabled = False
+            self._set_annotation_overlay_visible(False)
             self._shadow_height_mode_enabled = False
             self._pan_mode_enabled = False
             self._run_js_call("setDistanceMeasureMode", False)
@@ -2087,10 +2109,9 @@ class DesktopController:
             layer_key = str(options.get("layer_key") or "")
             self._active_dem_search_layer_key = layer_key or None
             self._run_js_call("addDemLayer", asset["file_name"], asset["tile_url"], options)
-            self._run_js_call("setSceneModeControlEnabled", False)
             self.panel.rgb_view_mode_combo.setCurrentIndex(0)
-            self.panel.rgb_view_mode_combo.setEnabled(False)
-            self.panel.apply_rgb_view_mode_btn.setEnabled(False)
+            self.panel.rgb_view_mode_combo.setEnabled(True)
+            self.panel.apply_rgb_view_mode_btn.setEnabled(True)
             self._apply_display_control_mode()
             self._logger.info("DEM terrain layer requested name=%s", asset["file_name"])
             return True
@@ -2108,12 +2129,12 @@ class DesktopController:
         mode = str(self.panel.rgb_view_mode_combo.currentData() or "3d").lower()
         if mode not in {"2d", "3d"}:
             mode = "3d"
+        if not is_dem:
+            mode = "2d"
+            if self.panel.rgb_view_mode_combo.currentData() != "2d":
+                self.panel.rgb_view_mode_combo.setCurrentIndex(1)
         if apply_scene_mode:
-            if self.state.active_layer_is_dem:
-                self._run_js_call("setSceneModeControlEnabled", False)
-                self._run_js_call("setSceneMode", "3d")
-            else:
-                self._run_js_call("setSceneMode", mode)
+            self._run_js_call("setSceneMode", mode)
         self._run_js_call("addTileLayer", asset["file_name"], asset["tile_url"], asset["kind"], options)
         if not from_search_results:
             self._explicit_imagery_layer_visible = True
@@ -2134,6 +2155,10 @@ class DesktopController:
         if self._explicit_imagery_layer_visible:
             imagery_visible = True
 
+        if self._swipe_comparator_enabled and self._comparator_selected_layer_type in {"dem", "imagery"}:
+            dem_visible = self._comparator_selected_layer_type == "dem"
+            imagery_visible = self._comparator_selected_layer_type == "imagery"
+
         for widget in (
             self.panel.brightness_slider,
             self.panel.contrast_slider,
@@ -2143,16 +2168,14 @@ class DesktopController:
         for widget in (
             self.panel.dem_exaggeration_slider,
             self.panel.dem_hillshade_slider,
-            self.panel.dem_azimuth_slider,
-            self.panel.dem_altitude_slider,
             self.panel.dem_color_mode_combo,
         ):
             widget.setEnabled(dem_visible)
 
-        # Camera controls stay available in all cases.
-        self.panel.pitch_slider.setEnabled(True)
-        self.panel.rotate_left_btn.setEnabled(True)
-        self.panel.rotate_right_btn.setEnabled(True)
+        # Comparator panes have fixed DEM tilt rules; pitch control only applies to the main viewer.
+        self.panel.pitch_slider.setEnabled(not self._swipe_comparator_enabled)
+        self.panel.rotate_left_btn.setEnabled(not self._swipe_comparator_enabled)
+        self.panel.rotate_right_btn.setEnabled(not self._swipe_comparator_enabled)
 
         if self._toolbar_context_callback is not None:
             if dem_visible and imagery_visible:
@@ -2164,10 +2187,13 @@ class DesktopController:
             else:
                 self._toolbar_context_callback("none")
 
-        if self._swipe_comparator_enabled and not self.can_enable_swipe_comparator():
+        if self._swipe_comparator_enabled and not self.can_enable_comparator():
             self._swipe_comparator_enabled = False
-            self._run_js_call("setSwipeComparator", False)
-            self.panel.log("Swipe comparator disabled: at least two visible raster layers are required.")
+            self._comparator_selected_pane = None
+            self._comparator_selected_layer_type = None
+            self._run_js_call("setComparator", False)
+            self.panel.log("Comparator disabled: at least two visible raster layers are required.")
+            self.panel.pitch_slider.setEnabled(True)
 
     def _is_dem_asset(self, asset: dict) -> bool:
         file_path = str(asset.get("file_path") or "")

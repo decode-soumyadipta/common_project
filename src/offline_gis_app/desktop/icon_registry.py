@@ -21,8 +21,7 @@ DEFAULT_ICON_SIZE = 28
 ICON_MANIFEST: dict[str, str] = {
     # Visualization tools
     "layer_compositor": "mActionAddLayer.svg",
-    "hillshade": "mIconMeshLayer.svg",
-    "colour_relief": "mActionNewMap.svg",
+    "comparator": "mActionMapTips.svg",
     "swipe_comparator": "mActionMapTips.svg",
     # Measurement tools
     "measure_distance": "mActionMeasure.svg",

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import time
 
-from PySide6.QtCore import QEvent, QSize, Qt, QUrl
+from PySide6.QtCore import QSize, Qt, QUrl
 from PySide6.QtGui import QAction, QGuiApplication, QIcon
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineCore import QWebEngineSettings
@@ -12,13 +12,11 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
-    QFrame,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
-    QMenu,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -38,130 +36,18 @@ from offline_gis_app.desktop.titiler_manager import TiTilerManager
 from offline_gis_app.desktop.web_page import LoggingWebEnginePage
 
 
-class ComparatorOverlayWidget(QWidget):
-    def __init__(self, parent: QWidget):
-        super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        self._pane_frames: list[QFrame] = []
-        self._pane_count: int = 0
-        self.hide()
-
-    def clear_overlay(self) -> None:
-        for frame in self._pane_frames:
-            frame.deleteLater()
-        self._pane_frames.clear()
-        self._pane_count = 0
-        self.hide()
-
-    def show_overlay(self, pane_count: int, layer_names: list[str]) -> None:
-        pane_count = max(0, min(int(pane_count), 4))
-        if pane_count < 2:
-            self.clear_overlay()
-            return
-
-        for frame in self._pane_frames:
-            frame.deleteLater()
-        self._pane_frames.clear()
-
-        for idx in range(pane_count):
-            frame = QFrame(self)
-            frame.setObjectName("comparatorPane")
-            frame.setStyleSheet(
-                """
-                QFrame#comparatorPane {
-                    border: 2px solid rgba(255, 221, 89, 0.95);
-                    border-radius: 6px;
-                    background: rgba(5, 12, 22, 0.06);
-                }
-                """
-            )
-            label = QLabel(layer_names[idx] if idx < len(layer_names) else f"Layer {idx + 1}", frame)
-            label.setObjectName("comparatorPaneLabel")
-            label.setStyleSheet(
-                """
-                QLabel#comparatorPaneLabel {
-                    background: rgba(12, 20, 34, 0.82);
-                    color: #f8fbff;
-                    border-radius: 4px;
-                    padding: 3px 7px;
-                    font-size: 11px;
-                    font-weight: 600;
-                }
-                """
-            )
-            label.adjustSize()
-            frame.show()
-            self._pane_frames.append(frame)
-
-        self._pane_count = pane_count
-        self._relayout_panes()
-        self.show()
-        self.raise_()
-
-    def resizeEvent(self, event) -> None:  # type: ignore[override]
-        super().resizeEvent(event)
-        self._relayout_panes()
-
-    def _relayout_panes(self) -> None:
-        if self._pane_count < 2 or not self._pane_frames:
-            return
-
-        spacing = 8
-        width = max(0, self.width())
-        height = max(0, self.height())
-        if width <= 0 or height <= 0:
-            return
-
-        rects: list[tuple[int, int, int, int]] = []
-        if self._pane_count == 2:
-            half = (width - spacing) // 2
-            rects = [
-                (0, 0, half, height),
-                (half + spacing, 0, width - (half + spacing), height),
-            ]
-        elif self._pane_count == 3:
-            half = (width - spacing) // 2
-            top_h = (height - spacing) // 2
-            rects = [
-                (0, 0, half, top_h),
-                (half + spacing, 0, width - (half + spacing), top_h),
-                (0, top_h + spacing, width, height - (top_h + spacing)),
-            ]
-        else:
-            half_w = (width - spacing) // 2
-            half_h = (height - spacing) // 2
-            rects = [
-                (0, 0, half_w, half_h),
-                (half_w + spacing, 0, width - (half_w + spacing), half_h),
-                (0, half_h + spacing, half_w, height - (half_h + spacing)),
-                (half_w + spacing, half_h + spacing, width - (half_w + spacing), height - (half_h + spacing)),
-            ]
-
-        for idx, frame in enumerate(self._pane_frames):
-            if idx >= len(rects):
-                break
-            x, y, w, h = rects[idx]
-            frame.setGeometry(x, y, max(80, w), max(60, h))
-            label = frame.findChild(QLabel, "comparatorPaneLabel")
-            if label is not None:
-                label.move(8, 8)
-
-
 class MainWindow(QMainWindow):
     IMAGERY_ONLY_ACTIONS: set[str] = {
         "Layer Compositor",
     }
     DEM_ONLY_ACTIONS: set[str] = {
-        "Hillshade",
-        "Colour Relief",
         "Elevation Profile",
         "Volume Cut/Fill",
         "Viewshed / LOS",
         "Slope & Aspect",
     }
     TOGGLE_ACTIONS: set[str] = {
-        "Hillshade",
-        "Swipe Comparator",
+        "Comparator",
         "Distance / Azimuth",
         "Pan",
         "Add Point",
@@ -173,9 +59,7 @@ class MainWindow(QMainWindow):
             "visualization",
             (
                 ("Layer Compositor", "layer_compositor"),
-                ("Hillshade", "hillshade"),
-                ("Colour Relief", "colour_relief"),
-                ("Swipe Comparator", "swipe_comparator"),
+                ("Comparator", "comparator"),
             ),
         ),
         (
@@ -257,7 +141,6 @@ class MainWindow(QMainWindow):
         self.panel_scroll.setWidget(self.panel)
         self.web_view = QWebEngineView(self)
         self.web_view.setPage(LoggingWebEnginePage(self.web_view))
-        self.web_view.installEventFilter(self)
         web_settings = self.web_view.settings()
         web_settings.setAttribute(QWebEngineSettings.LocalContentCanAccessRemoteUrls, True)
         web_settings.setAttribute(QWebEngineSettings.LocalContentCanAccessFileUrls, True)
@@ -269,9 +152,6 @@ class MainWindow(QMainWindow):
         else:
             splitter.setSizes([420, 1180])
         self.setCentralWidget(splitter)
-
-        self.comparator_overlay = ComparatorOverlayWidget(self.web_view)
-        self.comparator_overlay.setGeometry(self.web_view.rect())
 
         self.bridge = WebBridge()
         self.titiler_manager = TiTilerManager()
@@ -315,22 +195,16 @@ class MainWindow(QMainWindow):
             self.controller.on_toolbar_group_disabled("measurement")
 
     def _on_toolbar_action_triggered(self, action_label: str, checked: bool) -> None:
-        if action_label == "Colour Relief":
-            self._show_colour_relief_dropdown()
-            return
-
-        if action_label == "Swipe Comparator":
+        if action_label == "Comparator":
             action = self.toolbar_actions.get(action_label)
             if action is None:
                 return
             if checked:
-                self._show_swipe_comparator_dropdown()
+                self._show_comparator_dropdown()
                 return
             final_state = self.controller.handle_toolbar_action(action_label, checked=checked)
             if isinstance(final_state, bool):
                 action.setChecked(final_state)
-            if not bool(final_state):
-                self.comparator_overlay.clear_overlay()
             return
 
         final_state = self.controller.handle_toolbar_action(action_label, checked=checked)
@@ -355,74 +229,14 @@ class MainWindow(QMainWindow):
                 if other_action is not None and other_action.isCheckable() and other_action.isChecked():
                     other_action.setChecked(False)
 
-    def resizeEvent(self, event) -> None:  # type: ignore[override]
-        super().resizeEvent(event)
-        if hasattr(self, "comparator_overlay"):
-            self.comparator_overlay.setGeometry(self.web_view.rect())
-
-    def eventFilter(self, watched, event) -> bool:  # type: ignore[override]
-        if watched is self.web_view and hasattr(self, "comparator_overlay"):
-            if event.type() in {QEvent.Type.Resize, QEvent.Type.Show}:
-                self.comparator_overlay.setGeometry(self.web_view.rect())
-                self.comparator_overlay.raise_()
-        return super().eventFilter(watched, event)
-
-    def _show_colour_relief_dropdown(self) -> None:
-        if not self.controller._selected_dem_path():  # noqa: SLF001 - local UI guard
-            self.panel.log("Colour relief requires a visible DEM layer.")
-            return
-
-        action = self.toolbar_actions.get("Colour Relief")
-        if action is None:
-            return
-        anchor = self.main_toolbar.widgetForAction(action)
-        if anchor is None:
-            return
-
-        menu = QMenu(self)
-        menu.setStyleSheet(
-            """
-            QMenu {
-                background: #f8fafc;
-                border: 1px solid #c9d3df;
-                padding: 4px;
-            }
-            QMenu::item {
-                padding: 6px 14px;
-                border-radius: 4px;
-            }
-            QMenu::item:selected {
-                background: #e6eef8;
-            }
-            """
-        )
-
-        current_mode = self.controller.get_dem_color_mode()
-        white_action = menu.addAction("White relief")
-        color_action = menu.addAction("Color relief")
-        white_action.setCheckable(True)
-        color_action.setCheckable(True)
-        white_action.setChecked(current_mode == "gray")
-        color_action.setChecked(current_mode == "terrain")
-
-        global_pos = anchor.mapToGlobal(anchor.rect().bottomLeft())
-        selected = menu.exec(global_pos)
-        if selected is None:
-            return
-        if selected == white_action:
-            self.controller.set_dem_color_mode("gray", log_to_panel=True)
-            return
-        if selected == color_action:
-            self.controller.set_dem_color_mode("terrain", log_to_panel=True)
-
-    def _show_swipe_comparator_dropdown(self) -> None:
-        action = self.toolbar_actions.get("Swipe Comparator")
+    def _show_comparator_dropdown(self) -> None:
+        action = self.toolbar_actions.get("Comparator")
         if action is None:
             return
 
-        layers = self.controller.available_swipe_layer_options()
+        layers = self.controller.available_comparator_layer_options()
         if len(layers) < 2:
-            self.panel.log("Swipe comparator needs at least two layers in current region.")
+            self.panel.log("Comparator needs at least two layers in current region.")
             action.setChecked(False)
             return
 
@@ -432,10 +246,10 @@ class MainWindow(QMainWindow):
             return
 
         popup = QDialog(self, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
-        popup.setObjectName("swipeComparatorDropdown")
+        popup.setObjectName("comparatorDropdown")
         popup.setStyleSheet(
             """
-            QDialog#swipeComparatorDropdown {
+            QDialog#comparatorDropdown {
                 background: #f8fafc;
                 border: 1px solid #c9d3df;
                 border-radius: 8px;
@@ -467,7 +281,7 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
 
-        title = QLabel("Swipe Comparator")
+        title = QLabel("Comparator")
         layout.addWidget(title)
 
         row = QHBoxLayout()
@@ -496,6 +310,33 @@ class MainWindow(QMainWindow):
         layout.addWidget(apply_button)
         applied = {"done": False}
 
+        def _selected_count() -> int:
+            return sum(
+                1
+                for i in range(layer_list.count())
+                if layer_list.item(i).checkState() == Qt.CheckState.Checked
+            )
+
+        def _sync_layout_by_selection() -> None:
+            selected_count = _selected_count()
+            model = layout_combo.model()
+            for idx in range(layout_combo.count()):
+                pane_count = int(layout_combo.itemData(idx) or 0)
+                item = model.item(idx) if hasattr(model, "item") else None
+                if item is not None:
+                    item.setEnabled(pane_count == selected_count)
+
+            target_index = layout_combo.findData(selected_count)
+            if target_index >= 0:
+                if layout_combo.currentIndex() != target_index:
+                    layout_combo.setCurrentIndex(target_index)
+                info_label.setText(f"{selected_count} layer(s) selected. Layout locked to {selected_count} panes.")
+                apply_button.setEnabled(True)
+                return
+
+            info_label.setText("Select at least 2 layers.")
+            apply_button.setEnabled(False)
+
         def enforce_max_selection(changed_item: QListWidgetItem) -> None:
             checked_items = [
                 layer_list.item(i)
@@ -503,41 +344,40 @@ class MainWindow(QMainWindow):
                 if layer_list.item(i).checkState() == Qt.CheckState.Checked
             ]
             if len(checked_items) <= 4:
-                info_label.setText("Select up to 4 layers.")
+                _sync_layout_by_selection()
                 return
             changed_item.setCheckState(Qt.CheckState.Unchecked)
             info_label.setText("Maximum 4 layers are allowed.")
+            _sync_layout_by_selection()
 
         layer_list.itemChanged.connect(enforce_max_selection)
+        _sync_layout_by_selection()
 
         def apply_selection() -> None:
             selected_paths: list[str] = []
-            selected_labels: list[str] = []
             for i in range(layer_list.count()):
                 item = layer_list.item(i)
                 if item.checkState() != Qt.CheckState.Checked:
                     continue
                 selected_paths.append(str(item.data(Qt.ItemDataRole.UserRole) or ""))
-                selected_labels.append(item.text())
 
             selected_paths = [path for path in selected_paths if path]
             if len(selected_paths) < 2:
-                self.panel.log("Select at least two layers for swipe comparator.")
+                self.panel.log("Select at least two layers for comparator.")
                 action.setChecked(False)
                 popup.close()
                 return
 
             pane_count = int(layout_combo.currentData())
-            if len(selected_paths) < pane_count:
-                self.panel.log(f"Select at least {pane_count} layers for selected layout.")
+            if len(selected_paths) != pane_count:
+                self.panel.log(f"Select exactly {pane_count} layers for selected layout.")
                 return
 
-            success = self.controller.apply_swipe_comparator_selection(selected_paths)
+            success = self.controller.apply_comparator_selection(selected_paths)
             if success:
                 action.setChecked(True)
                 applied["done"] = True
             else:
-                self.comparator_overlay.clear_overlay()
                 action.setChecked(False)
             self._refresh_toolbar_action_state()
             popup.close()
@@ -551,8 +391,6 @@ class MainWindow(QMainWindow):
 
         if not applied["done"]:
             action.setChecked(False)
-        if not action.isChecked():
-            self.comparator_overlay.clear_overlay()
 
     def set_toolbar_layer_context(self, context: str) -> None:
         normalized = str(context or "none").lower()
@@ -597,9 +435,9 @@ class MainWindow(QMainWindow):
             else:
                 action.setEnabled(True)
 
-            if label == "Swipe Comparator" and hasattr(self, "controller"):
-                swipe_available = self.controller.can_attempt_enable_swipe_comparator()
-                if not swipe_available:
+            if label == "Comparator" and hasattr(self, "controller"):
+                comparator_available = self.controller.can_attempt_enable_comparator()
+                if not comparator_available:
                     action.setEnabled(False)
                     if action.isCheckable():
                         action.setChecked(False)
