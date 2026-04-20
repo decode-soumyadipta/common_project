@@ -59,6 +59,30 @@ function Resolve-Mode {
     return "venv"
 }
 
+function Test-CondaEnvExists {
+    param([string]$EnvName)
+
+    $global:LASTEXITCODE = 0
+    $json = conda env list --json
+    if ($global:LASTEXITCODE -ne 0 -or -not $json) {
+        return $false
+    }
+    try {
+        $parsed = $json | ConvertFrom-Json
+    } catch {
+        return $false
+    }
+    if (-not $parsed -or -not $parsed.envs) {
+        return $false
+    }
+    foreach ($envPath in $parsed.envs) {
+        if ((Split-Path $envPath -Leaf) -eq $EnvName) {
+            return $true
+        }
+    }
+    return $false
+}
+
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $repoRoot
 
@@ -71,8 +95,14 @@ if ($selectedMode -eq "conda") {
     }
 
     if (Test-Path (Join-Path $repoRoot "environment.yml")) {
-        Run-Step -Message "Updating conda environment from environment.yml" -Action {
-            conda env update -f environment.yml --prune
+        if (Test-CondaEnvExists -EnvName $CondaEnvName) {
+            Run-Step -Message "Updating conda environment '$CondaEnvName' from environment.yml" -Action {
+                conda env update -n $CondaEnvName -f environment.yml --prune
+            }
+        } else {
+            Run-Step -Message "Creating conda environment '$CondaEnvName' from environment.yml" -Action {
+                conda env create -n $CondaEnvName -f environment.yml
+            }
         }
     } else {
         Run-Step -Message "Ensuring conda Qt runtime packages" -Action {
