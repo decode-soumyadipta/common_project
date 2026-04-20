@@ -3,9 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, Signal, QTimer
-from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (
+from qtpy.QtCore import Qt, Signal, QTimer
+from qtpy.QtGui import QColor
+from qtpy.QtWidgets import (
     QApplication,
     QAbstractItemView,
     QComboBox,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, Signal, Slot
+from qtpy.QtCore import QObject, Signal, Slot
 
 
 class WebBridge(QObject):

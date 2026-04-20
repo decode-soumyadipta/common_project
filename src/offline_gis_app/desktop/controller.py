@@ -12,9 +12,9 @@ from urllib.parse import urlparse
 
 import httpx
 from pyproj import Transformer
-from PySide6.QtCore import QObject, QRunnable, QSignalBlocker, QThreadPool, QTimer, Qt, Signal
-from PySide6.QtWidgets import QFileDialog
-from PySide6.QtWebEngineWidgets import QWebEngineView
+from qtpy.QtCore import QObject, QRunnable, QSignalBlocker, QThreadPool, QTimer, Qt, Signal
+from qtpy.QtWebEngineWidgets import QWebEngineView
+from qtpy.QtWidgets import QFileDialog
 
 from offline_gis_app.desktop.api_client import DesktopApiClient
 from offline_gis_app.desktop.api_server_manager import ApiServerManager
@@ -87,6 +87,10 @@ class DesktopController:
         self._last_visible_focus_signature: tuple[float, float, float, float] | None = None
         self._offline_endpoints_valid = True
         self._layer_loading_active = False
+        self._layer_loading_timeout_ms = 30000
+        self._layer_loading_timeout_timer = QTimer(panel)
+        self._layer_loading_timeout_timer.setSingleShot(True)
+        self._layer_loading_timeout_timer.timeout.connect(self._on_layer_loading_timeout)
         self._measurement_pool = QThreadPool(panel)
         self._measurement_pool.setMaxThreadCount(1)
         self._swipe_comparator_enabled = False
@@ -209,7 +213,9 @@ class DesktopController:
         row = self.panel.uploaded_assets_list.currentRow()
         if row < 0:
             return
-        item = self.panel.uploaded_assets_list.item(row, 0)
+        item = self.panel.uploaded_assets_list.item(row, 1)
+        if item is None:
+            item = self.panel.uploaded_assets_list.item(row, 0)
         if item is None:
             return
         asset = item.data(Qt.ItemDataRole.UserRole)
@@ -237,6 +243,11 @@ class DesktopController:
     def enqueue_selected_path(self) -> None:
         if not self._require_offline_endpoints("Save raster"):
             return
+        if not self.api.api_ready():
+            self.panel.log(
+                f"API unavailable at {self.api.base_url}. Start API/server desktop, then retry 'Save raster'."
+            )
+            return
         path = self.panel.path_edit.text().strip()
         if not path:
             self.panel.log("Select a file path first.")
@@ -252,6 +263,7 @@ class DesktopController:
         self.state.active_ingest_job_id = str(job.get("id"))
         self.state.pending_ingest_source_path = path
         self.state.auto_visualize_ingest_result = True
+        self.panel.log("Save queued metadata ingest. Preview alone does not register catalog metadata.")
         self.panel.log(
             "Saved to ingest queue "
             f"id={job.get('id')} total={job.get('total_items')} status={job.get('status')}"
@@ -676,6 +688,7 @@ class DesktopController:
             self._logger.error("TiTiler unavailable during preview")
             return
 
+        self.panel.set_search_busy(True, "Reading raster metadata...", progress=10)
         try:
             metadata = extract_metadata(source)
         except FileNotFoundError as exc:
@@ -685,6 +698,8 @@ class DesktopController:
             self.panel.log(f"Preview failed: {exc}")
             self._logger.exception("Preview metadata extraction failed for path=%s", path)
             return
+        finally:
+            self.panel.set_search_busy(False)
 
         centroid_x, centroid_y = metadata.bounds.centroid()
         preview_asset = {
@@ -703,14 +718,27 @@ class DesktopController:
         options = self._layer_options(preview_asset, bounds)
         self.panel.rgb_view_mode_combo.setCurrentIndex(0)
         self._set_layer_loading(True, f"Previewing {metadata.file_name}...")
-        if self._add_layer(preview_asset, options):
-            if not self._fly_through_asset(preview_asset):
-                self._fly_to_asset(preview_asset)
+        try:
+            layer_added = self._add_layer(preview_asset, options)
+        except Exception:
+            self._logger.exception("Preview layer add failed for path=%s", path)
+            self._set_layer_loading(False, "Preview failed")
+            self.panel.log("Preview failed while adding layer. Check TiTiler/API logs.")
+            return
+
+        if layer_added:
+            moved_camera = self._fly_through_asset(preview_asset)
+            if not moved_camera:
+                moved_camera = self._fly_to_asset(preview_asset)
+            if not moved_camera:
+                # No camera movement callback will arrive; clear busy state now.
+                self._set_layer_loading(False, "Preview ready")
             self.panel.log(
                 "Preview ready: "
                 f"{metadata.file_name} ({metadata.kind.value.upper()}) | "
                 f"CRS {metadata.crs} | {metadata.width}x{metadata.height}"
             )
+            self.panel.log("Preview does not save metadata. Click Save to register this raster in catalog.")
             return
 
         self._set_layer_loading(False, "Preview failed")
@@ -951,14 +979,22 @@ class DesktopController:
             self._handle_api_error("Load ingested asset", exc)
             return
 
-        match = next((asset for asset in assets if asset.get("file_path") == source_path), None)
+        self.refresh_assets()
+        match = next(
+            (
+                asset
+                for asset in assets
+                if self._paths_equivalent(str(asset.get("file_path") or ""), source_path)
+            ),
+            None,
+        )
         if not isinstance(match, dict):
             self.panel.log("Ingest completed, but catalog item is not yet visible. Use Refresh Assets.")
+            self._logger.warning("Ingest completed but source path match not found source=%s", source_path)
             return
 
         self._asset_cache[match["file_path"]] = match
         self.state.selected_asset = match
-        self.refresh_assets()
         options = self._layer_options(match, self._asset_bounds(match))
         self._set_layer_loading(True, f"Loading {match['file_name']}...")
         if self._add_layer(match, options):
@@ -2311,6 +2347,19 @@ class DesktopController:
             return False
         return west <= -179.5 and east >= 179.5 and south <= -84.5 and north >= 84.5
 
+    @staticmethod
+    def _normalize_path_for_compare(path: str) -> str:
+        if not path:
+            return ""
+        try:
+            normalized = str(Path(path).expanduser().resolve(strict=False))
+        except Exception:
+            normalized = str(path)
+        return normalized.replace("\\", "/").casefold()
+
+    def _paths_equivalent(self, path_a: str, path_b: str) -> bool:
+        return self._normalize_path_for_compare(path_a) == self._normalize_path_for_compare(path_b)
+
     def on_js_log(self, level: str, message: str) -> None:
         normalized = level.lower().strip()
         if self._layer_loading_active and (
@@ -2338,7 +2387,18 @@ class DesktopController:
 
     def _set_layer_loading(self, active: bool, message: str) -> None:
         self._layer_loading_active = active
+        if active:
+            self._layer_loading_timeout_timer.start(self._layer_loading_timeout_ms)
+        else:
+            self._layer_loading_timeout_timer.stop()
         self.panel.set_layer_loading(active, message)
+
+    def _on_layer_loading_timeout(self) -> None:
+        if not self._layer_loading_active:
+            return
+        self._logger.warning("Layer loading timeout after %sms", self._layer_loading_timeout_ms)
+        self._set_layer_loading(False, "Layer load timeout")
+        self.panel.log("Layer load timed out. Check API/TiTiler availability and source raster path.")
 
     def _asset_path_accessible_locally(self, asset: dict) -> bool:
         path = str(asset.get("file_path") or "")

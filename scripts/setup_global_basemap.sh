@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET_ROOT="$ROOT_DIR/src/offline_gis_app/desktop/web_assets/basemap/xyz"
 SOURCE_URL="${BASE_URL:-https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile}"
+SOURCE_URL="${SOURCE_URL//$'\r'/}"
 CONCURRENCY="${CONCURRENCY:-12}"
 
 usage() {
@@ -21,6 +22,10 @@ EOF
 }
 
 resolve_python() {
+  if [[ -n "${PYTHON_BIN:-}" ]]; then
+    echo "$PYTHON_BIN"
+    return
+  fi
   if command -v python3 >/dev/null 2>&1; then
     echo "python3"
     return
@@ -125,6 +130,9 @@ for z in range(0, max_zoom + 1):
             print(f"{z} {x} {y}")
 PY
 
+tr -d '\r' < "$manifest_file" > "${manifest_file}.tmp"
+mv "${manifest_file}.tmp" "$manifest_file"
+
 sort -u "$manifest_file" -o "$manifest_file"
 
 manifest_count=$(wc -l < "$manifest_file" | tr -d ' ')
@@ -135,9 +143,7 @@ missing_count=0
 existing_count=0
 while read -r z x y; do
   processed_count=$((processed_count + 1))
-  tile_dir="$TARGET_ROOT/$z/$x"
-  mkdir -p "$tile_dir"
-  tile_file="$tile_dir/$y.jpg"
+  tile_file="$TARGET_ROOT/$z/$x/$y.jpg"
   if [[ -f "$tile_file" ]]; then
     existing_count=$((existing_count + 1))
   else
@@ -159,6 +165,7 @@ if [[ "$missing_count" -gt 0 ]]; then
     x="$2"
     y="$3"
     tile_dir="$TARGET_ROOT/$z/$x"
+    mkdir -p "$tile_dir"
     tile_file="$tile_dir/$y.jpg"
     tmp_file="$tile_file.part"
     url="$SOURCE_URL/$z/$y/$x"

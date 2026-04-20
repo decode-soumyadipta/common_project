@@ -2,13 +2,14 @@
 
 Modular offline-first GIS system with:
 - **FastAPI backend** for ingestion, search, and DEM profile APIs.
-- **PySide6 desktop shell** with QWebEngine and QWebChannel bridge.
-- **PostgreSQL/PostGIS metadata catalog by default** (SQLite still supported via `DATABASE_URL` override for local dev/tests).
+- **PyQt5 desktop shell** (via qtpy) with QWebEngine and QWebChannel bridge.
+- **SQLite metadata catalog by default** for standalone/offline deployments (`offline_gis.db` in project root).
+- **PostgreSQL/PostGIS optional** via `DATABASE_URL` override when needed.
 - **Small, single-purpose Python modules** for easier maintenance and debugging.
 
 ## 1. Conda Environment (recommended)
 
-This project uses **Python 3.11** for broad compatibility with PySide6, rasterio, and modern FastAPI stacks.
+This project uses **Python 3.11** for broad compatibility with PyQt5, rasterio, and modern FastAPI stacks.
 
 ```bash
 conda env create -f environment.yml
@@ -55,7 +56,7 @@ Optional (for RGB overlays on real 3D terrain offline): install a local quantize
 bash scripts/setup_offline_terrain_pack.sh /path/to/local/terrain-pack
 ```
 
-Or auto-download an Asia terrain-rgb pack (offline runtime after download):
+Or pre-download an Asia terrain-rgb pack (offline runtime after download):
 
 ```bash
 bash scripts/setup_offline_terrain_pack.sh --asia 8
@@ -76,6 +77,7 @@ Notes:
 - If `web_assets/basemap/terrain-rgb/metadata.json` exists, RGB in 3D mode uses that offline terrain-rgb pack.
 - Preview and load actions drape the uploaded raster over the offline 3D globe terrain in `3D Terrain Scene` mode by default.
 - If local offline tiles are missing, the app falls back to built-in NaturalEarth texture.
+- Cesium engine files (`web_assets/cesium`) are required to render the globe at all.
 
 ```bash
 python -m offline_gis_app.cli desktop
@@ -89,6 +91,13 @@ python -m offline_gis_app.cli desktop-server
 
 ```bash
 python -m offline_gis_app.cli desktop-client
+```
+
+Equivalent direct entry points (added for dual-app packaging clarity):
+
+```bash
+offline-gis-server
+offline-gis-client
 ```
 
 `desktop-server` now auto-starts local API on `127.0.0.1:8000` when needed.
@@ -113,6 +122,39 @@ bash scripts/run_titiler_local.sh
 
 If TiTiler is not running, the desktop app now auto-starts it when you load a layer.
 
+## 3.1 Dual Standalone Apps (Windows)
+
+This repo now supports two separately installable desktop executables from one installer:
+
+- **OfflineGIS-Server.exe**: ingestion/server-side desktop app.
+- **OfflineGIS-Client.exe**: client/search desktop app.
+
+Both apps share one local runtime home by default:
+
+- `%LOCALAPPDATA%/OfflineGIS`
+- shared DB: `%LOCALAPPDATA%/OfflineGIS/offline_gis.db`
+- shared data folder: `%LOCALAPPDATA%/OfflineGIS/data`
+
+This default is applied automatically by the standalone launchers and can still be overridden by environment variables.
+
+### Build both EXE bundles + installer wizard
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging/windows/build_dual_apps.ps1 -CondaEnvName offline-3d-gis -Clean
+```
+
+Outputs:
+
+- `dist/OfflineGIS-Server/OfflineGIS-Server.exe`
+- `dist/OfflineGIS-Client/OfflineGIS-Client.exe`
+- `dist/installer/OfflineGIS-Dual-Setup.exe` (when Inno Setup 6 is installed)
+
+Notes:
+
+- The build bundles local web assets from `src/offline_gis_app/desktop/web_assets`, including your downloaded Asia imagery/terrain files already present in this repo.
+- End users do **not** need to run setup scripts on the target offline machine.
+- Install both apps on the same machine and run server first, then client.
+
 Desktop panel now includes:
 - file browse + raster register/load,
 - catalog refresh + add-layer,
@@ -130,8 +172,10 @@ Desktop now emits **debug/info/warn/error logs** to terminal for:
 Quick check for the desktop dependency:
 
 ```bash
-python -c "from PySide6.QtWebEngineWidgets import QWebEngineView; print('QtWebEngine OK')"
+python -c "from qtpy.QtWebEngineWidgets import QWebEngineView; print('QtWebEngine OK')"
 ```
+
+Desktop runtime uses `PyQt5` by default.
 
 ## 4. Test
 
@@ -151,7 +195,7 @@ This is the most deployment-friendly approach for secure air-gapped environments
 
 Defaults are in `offline_gis_app/config/settings.py`.
 
-- `DATABASE_URL` (default: `postgresql+psycopg://localhost/offline_gis`)
+- `DATABASE_URL` (default: `sqlite:///./offline_gis.db`)
 - `DATA_ROOT` (default: current project folder)
 - `API_HOST` (default: `127.0.0.1`)
 - `API_PORT` (default: `8000`)

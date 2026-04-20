@@ -10,6 +10,7 @@
   let activeDemHillshadeUrl = null;
   const managedImageryLayers = new Map();
   let globalBasemapLayer = null;
+  let asiaHiResBasemapLayer = null;
   let fallbackBasemapLayer = null;
   let northPolarCapLayer = null;
   let southPolarCapLayer = null;
@@ -44,6 +45,15 @@
   let comparatorActiveInputReleaseTimer = null;
   let comparatorDemRefreshTimer = null;
   const COMPARATOR_DEM_REFRESH_DEBOUNCE_MS = 120;
+  if (!window.Cesium) {
+    const statusEl = document.getElementById("status");
+    if (statusEl) {
+      statusEl.textContent =
+        "Cesium.js not found. Run scripts/setup_cesium_assets.sh to install local Cesium assets.";
+    }
+    console.error("[offlineGIS] Cesium runtime not found. Local assets are missing.");
+    return;
+  }
   const COMPARATOR_DEM_DEFAULT_PITCH = Cesium.Math.toRadians(-35.0);
   const COMPARATOR_DEM_MIN_PITCH = Cesium.Math.toRadians(-80.0);
   const COMPARATOR_DEM_MAX_PITCH = Cesium.Math.toRadians(-15.0);
@@ -58,6 +68,8 @@
   const LOCAL_SATELLITE_TILE_ROOT = "./basemap/xyz";
   const LOCAL_SATELLITE_METADATA_URL = "./basemap/xyz/metadata.json";
   const LOCAL_SATELLITE_DEFAULT_MAX_LEVEL = 7;
+  const LOCAL_SATELLITE_ASIA_MAX_LEVEL = 10;
+  const LOCAL_SATELLITE_ASIA_SAMPLE_TILE = `${LOCAL_SATELLITE_TILE_ROOT}/10/768/445.jpg`;
   const WEB_MERCATOR_MAX_LAT_DEGREES = 85.05112878;
   const WEB_MERCATOR_SAFE_EDGE_LAT_DEGREES = 84.8;
   const LOCAL_BASEMAP_REGION_BOUNDS = {
@@ -188,6 +200,18 @@
   function setStatus(text) {
     const el = document.getElementById("status");
     if (el) el.textContent = text;
+  }
+
+  function emitMapClick(lon, lat) {
+    if (bridge && bridge.on_map_click) {
+      bridge.on_map_click(lon, lat);
+    }
+  }
+
+  function emitMeasurementUpdated(meters) {
+    if (bridge && bridge.on_measurement) {
+      bridge.on_measurement(meters);
+    }
   }
 
   function setSearchBusy(active, message) {
@@ -2739,6 +2763,12 @@
   }
 
   function initBridge() {
+    if (typeof QWebChannel === "undefined" || !window.qt || !qt.webChannelTransport) {
+      setStatus("Bridge unavailable, running standalone Cesium mode.");
+      log("warn", "QWebChannel transport unavailable; initializing viewer without bridge binding");
+      initViewer();
+      return;
+    }
     new QWebChannel(qt.webChannelTransport, function (channel) {
       bridge = channel.objects.bridge;
       setStatus("Bridge connected.");
@@ -3135,6 +3165,10 @@
       viewer.imageryLayers.remove(globalBasemapLayer, false);
       globalBasemapLayer = null;
     }
+    if (asiaHiResBasemapLayer) {
+      viewer.imageryLayers.remove(asiaHiResBasemapLayer, false);
+      asiaHiResBasemapLayer = null;
+    }
     clearPolarCapLayers();
     if (!fallbackBasemapLayer) {
       const provider = createNaturalEarthProvider();
@@ -3154,6 +3188,19 @@
         resolve(false);
       };
       probe.src = `${LOCAL_SATELLITE_TILE_ROOT}/0/0/0.jpg?ts=${Date.now()}`;
+    });
+  }
+
+  function probeAsiaHiResTile() {
+    return new Promise((resolve) => {
+      const probe = new Image();
+      probe.onload = function () {
+        resolve(true);
+      };
+      probe.onerror = function () {
+        resolve(false);
+      };
+      probe.src = `${LOCAL_SATELLITE_ASIA_SAMPLE_TILE}?ts=${Date.now()}`;
     });
   }
 
@@ -3216,30 +3263,70 @@
     if (!viewer) return;
     const hasTiles = await probeLocalBasemapTile();
     if (!hasTiles) {
-      attachOfflineFallbackBasemap("Offline world tiles missing. Run scripts/setup_global_basemap.sh first.");
+      attachOfflineFallbackBasemap(
+        "Offline world tiles missing. Run scripts/setup_global_basemap.sh first."
+      );
       return;
     }
-    const metadata = await getLocalBasemapMetadata();
-    const maxLevel = getLocalBasemapMaxLevel(metadata);
-    const coverageRectangle = createLocalBasemapCoverageRectangle(metadata);
+    const hasAsiaHiResTiles = await probeAsiaHiResTile();
+    const worldBounds = LOCAL_BASEMAP_REGION_BOUNDS.world;
+    const asiaBounds = LOCAL_BASEMAP_REGION_BOUNDS.asia;
+    const worldRectangle = Cesium.Rectangle.fromDegrees(
+      worldBounds.west,
+      worldBounds.south,
+      worldBounds.east,
+      worldBounds.north
+    );
+    const asiaRectangle = Cesium.Rectangle.fromDegrees(
+      asiaBounds.west,
+      asiaBounds.south,
+      asiaBounds.east,
+      asiaBounds.north
+    );
     ensureFallbackBasemapLayer();
     if (globalBasemapLayer) {
       viewer.imageryLayers.remove(globalBasemapLayer, false);
       globalBasemapLayer = null;
     }
+    if (asiaHiResBasemapLayer) {
+      viewer.imageryLayers.remove(asiaHiResBasemapLayer, false);
+      asiaHiResBasemapLayer = null;
+    }
     const provider = new Cesium.UrlTemplateImageryProvider({
       url: `${LOCAL_SATELLITE_TILE_ROOT}/{z}/{x}/{y}.jpg`,
       tilingScheme: new Cesium.WebMercatorTilingScheme(),
-      maximumLevel: maxLevel,
-      rectangle: coverageRectangle || undefined,
+      maximumLevel: LOCAL_SATELLITE_DEFAULT_MAX_LEVEL,
+      rectangle: worldRectangle,
       enablePickFeatures: false,
       credit: "Offline world imagery",
     });
     attachTileErrorHandler(provider, LOCAL_SATELLITE_LAYER_NAME);
     globalBasemapLayer = viewer.imageryLayers.addImageryProvider(provider, 1);
     globalBasemapLayer.alpha = 1.0;
+
+    if (hasAsiaHiResTiles) {
+      const asiaProvider = new Cesium.UrlTemplateImageryProvider({
+        url: `${LOCAL_SATELLITE_TILE_ROOT}/{z}/{x}/{y}.jpg`,
+        tilingScheme: new Cesium.WebMercatorTilingScheme(),
+        maximumLevel: LOCAL_SATELLITE_ASIA_MAX_LEVEL,
+        rectangle: asiaRectangle,
+        enablePickFeatures: false,
+        credit: "Offline Asia hi-res imagery",
+      });
+      attachTileErrorHandler(asiaProvider, "LocalSatelliteAsiaHiRes");
+      asiaHiResBasemapLayer = viewer.imageryLayers.addImageryProvider(asiaProvider, 2);
+      asiaHiResBasemapLayer.alpha = 1.0;
+    }
+
     ensurePolarCapLayers();
-    setStatus(`Offline satellite globe ready (max zoom ${maxLevel}).`);
+    if (hasAsiaHiResTiles) {
+      setStatus(
+        `Offline satellite globe ready (world max zoom ${LOCAL_SATELLITE_DEFAULT_MAX_LEVEL}, Asia max zoom ${LOCAL_SATELLITE_ASIA_MAX_LEVEL}).`
+      );
+      log("info", "Loaded local offline world tiles with Asia high-resolution overlay");
+      return;
+    }
+    setStatus(`Offline satellite globe ready (world max zoom ${LOCAL_SATELLITE_DEFAULT_MAX_LEVEL}).`);
     log("info", "Loaded local offline world XYZ tiles");
   }
 
@@ -3333,7 +3420,7 @@
       }
 
       if (distanceMeasureModeEnabled) {
-        bridge.on_map_click(lon, lat);
+        emitMapClick(lon, lat);
         log("debug", "Distance mode click lon=" + lon.toFixed(6) + " lat=" + lat.toFixed(6));
         if (!distanceMeasureAnchor) {
           distanceMeasureAnchor = { lon: lon, lat: lat };
@@ -3362,7 +3449,7 @@
           geodesic.surfaceDistance
         );
         distanceMeasureAnchor = { lon: lon, lat: lat };
-        bridge.on_measurement(geodesic.surfaceDistance);
+        emitMeasurementUpdated(geodesic.surfaceDistance);
         setStatus("Distance measured. Click next point for chained measure, or right-click to stop.");
         log("info", "Distance measured (m): " + geodesic.surfaceDistance.toFixed(2));
         return;
@@ -3370,7 +3457,7 @@
 
       clickedPoints.push([lon, lat]);
       if (clickedPoints.length > 2) clickedPoints.shift();
-      bridge.on_map_click(lon, lat);
+      emitMapClick(lon, lat);
       log("debug", "Map click lon=" + lon.toFixed(6) + " lat=" + lat.toFixed(6));
     }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 

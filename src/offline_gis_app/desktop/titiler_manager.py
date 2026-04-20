@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import sys
 import time
 from typing import Sequence
 
@@ -39,13 +40,16 @@ class TiTilerManager:
     def _start_process(self) -> None:
         if self._process and self._process.poll() is None:
             return
+        bootstrap_code = (
+            "import shapely; "
+            "import uvicorn; "
+            "from titiler.application.main import app; "
+            "uvicorn.run(app, host='127.0.0.1', port=8081, log_level='warning')"
+        )
         command: Sequence[str] = (
-            "uvicorn",
-            "titiler.application.main:app",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            "8081",
+            sys.executable,
+            "-c",
+            bootstrap_code,
         )
         env = os.environ.copy()
         env["GDAL_DISABLE_READDIR_ON_OPEN"] = "EMPTY_DIR"

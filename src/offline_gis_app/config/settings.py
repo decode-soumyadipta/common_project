@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     """Runtime configuration loaded from environment variables and .env."""
-    database_url: str = "postgresql+psycopg://localhost/offline_gis"
+    database_url: str = "sqlite:///./offline_gis.db"
     data_root: Path = Path(".").resolve()
     api_host: str = "127.0.0.1"
     api_port: int = 8000

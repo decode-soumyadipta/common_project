@@ -8,10 +8,10 @@ from typing import Optional
 import numpy as np
 from numpy.typing import NDArray
 from pyproj import Geod, Transformer
+from shapely.geometry import Polygon
 from rasterio.features import rasterize
 from rasterio.transform import rowcol
 from rasterio.windows import Window, from_bounds
-from shapely.geometry import Polygon
 
 try:
     import rasterio

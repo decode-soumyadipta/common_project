@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from PySide6.QtWebEngineCore import QWebEnginePage
+from qtpy.QtWebEngineWidgets import QWebEnginePage
 
 
 class LoggingWebEnginePage(QWebEnginePage):

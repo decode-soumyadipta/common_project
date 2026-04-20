@@ -3,12 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 import time
 
-from PySide6.QtCore import QSize, Qt, QUrl
-from PySide6.QtGui import QAction, QGuiApplication, QIcon
-from PySide6.QtWebChannel import QWebChannel
-from PySide6.QtWebEngineCore import QWebEngineSettings
-from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWidgets import (
+from qtpy.QtCore import QSize, Qt, QUrl
+from qtpy.QtGui import QAction, QGuiApplication, QIcon
+from qtpy.QtWebChannel import QWebChannel
+from qtpy.QtWebEngineWidgets import QWebEngineSettings, QWebEngineView
+from qtpy.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
@@ -120,16 +119,25 @@ class MainWindow(QMainWindow):
         else:
             self.resize(1400, 860)
 
-        (
-            self.main_toolbar,
-            self.toolbar_actions,
-            self.visualization_actions,
-            self.measurement_actions,
-            self.action_group_by_label,
-            self.visualization_tools_switch,
-            self.measurement_tools_switch,
-        ) = self._create_main_toolbar()
-        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.main_toolbar)
+        self.main_toolbar: QToolBar | None = None
+        self.toolbar_actions: dict[str, QAction] = {}
+        self.visualization_actions: list[QAction] = []
+        self.measurement_actions: list[QAction] = []
+        self.action_group_by_label: dict[str, str] = {}
+        self.visualization_tools_switch: QCheckBox | None = None
+        self.measurement_tools_switch: QCheckBox | None = None
+
+        if app_mode != DesktopAppMode.SERVER:
+            (
+                self.main_toolbar,
+                self.toolbar_actions,
+                self.visualization_actions,
+                self.measurement_actions,
+                self.action_group_by_label,
+                self.visualization_tools_switch,
+                self.measurement_tools_switch,
+            ) = self._create_main_toolbar()
+            self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.main_toolbar)
         self._toolbar_layer_context: str = "none"
         self._visualization_tools_enabled: bool = True
         self._measurement_tools_enabled: bool = True
@@ -164,7 +172,7 @@ class MainWindow(QMainWindow):
             bridge=self.bridge,
             titiler_manager=self.titiler_manager,
             app_mode=app_mode,
-            toolbar_context_callback=self.set_toolbar_layer_context,
+            toolbar_context_callback=self.set_toolbar_layer_context if app_mode != DesktopAppMode.SERVER else None,
         )
 
         for label, action in self.toolbar_actions.items():
@@ -172,10 +180,11 @@ class MainWindow(QMainWindow):
                 lambda checked=False, action_label=label: self._on_toolbar_action_triggered(action_label, checked)
             )
 
-        self.visualization_tools_switch.toggled.connect(self._set_visualization_tools_visible)
-        self.measurement_tools_switch.toggled.connect(self._set_measurement_tools_visible)
-        self._set_visualization_tools_visible(bool(self.visualization_tools_switch.isChecked()))
-        self._set_measurement_tools_visible(bool(self.measurement_tools_switch.isChecked()))
+        if self.visualization_tools_switch is not None and self.measurement_tools_switch is not None:
+            self.visualization_tools_switch.toggled.connect(self._set_visualization_tools_visible)
+            self.measurement_tools_switch.toggled.connect(self._set_measurement_tools_visible)
+            self._set_visualization_tools_visible(bool(self.visualization_tools_switch.isChecked()))
+            self._set_measurement_tools_visible(bool(self.measurement_tools_switch.isChecked()))
 
         html_path = Path(__file__).parent / "web_assets" / "index.html"
         html_url = QUrl.fromLocalFile(str(html_path.resolve()))

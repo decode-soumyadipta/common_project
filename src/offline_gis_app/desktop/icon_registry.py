@@ -6,11 +6,11 @@ from typing import Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import urlretrieve
 
-from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
+from qtpy.QtCore import QSize, Qt
+from qtpy.QtGui import QColor, QIcon, QPainter, QPixmap
 
 try:
-    from PySide6.QtSvg import QSvgRenderer
+    from qtpy.QtSvg import QSvgRenderer
 except Exception:  # pragma: no cover - QtSvg may not be available in some runtimes
     QSvgRenderer = None
 

@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET_QUANTIZED_DIR="$ROOT_DIR/src/offline_gis_app/desktop/web_assets/basemap/terrain"
 TARGET_TERRAIN_RGB_DIR="$ROOT_DIR/src/offline_gis_app/desktop/web_assets/basemap/terrain-rgb"
 TERRAIN_RGB_SOURCE="${TERRAIN_RGB_SOURCE:-https://s3.amazonaws.com/elevation-tiles-prod/terrarium}"
+TERRAIN_RGB_SOURCE="${TERRAIN_RGB_SOURCE//$'\r'/}"
 CONCURRENCY="${CONCURRENCY:-12}"
 
 usage() {
@@ -26,6 +27,10 @@ EOF
 }
 
 resolve_python() {
+  if [[ -n "${PYTHON_BIN:-}" ]]; then
+    echo "$PYTHON_BIN"
+    return
+  fi
   if command -v python3 >/dev/null 2>&1; then
     echo "python3"
     return
@@ -117,6 +122,9 @@ for z in range(0, max_zoom + 1):
             print(f"{z} {x} {y}")
 PY
 
+  tr -d '\r' < "$manifest_file" > "${manifest_file}.tmp"
+  mv "${manifest_file}.tmp" "$manifest_file"
+
   # Defensive de-duplication to avoid duplicate workers writing the same tile path.
   sort -u "$manifest_file" -o "$manifest_file"
 
@@ -155,7 +163,7 @@ PY
       mkdir -p "$tile_dir"
       url="$TERRAIN_RGB_SOURCE/$z/$x/$y.png"
       for attempt in 1 2 3; do
-        tmp_file="$(mktemp "$tile_file.part.XXXXXX")"
+        tmp_file="$tile_file.part"
         if curl -fsSL --connect-timeout 20 "$url" -o "$tmp_file" && [[ -s "$tmp_file" ]]; then
           mv -f "$tmp_file" "$tile_file"
           exit 0
