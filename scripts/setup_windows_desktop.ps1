@@ -102,8 +102,11 @@ if ($selectedMode -eq "conda") {
                 }
             } catch {
                 Write-Host "Conda env update failed for '$CondaEnvName'. Falling back to force-recreate from environment.yml..." -ForegroundColor Yellow
-                Run-Step -Message "Force-recreating conda environment '$CondaEnvName' from environment.yml" -Action {
-                    conda env create -n $CondaEnvName -f environment.yml --force
+                Run-Step -Message "Removing existing conda environment '$CondaEnvName'" -Action {
+                    conda remove -n $CondaEnvName --all -y
+                }
+                Run-Step -Message "Recreating conda environment '$CondaEnvName' from environment.yml" -Action {
+                    conda env create -n $CondaEnvName -f environment.yml
                 }
             }
         } else {
