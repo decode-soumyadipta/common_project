@@ -24,6 +24,7 @@ specs:
 post_install: post_install.bat
 extra_files:
   - payload/wheels
+  - create_shortcuts.ps1
 default_prefix: "%USERPROFILE%\\offline-3d-gis"
 welcome_file: welcome.txt
 readme_file: readme.txt

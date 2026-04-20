@@ -19,7 +19,11 @@ function Run-Step {
         [scriptblock]$Action
     )
     Write-Host "==> $Message" -ForegroundColor Cyan
+    $global:LASTEXITCODE = 0
     & $Action
+    if ($global:LASTEXITCODE -ne 0) {
+        throw "Step failed with exit code $($global:LASTEXITCODE): $Message"
+    }
 }
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")

@@ -63,5 +63,15 @@ echo [offline-3d-gis] Creating convenience launchers.
   echo "%~dp0python.exe" -m offline_gis_app.cli api %%*
 ) > "%PREFIX%\offline-gis-api.bat"
 
+if exist "%PREFIX%\create_shortcuts.ps1" (
+  echo [offline-3d-gis] Creating Windows shortcuts.
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%PREFIX%\create_shortcuts.ps1" -InstallPrefix "%PREFIX%"
+  if errorlevel 1 (
+    echo [offline-3d-gis] WARNING: shortcut creation failed. Launchers are still available in %PREFIX%.
+  )
+) else (
+  echo [offline-3d-gis] WARNING: create_shortcuts.ps1 not found; skipping shortcut creation.
+)
+
 echo [offline-3d-gis] Post-install complete.
 exit /b 0

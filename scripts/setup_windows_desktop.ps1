@@ -161,7 +161,7 @@ if ($selectedMode -eq "conda") {
     }
 
     Run-Step -Message "Installing project in editable mode (without pip Qt override)" -Action {
-        conda run -n $CondaEnvName python -m pip install -e .[geo,dev]
+        conda run -n $CondaEnvName python -m pip install -e '.[geo,dev]'
     }
 
     $qtCheckCode = "from PySide6.QtWebEngineWidgets import QWebEngineView; print('QtWebEngine OK')"
@@ -212,7 +212,7 @@ Run-Step -Message "Upgrading pip in venv" -Action {
 }
 
 Run-Step -Message "Installing desktop + geo + dev dependencies" -Action {
-    & $venvPython -m pip install -e .[desktop,geo,dev]
+    & $venvPython -m pip install -e '.[desktop,geo,dev]'
 }
 
 Run-Step -Message "Verifying Qt WebEngine import in venv" -Action {

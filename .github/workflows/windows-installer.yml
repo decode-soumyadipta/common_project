@@ -1,0 +1,44 @@
+name: Build Windows Installer
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-windows-installer:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-update-conda: true
+          activate-environment: builder
+          python-version: "3.11"
+          channels: conda-forge,defaults
+          channel-priority: strict
+
+      - name: Build Windows installer
+        shell: powershell
+        run: |
+          powershell -ExecutionPolicy Bypass -File .\scripts\build_windows_installer.ps1
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-3d-gis-windows-installer
+          path: dist/windows-installer/*.exe
+          if-no-files-found: error
+
+      - name: Publish release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/windows-installer/*.exe
+          draft: false
+          prerelease: false
