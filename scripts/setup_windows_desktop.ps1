@@ -96,8 +96,15 @@ if ($selectedMode -eq "conda") {
 
     if (Test-Path (Join-Path $repoRoot "environment.yml")) {
         if (Test-CondaEnvExists -EnvName $CondaEnvName) {
-            Run-Step -Message "Updating conda environment '$CondaEnvName' from environment.yml" -Action {
-                conda env update -n $CondaEnvName -f environment.yml --prune
+            try {
+                Run-Step -Message "Updating conda environment '$CondaEnvName' from environment.yml" -Action {
+                    conda env update -n $CondaEnvName -f environment.yml --prune
+                }
+            } catch {
+                Write-Host "Conda env update failed for '$CondaEnvName'. Falling back to force-recreate from environment.yml..." -ForegroundColor Yellow
+                Run-Step -Message "Force-recreating conda environment '$CondaEnvName' from environment.yml" -Action {
+                    conda env create -n $CondaEnvName -f environment.yml --force
+                }
             }
         } else {
             Run-Step -Message "Creating conda environment '$CondaEnvName' from environment.yml" -Action {
