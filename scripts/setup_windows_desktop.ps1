@@ -28,6 +28,42 @@ function Run-Step {
     }
 }
 
+function Try-CondaInstall {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$EnvName,
+        [Parameter(Mandatory = $true)]
+        [string[]]$Packages,
+        [string]$Channel = "conda-forge"
+    )
+
+    $global:LASTEXITCODE = 0
+    conda install -n $EnvName -y -c $Channel @Packages
+    return ($global:LASTEXITCODE -eq 0)
+}
+
+function Ensure-CondaQtWebEngine {
+    param([string]$EnvName)
+
+    Write-Host "==> Ensuring Qt WebEngine runtime packages in conda env" -ForegroundColor Cyan
+
+    if (Try-CondaInstall -EnvName $EnvName -Packages @("pyside6", "pyside6-webengine")) {
+        Write-Host "Installed Qt runtime via conda packages: pyside6 + pyside6-webengine" -ForegroundColor Green
+        return
+    }
+
+    Write-Host "Conda package combination pyside6 + pyside6-webengine unavailable. Trying pyside6 + pyside6-addons..." -ForegroundColor Yellow
+    if (Try-CondaInstall -EnvName $EnvName -Packages @("pyside6", "pyside6-addons")) {
+        Write-Host "Installed Qt runtime via conda packages: pyside6 + pyside6-addons" -ForegroundColor Green
+        return
+    }
+
+    Write-Host "Conda Qt package combinations unavailable. Falling back to pip Qt addons inside conda env..." -ForegroundColor Yellow
+    Run-Step -Message "Installing pip Qt fallback packages in conda env" -Action {
+        conda run -n $EnvName python -m pip install --upgrade "PySide6>=6.7,<7.0" "PySide6-Addons>=6.7,<7.0"
+    }
+}
+
 function Resolve-Mode {
     param(
         [string]$RequestedMode,
@@ -115,14 +151,10 @@ if ($selectedMode -eq "conda") {
             }
         }
     } else {
-        Run-Step -Message "Ensuring conda Qt runtime packages" -Action {
-            conda install -n $CondaEnvName -y -c conda-forge pyside6 pyside6-addons
-        }
+        Ensure-CondaQtWebEngine -EnvName $CondaEnvName
     }
 
-    Run-Step -Message "Ensuring explicit Qt runtime packages in conda env" -Action {
-        conda install -n $CondaEnvName -y -c conda-forge pyside6 pyside6-addons
-    }
+    Ensure-CondaQtWebEngine -EnvName $CondaEnvName
 
     Run-Step -Message "Upgrading pip in conda env" -Action {
         conda run -n $CondaEnvName python -m pip install --upgrade pip
@@ -137,10 +169,8 @@ if ($selectedMode -eq "conda") {
     $global:LASTEXITCODE = 0
     conda run -n $CondaEnvName python -c $qtCheckCode
     if ($global:LASTEXITCODE -ne 0) {
-        Write-Host "QtWebEngine import failed after pyside6-addons install; trying pyside6-webengine fallback..." -ForegroundColor Yellow
-        Run-Step -Message "Installing fallback package pyside6-webengine in conda env" -Action {
-            conda install -n $CondaEnvName -y -c conda-forge pyside6-webengine
-        }
+        Write-Host "QtWebEngine import failed after initial install. Re-running fallback installers..." -ForegroundColor Yellow
+        Ensure-CondaQtWebEngine -EnvName $CondaEnvName
         Run-Step -Message "Re-verifying Qt WebEngine import in conda env" -Action {
             conda run -n $CondaEnvName python -c $qtCheckCode
         }

@@ -15,7 +15,6 @@ dependencies:
   - pytest
   - httpx
   - pyside6>=6.7,<7.0
-  - pyside6-addons>=6.7,<7.0
   - pip:
       - titiler.application>=0.21,<1.0
       - -e .

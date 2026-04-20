@@ -15,7 +15,7 @@ conda env create -f environment.yml
 conda activate offline-3d-gis
 ```
 
-This environment now installs Qt packages from conda-forge directly (`pyside6` + `pyside6-addons`) for better Windows DLL compatibility.
+This environment installs core Qt from conda, and the Windows setup script resolves Qt WebEngine runtime using channel-compatible packages.
 
 If you already created the env before this fix, update it:
 
@@ -28,9 +28,11 @@ conda env update -f environment.yml --prune
 If desktop startup shows a Qt/WebEngine DLL load error, run:
 
 ```bash
-conda install -c conda-forge pyside6 pyside6-addons
-# if needed on your channel build:
 conda install -c conda-forge pyside6 pyside6-webengine
+# if unavailable on your channel build:
+conda install -c conda-forge pyside6 pyside6-addons
+# fallback:
+python -m pip install "PySide6>=6.7,<7.0" "PySide6-Addons>=6.7,<7.0"
 ```
 
 If it still fails, install the **Microsoft Visual C++ 2015-2022 Redistributable (x64)** and recreate the environment.

@@ -19,7 +19,7 @@ specs:
   - pyproj
   - httpx
   - pyside6 >=6.7,<7.0
-  - pyside6-addons >=6.7,<7.0
+  - pyside6-webengine >=6.7,<7.0
   - qtawesome >=1.3,<2.0
 post_install: post_install.bat
 extra_files:
