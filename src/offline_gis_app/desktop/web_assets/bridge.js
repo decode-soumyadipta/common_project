@@ -124,6 +124,22 @@
     left: 0,
     right: 0,
   };
+  const comparatorCameraSyncState = {
+    left: {
+      lastSourceWidthRad: NaN,
+      lastSourceHeightRad: NaN,
+      lastSourceCameraHeightM: NaN,
+      lastSourceCenterLon: NaN,
+      lastSourceCenterLat: NaN,
+    },
+    right: {
+      lastSourceWidthRad: NaN,
+      lastSourceHeightRad: NaN,
+      lastSourceCameraHeightM: NaN,
+      lastSourceCenterLon: NaN,
+      lastSourceCenterLat: NaN,
+    },
+  };
   let terrainDecodeCanvas = null;
   let terrainDecodeContext = null;
   let searchDrawMode = "none";
@@ -246,6 +262,17 @@
     return cartesianToLonLat(getCartesianFromViewer(targetViewer, screenPosition));
   }
 
+  function getViewerCenterLonLat(targetViewer) {
+    if (!targetViewer || !targetViewer.canvas) {
+      return null;
+    }
+    const center = new Cesium.Cartesian2(
+      targetViewer.canvas.clientWidth * 0.5,
+      targetViewer.canvas.clientHeight * 0.5,
+    );
+    return getLonLatFromViewer(targetViewer, center);
+  }
+
   function applyCrosshairScreenPosition(crosshairElement, targetViewer, screenPosition) {
     if (!crosshairElement) {
       return;
@@ -356,6 +383,17 @@
     targetViewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
   }
 
+  function focusComparatorViewerToRectangle(targetViewer, layerType, focusRect) {
+    if (!targetViewer || !focusRect) {
+      return;
+    }
+    if (layerType === "dem") {
+      setComparatorDemCameraFromRectangle(targetViewer, focusRect, targetViewer.camera.heading);
+      return;
+    }
+    targetViewer.camera.setView({ destination: focusRect });
+  }
+
   function getComparatorLayerTypeForViewer(targetViewer) {
     if (targetViewer === comparatorLeftViewer) {
       return comparatorLeftLayerType;
@@ -364,6 +402,62 @@
       return comparatorRightLayerType;
     }
     return null;
+  }
+
+  function getComparatorPaneKeyForViewer(targetViewer) {
+    if (targetViewer === comparatorLeftViewer) {
+      return "left";
+    }
+    if (targetViewer === comparatorRightViewer) {
+      return "right";
+    }
+    return null;
+  }
+
+  function getComparatorSyncStateForViewer(targetViewer) {
+    const paneKey = getComparatorPaneKeyForViewer(targetViewer);
+    if (!paneKey) {
+      return null;
+    }
+    return comparatorCameraSyncState[paneKey] || null;
+  }
+
+  function resetComparatorCameraSyncState(reason) {
+    for (const paneKey of ["left", "right"]) {
+      const state = comparatorCameraSyncState[paneKey];
+      if (!state) {
+        continue;
+      }
+      state.lastSourceWidthRad = NaN;
+      state.lastSourceHeightRad = NaN;
+      state.lastSourceCameraHeightM = NaN;
+      state.lastSourceCenterLon = NaN;
+      state.lastSourceCenterLat = NaN;
+    }
+    log("debug", `Comparator sync state reset reason=${String(reason || "unspecified")}`);
+  }
+
+  function recordComparatorSourceRectangle(sourceViewer, sourceRectangle, context) {
+    const state = getComparatorSyncStateForViewer(sourceViewer);
+    if (!state || !sourceRectangle) {
+      return;
+    }
+    const width = rectangleWidthRadians(sourceRectangle);
+    const height = rectangleHeightRadians(sourceRectangle);
+    const center = Cesium.Rectangle.center(sourceRectangle);
+    if (!Number.isFinite(width) || !Number.isFinite(height) || !center) {
+      return;
+    }
+    state.lastSourceWidthRad = width;
+    state.lastSourceHeightRad = height;
+    state.lastSourceCenterLon = Number(center.longitude);
+    state.lastSourceCenterLat = Number(center.latitude);
+    const cameraHeight = sourceViewer && sourceViewer.camera && sourceViewer.camera.positionCartographic && Number.isFinite(sourceViewer.camera.positionCartographic.height)
+      ? Number(sourceViewer.camera.positionCartographic.height)
+      : NaN;
+    state.lastSourceCameraHeightM = Number.isFinite(cameraHeight) ? cameraHeight : NaN;
+    const paneKey = getComparatorPaneKeyForViewer(sourceViewer) || "unknown";
+    log("debug", `Comparator source rect recorded pane=${paneKey} context=${context} width=${width.toFixed(6)} height=${height.toFixed(6)} cam_h=${Number.isFinite(state.lastSourceCameraHeightM) ? state.lastSourceCameraHeightM.toFixed(2) : "n/a"} center_lon=${state.lastSourceCenterLon.toFixed(6)} center_lat=${state.lastSourceCenterLat.toFixed(6)}`);
   }
 
   function getComparatorDemViewer() {
@@ -414,92 +508,25 @@
     comparatorActiveInputReleaseTimer = window.setTimeout(function () {
       comparatorActiveInputReleaseTimer = null;
       comparatorActiveInputViewer = null;
-    }, 220);
+      log("debug", "Comparator activeInputViewer released after inactivity window");
+    }, 650);
+    log("debug", `Comparator activeInputViewer set to ${sourceViewer === comparatorLeftViewer ? "LEFT" : "RIGHT"}`);
   }
 
   function scheduleComparatorCameraSync(sourceViewer) {
-    if (!comparatorModeEnabled || !sourceViewer) {
-      return;
+    if (comparatorModeEnabled && sourceViewer) {
+      log("debug", "Comparator camera sync is disabled; scheduleComparatorCameraSync ignored");
+      updateComparatorCenterReadout(sourceViewer);
     }
-    comparatorPendingSyncSource = sourceViewer;
-    if (comparatorSyncFrameHandle !== null) {
-      return;
-    }
-    comparatorSyncFrameHandle = window.requestAnimationFrame(function () {
-      comparatorSyncFrameHandle = null;
-      const source = comparatorPendingSyncSource;
-      comparatorPendingSyncSource = null;
-      if (!comparatorModeEnabled || !source) {
-        return;
-      }
-      const target = source === comparatorLeftViewer ? comparatorRightViewer : comparatorLeftViewer;
-      syncViewerCamera(source, target);
-      updateComparatorCenterReadout(source);
-    });
   }
 
   function lockComparatorFocusToCurrentView() {
     if (!comparatorModeEnabled || !comparatorLeftViewer || !comparatorRightViewer) {
-      log("debug", "lockComparatorFocusToCurrentView: comparatorMode=" + comparatorModeEnabled + " left=" + !!comparatorLeftViewer + " right=" + !!comparatorRightViewer);
       return;
     }
-    const demPitch = getComparatorDemPitchRadians();
-    log("debug", "lockComparatorFocusToCurrentView: START leftType=" + comparatorLeftLayerType + " rightType=" + comparatorRightLayerType + " demPitch=" + demPitch);
-    
-    const sourceViewer = getComparatorDemViewer() || comparatorLeftViewer;
-    const sourceLayerType = getComparatorLayerTypeForViewer(sourceViewer);
-    const focusRect = sourceViewer.camera.computeViewRectangle(sourceViewer.scene.globe.ellipsoid);
-    if (!focusRect) {
-      log("debug", "lockComparatorFocusToCurrentView: focusRect is null!");
-      return;
-    }
-    
-    log("debug", "lockComparatorFocusToCurrentView: focusRect computed west=" + focusRect.west.toFixed(4) + " east=" + focusRect.east.toFixed(4) + " south=" + focusRect.south.toFixed(4) + " north=" + focusRect.north.toFixed(4));
-
-    comparatorCameraSyncLock = true;
-    log("debug", "lockComparatorFocusToCurrentView: Sync lock ACTIVATED");
-    
-    try {
-      // MORPH TO CORRECT SCENE MODE FIRST
-      log("debug", "lockComparatorFocusToCurrentView: About to morph left to " + (comparatorLeftLayerType === "dem" ? "3D" : "2D"));
-      log("debug", "lockComparatorFocusToCurrentView: About to morph right to " + (comparatorRightLayerType === "dem" ? "3D" : "2D"));
-      
-      setComparatorViewerModeByType(comparatorLeftViewer, comparatorLeftLayerType);
-      setComparatorViewerModeByType(comparatorRightViewer, comparatorRightLayerType);
-      
-      log("debug", "lockComparatorFocusToCurrentView: Morph complete, NOW setting camera views");
-
-      // NOW set view rectangles AFTER morphing to correct scene mode
-      if (comparatorLeftLayerType === "dem") {
-        log("debug", "lockComparatorFocusToCurrentView: Setting left viewer (DEM) tilted 3D view pitch=" + demPitch);
-        setComparatorDemCameraFromRectangle(comparatorLeftViewer, focusRect, comparatorLeftViewer.camera.heading);
-      } else {
-        log("debug", "lockComparatorFocusToCurrentView: Setting left viewer (IMAGERY) without pitch");
-        const leftDestination = resolveImagerySyncDestinationRectangle(focusRect, comparatorLeftViewer, sourceLayerType) || focusRect;
-        comparatorLeftViewer.camera.setView({ destination: leftDestination });
-      }
-
-      if (comparatorRightLayerType === "dem") {
-        log("debug", "lockComparatorFocusToCurrentView: Setting right viewer (DEM) tilted 3D view pitch=" + demPitch);
-        setComparatorDemCameraFromRectangle(comparatorRightViewer, focusRect, comparatorRightViewer.camera.heading);
-      } else {
-        log("debug", "lockComparatorFocusToCurrentView: Setting right viewer (IMAGERY) without pitch");
-        const rightDestination = resolveImagerySyncDestinationRectangle(focusRect, comparatorRightViewer, sourceLayerType) || focusRect;
-        comparatorRightViewer.camera.setView({ destination: rightDestination });
-      }
-      
-      log("debug", "lockComparatorFocusToCurrentView: Camera views set complete, keeping sync lock for 50ms");
-    } finally {
-      // Keep the lock active for a bit longer to prevent camera.changed events from overwriting our position
-      setTimeout(function () {
-        comparatorCameraSyncLock = false;
-        log("debug", "lockComparatorFocusToCurrentView: Sync lock RELEASED (after 50ms delay)");
-      }, 50);
-    }
-    
-    updateComparatorCenterReadout(sourceViewer);
+    log("debug", "Comparator camera sync is disabled; lockComparatorFocusToCurrentView ignored");
+    updateComparatorCenterReadout(getComparatorDemViewer() || comparatorLeftViewer);
     requestSceneRender();
-    log("debug", "lockComparatorFocusToCurrentView: COMPLETE");
   }
 
   function setComparatorViewerModeByType(targetViewer, layerType) {
@@ -563,7 +590,7 @@
     return new Cesium.Rectangle(west, south, east, north);
   }
 
-  function resolveImagerySyncDestinationRectangle(sourceRectangle, targetViewer, sourceLayerType) {
+  function resolveImagerySyncDestinationRectangle(sourceViewer, sourceRectangle, targetViewer, sourceLayerType) {
     if (!sourceRectangle) {
       return null;
     }
@@ -574,6 +601,7 @@
       ? targetViewer.camera.computeViewRectangle(targetViewer.scene.globe.ellipsoid)
       : null;
     if (!targetRectangle) {
+      log("debug", "Comparator imagery sync: targetRectangle is null, returning source");
       return sourceRectangle;
     }
 
@@ -582,60 +610,78 @@
     const targetWidth = rectangleWidthRadians(targetRectangle);
     const targetHeight = rectangleHeightRadians(targetRectangle);
     if (!Number.isFinite(sourceWidth) || !Number.isFinite(sourceHeight) || !Number.isFinite(targetWidth) || !Number.isFinite(targetHeight)) {
+      log("debug", `Comparator imagery sync: invalid dimensions src_w=${sourceWidth} src_h=${sourceHeight} tgt_w=${targetWidth} tgt_h=${targetHeight}, returning source`);
       return sourceRectangle;
     }
 
-    // In DEM 3D mode, computeViewRectangle can spike during tilt/zoom and force 2D panes to jump out.
-    const minScale = 0.82;
-    const maxScale = 1.22;
-    const unclampedScale = sourceWidth / targetWidth;
-    const clampedScale = Cesium.Math.clamp(unclampedScale, minScale, maxScale);
-    if (Math.abs(clampedScale - unclampedScale) < 1.0e-6) {
-      return sourceRectangle;
+    const sourceState = getComparatorSyncStateForViewer(sourceViewer);
+    const sourceCameraHeight = sourceViewer && sourceViewer.camera && sourceViewer.camera.positionCartographic && Number.isFinite(sourceViewer.camera.positionCartographic.height)
+      ? Number(sourceViewer.camera.positionCartographic.height)
+      : NaN;
+    const previousSourceCameraHeight = sourceState && Number.isFinite(sourceState.lastSourceCameraHeightM)
+      ? Number(sourceState.lastSourceCameraHeightM)
+      : NaN;
+    const rawZoomDelta = Number.isFinite(sourceCameraHeight) && Number.isFinite(previousSourceCameraHeight) && previousSourceCameraHeight > 1.0
+      ? sourceCameraHeight / previousSourceCameraHeight
+      : 1.0;
+
+    // Use incremental height deltas to avoid abrupt jumps from unstable tilted DEM rectangles.
+    const minZoomDelta = 0.96;
+    const maxZoomDelta = 1.04;
+    let zoomDelta = Cesium.Math.clamp(rawZoomDelta, minZoomDelta, maxZoomDelta);
+    if (!Number.isFinite(zoomDelta) || zoomDelta <= 0.0) {
+      zoomDelta = 1.0;
+    }
+    if (rawZoomDelta > 1.30 || rawZoomDelta < 0.70) {
+      log("debug", `Comparator imagery sync SPIKE detected rawZoomDelta=${rawZoomDelta.toFixed(6)}; freezing zoomDelta=1.0`);
+      zoomDelta = 1.0;
     }
 
-    const center = Cesium.Rectangle.center(sourceRectangle);
-    const width = targetWidth * clampedScale;
-    const height = targetHeight * clampedScale;
-    const resolved = buildRectangleFromCenter(center, width, height);
+    const absoluteScale = sourceWidth / targetWidth;
+
+    log("debug", `Comparator imagery sync START: sourceWidth=${sourceWidth.toFixed(6)} sourceHeight=${sourceHeight.toFixed(6)} targetWidth=${targetWidth.toFixed(6)} targetHeight=${targetHeight.toFixed(6)} sourceCamH=${Number.isFinite(sourceCameraHeight) ? sourceCameraHeight.toFixed(2) : "n/a"} prevSourceCamH=${Number.isFinite(previousSourceCameraHeight) ? previousSourceCameraHeight.toFixed(2) : "n/a"} rawZoomDelta=${rawZoomDelta.toFixed(6)} zoomDelta=${zoomDelta.toFixed(6)} absRatio=${absoluteScale.toFixed(6)}`);
+
+    const sourceCenterLonLat = getViewerCenterLonLat(sourceViewer);
+    const sourceCenter = sourceCenterLonLat
+      ? {
+          longitude: Cesium.Math.toRadians(Number(sourceCenterLonLat.lon)),
+          latitude: Cesium.Math.toRadians(Number(sourceCenterLonLat.lat)),
+        }
+      : Cesium.Rectangle.center(sourceRectangle);
+    const targetCenter = Cesium.Rectangle.center(targetRectangle);
+    const rawLonDelta = Cesium.Math.negativePiToPi(Number(sourceCenter.longitude) - Number(targetCenter.longitude));
+    const rawLatDelta = Number(sourceCenter.latitude) - Number(targetCenter.latitude);
+    const maxLonShift = targetWidth * 0.45;
+    const maxLatShift = targetHeight * 0.45;
+    const lonDelta = Cesium.Math.clamp(rawLonDelta, -maxLonShift, maxLonShift);
+    const latDelta = Cesium.Math.clamp(rawLatDelta, -maxLatShift, maxLatShift);
+
+    const destinationCenter = {
+      longitude: Cesium.Math.negativePiToPi(Number(targetCenter.longitude) + lonDelta),
+      latitude: Cesium.Math.clamp(Number(targetCenter.latitude) + latDelta, -Cesium.Math.PI_OVER_TWO + 1.0e-6, Cesium.Math.PI_OVER_TWO - 1.0e-6),
+    };
+    const destinationWidth = targetWidth * zoomDelta;
+    const destinationHeight = targetHeight * zoomDelta;
+    const resolved = buildRectangleFromCenter(destinationCenter, destinationWidth, destinationHeight);
     if (!resolved) {
+      log("debug", "Comparator imagery sync: buildRectangleFromCenter failed; returning source rectangle");
       return sourceRectangle;
     }
-    log("debug", `Comparator imagery sync clamped scale=${unclampedScale.toFixed(3)}->${clampedScale.toFixed(3)}`);
+
+    const resolvedWidth = rectangleWidthRadians(resolved);
+    log("debug", `Comparator imagery sync RESULT: sourceCenterMode=${sourceCenterLonLat ? "screen-center" : "view-rect"} rawLonDelta=${rawLonDelta.toFixed(6)} rawLatDelta=${rawLatDelta.toFixed(6)} lonDelta=${lonDelta.toFixed(6)} latDelta=${latDelta.toFixed(6)} resolvedWidth=${resolvedWidth.toFixed(6)} targetWidth=${targetWidth.toFixed(6)}`);
     return resolved;
   }
 
   function syncViewerCamera(sourceViewer, targetViewer) {
-    if (!sourceViewer || !targetViewer || comparatorCameraSyncLock) {
-      return;
-    }
-    syncComparatorTerrainProviders();
-    comparatorCameraSyncLock = true;
-    try {
-      const sourceCamera = sourceViewer.camera;
-      const sourceRectangle = sourceCamera.computeViewRectangle(sourceViewer.scene.globe.ellipsoid);
-      const sourceLayerType = getComparatorLayerTypeForViewer(sourceViewer);
-      const targetLayerType = getComparatorLayerTypeForViewer(targetViewer);
-      if (!sourceRectangle) {
-        return;
+    if (comparatorModeEnabled) {
+      log("debug", "Comparator camera sync is disabled; syncViewerCamera ignored");
+      if (sourceViewer) {
+        updateComparatorCenterReadout(sourceViewer);
       }
-      const sourceHeight = sourceCamera.positionCartographic && Number.isFinite(sourceCamera.positionCartographic.height)
-        ? Number(sourceCamera.positionCartographic.height)
-        : NaN;
-      const demSourceHeight = sourceLayerType === "dem" ? sourceHeight : NaN;
-      if (sourceRectangle) {
-        if (targetLayerType === "dem") {
-          setComparatorDemCameraFromRectangle(targetViewer, sourceRectangle, sourceCamera.heading, demSourceHeight);
-        } else {
-          const destinationRectangle = resolveImagerySyncDestinationRectangle(sourceRectangle, targetViewer, sourceLayerType) || sourceRectangle;
-          targetViewer.camera.setView({
-            destination: destinationRectangle,
-          });
-        }
+      if (targetViewer && targetViewer.scene) {
+        targetViewer.scene.requestRender();
       }
-      targetViewer.scene.requestRender();
-    } finally {
-      comparatorCameraSyncLock = false;
     }
   }
 
@@ -648,52 +694,21 @@
 
     comparatorLeftViewer.camera.changed.addEventListener(function () {
       if (comparatorModeEnabled) {
-        if (comparatorActiveInputViewer && comparatorActiveInputViewer !== comparatorLeftViewer) {
-          return;
-        }
-        markComparatorInputViewer(comparatorLeftViewer);
-        scheduleComparatorCameraSync(comparatorLeftViewer);
+        updateComparatorCenterReadout(comparatorLeftViewer);
       }
     });
     comparatorRightViewer.camera.changed.addEventListener(function () {
       if (comparatorModeEnabled) {
-        if (comparatorActiveInputViewer && comparatorActiveInputViewer !== comparatorRightViewer) {
-          return;
-        }
-        markComparatorInputViewer(comparatorRightViewer);
-        scheduleComparatorCameraSync(comparatorRightViewer);
+        updateComparatorCenterReadout(comparatorRightViewer);
       }
     });
 
     function attachCursorBridge(container, sourceViewer) {
-      container.addEventListener(
-        "wheel",
-        function () {
-          if (comparatorModeEnabled) {
-            markComparatorInputViewer(sourceViewer);
-          }
-        },
-        { passive: true }
-      );
-      container.addEventListener("mousedown", function () {
+      container.addEventListener("wheel", function () {
         if (comparatorModeEnabled) {
-          markComparatorInputViewer(sourceViewer);
+          updateComparatorCenterReadout(sourceViewer);
         }
-      });
-      container.addEventListener("pointerdown", function () {
-        if (comparatorModeEnabled) {
-          markComparatorInputViewer(sourceViewer);
-        }
-      });
-      container.addEventListener(
-        "touchstart",
-        function () {
-          if (comparatorModeEnabled) {
-            markComparatorInputViewer(sourceViewer);
-          }
-        },
-        { passive: true }
-      );
+      }, { passive: true });
       container.addEventListener("mousemove", function (event) {
         if (!comparatorModeEnabled || !sourceViewer) {
           return;
@@ -1070,21 +1085,25 @@
       const leftRect = rectangleFromBounds(leftDef.bounds || null);
       const rightRect = rectangleFromBounds(rightDef.bounds || null);
       if (leftRect) {
-        comparatorLeftViewer.camera.setView({ destination: leftRect });
+        focusComparatorViewerToRectangle(comparatorLeftViewer, comparatorLeftLayerType, leftRect);
       }
       if (rightRect) {
-        comparatorRightViewer.camera.setView({ destination: rightRect });
+        focusComparatorViewerToRectangle(comparatorRightViewer, comparatorRightLayerType, rightRect);
       }
-      syncViewerCamera(comparatorLeftViewer, comparatorRightViewer);
-    }
-    if (!preserveView) {
-      lockComparatorFocusToCurrentView();
     }
     updateComparatorCenterReadout(getComparatorDemViewer() || comparatorLeftViewer);
     setSelectedComparatorPane(comparatorSelectedPane, true);
 
     enforceComparatorDemLayerOrder("left", comparatorLeftViewer);
     enforceComparatorDemLayerOrder("right", comparatorRightViewer);
+    const leftRectAfterRefresh = comparatorLeftViewer.camera.computeViewRectangle(comparatorLeftViewer.scene.globe.ellipsoid);
+    const rightRectAfterRefresh = comparatorRightViewer.camera.computeViewRectangle(comparatorRightViewer.scene.globe.ellipsoid);
+    if (leftRectAfterRefresh) {
+      recordComparatorSourceRectangle(comparatorLeftViewer, leftRectAfterRefresh, "refreshComparatorLayers-left");
+    }
+    if (rightRectAfterRefresh) {
+      recordComparatorSourceRectangle(comparatorRightViewer, rightRectAfterRefresh, "refreshComparatorLayers-right");
+    }
     requestSceneRender();
   }
 
@@ -1387,6 +1406,7 @@
     const next = Boolean(enabled);
     swipeComparatorEnabled = next;
     comparatorModeEnabled = next;
+    resetComparatorCameraSyncState(next ? "comparator-enabled" : "comparator-disabled");
     if (!next) {
       cancelComparatorCameraSyncSchedule();
     }
@@ -1422,16 +1442,15 @@
       const bounds = activeTileBounds || lastLoadedBounds;
       if (bounds && comparatorLeftViewer && comparatorRightViewer) {
         const rect = Cesium.Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north);
-        comparatorLeftViewer.camera.setView({ destination: rect });
-        syncViewerCamera(comparatorLeftViewer, comparatorRightViewer);
+        focusComparatorViewerToRectangle(comparatorLeftViewer, comparatorLeftLayerType, rect);
+        focusComparatorViewerToRectangle(comparatorRightViewer, comparatorRightLayerType, rect);
       }
-      lockComparatorFocusToCurrentView();
       updateComparatorCenterReadout(getComparatorDemViewer() || comparatorLeftViewer);
       notifyComparatorPaneState(comparatorSelectedPane);
       if (candidateCount < 2) {
         setStatus("Comparator enabled. Select two visible layers to render left and right panes.");
       } else {
-        setStatus("Comparator enabled. Dual pane globes are synchronized.");
+        setStatus("Comparator enabled. Panes are independently controllable.");
       }
     } else {
       setComparatorWindowsVisible(false);
@@ -4374,8 +4393,7 @@
         viewer.camera.rotateRight(Cesium.Math.toRadians(degrees));
       }
       if (comparatorModeEnabled && comparatorLeftViewer && comparatorRightViewer) {
-        log("debug", "rotateCamera: Calling lockComparatorFocusToCurrentView");
-        lockComparatorFocusToCurrentView();
+        log("debug", "rotateCamera: comparator panes are independent; no camera sync applied");
       }
       log("debug", "Rotate camera degrees=" + degrees);
     },

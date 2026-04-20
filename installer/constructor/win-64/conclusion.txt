@@ -1,0 +1,8 @@
+Installation completed.
+
+Launchers created in install directory:
+- offline-gis-desktop-client.bat
+- offline-gis-desktop-server.bat
+- offline-gis-api.bat
+
+If needed, install Microsoft Visual C++ 2015-2022 Redistributable (x64).

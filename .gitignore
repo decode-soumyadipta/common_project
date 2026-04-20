@@ -6,9 +6,11 @@ __pycache__/
 # Packaging/build artifacts
 build/
 dist/
+dist/windows-installer/
 *.egg-info/
 .eggs/
 pip-wheel-metadata/
+installer/constructor/win-64/payload/wheels/*.whl
 
 # Test and tooling caches
 .pytest_cache/
