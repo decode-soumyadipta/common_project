@@ -21,7 +21,11 @@ function Run-Step {
         [scriptblock]$Action
     )
     Write-Host "==> $Message" -ForegroundColor Cyan
+    $global:LASTEXITCODE = 0
     & $Action
+    if ($global:LASTEXITCODE -ne 0) {
+        throw "Step failed with exit code $($global:LASTEXITCODE): $Message"
+    }
 }
 
 function Resolve-Mode {
@@ -72,12 +76,12 @@ if ($selectedMode -eq "conda") {
         }
     } else {
         Run-Step -Message "Ensuring conda Qt runtime packages" -Action {
-            conda install -n $CondaEnvName -y -c conda-forge pyside6 pyside6-webengine
+            conda install -n $CondaEnvName -y -c conda-forge pyside6 pyside6-addons
         }
     }
 
-    Run-Step -Message "Ensuring explicit Qt WebEngine packages in conda env" -Action {
-        conda install -n $CondaEnvName -y -c conda-forge pyside6 pyside6-webengine
+    Run-Step -Message "Ensuring explicit Qt runtime packages in conda env" -Action {
+        conda install -n $CondaEnvName -y -c conda-forge pyside6 pyside6-addons
     }
 
     Run-Step -Message "Upgrading pip in conda env" -Action {
@@ -88,8 +92,18 @@ if ($selectedMode -eq "conda") {
         conda run -n $CondaEnvName python -m pip install -e .[geo,dev]
     }
 
-    Run-Step -Message "Verifying Qt WebEngine import in conda env" -Action {
-        conda run -n $CondaEnvName python -c "from PySide6.QtWebEngineWidgets import QWebEngineView; print('QtWebEngine OK')"
+    $qtCheckCode = "from PySide6.QtWebEngineWidgets import QWebEngineView; print('QtWebEngine OK')"
+    Write-Host "==> Verifying Qt WebEngine import in conda env" -ForegroundColor Cyan
+    $global:LASTEXITCODE = 0
+    conda run -n $CondaEnvName python -c $qtCheckCode
+    if ($global:LASTEXITCODE -ne 0) {
+        Write-Host "QtWebEngine import failed after pyside6-addons install; trying pyside6-webengine fallback..." -ForegroundColor Yellow
+        Run-Step -Message "Installing fallback package pyside6-webengine in conda env" -Action {
+            conda install -n $CondaEnvName -y -c conda-forge pyside6-webengine
+        }
+        Run-Step -Message "Re-verifying Qt WebEngine import in conda env" -Action {
+            conda run -n $CondaEnvName python -c $qtCheckCode
+        }
     }
 
     Write-Host "" 
