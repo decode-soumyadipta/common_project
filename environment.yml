@@ -14,7 +14,7 @@ dependencies:
   - pyproj
   - pytest
   - httpx
-  - pyside6>=6.7,<7.0
   - pip:
+      - PySide6>=6.7,<7.0
       - titiler.application>=0.21,<1.0
       - -e .

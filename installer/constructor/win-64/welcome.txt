@@ -1,8 +1,0 @@
-Offline 3D GIS Desktop Installer
-
-This installer creates a self-contained Windows conda environment with Qt WebEngine runtime and the Offline 3D GIS desktop app.
-
-You can run the app using:
-- offline-gis-desktop-client.bat
-- offline-gis-desktop-server.bat
-- offline-gis-api.bat
