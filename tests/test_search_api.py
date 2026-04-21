@@ -2,8 +2,8 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
-from offline_gis_app.api.app import create_app
-from offline_gis_app.db.catalog import CatalogRepository
+from offline_gis_app.server_backend.app import create_app
+from offline_gis_app.server_backend.catalog.catalog_repository import CatalogRepository
 from offline_gis_app.utils.geometry import Bounds
 
 

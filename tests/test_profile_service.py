@@ -5,7 +5,7 @@ import pytest
 import rasterio
 from rasterio.transform import from_origin
 
-from offline_gis_app.services.profile_service import sample_profile
+from offline_gis_app.server_ingestion.services.profile_service import sample_profile
 
 
 def test_sample_profile_reprojects_from_wgs84_to_dataset_crs(tmp_path: Path):

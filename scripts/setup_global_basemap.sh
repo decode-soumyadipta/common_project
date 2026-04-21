@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TARGET_ROOT="$ROOT_DIR/src/offline_gis_app/desktop/web_assets/basemap/xyz"
+TARGET_ROOT="$ROOT_DIR/src/offline_gis_app/client_frontend/web_assets/basemap/xyz"
 SOURCE_URL="${BASE_URL:-https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile}"
 SOURCE_URL="${SOURCE_URL//$'\r'/}"
 CONCURRENCY="${CONCURRENCY:-12}"

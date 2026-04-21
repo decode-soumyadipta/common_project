@@ -20,8 +20,8 @@ dependencies = [
 
 [project.scripts]
 offline-gis-cli = "offline_gis_app.cli:main"
-offline-gis-server = "offline_gis_app.desktop.apps.server_app:main"
-offline-gis-client = "offline_gis_app.desktop.apps.client_app:main"
+offline-gis-server = "offline_gis_app.client_backend.desktop.apps.server_app:main"
+offline-gis-client = "offline_gis_app.client_backend.desktop.apps.client_app:main"
 
 [project.optional-dependencies]
 desktop = [
@@ -46,6 +46,13 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+offline_gis_app = [
+  "client_frontend/web_assets/**/*",
+  "client_frontend/icons/*",
+  "db/migrations/*",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -4,9 +4,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from offline_gis_app.db.base import Base
-from offline_gis_app.db.catalog import CatalogRepository
+from offline_gis_app.server_backend.catalog.catalog_repository import CatalogRepository
 from offline_gis_app.db.models import RasterKind
-from offline_gis_app.services.metadata_models import RasterMetadata
+from offline_gis_app.server_ingestion.services.metadata_models import RasterMetadata
 from offline_gis_app.utils.geometry import Bounds
 
 

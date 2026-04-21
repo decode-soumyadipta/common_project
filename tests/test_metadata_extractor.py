@@ -4,7 +4,7 @@ import numpy as np
 import rasterio
 from rasterio.transform import from_origin
 
-from offline_gis_app.services.metadata_extractor import extract_metadata
+from offline_gis_app.server_ingestion.services.metadata_extractor import extract_metadata
 
 
 def test_extract_metadata_transforms_bounds_to_wgs84(tmp_path: Path):

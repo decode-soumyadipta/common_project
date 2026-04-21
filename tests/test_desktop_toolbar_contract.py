@@ -5,9 +5,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MAIN_WINDOW_PATH = ROOT / "src/offline_gis_app/desktop/main_window.py"
-CONTROLLER_PATH = ROOT / "src/offline_gis_app/desktop/controller.py"
-ICON_REGISTRY_PATH = ROOT / "src/offline_gis_app/desktop/icon_registry.py"
+MAIN_WINDOW_PATH = ROOT / "src/offline_gis_app/client_backend/desktop/main_window.py"
+CONTROLLER_PATH = ROOT / "src/offline_gis_app/client_backend/desktop/controller.py"
+ICON_REGISTRY_PATH = ROOT / "src/offline_gis_app/client_backend/desktop/icon_registry.py"
 
 
 def _module_ast(path: Path) -> ast.Module:

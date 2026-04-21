@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TARGET_DIR="$ROOT_DIR/src/offline_gis_app/desktop/web_assets/cesium"
+TARGET_DIR="$ROOT_DIR/src/offline_gis_app/client_frontend/web_assets/cesium"
 VERSION="${1:-1.133.1}"
 
 TMP_DIR="$(mktemp -d)"

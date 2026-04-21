@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TARGET_QUANTIZED_DIR="$ROOT_DIR/src/offline_gis_app/desktop/web_assets/basemap/terrain"
-TARGET_TERRAIN_RGB_DIR="$ROOT_DIR/src/offline_gis_app/desktop/web_assets/basemap/terrain-rgb"
+TARGET_QUANTIZED_DIR="$ROOT_DIR/src/offline_gis_app/client_frontend/web_assets/basemap/terrain"
+TARGET_TERRAIN_RGB_DIR="$ROOT_DIR/src/offline_gis_app/client_frontend/web_assets/basemap/terrain-rgb"
 TERRAIN_RGB_SOURCE="${TERRAIN_RGB_SOURCE:-https://s3.amazonaws.com/elevation-tiles-prod/terrarium}"
 TERRAIN_RGB_SOURCE="${TERRAIN_RGB_SOURCE//$'\r'/}"
 CONCURRENCY="${CONCURRENCY:-12}"

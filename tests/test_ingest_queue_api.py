@@ -1,7 +1,7 @@
-from offline_gis_app.services.ingest_queue_service import IngestJobView
+from offline_gis_app.server_ingestion.services.ingest_queue_service import IngestJobView
 from fastapi.testclient import TestClient
 
-from offline_gis_app.api.app import create_app
+from offline_gis_app.server_backend.app import create_app
 
 
 def test_enqueue_ingest_job(monkeypatch):
@@ -23,7 +23,7 @@ def test_enqueue_ingest_job(monkeypatch):
             last_error=None,
         )
 
-    monkeypatch.setattr("offline_gis_app.api.routes.ingest.ingest_queue_service.enqueue_paths", fake_enqueue)
+    monkeypatch.setattr("offline_gis_app.server_backend.routes.ingest.ingest_queue_service.enqueue_paths", fake_enqueue)
 
     response = client.post("/ingest/queue", json={"paths": ["/tmp/a.tif"]})
     assert response.status_code == 200
@@ -35,7 +35,7 @@ def test_get_ingest_job(monkeypatch):
     client = TestClient(app)
 
     monkeypatch.setattr(
-        "offline_gis_app.api.routes.ingest.ingest_queue_service.get_job",
+        "offline_gis_app.server_backend.routes.ingest.ingest_queue_service.get_job",
         lambda job_id: IngestJobView(
             id=job_id,
             status="running",
@@ -60,7 +60,7 @@ def test_resume_ingest_job(monkeypatch):
     client = TestClient(app)
 
     monkeypatch.setattr(
-        "offline_gis_app.api.routes.ingest.ingest_queue_service.resume_job",
+        "offline_gis_app.server_backend.routes.ingest.ingest_queue_service.resume_job",
         lambda job_id: IngestJobView(
             id=job_id,
             status="queued",

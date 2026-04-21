@@ -1,13 +1,13 @@
 from fastapi.testclient import TestClient
 
-from offline_gis_app.api.app import create_app
+from offline_gis_app.server_backend.app import create_app
 
 
 def test_profile_endpoint(monkeypatch):
     client = TestClient(create_app())
 
     monkeypatch.setattr(
-        "offline_gis_app.api.routes.profile.sample_profile",
+        "offline_gis_app.server_backend.routes.profile.sample_profile",
         lambda *_args, **_kwargs: [1.0, 2.0, 3.0],
     )
 

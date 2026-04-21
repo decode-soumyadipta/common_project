@@ -48,24 +48,24 @@ offline_gis.db
 .DS_Store
 
 # Generated Cesium runtime bundle (recreate via setup script)
-src/offline_gis_app/desktop/web_assets/cesium/
+src/offline_gis_app/client_frontend/web_assets/cesium/
 
 # Generated offline world tile cache (recreate via setup script)
-src/offline_gis_app/desktop/web_assets/basemap/xyz/
+src/offline_gis_app/client_frontend/web_assets/basemap/xyz/
 
 # Generated terrain-rgb cache (recreate via setup script)
-src/offline_gis_app/desktop/web_assets/basemap/terrain-rgb/
+src/offline_gis_app/client_frontend/web_assets/basemap/terrain-rgb/
 
 # Generated quantized-mesh terrain pack (optional local install)
-src/offline_gis_app/desktop/web_assets/basemap/terrain/
+src/offline_gis_app/client_frontend/web_assets/basemap/terrain/
 
 # Legacy/experimental offline 3D-tiles assets (not used by current runtime path)
-src/offline_gis_app/desktop/web_assets/basemap/3dtiles/
+src/offline_gis_app/client_frontend/web_assets/basemap/3dtiles/
 
 # Optional boundary overlay data bundles (can be re-downloaded/rebuilt)
-src/offline_gis_app/desktop/web_assets/basemap/boundaries/
+src/offline_gis_app/client_frontend/web_assets/basemap/boundaries/
 
 
 grep_3dtiles.txt
 GIS_APP_SPEC.md
-src/offline_gis_app/desktop/icons/README.md
+src/offline_gis_app/client_frontend/icons/README.md
