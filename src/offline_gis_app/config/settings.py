@@ -15,6 +15,13 @@ class Settings(BaseSettings):
     max_ingest_workers: int = 5
     ingest_checkpoint_interval: int = 1
     ingest_item_max_retries: int = 3
+    ingest_memory_budget_mb: int = 512
+    ingest_window_chunk_size: int = 1024
+    ingest_enable_cog_conversion: bool = True
+    ingest_cog_overwrite: bool = False
+    cog_blocksize: int = 512
+    cog_compression: str = "LZW"
+    cog_overview_resampling: str = "average"
     titiler_base_url: str = "http://127.0.0.1:8081"
     titiler_tile_matrix_set_id: str = "WebMercatorQuad"
 

@@ -53,6 +53,7 @@ class IngestJobResponse(BaseModel):
     progress_percent: int = 0
     current_step: str | None = None
     current_item_path: str | None = None
+    current_item_stage: str | None = None
     elapsed_seconds: float | None = None
     started_at: str | None = None
     completed_at: str | None = None

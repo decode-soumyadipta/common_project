@@ -186,8 +186,13 @@ class MainWindow(QMainWindow):
             self._set_visualization_tools_visible(bool(self.visualization_tools_switch.isChecked()))
             self._set_measurement_tools_visible(bool(self.measurement_tools_switch.isChecked()))
 
-        html_path = Path(__file__).resolve().parents[2] / "client_frontend" / "web_assets" / "index.html"
-        html_url = QUrl.fromLocalFile(str(html_path.resolve()))
+        base_path = Path(__file__).resolve().parents[2] / "client_frontend" / "web_assets" / "index.html"
+
+        if not base_path.exists():
+            # Fallback: try alternative path structure
+            base_path = Path(__file__).resolve().parents[3] / "src" / "offline_gis_app" / "client_frontend" / "web_assets" / "index.html"
+
+        html_url = QUrl.fromLocalFile(str(base_path.resolve()))
         html_url.setQuery(f"v={int(time.time())}")
         self.web_view.setUrl(html_url)
 

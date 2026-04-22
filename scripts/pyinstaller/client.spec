@@ -23,7 +23,24 @@ datas = collect_data_files(
 )
 
 hiddenimports = []
-hiddenimports += collect_submodules("qtpy")
+hiddenimports += [
+    "PyQt5",
+    "PyQt5.QtWebEngineWidgets",
+    "PyQt5.QtWebEngineCore",
+    "PyQt5.QtWebChannel",
+    "qtpy",
+    "qtpy.QtCore",
+    "qtpy.QtGui",
+    "qtpy.QtWidgets",
+    "qtpy.QtWebEngineWidgets",
+    "qtpy.QtWebChannel",
+]
+hiddenimports += collect_submodules("fastapi")
+hiddenimports += collect_submodules("starlette")
+hiddenimports += collect_submodules("uvicorn")
+hiddenimports += collect_submodules("pydantic")
+hiddenimports += collect_submodules("sqlalchemy")
+hiddenimports += collect_submodules("typing_extensions")
 
 
 a = Analysis(
@@ -35,7 +52,11 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=[
+        "PyQt6",
+        "PySide2",
+        "PySide6",
+    ],
     noarchive=False,
 )
 pyz = PYZ(a.pure)
@@ -52,6 +73,6 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=False,
+    console=True,
     disable_windowed_traceback=False,
 )

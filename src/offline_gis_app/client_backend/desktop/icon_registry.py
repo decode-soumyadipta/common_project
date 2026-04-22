@@ -26,8 +26,8 @@ ICON_MANIFEST: dict[str, str] = {
     # Measurement tools
     "measure_distance": "mActionMeasure.svg",
     "measure_area": "mActionMeasureArea.svg",
-    "elevation_profile": "mActionMapIdentification.svg",
-    "volume": "mActionMeasureArea.svg",
+    "elevation_profile": "mActionOpenTable.svg",
+    "volume": "mActionCalculateField.svg",
     "viewshed": "mActionIdentify.svg",
     "slope_aspect": "mActionOptions.svg",
     "clear_last": "mActionUndo.svg",
@@ -49,7 +49,7 @@ ICON_MANIFEST: dict[str, str] = {
     "zoom_layer": "mActionZoomToLayer.svg",
     "zoom_selection": "mActionZoomToSelected.svg",
     "identify": "mActionIdentify.svg",
-    "north_arrow": "mActionMapIdentification.svg",
+    "north_arrow": "mActionScaleBar.svg",
     # Layers/data
     "open_raster": "mActionAddRasterLayer.svg",
     "open_dem": "mActionAddOgrLayer.svg",
@@ -65,7 +65,7 @@ ICON_MANIFEST: dict[str, str] = {
     "save_project_as": "mActionFileSaveAs.svg",
     "export_gpkg": "mActionFileSaveAs.svg",
     "export_csv": "mActionOpenTable.svg",
-    "export_profile_csv": "mActionOpenTable.svg",
+    "export_profile_csv": "mActionSaveMapAsImage.svg",
     "export_geotiff": "mActionSaveMapAsImage.svg",
     "print_layout": "mActionSaveMapAsImage.svg",
     # App/ui

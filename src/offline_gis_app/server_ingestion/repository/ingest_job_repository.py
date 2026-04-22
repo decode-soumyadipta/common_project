@@ -33,6 +33,8 @@ class IngestJobRepository:
                 file_path=path,
                 status=IngestJobItemStatus.PENDING,
                 attempts=0,
+                checkpoint_stage=None,
+                stage_attempt=0,
             )
             self._session.add(item)
 
@@ -106,12 +108,18 @@ class IngestJobRepository:
         status: IngestJobItemStatus,
         *,
         attempts: int | None = None,
+        stage_attempt: int | None = None,
+        checkpoint_stage: str | None = None,
         last_error: str | None = None,
         asset_id: str | None = None,
     ) -> None:
         item.status = status
         if attempts is not None:
             item.attempts = attempts
+        if stage_attempt is not None:
+            item.stage_attempt = stage_attempt
+        if checkpoint_stage is not None:
+            item.checkpoint_stage = checkpoint_stage
         item.last_error = last_error
         item.asset_id = asset_id
         item.updated_at = datetime.utcnow()
@@ -124,6 +132,8 @@ class IngestJobRepository:
         status: IngestJobItemStatus,
         *,
         attempts: int | None = None,
+        stage_attempt: int | None = None,
+        checkpoint_stage: str | None = None,
         last_error: str | None = None,
         asset_id: str | None = None,
     ) -> None:
@@ -134,9 +144,22 @@ class IngestJobRepository:
             item,
             status,
             attempts=attempts,
+            stage_attempt=stage_attempt,
+            checkpoint_stage=checkpoint_stage,
             last_error=last_error,
             asset_id=asset_id,
         )
+
+    def mark_item_stage_checkpoint(self, item_id: str, stage_name: str) -> None:
+        item = self.get_item(item_id)
+        if item is None:
+            return
+        item.checkpoint_stage = stage_name
+        item.stage_attempt = int(item.stage_attempt or 0) + 1
+        item.last_checkpoint_at = datetime.utcnow()
+        item.updated_at = datetime.utcnow()
+        self._session.add(item)
+        self._session.commit()
 
     def refresh_job_counters(self, job: IngestJob) -> None:
         stmt = select(IngestJobItem.status).where(IngestJobItem.job_id == job.id)

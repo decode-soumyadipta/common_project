@@ -102,25 +102,54 @@ class DesktopApiClient:
         return response.json()
 
     def get_tilejson(self, file_path: str) -> dict[str, Any]:
-        encoded_path = quote(file_path, safe="/:")
+        encoded_path = quote(self._to_file_url(file_path), safe="/:")
         endpoint = (
             f"{self._titiler_base}/cog/{settings.titiler_tile_matrix_set_id}/tilejson.json"
-            f"?url=file://{encoded_path}"
+            f"?url={encoded_path}"
         )
         response = httpx.get(endpoint, timeout=20.0)
         response.raise_for_status()
         return response.json()
 
     def get_cog_info(self, file_path: str) -> dict[str, Any]:
-        encoded_path = quote(file_path, safe="/:")
-        endpoint = f"{self._titiler_base}/cog/info?url=file://{encoded_path}"
+        encoded_path = quote(self._to_file_url(file_path), safe="/:")
+        endpoint = f"{self._titiler_base}/cog/info?url={encoded_path}"
         response = httpx.get(endpoint, timeout=20.0)
         response.raise_for_status()
         return response.json()
 
     def get_cog_statistics(self, file_path: str) -> dict[str, Any]:
-        encoded_path = quote(file_path, safe="/:")
-        endpoint = f"{self._titiler_base}/cog/statistics?url=file://{encoded_path}"
+        encoded_path = quote(self._to_file_url(file_path), safe="/:")
+        endpoint = f"{self._titiler_base}/cog/statistics?url={encoded_path}"
         response = httpx.get(endpoint, timeout=30.0)
         response.raise_for_status()
         return response.json()
+
+    @staticmethod
+    def _to_file_url(file_path: str) -> str:
+        normalized = file_path.strip().replace("\\", "/")
+        if not normalized:
+            raise ValueError("file_path cannot be empty")
+
+        if normalized.startswith("//"):
+            tail = normalized[2:]
+            while "//" in tail:
+                tail = tail.replace("//", "/")
+            normalized = "//" + tail
+        else:
+            while "//" in normalized:
+                normalized = normalized.replace("//", "/")
+
+        if normalized.startswith("file://"):
+            return normalized
+
+        if len(normalized) >= 3 and normalized[1] == ":" and normalized[2] == "/":
+            return f"file:///{normalized}"
+
+        if normalized.startswith("//"):
+            return f"file:{normalized}"
+
+        if normalized.startswith("/"):
+            return f"file://{normalized}"
+
+        return f"file:///{normalized}"

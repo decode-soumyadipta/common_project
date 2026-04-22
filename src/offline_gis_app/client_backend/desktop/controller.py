@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 
 import httpx
 from pyproj import Transformer
-from qtpy.QtCore import QObject, QRunnable, QSignalBlocker, QThreadPool, QTimer, Qt, Signal
+from qtpy.QtCore import QSignalBlocker, QThreadPool, QTimer, Qt
 from qtpy.QtWebEngineWidgets import QWebEngineView
 from qtpy.QtWidgets import QFileDialog
 
@@ -20,10 +20,16 @@ from offline_gis_app.client_backend.desktop.api_client import DesktopApiClient
 from offline_gis_app.client_backend.desktop.api_server_manager import ApiServerManager
 from offline_gis_app.client_backend.desktop.app_mode import DesktopAppMode
 from offline_gis_app.client_backend.desktop.bridge import WebBridge
+from offline_gis_app.client_backend.desktop.coordinators import (
+    MeasurementCoordinator,
+    SearchCoordinator,
+    VisualizationCoordinator,
+)
 from offline_gis_app.client_backend.desktop.control_panel import ControlPanel
+from offline_gis_app.client_backend.desktop.performance_service import DesktopPerformanceService
 from offline_gis_app.client_backend.desktop.state import DesktopState
 from offline_gis_app.client_backend.desktop.titiler_manager import TiTilerManager
-from offline_gis_app.client_backend.tools.scientific_measurements import (
+from offline_gis_app.server_ingestion.services.scientific_measurements import (
     compute_slope_aspect,
     compute_viewshed,
     compute_volume,
@@ -32,25 +38,6 @@ from offline_gis_app.client_backend.tools.scientific_measurements import (
 )
 from offline_gis_app.server_ingestion.services.metadata_extractor import MetadataExtractorError, extract_metadata
 from offline_gis_app.server_ingestion.services.tile_url_builder import build_xyz_url
-
-
-class _MeasurementWorkerSignals(QObject):
-    finished = Signal(str, object, str)
-
-
-class _MeasurementWorker(QRunnable):
-    def __init__(self, name: str, task: Callable[[], object]):
-        super().__init__()
-        self._name = name
-        self._task = task
-        self.signals = _MeasurementWorkerSignals()
-
-    def run(self) -> None:  # type: ignore[override]
-        try:
-            result = self._task()
-            self.signals.finished.emit(self._name, result, "")
-        except Exception as exc:  # pragma: no cover - runtime defensive branch
-            self.signals.finished.emit(self._name, None, str(exc))
 
 
 class DesktopController:
@@ -75,6 +62,7 @@ class DesktopController:
         self.panel.api_client = self.api  # Set API client on panel for asset listing
         self.api_server = api_server_manager or ApiServerManager(base_url=self.api.base_url)
         self.titiler = titiler_manager or TiTilerManager()
+        self.performance = DesktopPerformanceService()
         self.state = DesktopState()
         self._logger = logging.getLogger("desktop.controller")
         self._toolbar_context_callback = toolbar_context_callback
@@ -115,15 +103,27 @@ class DesktopController:
         self._ingest_poll_timer.timeout.connect(self._poll_active_ingest_job)
         self._last_ingest_step: str | None = None
         self._last_ingest_status: str | None = None
+        self._search = SearchCoordinator(self)
+        self._viz = VisualizationCoordinator(self)
+        self._measure = MeasurementCoordinator(self)
         self._logger.info("Controller initialized mode=%s", self.app_mode.value)
         self._connect_signals()
         self._apply_display_control_mode()
-        self._prepare_api_runtime()
-        self.refresh_assets()
+        # Defer startup network and process work so the main window can render
+        # immediately instead of appearing as a silent/no-window launch.
+        QTimer.singleShot(0, self._bootstrap_startup_tasks)
 
-        # Refresh uploaded assets list on server mode
-        if self.app_mode == DesktopAppMode.SERVER:
-            self.panel.refresh_uploaded_assets()
+    def _bootstrap_startup_tasks(self) -> None:
+        try:
+            self._prepare_api_runtime()
+            self.refresh_assets()
+
+            # Refresh uploaded assets list on server mode
+            if self.app_mode == DesktopAppMode.SERVER:
+                self.panel.refresh_uploaded_assets()
+        except Exception:  # pragma: no cover - runtime defensive branch
+            self.panel.log("Startup initialization failed. Check logs for details.")
+            self._logger.exception("Deferred startup tasks failed")
 
     def _prepare_api_runtime(self) -> None:
         self._offline_endpoints_valid = self._validate_offline_endpoints()
@@ -280,71 +280,10 @@ class DesktopController:
         self._ingest_poll_timer.start()
 
     def search_assets_by_coordinate(self) -> None:
-        if not self._require_offline_endpoints("Coordinate search"):
-            return
-        lon = float(self.panel.search_coord_lon.value())
-        lat = float(self.panel.search_coord_lat.value())
-        buffer_meters = float(self.panel.search_buffer_m.value())
-        self.panel.set_search_busy(True, "Searching around coordinate...", progress=8)
-        try:
-            self.panel.set_search_busy(True, "Preparing query...", progress=18)
-            if buffer_meters <= 0:
-                assets = self.api.search_assets_by_point(lon=lon, lat=lat)
-            else:
-                polygon_points = self._coordinate_buffer_polygon(lon, lat, buffer_meters)
-                assets = self.api.search_assets_by_polygon(points=polygon_points, buffer_meters=0.0)
-            self.panel.set_search_busy(True, "Rendering results...", progress=78)
-            self._apply_search_results(
-                assets,
-                label=f"Coordinate search ({lon:.6f}, {lat:.6f}) buffer={int(buffer_meters)}m",
-            )
-            self.panel.set_search_busy(True, "Finalizing...", progress=97)
-        except httpx.HTTPError as exc:
-            self._handle_api_error("Coordinate search", exc)
-            return
-        finally:
-            self.panel.set_search_busy(False)
+        self._search.search_assets_by_coordinate()
 
     def search_assets_from_drawn_geometry(self) -> None:
-        if not self._require_offline_endpoints("Drawn geometry search"):
-            self.panel.set_search_busy(False)
-            return
-        geometry_type = self.state.search_geometry_type
-        payload = self.state.search_geometry_payload or {}
-        if geometry_type is None:
-            self.panel.log("Draw a search geometry first.")
-            self.panel.set_search_busy(False)
-            return
-
-        if geometry_type != "polygon":
-            self.panel.log("Only polygon draw search is enabled.")
-            self.panel.set_search_busy(False)
-            return
-
-        self.panel.set_search_busy(True, "Searching polygon overlap...", progress=12)
-        try:
-            self.panel.set_search_busy(True, "Preparing polygon query...", progress=24)
-            points = [
-                (float(item["lon"]), float(item["lat"]))
-                for item in payload.get("points", [])
-            ]
-            self.panel.set_search_busy(True, "Querying catalog...", progress=42)
-            assets = self.api.search_assets_by_polygon(
-                points=points,
-                buffer_meters=float(self.panel.search_buffer_m.value()),
-            )
-            self.panel.set_search_busy(True, "Rendering results...", progress=80)
-            self._apply_search_results(assets, label=f"Drawn {geometry_type} search")
-            self.panel.set_search_busy(True, "Finalizing...", progress=97)
-        except (KeyError, ValueError, TypeError):
-            self.panel.log("Invalid drawn geometry payload.")
-            self._logger.exception("Invalid drawn geometry payload=%s", payload)
-            return
-        except httpx.HTTPError as exc:
-            self._handle_api_error("Drawn geometry search", exc)
-            return
-        finally:
-            self.panel.set_search_busy(False)
+        self._search.search_assets_from_drawn_geometry()
 
     def _set_search_draw_button_checked(self, checked: bool) -> None:
         button = self.panel.search_draw_polygon_btn
@@ -354,35 +293,13 @@ class DesktopController:
             button.blockSignals(False)
 
     def set_search_draw_mode(self, enabled: bool | None = None) -> None:
-        next_state = True if enabled is None else bool(enabled)
-        if not next_state:
-            self.clear_search_geometry()
-            self.panel.log("Polygon draw disabled.")
-            self._set_search_draw_button_checked(False)
-            return
-        if self._distance_measure_mode_enabled:
-            self._distance_measure_mode_enabled = False
-            self._run_js_call("setDistanceMeasureMode", False)
-        if self._add_point_mode_enabled:
-            self._add_point_mode_enabled = False
-            self._set_annotation_overlay_visible(False)
-        if self._shadow_height_mode_enabled:
-            self._shadow_height_mode_enabled = False
-        self._pan_mode_enabled = False
-        self._run_js_call("setSearchDrawMode", "polygon")
-        self._set_search_draw_button_checked(True)
-        self.panel.log("Polygon draw mode enabled.")
+        self._search.set_search_draw_mode(enabled)
 
     def finish_search_polygon(self) -> None:
-        self._run_js_call("finishSearchPolygon")
-        self._set_search_draw_button_checked(False)
+        self._search.finish_search_polygon()
 
     def clear_search_geometry(self) -> None:
-        self._run_js_call("clearSearchGeometry")
-        self.state.search_geometry_type = None
-        self.state.search_geometry_payload = None
-        self._set_search_draw_button_checked(False)
-        self.panel.log("Search geometry cleared.")
+        self._search.clear_search_geometry()
 
     def _set_annotation_overlay_visible(self, visible: bool) -> None:
         self._run_js_call("setAnnotationVisibility", bool(visible))
@@ -400,17 +317,7 @@ class DesktopController:
         ]
 
     def on_search_geometry(self, geometry_type: str, payload_json: str) -> None:
-        try:
-            payload = json.loads(payload_json)
-        except json.JSONDecodeError:
-            self._logger.error("Invalid geometry payload JSON: %s", payload_json)
-            return
-        self.state.search_geometry_type = geometry_type
-        self.state.search_geometry_payload = payload
-        self.panel.log(f"Search geometry updated: type={geometry_type}")
-        if geometry_type == "polygon":
-            self._update_coordinate_inputs_from_polygon(payload)
-            self.panel.log("Polygon ready. Click Search to run overlap scan.")
+        self._search.on_search_geometry(geometry_type, payload_json)
 
     @staticmethod
     def _set_slider_from_float_value(slider, raw_value: object, scale: float = 1.0) -> None:
@@ -723,7 +630,6 @@ class DesktopController:
         self.state.selected_asset = preview_asset
         bounds = self._asset_bounds(preview_asset)
         options = self._layer_options(preview_asset, bounds)
-        self.panel.rgb_view_mode_combo.setCurrentIndex(0)
         self._set_layer_loading(True, f"Previewing {metadata.file_name}...")
         try:
             layer_added = self._add_layer(preview_asset, options)
@@ -776,8 +682,18 @@ class DesktopController:
         if self.app_mode == DesktopAppMode.SERVER:
             self.panel.refresh_uploaded_assets()
         shown = self.panel.assets_combo.count()
+        recommendation = self.performance.recommend_policy(
+            asset_count=shown,
+            dem_loaded=bool(self._explicit_dem_layer_visible),
+        )
         self.panel.log(f"Catalog refreshed: {shown} assets")
+        self.panel.log(
+            "Render policy: "
+            f"cache={recommendation.tile_cache_size}/terrain={recommendation.terrain_cache_size} "
+            f"lod={recommendation.lod_mode}"
+        )
         self._logger.info("Catalog refreshed visible=%s total=%s", shown, len(assets))
+        self._logger.info("Render policy recommendation: %s", recommendation.reason)
 
     def _select_asset_in_combo(self, file_path: str) -> bool:
         if not file_path:
@@ -1013,64 +929,31 @@ class DesktopController:
         self.state.pending_ingest_source_path = None
 
     def apply_rgb_view_mode(self) -> None:
-        mode = str(self.panel.rgb_view_mode_combo.currentData() or "3d")
-        self._run_js_call("setSceneMode", mode)
-        self._apply_display_control_mode()
-        mode_label = "2D map" if mode == "2d" else "3D terrain"
-        self.panel.log(f"RGB view mode applied: {mode_label}")
+        self._viz.apply_rgb_view_mode()
 
     def _on_visual_slider_changed(self, _value: int) -> None:
-        self.apply_visual_settings(log_to_panel=False)
+        self._viz.on_visual_slider_changed(_value)
 
     def _on_dem_slider_changed(self, _value: int) -> None:
-        self.apply_dem_settings(log_to_panel=False)
+        self._viz.on_dem_slider_changed(_value)
 
     def _on_dem_color_mode_changed(self, _index: int) -> None:
-        self.apply_dem_color_mode(log_to_panel=False)
+        self._viz.on_dem_color_mode_changed(_index)
 
     def apply_visual_settings(self, log_to_panel: bool = True) -> None:
-        brightness = self.panel.brightness_slider.value() / 100.0
-        contrast = self.panel.contrast_slider.value() / 100.0
-        self._run_js_call("setImageryProperties", brightness, contrast)
-        if log_to_panel:
-            self.panel.log(f"Applied imagery settings brightness={brightness:.2f}, contrast={contrast:.2f}")
-            self._logger.info("Applied imagery settings brightness=%.2f contrast=%.2f", brightness, contrast)
-            return
-        self._logger.debug("Live imagery settings brightness=%.2f contrast=%.2f", brightness, contrast)
+        self._viz.apply_visual_settings(log_to_panel=log_to_panel)
 
     def apply_dem_settings(self, _checked: bool | None = None, log_to_panel: bool = True) -> None:
-        exaggeration = self.panel.dem_exaggeration_slider.value() / 100.0
-        hillshade_strength = self.panel.dem_hillshade_slider.value() / 100.0
-        self._run_js_call("setDemProperties", exaggeration, hillshade_strength)
-        if log_to_panel:
-            self.panel.log("Applied DEM settings " f"exaggeration={exaggeration:.2f}, hillshade={hillshade_strength:.2f}")
-            self._logger.info(
-                "Applied DEM settings exaggeration=%.2f hillshade=%.2f",
-                exaggeration,
-                hillshade_strength,
-            )
-            return
-        self._logger.debug(
-            "Live DEM settings exaggeration=%.2f hillshade=%.2f",
-            exaggeration,
-            hillshade_strength,
-        )
+        self._viz.apply_dem_settings(_checked=_checked, log_to_panel=log_to_panel)
 
     def apply_dem_color_mode(self, log_to_panel: bool = True) -> None:
-        color_mode = str(self.panel.dem_color_mode_combo.currentData() or "gray")
-        self._run_js_call("setDemColorMode", color_mode)
-        if log_to_panel:
-            label = "White relief" if color_mode == "gray" else "Color relief"
-            self.panel.log(f"Applied DEM style: {label}")
-            self._logger.info("Applied DEM style=%s", color_mode)
-            return
-        self._logger.debug("Live DEM style=%s", color_mode)
+        self._viz.apply_dem_color_mode(log_to_panel=log_to_panel)
 
     def rotate_camera(self, degrees: float) -> None:
-        self._run_js_call("rotateCamera", degrees)
+        self._viz.rotate_camera(degrees)
 
     def set_pitch(self, degrees: int) -> None:
-        self._run_js_call("setPitch", float(degrees))
+        self._viz.set_pitch(degrees)
 
     def on_map_click(self, lon: float, lat: float) -> None:
         self.state.clicked_points.append((lon, lat))
@@ -1364,40 +1247,10 @@ class DesktopController:
         return self._auto_enable_second_comparator_imagery_layer()
 
     def _enqueue_distance_measurement(self, lon1: float, lat1: float, lon2: float, lat2: float) -> None:
-        dem_path = self._selected_dem_path()
-
-        distance_info = measure_distance(lon1, lat1, lon2, lat2, dem_path=None)
-        self._annotation_line_records.append(
-            {
-                "coords": [(lon1, lat1), (lon2, lat2)],
-                "feature_type": "road",
-                "length_m": float(distance_info.distance_m),
-                "width_m": 0.0,
-                "condition": "intact",
-                "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-            }
-        )
-
-        def task() -> object:
-            return measure_distance(lon1, lat1, lon2, lat2, dem_path=dem_path)
-
-        def formatter(result: object) -> str:
-            d = result
-            return (
-                "Distance/Azimuth: "
-                f"2D={d.distance_m:.3f} m, az_fwd={d.azimuth_fwd_deg:.2f} deg, az_back={d.azimuth_back_deg:.2f} deg"
-                + (f", dz={d.dz_m:+.3f} m, 3D={d.distance_3d_m:.3f} m" if d.distance_3d_m is not None else "")
-            )
-
-        self._submit_measurement_job("Distance/Azimuth", task, formatter)
+        self._measure.enqueue_distance_measurement(lon1, lat1, lon2, lat2)
 
     def _submit_measurement_job(self, name: str, task: Callable[[], object], formatter: Callable[[object], str]) -> None:
-        worker = _MeasurementWorker(name=name, task=task)
-        worker.signals.finished.connect(
-            lambda job_name, result, error, fmt=formatter: self._on_measurement_job_finished(job_name, result, error, fmt)
-        )
-        self._measurement_pool.start(worker)
-        self.panel.log(f"{name} started...")
+        self._measure.submit_measurement_job(name, task, formatter)
 
     def _on_measurement_job_finished(
         self,
@@ -1406,43 +1259,19 @@ class DesktopController:
         error: str,
         formatter: Callable[[object], str],
     ) -> None:
-        if error:
-            self.panel.log(f"{name} failed: {error}")
-            self._logger.error("Measurement job failed name=%s error=%s", name, error)
-            return
-        message = formatter(result)
-        self.panel.log(message)
-        self._record_measurement_result(name, message)
+        self._measure.on_measurement_job_finished(name, result, error, formatter)
 
     def _record_measurement_result(self, name: str, details: str) -> None:
-        timestamp = dt.datetime.now().strftime("%H:%M:%S")
-        entry = f"[{timestamp}] {name}: {details}"
-        self._measurement_history.append(entry)
-        self.panel.add_measurement_result_entry(entry)
+        self._measure.record_measurement_result(name, details)
 
     def clear_selected_measurement_result(self) -> None:
-        row = self.panel.selected_measurement_result_row()
-        if row < 0 or row >= len(self._measurement_history):
-            return
-        self._measurement_history.pop(row)
-        self.panel.remove_measurement_result_row(row)
+        self._measure.clear_selected_measurement_result()
 
     def clear_all_measurement_results(self) -> None:
-        self._measurement_history.clear()
-        self.panel.clear_measurement_result_entries()
+        self._measure.clear_all_measurement_results()
 
     def _selected_dem_path(self) -> str | None:
-        selected = self._selected_asset()
-        if selected and self._is_dem_asset(selected):
-            return str(selected.get("file_path") or "") or None
-        if self._active_dem_search_layer_key:
-            asset = self._search_result_assets_by_path.get(self._active_dem_search_layer_key)
-            if isinstance(asset, dict):
-                return str(asset.get("file_path") or "") or None
-        for path, asset in self._search_result_assets_by_path.items():
-            if self._search_layer_visibility.get(path, False) and self._is_dem_asset(asset):
-                return str(asset.get("file_path") or "") or None
-        return None
+        return self._measure.selected_dem_path()
 
     def _current_polygon_lonlat(self) -> list[tuple[float, float]] | None:
         payload = self.state.search_geometry_payload or {}
@@ -2131,6 +1960,17 @@ class DesktopController:
 
     def _add_layer(self, asset: dict, options: dict) -> bool:
         tile_url = str(asset.get("tile_url") or "")
+        
+        # --- FIX: TiTiler/Rasterio 500 error on Windows ---
+        # Remove "file:///" prefixes from the nested url parameter.
+        # Rasterio on Windows fails to resolve "file:///C:/..." if it contains spaces.
+        if "url=file:///" in tile_url:
+            tile_url = tile_url.replace("url=file:///", "url=")
+        if "url=file%3A%2F%2F%2F" in tile_url:
+            tile_url = tile_url.replace("url=file%3A%2F%2F%2F", "url=")
+            
+        asset["tile_url"] = tile_url
+        
         if not self._is_offline_safe_url(tile_url):
             self.panel.log(f"Blocked non-offline tile URL for {asset.get('file_name', 'asset')}")
             self._logger.error("Blocked non-offline tile URL: %s", tile_url)
@@ -2153,6 +1993,7 @@ class DesktopController:
             self._apply_display_control_mode()
             self._logger.info("DEM terrain layer requested name=%s", asset["file_name"])
             return True
+            
         replace_existing = bool(options.get("replace_existing", True))
         apply_scene_mode = bool(options.get("apply_scene_mode", True))
         if replace_existing:
@@ -2164,13 +2005,19 @@ class DesktopController:
             self.panel.apply_rgb_view_mode_btn.setEnabled(True)
             self._run_js_call("setSceneModeControlEnabled", True)
             self._apply_display_control_mode()
+            
         mode = str(self.panel.rgb_view_mode_combo.currentData() or "3d").lower()
         if mode not in {"2d", "3d"}:
             mode = "3d"
-        if not is_dem:
-            mode = "2d"
-            if self.panel.rgb_view_mode_combo.currentData() != "2d":
-                self.panel.rgb_view_mode_combo.setCurrentIndex(1)
+        self._logger.info(
+            "Layer render request name=%s kind=%s is_dem=%s mode=%s replace_existing=%s apply_scene_mode=%s",
+            asset.get("file_name"),
+            asset.get("kind"),
+            is_dem,
+            mode,
+            replace_existing,
+            apply_scene_mode,
+        )
         if apply_scene_mode:
             self._run_js_call("setSceneMode", mode)
         self._run_js_call("addTileLayer", asset["file_name"], asset["tile_url"], asset["kind"], options)
@@ -2261,13 +2108,16 @@ class DesktopController:
             return False
 
     def _raster_render_query(self, asset: dict) -> dict[str, object]:
+        query: dict[str, object] = {}
+        is_dem = str(asset.get("kind", "")).lower() == "dem" or "dem" in str(asset.get("file_name", "")).lower()
+        
+        info = {}
         try:
             info = self.api.get_cog_info(asset["file_path"])
-        except httpx.HTTPError:
-            return {}
+        except httpx.HTTPError as exc:
+            self._logger.warning("COG info unavailable for %s: %s", asset.get("file_name"), exc)
+            
         band_count = int(info.get("count", 1) or 1)
-        is_dem = str(asset.get("kind", "")).lower() == "dem" or "dem" in str(asset.get("file_name", "")).lower()
-        query: dict[str, object] = {}
         nodata_value = info.get("nodata_value", info.get("nodata"))
         try:
             if nodata_value is not None:
@@ -2275,14 +2125,30 @@ class DesktopController:
         except (TypeError, ValueError):
             pass
 
-        # Always constrain multi-band non-DEM rasters to RGB to avoid TiTiler PNG encoding failures.
         if band_count >= 3 and not is_dem:
             query["bidx"] = [1, 2, 3]
 
+        stats = {}
         try:
             stats = self.api.get_cog_statistics(asset["file_path"])
         except httpx.HTTPError as exc:
-            self._logger.warning("Statistics unavailable for %s: %s", asset["file_name"], exc)
+            self._logger.warning("Statistics unavailable for %s: %s", asset.get("file_name"), exc)
+
+        if is_dem:
+            color_mode = str(self.panel.dem_color_mode_combo.currentData() or "gray")
+            query["colormap_name"] = color_mode
+            
+            # FIX: Provide default elevation rescale if TiTiler stats fail, preventing blank maps.
+            low, high = -100.0, 4000.0 
+            if isinstance(stats, dict) and stats:
+                first_band = stats.get("b1") if isinstance(stats.get("b1"), dict) else next(iter(stats.values()))
+                if isinstance(first_band, dict):
+                    b_low = first_band.get("min")
+                    b_high = first_band.get("max")
+                    if b_low is not None and b_high is not None and float(b_high) > float(b_low):
+                        low, high = float(b_low), float(b_high)
+            
+            query["rescale"] = f"{low},{high}"
             return query
 
         if not isinstance(stats, dict) or not stats:
@@ -2307,21 +2173,13 @@ class DesktopController:
 
         first_band = stats.get("b1") if isinstance(stats.get("b1"), dict) else next(iter(stats.values()))
         if not isinstance(first_band, dict):
-            return {}
-        if is_dem:
-            # For scientific DEM display, keep colorbar values tied to true dataset extremes.
-            low = first_band.get("min")
-            high = first_band.get("max")
-        else:
-            low = first_band.get("percentile_2", first_band.get("min"))
-            high = first_band.get("percentile_98", first_band.get("max"))
+            return query
+        
+        low = first_band.get("percentile_2", first_band.get("min"))
+        high = first_band.get("percentile_98", first_band.get("max"))
         if low is None or high is None or float(high) <= float(low):
             return query
-        if is_dem:
-            color_mode = str(self.panel.dem_color_mode_combo.currentData() or "gray")
-            query["rescale"] = f"{float(low)},{float(high)}"
-            query["colormap_name"] = color_mode
-            return query
+            
         query["rescale"] = f"{float(low)},{float(high)}"
         return query
 
@@ -2370,6 +2228,15 @@ class DesktopController:
             or "Fly-to lon=" in message
         ):
             self._set_layer_loading(False, "Layer ready")
+
+        if normalized == "debug" and (
+            "SCENE_DEBUG" in message
+            or "addTileLayer request" in message
+            or "addDemLayer request" in message
+            or "Imagery provider configured" in message
+        ):
+            self._logger.info("JS(debug): %s", message)
+            return
 
         if "Tile provider error for" in message:
             self._logger.warning("JS: %s", message)

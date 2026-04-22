@@ -104,6 +104,9 @@ class IngestJobItem(Base):
         default=IngestJobItemStatus.PENDING,
     )
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    checkpoint_stage: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    stage_attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_checkpoint_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     asset_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("raster_assets.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

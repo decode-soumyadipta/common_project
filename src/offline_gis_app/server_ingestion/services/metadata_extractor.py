@@ -2,6 +2,7 @@ from pathlib import Path
 
 from offline_gis_app.server_ingestion.services.file_kind import detect_raster_kind
 from offline_gis_app.server_ingestion.services.metadata_models import RasterMetadata
+from offline_gis_app.server_ingestion.services.pyramiding_service import RasterPyramidingService
 from offline_gis_app.utils.crs import normalize_crs
 from offline_gis_app.utils.geometry import Bounds
 
@@ -21,35 +22,8 @@ def _read_with_rasterio(path: Path):
 
 
 def ensure_overviews(path: Path) -> bool:
-    """Build internal overviews when absent to improve TiTiler performance.
-
-    This is a best-effort optimization and should never block ingest.
-    """
-    try:
-        import rasterio  # type: ignore
-        from rasterio.enums import Resampling  # type: ignore
-    except ImportError:
-        return False
-
-    try:
-        with rasterio.open(path, "r+") as ds:
-            if ds.count < 1:
-                return False
-            if ds.overviews(1):
-                return False
-            min_dim = min(int(ds.width), int(ds.height))
-            factors: list[int] = []
-            factor = 2
-            while min_dim // factor >= 256:
-                factors.append(factor)
-                factor *= 2
-            if not factors:
-                return False
-            ds.build_overviews(factors, Resampling.average)
-            ds.update_tags(ns="rio_overview", resampling="average")
-            return True
-    except Exception:
-        return False
+    """Backward-compatible overview hook delegated to pyramiding service."""
+    return RasterPyramidingService().ensure(path)
 
 
 def _is_valid_epsg4326_bounds(bounds: Bounds) -> bool:

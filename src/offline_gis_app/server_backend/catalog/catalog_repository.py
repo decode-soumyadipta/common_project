@@ -65,6 +65,10 @@ class CatalogRepository:
                 FROM raster_assets
                 WHERE ST_Intersects(
                     ST_GeomFromText(bounds_wkt, 4326),
+                    ST_MakeEnvelope(:lon, :lat, :lon, :lat, 4326)
+                )
+                AND ST_Intersects(
+                    ST_GeomFromText(bounds_wkt, 4326),
                     ST_SetSRID(ST_Point(:lon, :lat), 4326)
                 )
                 ORDER BY created_at DESC
@@ -84,6 +88,10 @@ class CatalogRepository:
                 SELECT id
                 FROM raster_assets
                 WHERE ST_Intersects(
+                    ST_GeomFromText(bounds_wkt, 4326),
+                    ST_MakeEnvelope(:west, :south, :east, :north, 4326)
+                )
+                AND ST_Intersects(
                     ST_GeomFromText(bounds_wkt, 4326),
                     ST_MakeEnvelope(:west, :south, :east, :north, 4326)
                 )
@@ -110,16 +118,18 @@ class CatalogRepository:
         if self._is_postgresql():
             stmt = text(
                 """
-                SELECT id
-                FROM raster_assets
-                WHERE ST_Intersects(
-                    ST_GeomFromText(bounds_wkt, 4326),
-                    CASE
+                WITH query_geom AS (
+                    SELECT CASE
                         WHEN :buffer_meters > 0
                         THEN ST_Buffer(ST_GeomFromText(:polygon_wkt, 4326)::geography, :buffer_meters)::geometry
                         ELSE ST_GeomFromText(:polygon_wkt, 4326)
-                    END
+                    END AS geom
                 )
+                SELECT id
+                FROM raster_assets
+                CROSS JOIN query_geom
+                WHERE ST_Intersects(ST_GeomFromText(bounds_wkt, 4326), ST_Envelope(query_geom.geom))
+                AND ST_Intersects(ST_GeomFromText(bounds_wkt, 4326), query_geom.geom)
                 ORDER BY created_at DESC
                 """
             )

@@ -29,6 +29,7 @@ class IngestJobView:
     progress_percent: int = 0
     current_step: str | None = None
     current_item_path: str | None = None
+    current_item_stage: str | None = None
     elapsed_seconds: float | None = None
     started_at: str | None = None
     completed_at: str | None = None
@@ -40,6 +41,7 @@ class IngestJobView:
 class _RuntimeProgress:
     current_step: str | None = None
     current_item_path: str | None = None
+    current_item_stage: str | None = None
 
 
 class IngestQueueService:
@@ -203,12 +205,22 @@ class IngestQueueService:
                     last_error=None,
                 )
 
+            self._set_runtime_stage(job_id, str(item.checkpoint_stage or "validate_source_path"))
+
+            def _persist_stage_checkpoint(stage_name: str) -> None:
+                with self._session_factory() as callback_session:
+                    callback_repo = IngestJobRepository(callback_session)
+                    callback_repo.mark_item_stage_checkpoint(item.id, stage_name)
+                self._set_runtime_stage(job_id, stage_name)
+
             try:
                 with self._session_factory() as session:
                     result = register_raster(
                         Path(item.file_path),
                         session,
                         progress_callback=lambda step: self._set_runtime_progress(job_id, step, item.file_path),
+                        resume_from_stage=item.checkpoint_stage,
+                        stage_checkpoint_callback=_persist_stage_checkpoint,
                     )
                 with self._session_factory() as session:
                     repo = IngestJobRepository(session)
@@ -216,6 +228,7 @@ class IngestQueueService:
                         item.id,
                         IngestJobItemStatus.SUCCEEDED,
                         attempts=attempts,
+                        checkpoint_stage="publish_tile_url",
                         last_error=None,
                         asset_id=result.get("id"),
                     )
@@ -243,6 +256,7 @@ class IngestQueueService:
                         item.id,
                         next_status,
                         attempts=attempts,
+                        checkpoint_stage=item.checkpoint_stage,
                         last_error=error_text,
                     )
                     tracked_job = repo.get_job(job_id)
@@ -281,7 +295,22 @@ class IngestQueueService:
 
     def _set_runtime_progress(self, job_id: str, step: str | None, item_path: str | None) -> None:
         with self._lock:
-            self._runtime_progress[job_id] = _RuntimeProgress(current_step=step, current_item_path=item_path)
+            existing = self._runtime_progress.get(job_id)
+            stage = existing.current_item_stage if existing else None
+            self._runtime_progress[job_id] = _RuntimeProgress(
+                current_step=step,
+                current_item_path=item_path,
+                current_item_stage=stage,
+            )
+
+    def _set_runtime_stage(self, job_id: str, stage: str | None) -> None:
+        with self._lock:
+            existing = self._runtime_progress.get(job_id)
+            self._runtime_progress[job_id] = _RuntimeProgress(
+                current_step=existing.current_step if existing else None,
+                current_item_path=existing.current_item_path if existing else None,
+                current_item_stage=stage,
+            )
 
     def _attach_runtime_progress(self, view: IngestJobView) -> IngestJobView:
         with self._lock:
@@ -310,6 +339,7 @@ class IngestQueueService:
             progress_percent=progress_percent,
             current_step=runtime.current_step if runtime else None,
             current_item_path=runtime.current_item_path if runtime else None,
+            current_item_stage=runtime.current_item_stage if runtime else None,
             elapsed_seconds=elapsed_seconds,
             started_at=view.started_at,
             completed_at=view.completed_at,

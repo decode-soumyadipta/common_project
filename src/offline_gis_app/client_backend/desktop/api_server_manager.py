@@ -5,7 +5,6 @@ import os
 import subprocess
 import sys
 import time
-from typing import Sequence
 from urllib.parse import urlparse
 
 import httpx
@@ -50,7 +49,7 @@ class ApiServerManager:
     def _start_process(self) -> None:
         if self._process and self._process.poll() is None:
             return
-        command: Sequence[str] = (
+        command = (
             sys.executable,
             "-m",
             "uvicorn",

@@ -1,7 +1,7 @@
-# Tiler Service Template
+# Tiler Service
 
 ## Responsibility
-Build and validate tile URLs for supported raster sources.
+Build and validate deterministic offline TiTiler URLs for supported raster sources.
 
 ## Contracts
 - Input: normalized source path.
@@ -9,5 +9,5 @@ Build and validate tile URLs for supported raster sources.
 - Error model: recoverable URL policy errors should raise ValueError.
 
 ## Implementation Notes
-- Keep runtime policy isolated from API route logic.
-- Add provider adapters under this folder as needed.
+- Runtime URL policy lives in `service.py` (`TiTilerUrlPolicy`).
+- API routes and catalog serialization call a shared URL builder for consistency.

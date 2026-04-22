@@ -233,7 +233,7 @@ The third phase implements the specific GIS analytical tools requested by the cl
 **Day 10: Testing, Packaging, and Delivery**
 
 * **Focus:** Creating a professional-grade, distributable asset.  
-* **Tasks:** Conduct rigorous quality assurance, ensuring the 5cm data renders without memory leaks. Utilize tools like PyInstaller or Qt's pyside6-deploy to compile the Python environment, the UI, the TiTiler server, and the local database connection scripts into a standalone executable package.64  
+* **Tasks:** Conduct rigorous quality assurance, ensuring the 5cm data renders without memory leaks. Package deployment as source ZIP + conda-pack environment tarball for fully offline execution, including the UI, TiTiler server, and local database connection scripts.64  
 * **Deliverable:** The final, testing-grade desktop application deployed on the government LAN.
 
 ## **Learning Resources and Skill Development**

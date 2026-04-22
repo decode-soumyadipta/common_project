@@ -1800,20 +1800,73 @@
     const splitIndex = url.indexOf("?");
     const base = splitIndex >= 0 ? url.slice(0, splitIndex) : url;
     const queryText = splitIndex >= 0 ? url.slice(splitIndex + 1) : "";
-    const params = new URLSearchParams(queryText);
-    Object.entries(extraQuery || {}).forEach(([key, value]) => {
+    
+    // Extract existing parameters as a map to avoid double-encoding
+    const existingParams = {};
+    if (queryText) {
+      queryText.split("&").forEach(function (pair) {
+        const eqIdx = pair.indexOf("=");
+        if (eqIdx > 0) {
+          const key = decodeURIComponent(pair.slice(0, eqIdx));
+          const value = decodeURIComponent(pair.slice(eqIdx + 1));
+          existingParams[key] = value;
+        }
+      });
+    }
+    
+    // Merge new parameters into existing ones
+    const finalParams = Object.assign({}, existingParams, extraQuery || {});
+    
+    // Reconstruct query string without double-encoding
+    const paramPairs = Object.entries(finalParams).map(function ([key, value]) {
       if (value === null || value === undefined) {
-        return;
+        return null;
       }
       if (Array.isArray(value)) {
-        params.delete(key);
-        value.forEach((item) => params.append(key, String(item)));
-        return;
+        return value.map(function (item) {
+          return encodeURIComponent(key) + "=" + encodeURIComponent(String(item));
+        }).join("&");
       }
-      params.set(key, String(value));
-    });
-    const merged = params.toString();
-    return merged ? `${base}?${merged}` : base;
+      return encodeURIComponent(key) + "=" + encodeURIComponent(String(value));
+    }).filter(Boolean);
+    
+    const merged = paramPairs.join("&");
+    return merged ? base + "?" + merged : base;
+  }
+
+  function logLayerStack() {
+    if (!viewer || !viewer.imageryLayers) {
+      return;
+    }
+    const rows = [];
+    for (let idx = 0; idx < viewer.imageryLayers.length; idx += 1) {
+      const layer = viewer.imageryLayers.get(idx);
+      const show = layer && layer.show === false ? "HIDDEN" : "VISIBLE";
+      
+      // FIX: Check if alpha is a finite number, fallback to 1.0, then format.
+      const rawAlpha = layer && typeof layer.alpha === "number" ? layer.alpha : 1.0;
+      const alpha = (Number.isFinite(rawAlpha) ? rawAlpha : 1.0).toFixed(2);
+      
+      let desc = "layer#" + idx + ":" + show + ":alpha=" + alpha;
+      if (layer === activeDemDrapeLayer) {
+        desc += ":DEM-DRAPE";
+      } else if (layer === activeDemHillshadeLayer) {
+        desc += ":DEM-HILLSHADE";
+      } else if (layer === globalBasemapLayer) {
+        desc += ":BASEMAP";
+      } else if (layer === activeImageryLayer) {
+        desc += ":ACTIVE-IMAGERY";
+      } else if (managedImageryLayers.has(Array.from(managedImageryLayers.entries()).find(([_, l]) => l === layer)?.[0] || "")) {
+        const key = Array.from(managedImageryLayers.entries()).find(([_, l]) => l === layer)?.[0] || "unknown";
+        desc += ":MANAGED-IMAGERY:" + key;
+      }
+      rows.push(desc);
+    }
+    log("debug", "Layer stack [" + viewer.imageryLayers.length + " layers]: " + rows.join(" | "));
+  }
+
+  function requestLayerStackDump() {
+    logLayerStack();
   }
 
   function attachTileErrorHandler(provider, name) {
@@ -1826,6 +1879,17 @@
       const currentCount = (layerErrorCounts.get(name) || 0) + 1;
       layerErrorCounts.set(name, currentCount);
       const msg = error && error.message ? String(error.message) : "tile request failed";
+      if (currentCount === 1) {
+        let templateUrl = "";
+        try {
+          templateUrl = String(provider && provider.url ? provider.url : "");
+        } catch (_err) {
+          templateUrl = "";
+        }
+        if (templateUrl) {
+          log("warn", "Tile provider template for " + name + " => " + templateUrl);
+        }
+      }
       if (currentCount <= 10 || currentCount % 25 === 0) {
         log(
           "warn",
@@ -2617,7 +2681,8 @@
     const rasterQuery = activeDemContext.options && activeDemContext.options.query ? activeDemContext.options.query : {};
     const minLevel = activeDemContext.options && Number.isInteger(activeDemContext.options.minzoom) ? activeDemContext.options.minzoom : 0;
     const maxLevelRaw = activeDemContext.options && Number.isInteger(activeDemContext.options.maxzoom) ? activeDemContext.options.maxzoom : 19;
-    const maxLevel = Math.min(maxLevelRaw, DEM_MAX_TERRAIN_LEVEL);
+    const imageryMaxLevel = Math.max(minLevel, maxLevelRaw);
+    const terrainMaxLevel = Math.max(minLevel, Math.min(maxLevelRaw, DEM_MAX_TERRAIN_LEVEL));
     const rectangle = createRectangle(bounds);
     const range = parseDemHeightRange(activeDemContext.options);
     const decodeConfig = {
@@ -2646,6 +2711,7 @@
       resampling: "nearest",
     };
     const drapeUrl = buildUrlWithQuery(activeDemContext.xyzUrl, drapeQuery);
+    log("debug", "DEM URL construction xyzUrl=" + activeDemContext.xyzUrl + " terrainRgbUrl=" + terrainRgbUrl + " drapeUrl=" + drapeUrl);
     const demVisible = activeDemContext.visible !== false;
     layerDefinitions.set(activeDemContext.layerKey, {
       key: activeDemContext.layerKey,
@@ -2656,7 +2722,7 @@
       drapeUrl: drapeUrl,
       hillshadeUrl: hillshadeUrl,
       minLevel: minLevel,
-      maxLevel: maxLevel,
+      maxLevel: imageryMaxLevel,
       bounds: normalizeBounds(bounds),
       hillshadeAlpha: Math.max(0.0, Math.min(0.35, demVisual.hillshadeAlpha * 0.45)),
     });
@@ -2665,7 +2731,7 @@
       xyzUrl: activeDemContext.xyzUrl,
       bounds: bounds || null,
       minLevel: minLevel,
-      maxLevel: maxLevel,
+      maxLevel: terrainMaxLevel,
       minHeight: range.min,
       maxHeight: range.max,
     });
@@ -2690,7 +2756,7 @@
       }
       const drapeProvider = new Cesium.UrlTemplateImageryProvider({
         url: drapeUrl,
-        maximumLevel: maxLevel,
+        maximumLevel: imageryMaxLevel,
         minimumLevel: minLevel,
         tilingScheme: new Cesium.WebMercatorTilingScheme(),
         enablePickFeatures: false,
@@ -2713,7 +2779,7 @@
       if (!activeDemHillshadeLayer) {
         const hillshadeProvider = new Cesium.UrlTemplateImageryProvider({
           url: hillshadeUrl,
-          maximumLevel: maxLevel,
+          maximumLevel: imageryMaxLevel,
           minimumLevel: minLevel,
           tilingScheme: new Cesium.WebMercatorTilingScheme(),
           enablePickFeatures: false,
@@ -2741,13 +2807,23 @@
     if (activeDemHillshadeLayer) {
       viewer.imageryLayers.raiseToTop(activeDemHillshadeLayer);
     }
-    // Re-raise managed imagery layers to maintain proper ordering above DEM
-    // Note: This ensures other managed layers stay below the DEM visualization
+    // Managed imagery layers should render ABOVE DEM drape but BELOW DEM hillshade
+    // Order (top to bottom): hillshade > managed imagery > drape > base layers
+    if (activeDemHillshadeLayer && viewer.imageryLayers.indexOf(activeDemHillshadeLayer) >= 0) {
+      viewer.imageryLayers.raiseToTop(activeDemHillshadeLayer);
+    }
+    const topManagedIndex = activeDemHillshadeLayer ? viewer.imageryLayers.indexOf(activeDemHillshadeLayer) - 1 : viewer.imageryLayers.length - 1;
     for (const layer of managedImageryLayers.values()) {
-      if (layer && layer.show) {
-        viewer.imageryLayers.lowerToBottom(layer);
+      if (layer && layer.show && viewer.imageryLayers.indexOf(layer) >= 0) {
+        const currentIndex = viewer.imageryLayers.indexOf(layer);
+        if (currentIndex < topManagedIndex) {
+          for (let i = currentIndex; i < topManagedIndex; i += 1) {
+            viewer.imageryLayers.raiseToTop(layer);
+          }
+        }
       }
     }
+    log("debug", "DEM layer stack: hillshade=" + (activeDemHillshadeLayer ? "yes" : "no") + " drape=" + (activeDemDrapeLayer ? "yes" : "no") + " managed=" + managedImageryLayers.size);
     updateBasemapBlendForCurrentMode();
     if (demVisible) {
       updateDemColorbar(range.min, range.max, activeDemContext.options);
@@ -2756,7 +2832,22 @@
       hideDemColorbar();
       setStatus("DEM layer hidden.");
     }
-    log("info", "DEM terrain activated name=" + activeDemContext.name + " terrain=" + terrainRgbUrl + " drape=" + drapeUrl);
+    log(
+      "info",
+      "DEM terrain activated name=" +
+        activeDemContext.name +
+        " min=" +
+        minLevel +
+        " imageryMax=" +
+        imageryMaxLevel +
+        " terrainMax=" +
+        terrainMaxLevel +
+        " terrain=" +
+        terrainRgbUrl +
+        " drape=" +
+        drapeUrl
+    );
+    logLayerStack();
     if (comparatorModeEnabled) {
       refreshComparatorLayers();
     }
@@ -3953,6 +4044,17 @@
     addTileLayer: async function (name, xyzUrl, kind, options) {
       if (!viewer) return;
       await ensureBaseTerrainReady();
+      log(
+        "info",
+        "addTileLayer request name=" +
+          String(name || "") +
+          " kind=" +
+          String(kind || "") +
+          " xyz=" +
+          String(xyzUrl || "") +
+          " options=" +
+          JSON.stringify(options || {})
+      );
       const layerKey =
         options && typeof options.layer_key === "string" && options.layer_key
           ? options.layer_key
@@ -3999,6 +4101,7 @@
       });
       const qpText = qp.toString();
       if (qpText) providerUrl += (providerUrl.includes("?") ? "&" : "?") + qpText;
+      log("debug", "Imagery URL construction baseUrl=" + xyzUrl + " finalUrl=" + providerUrl);
       const bounds = options && options.bounds ? options.bounds : null;
       const normalizedBounds = normalizeBounds(bounds);
       if (normalizedBounds) {
@@ -4039,11 +4142,37 @@
         enablePickFeatures: false,
         rectangle: rectangle,
       });
+      log(
+        "debug",
+        "Imagery provider template URL: " + providerUrl
+      );
+      log(
+        "info",
+        "Imagery provider configured name=" +
+          String(name || "") +
+          " min=" +
+          minLevel +
+          " max=" +
+          maxLevel +
+          " rectangle=" +
+          JSON.stringify(normalizedBounds || null) +
+          " url=" +
+          providerUrl
+      );
+      // Attach ready handler to detect initialization issues
+      if (provider.readyPromise) {
+        provider.readyPromise.then(function () {
+          log("debug", "Provider ready name=" + name + " tilesLoaded=" + (provider.getTileCredits ? "yes" : "no"));
+        }).catch(function (err) {
+          log("warn", "Provider ready failed name=" + name + " error=" + String(err));
+        });
+      }
       attachTileErrorHandler(provider, name);
       activeImageryLayer = viewer.imageryLayers.addImageryProvider(provider);
       managedImageryLayers.set(layerKey, activeImageryLayer);
       viewer.imageryLayers.raiseToTop(activeImageryLayer);
       activeImageryLayer.alpha = 1.0;
+      activeImageryLayer.show = true;
       layerDefinitions.set(layerKey, {
         key: layerKey,
         label: String(name || layerKey),
@@ -4059,6 +4188,7 @@
         refreshComparatorLayers();
       }
       updateBasemapBlendForCurrentMode();
+      logLayerStack();
       setStatus("Layer added: " + name);
       log(
         "info",
@@ -4078,6 +4208,15 @@
     },
     addDemLayer: function (name, xyzUrl, options) {
       if (!viewer) return;
+      log(
+        "info",
+        "addDemLayer request name=" +
+          String(name || "") +
+          " xyz=" +
+          String(xyzUrl || "") +
+          " options=" +
+          JSON.stringify(options || {})
+      );
       const replaceExisting = !(options && options.replace_existing === false);
       const layerKey =
         options && typeof options.layer_key === "string" && options.layer_key

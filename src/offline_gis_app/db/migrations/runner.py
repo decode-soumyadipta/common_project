@@ -56,6 +56,7 @@ def _ordered_migrations() -> list[tuple[str, MigrationFn]]:
         ("20260417_002_ingest_queue_indexes", _migration_ingest_queue_indexes),
         ("20260418_001_legacy_schema_backfill", _migration_legacy_schema_backfill),
         ("20260419_001_raster_bounds_spatial_index", _migration_raster_bounds_spatial_index),
+        ("20260422_001_ingest_item_stage_checkpoint", _migration_ingest_item_stage_checkpoint),
     ]
 
 
@@ -64,6 +65,7 @@ def _migration_description(version: str) -> str:
         "20260417_002_ingest_queue_indexes": "Add ingest queue state indexes",
         "20260418_001_legacy_schema_backfill": "Backfill missing legacy table columns for existing databases",
         "20260419_001_raster_bounds_spatial_index": "Add PostGIS-backed spatial index for raster bounds search",
+        "20260422_001_ingest_item_stage_checkpoint": "Add stage-level checkpoint fields for ingest job items",
     }
     return descriptions.get(version, "migration")
 
@@ -120,6 +122,23 @@ def _migration_raster_bounds_spatial_index(conn: Connection) -> None:
             CREATE INDEX IF NOT EXISTS idx_raster_assets_bounds_geom_gist
             ON raster_assets
             USING GIST (ST_GeomFromText(bounds_wkt, 4326))
+            """
+        )
+    )
+
+
+def _migration_ingest_item_stage_checkpoint(conn: Connection) -> None:
+    """Persist per-item stage checkpoint details for resumable ingest execution."""
+    if not _table_exists(conn, "ingest_job_items"):
+        return
+    _ensure_column(conn, "ingest_job_items", "checkpoint_stage", "VARCHAR(64)")
+    _ensure_column(conn, "ingest_job_items", "stage_attempt", "INTEGER")
+    _ensure_column(conn, "ingest_job_items", "last_checkpoint_at", "TIMESTAMP")
+    conn.execute(
+        text(
+            """
+            CREATE INDEX IF NOT EXISTS idx_ingest_job_items_checkpoint_stage
+            ON ingest_job_items (job_id, checkpoint_stage)
             """
         )
     )
