@@ -25,6 +25,18 @@ if 'postgresql' in settings.database_url:
             dbapi_conn.rollback()
             LOGGER.debug("PostGIS extension activation skipped during connection setup", exc_info=True)
 
+# Enable WAL mode on SQLite for concurrent read/write (Server/Client processes)
+if 'sqlite' in settings.database_url:
+    @event.listens_for(engine, "connect")
+    def set_sqlite_pragma(dbapi_conn, connection_record):
+        try:
+            cursor = dbapi_conn.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL;")
+            cursor.execute("PRAGMA synchronous=NORMAL;")
+            cursor.close()
+        except Exception:
+            pass
+
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, class_=Session)
 
 

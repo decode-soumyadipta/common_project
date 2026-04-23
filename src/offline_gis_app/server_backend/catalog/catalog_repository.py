@@ -76,7 +76,19 @@ class CatalogRepository:
             )
             ids = self._select_asset_ids(stmt, {"lon": lon, "lat": lat})
             return self._load_assets_by_ids(ids)
-        return [asset for asset in self.list_assets() if _asset_bounds(asset).contains(lon, lat)]
+        # Optimized memory-efficient search for SQLite without loading full ORM objects
+        stmt = select(RasterAsset.id, RasterAsset.bounds_wkt).order_by(RasterAsset.created_at.desc())
+        matching_ids = []
+        for asset_id, wkt in self._session.execute(stmt):
+            try:
+                parsed_bounds = parse_bounds_wkt_polygon(wkt)
+                asset_box = _SimpleBounds(parsed_bounds.min_x, parsed_bounds.min_y, parsed_bounds.max_x, parsed_bounds.max_y)
+                if asset_box.contains(lon, lat):
+                    matching_ids.append(asset_id)
+            except Exception:
+                pass
+                
+        return self._load_assets_by_ids(matching_ids)
 
     def search_assets_by_bbox(self, west: float, south: float, east: float, north: float) -> list[RasterAsset]:
         """Find assets that intersect a bounding box."""
@@ -110,7 +122,20 @@ class CatalogRepository:
             return self._load_assets_by_ids(ids)
 
         query = _SimpleBounds(query_west, query_south, query_east, query_north)
-        return [asset for asset in self.list_assets() if _asset_bounds(asset).intersects(query)]
+        
+        # Optimized memory-efficient search for SQLite without loading full ORM objects
+        stmt = select(RasterAsset.id, RasterAsset.bounds_wkt).order_by(RasterAsset.created_at.desc())
+        matching_ids = []
+        for asset_id, wkt in self._session.execute(stmt):
+            try:
+                parsed_bounds = parse_bounds_wkt_polygon(wkt)
+                asset_box = _SimpleBounds(parsed_bounds.min_x, parsed_bounds.min_y, parsed_bounds.max_x, parsed_bounds.max_y)
+                if asset_box.intersects(query):
+                    matching_ids.append(asset_id)
+            except Exception:
+                pass
+                
+        return self._load_assets_by_ids(matching_ids)
 
     def search_assets_by_polygon(self, points: list[tuple[float, float]], buffer_meters: float = 0.0) -> list[RasterAsset]:
         """Find assets that intersect a polygon, optionally buffered in meters."""
@@ -143,7 +168,20 @@ class CatalogRepository:
             return self._load_assets_by_ids(ids)
 
         fallback = _simple_polygon_bounds(points, buffer_meters)
-        return [asset for asset in self.list_assets() if _asset_bounds(asset).intersects(fallback)]
+        
+        # Optimized memory-efficient search for SQLite without loading full ORM objects
+        stmt = select(RasterAsset.id, RasterAsset.bounds_wkt).order_by(RasterAsset.created_at.desc())
+        matching_ids = []
+        for asset_id, wkt in self._session.execute(stmt):
+            try:
+                parsed_bounds = parse_bounds_wkt_polygon(wkt)
+                asset_box = _SimpleBounds(parsed_bounds.min_x, parsed_bounds.min_y, parsed_bounds.max_x, parsed_bounds.max_y)
+                if asset_box.intersects(fallback):
+                    matching_ids.append(asset_id)
+            except Exception:
+                pass
+        
+        return self._load_assets_by_ids(matching_ids)
 
     def _is_postgresql(self) -> bool:
         bind = self._session.bind

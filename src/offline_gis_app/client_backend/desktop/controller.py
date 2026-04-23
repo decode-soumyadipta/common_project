@@ -1962,14 +1962,17 @@ class DesktopController:
         tile_url = str(asset.get("tile_url") or "")
         
         # --- FIX: TiTiler/Rasterio 500 error on Windows & macOS ---
-        # Remove "file://" prefixes from the nested url parameter.
         # Rasterio on Windows fails to resolve "file:///C:/..." if it contains spaces.
+        # But we MUST have the "file:" scheme, otherwise urllib parses "C:" as the scheme.
         import platform
+        import re
         if platform.system() == "Windows":
             if "url=file:///" in tile_url:
-                tile_url = tile_url.replace("url=file:///", "url=")
+                tile_url = tile_url.replace("url=file:///", "url=file:")
             if "url=file%3A%2F%2F%2F" in tile_url:
-                tile_url = tile_url.replace("url=file%3A%2F%2F%2F", "url=")
+                tile_url = tile_url.replace("url=file%3A%2F%2F%2F", "url=file:")
+            # If the url parameter is just 'C:/...', prepend 'file:'
+            tile_url = re.sub(r"url=([a-zA-Z])(:|%3A)", r"url=file:\1\2", tile_url)
         else:
             if "url=file://" in tile_url:
                 tile_url = tile_url.replace("url=file://", "url=")

@@ -6,6 +6,7 @@
   let activeDemHillshadeLayer = null;
   let activeDemContext = null;
   let activeDemTerrainSignature = null;
+  let activeDemTerrainProvider = null;
   let activeDemDrapeUrl = null;
   let activeDemHillshadeUrl = null;
   const managedImageryLayers = new Map();
@@ -86,8 +87,9 @@
   const terrainTileCache = new Map();
   // DEM rendering uses imagery-only pipeline (colormap drape + hillshade overlay on EllipsoidTerrainProvider)
   // No client-side terrain decoding — crash-proof for any raster size on macOS and Windows/NVIDIA.
-  // TERRAIN_SAMPLE_SIZE and DEM_MAX_TERRAIN_LEVEL kept for comparator code that still references them.
-  const TERRAIN_SAMPLE_SIZE = 33;
+  // TERRAIN_SAMPLE_SIZE is set to 65. A value of 256 creates 6.5M+ triangles and freezes the UI thread.
+  // 65 is the standard optimal resolution for high-detail Cesium heightmaps without causing lag.
+  const TERRAIN_SAMPLE_SIZE = 65;
   const DEM_MAX_TERRAIN_LEVEL = 14;
   const DEM_HILLSHADE_AZIMUTH = 45;
   const DEM_HILLSHADE_ALTITUDE = 45;
@@ -551,7 +553,8 @@
       log("debug", "setComparatorViewerModeByType: viewer or scene is null");
       return;
     }
-    const desiredMode = layerType === "dem" ? Cesium.SceneMode.SCENE3D : Cesium.SceneMode.SCENE2D;
+    // Strictly apply the global 2D/3D toggle to maintain uniform application state, ignoring layer type.
+    const desiredMode = currentSceneMode === "2d" ? Cesium.SceneMode.SCENE2D : Cesium.SceneMode.SCENE3D;
     const currentMode = targetViewer.scene.mode;
     log("debug", "setComparatorViewerModeByType: viewer=" + (targetViewer === comparatorLeftViewer ? "LEFT" : "RIGHT") + " desired=" + (desiredMode === Cesium.SceneMode.SCENE3D ? "3D" : "2D") + " current=" + (currentMode === Cesium.SceneMode.SCENE3D ? "3D" : "2D"));
     
@@ -1008,7 +1011,7 @@
           rectangle: rectangle,
         });
         const hsLayer = targetViewer.imageryLayers.addImageryProvider(hsProvider);
-        hsLayer.alpha = Math.max(0.0, Math.min(0.35, (Number(demState.hillshadeAlpha) || 0.0) * 0.45));
+        hsLayer.alpha = Math.max(0.0, Math.min(1.0, Number(demState.hillshadeAlpha) || 0.0));
         targetViewer.__comparatorHillshadeLayer = hsLayer;
       }
       enforceComparatorDemLayerOrder(paneKey, targetViewer);
@@ -2014,11 +2017,17 @@
         setSceneModeControlEnabled(true);
         setStatus("DEM layer shown.");
         log("info", "DEM layer shown key=" + layerKey);
+        if (activeDemTerrainProvider && viewer.terrainProvider !== activeDemTerrainProvider) {
+          viewer.terrainProvider = activeDemTerrainProvider;
+        }
       } else {
         hideDemColorbar();
         setSceneModeControlEnabled(true);
         setStatus("DEM layer hidden.");
         log("info", "DEM layer hidden key=" + layerKey);
+        if (viewer.terrainProvider !== baseTerrainProvider) {
+          viewer.terrainProvider = baseTerrainProvider;
+        }
       }
       if (comparatorModeEnabled) {
         refreshComparatorLayers();
@@ -2101,7 +2110,12 @@
 
   function applyDemSceneSettings() {
     if (!viewer) return;
-    viewer.scene.verticalExaggeration = Math.max(0.5, demVisual.exaggeration);
+    if ("verticalExaggeration" in viewer.scene) {
+      viewer.scene.verticalExaggeration = Math.max(0.5, demVisual.exaggeration);
+    }
+    if (viewer.scene.globe) {
+      viewer.scene.globe.terrainExaggeration = Math.max(0.5, demVisual.exaggeration);
+    }
     viewer.scene.globe.enableLighting = true;
     viewer.scene.globe.depthTestAgainstTerrain = true;
     viewer.scene.globe.preloadAncestors = false;
@@ -2547,18 +2561,35 @@
       minLevel: minLevel,
       maxLevel: imageryMaxLevel,
       bounds: normalizeBounds(bounds),
-      hillshadeAlpha: Math.max(0.0, Math.min(0.35, demVisual.hillshadeAlpha * 0.45)),
+      hillshadeAlpha: demVisual.hillshadeAlpha,
     });
     layerVisibilityState.set(activeDemContext.layerKey, demVisible);
 
-    // ── Imagery-only DEM pipeline ──────────────────────────────────────────
-    // Reset terrain to flat ellipsoid — DEM height values are visualized via
-    // the colormap drape imagery layer, NOT via a custom TerrainProvider.
-    // This is the only approach that is stable for large rasters in Chromium 87.
-    if (viewer.terrainProvider !== baseTerrainProvider) {
-      viewer.terrainProvider = baseTerrainProvider;
-      activeDemTerrainSignature = null;
+    // ── 3D DEM Rendering Pipeline ──────────────────────────────────────────
+    // Instantiate our robust custom TerrainProvider which decodes grayscale 
+    // values from TiTiler directly into Cesium's HeightmapTerrainData.
+    const terrainUrl = drapeUrl; // Reuse the drape URL (grayscale) for heights
+    const customTerrainProvider = new OfflineCustomTerrainProvider({
+      url: terrainUrl,
+      minLevel: minLevel,
+      maxLevel: terrainMaxLevel,
+      options: activeDemContext.options
+    });
+    
+    activeDemTerrainProvider = customTerrainProvider;
+
+    if (viewer.terrainProvider !== customTerrainProvider) {
+      viewer.terrainProvider = customTerrainProvider;
+      activeDemTerrainSignature = activeDemContext.layerKey;
     }
+
+    if (!demVisible) {
+      if (viewer.terrainProvider !== baseTerrainProvider) {
+        viewer.terrainProvider = baseTerrainProvider;
+      }
+    }
+    // ───────────────────────────────────────────────────────────────────────
+
 
     // Always clean up hillshade when drape URL changes to ensure proper layer rebuild
     const drapeUrlChanged = activeDemDrapeUrl !== drapeUrl;
@@ -2588,7 +2619,7 @@
       activeDemDrapeUrl = drapeUrl;
     }
 
-    const clampedHillshadeAlpha = Math.max(0.0, Math.min(0.35, demVisual.hillshadeAlpha * 0.45));
+    const clampedHillshadeAlpha = Math.max(0.0, Math.min(1.0, demVisual.hillshadeAlpha));
     if (clampedHillshadeAlpha > 0.01) {
       if (activeDemHillshadeLayer && activeDemHillshadeUrl !== hillshadeUrl) {
         viewer.imageryLayers.remove(activeDemHillshadeLayer, false);
@@ -2610,36 +2641,24 @@
       }
       activeDemHillshadeLayer.alpha = clampedHillshadeAlpha;
       activeDemHillshadeLayer.show = demVisible;
-      if (activeDemHillshadeLayer) {
-        viewer.imageryLayers.raiseToTop(activeDemHillshadeLayer);
-      }
     } else if (activeDemHillshadeLayer) {
       viewer.imageryLayers.remove(activeDemHillshadeLayer, false);
       activeDemHillshadeLayer = null;
       activeDemHillshadeUrl = null;
     }
     applyDemSceneSettings();
-    // Ensure proper layer stacking: DEM layers (drape + hillshade) should be topmost
+    
+    // Ensure proper layer stacking: RGB imagery MUST STRICTLY overlay the DEM
+    // Order (top to bottom): managed imagery (RGB) > hillshade > drape > base layers
     if (activeDemDrapeLayer) {
       viewer.imageryLayers.raiseToTop(activeDemDrapeLayer);
     }
     if (activeDemHillshadeLayer) {
       viewer.imageryLayers.raiseToTop(activeDemHillshadeLayer);
     }
-    // Managed imagery layers should render ABOVE DEM drape but BELOW DEM hillshade
-    // Order (top to bottom): hillshade > managed imagery > drape > base layers
-    if (activeDemHillshadeLayer && viewer.imageryLayers.indexOf(activeDemHillshadeLayer) >= 0) {
-      viewer.imageryLayers.raiseToTop(activeDemHillshadeLayer);
-    }
-    const topManagedIndex = activeDemHillshadeLayer ? viewer.imageryLayers.indexOf(activeDemHillshadeLayer) - 1 : viewer.imageryLayers.length - 1;
     for (const layer of managedImageryLayers.values()) {
       if (layer && layer.show && viewer.imageryLayers.indexOf(layer) >= 0) {
-        const currentIndex = viewer.imageryLayers.indexOf(layer);
-        if (currentIndex < topManagedIndex) {
-          for (let i = currentIndex; i < topManagedIndex; i += 1) {
-            viewer.imageryLayers.raiseToTop(layer);
-          }
-        }
+        viewer.imageryLayers.raiseToTop(layer);
       }
     }
     log("debug", "DEM layer stack: hillshade=" + (activeDemHillshadeLayer ? "yes" : "no") + " drape=" + (activeDemDrapeLayer ? "yes" : "no") + " managed=" + managedImageryLayers.size);
@@ -2668,6 +2687,124 @@
     }
     requestSceneRender();
   }
+
+  const MAX_CONCURRENT_TERRAIN_DECODES = 4;
+  let activeTerrainDecodes = 0;
+  const terrainDecodeQueue = [];
+  terrainDecodeCanvas = document.createElement("canvas");
+  terrainDecodeCanvas.width = TERRAIN_SAMPLE_SIZE;
+  terrainDecodeCanvas.height = TERRAIN_SAMPLE_SIZE;
+  terrainDecodeCtx = terrainDecodeCanvas.getContext("2d", { willReadFrequently: true });
+
+  function processTerrainDecodeQueue() {
+    while (terrainDecodeQueue.length > 0 && activeTerrainDecodes < MAX_CONCURRENT_TERRAIN_DECODES) {
+      const task = terrainDecodeQueue.shift();
+      activeTerrainDecodes++;
+      task().finally(() => {
+        activeTerrainDecodes--;
+        processTerrainDecodeQueue();
+      });
+    }
+  }
+
+  function enqueueTerrainDecode(taskFn) {
+    return new Promise((resolve, reject) => {
+      terrainDecodeQueue.push(async () => {
+        try {
+          resolve(await taskFn());
+        } catch (err) {
+          reject(err);
+        }
+      });
+      processTerrainDecodeQueue();
+    });
+  }
+
+  function OfflineCustomTerrainProvider(options) {
+    this.tilingScheme = new Cesium.WebMercatorTilingScheme();
+    this.hasWaterMask = false;
+    this.hasVertexNormals = false;
+    this.ready = true;
+    this.readyPromise = Cesium.when.resolve(true);
+    this.errorEvent = new Cesium.Event();
+    
+    this._url = options.url;
+    this._min = options.minLevel || 0;
+    this._max = options.maxLevel || DEM_MAX_TERRAIN_LEVEL;
+    this._rangeMin = 0;
+    this._rangeMax = 0;
+    
+    if (options.options && options.options.query && options.options.query.rescale) {
+      const parts = String(options.options.query.rescale).split(",");
+      if (parts.length === 2) {
+        this._rangeMin = parseFloat(parts[0]);
+        this._rangeMax = parseFloat(parts[1]);
+      }
+    }
+  }
+
+  OfflineCustomTerrainProvider.prototype.requestTileGeometry = function (x, y, level) {
+    if (level > this._max) {
+      return Cesium.when.reject(new Error("Exceeded max level"));
+    }
+    
+    const tileUrl = this._url.replace("%7Bz%7D", level).replace("%7Bx%7D", x).replace("%7By%7D", y).replace("{z}", level).replace("{x}", x).replace("{y}", y);
+    
+    return Cesium.when(enqueueTerrainDecode(() => {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => {
+          terrainDecodeCtx.clearRect(0, 0, TERRAIN_SAMPLE_SIZE, TERRAIN_SAMPLE_SIZE);
+          terrainDecodeCtx.drawImage(img, 0, 0, TERRAIN_SAMPLE_SIZE, TERRAIN_SAMPLE_SIZE);
+          const imgData = terrainDecodeCtx.getImageData(0, 0, TERRAIN_SAMPLE_SIZE, TERRAIN_SAMPLE_SIZE);
+          const data = imgData.data;
+          const output = new Float32Array(TERRAIN_SAMPLE_SIZE * TERRAIN_SAMPLE_SIZE);
+          
+          const rMin = this._rangeMin;
+          const span = this._rangeMax - rMin;
+          
+          for (let i = 0; i < output.length; i++) {
+            const val = data[i * 4]; 
+            if (data[i * 4 + 3] === 0) {
+              output[i] = 0; 
+            } else {
+              output[i] = rMin + (val / 255.0) * span;
+            }
+          }
+          
+          img.onload = null;
+          img.onerror = null;
+          
+          resolve(new Cesium.HeightmapTerrainData({
+            buffer: output,
+            width: TERRAIN_SAMPLE_SIZE,
+            height: TERRAIN_SAMPLE_SIZE,
+            structure: { heightScale: demVisual.exaggeration, heightOffset: 0.0, elementsPerHeight: 1, stride: 1 }
+          }));
+        };
+        img.onerror = () => {
+          img.onload = null;
+          img.onerror = null;
+          const output = new Float32Array(TERRAIN_SAMPLE_SIZE * TERRAIN_SAMPLE_SIZE);
+          resolve(new Cesium.HeightmapTerrainData({
+            buffer: output,
+            width: TERRAIN_SAMPLE_SIZE,
+            height: TERRAIN_SAMPLE_SIZE,
+            structure: { heightScale: demVisual.exaggeration, heightOffset: 0.0, elementsPerHeight: 1, stride: 1 }
+          }));
+        };
+        img.src = tileUrl;
+      });
+    }));
+  };
+
+  OfflineCustomTerrainProvider.prototype.getLevelMaximumGeometricError = function (level) {
+    return 7785.0 / Math.pow(2, level);
+  };
+  OfflineCustomTerrainProvider.prototype.getTileDataAvailable = function (x, y, level) {
+    return level <= this._max;
+  };
 
   function setDemColorMode(colormapName) {
     if (!activeDemContext) {
@@ -3793,6 +3930,10 @@
       viewer.scene.morphTo2D(0.0);
       currentSceneMode = "2d";
       syncSceneModeToggle("2d");
+      if (comparatorModeEnabled) {
+        setComparatorViewerModeByType(comparatorLeftViewer, null);
+        setComparatorViewerModeByType(comparatorRightViewer, null);
+      }
       updateBasemapBlendForCurrentMode();
       // Force immediate re-render after instant morph
       requestSceneRender();
@@ -3806,6 +3947,10 @@
     viewer.scene.morphTo3D(0.0);
     currentSceneMode = "3d";
     syncSceneModeToggle("3d");
+    if (comparatorModeEnabled) {
+      setComparatorViewerModeByType(comparatorLeftViewer, null);
+      setComparatorViewerModeByType(comparatorRightViewer, null);
+    }
     updateBasemapBlendForCurrentMode();
     // Force immediate re-render after instant morph
     requestSceneRender();
@@ -4142,45 +4287,62 @@
           comparatorDemRefreshTimer = null;
         }
         const paneState = getComparatorPaneVisual(comparatorSelectedPane);
-        if (!paneState) {
-          return;
-        }
+        if (!paneState) return;
+        
+        const comparatorExaggChanged = paneState.dem.exaggeration !== nextExaggeration;
         paneState.dem.exaggeration = nextExaggeration;
         paneState.dem.hillshadeAlpha = nextHillshadeAlpha;
+        
         applyComparatorPaneVisualState(comparatorSelectedPane);
         notifyComparatorPaneState(comparatorSelectedPane);
+        
+        if (comparatorExaggChanged) {
+          scheduleComparatorDemRefresh(comparatorSelectedPane);
+        }
+        
         requestSceneRender();
-        log(
-          "info",
-          "Comparator DEM properties pane=" +
-            comparatorSelectedPane +
-            " exaggeration=" +
-            nextExaggeration.toFixed(2) +
-            " hillshade=" +
-            nextHillshadeAlpha.toFixed(2)
-        );
         return;
       }
 
+      const exaggerationChanged = demVisual.exaggeration !== nextExaggeration;
       demVisual.exaggeration = nextExaggeration;
       demVisual.hillshadeAlpha = nextHillshadeAlpha;
-      if (activeDemContext) {
-        applyDemLayer();
-      } else if (viewer) {
-        viewer.scene.verticalExaggeration = demVisual.exaggeration;
+      
+      if (viewer && viewer.scene) {
+        if ("verticalExaggeration" in viewer.scene) {
+          viewer.scene.verticalExaggeration = demVisual.exaggeration;
+        }
+        if (viewer.scene.globe) {
+          viewer.scene.globe.terrainExaggeration = demVisual.exaggeration;
+        }
       }
-      if (comparatorLeftViewer && comparatorRightViewer) {
-        comparatorLeftViewer.scene.verticalExaggeration = demVisual.exaggeration;
-        comparatorRightViewer.scene.verticalExaggeration = demVisual.exaggeration;
+      if (comparatorLeftViewer && comparatorLeftViewer.scene && comparatorRightViewer && comparatorRightViewer.scene) {
+        if ("verticalExaggeration" in comparatorLeftViewer.scene) {
+          comparatorLeftViewer.scene.verticalExaggeration = demVisual.exaggeration;
+          comparatorRightViewer.scene.verticalExaggeration = demVisual.exaggeration;
+        }
+        if (comparatorLeftViewer.scene.globe) {
+          comparatorLeftViewer.scene.globe.terrainExaggeration = demVisual.exaggeration;
+          comparatorRightViewer.scene.globe.terrainExaggeration = demVisual.exaggeration;
+        }
       }
+      
+      if (activeDemHillshadeLayer) {
+        // Apply alpha dynamically without artificially capping at 0.35
+        activeDemHillshadeLayer.alpha = demVisual.hillshadeAlpha;
+      }
+
+      if (exaggerationChanged && activeDemContext) {
+        if (window.mainDemRefreshTimer !== undefined && window.mainDemRefreshTimer !== null) {
+          window.clearTimeout(window.mainDemRefreshTimer);
+        }
+        window.mainDemRefreshTimer = window.setTimeout(() => {
+          applyDemLayer();
+        }, 300);
+      }
+
+      // Vertical exaggeration and layer alpha apply directly to the GPU in real-time.
       requestSceneRender();
-      log(
-        "info",
-        "DEM properties exaggeration=" +
-          demVisual.exaggeration.toFixed(2) +
-          " hillshade=" +
-          demVisual.hillshadeAlpha.toFixed(2)
-      );
     },
     setImageryProperties: function (brightness, contrast) {
       if (!viewer) return;
