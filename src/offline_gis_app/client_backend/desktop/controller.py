@@ -1961,13 +1961,20 @@ class DesktopController:
     def _add_layer(self, asset: dict, options: dict) -> bool:
         tile_url = str(asset.get("tile_url") or "")
         
-        # --- FIX: TiTiler/Rasterio 500 error on Windows ---
-        # Remove "file:///" prefixes from the nested url parameter.
+        # --- FIX: TiTiler/Rasterio 500 error on Windows & macOS ---
+        # Remove "file://" prefixes from the nested url parameter.
         # Rasterio on Windows fails to resolve "file:///C:/..." if it contains spaces.
-        if "url=file:///" in tile_url:
-            tile_url = tile_url.replace("url=file:///", "url=")
-        if "url=file%3A%2F%2F%2F" in tile_url:
-            tile_url = tile_url.replace("url=file%3A%2F%2F%2F", "url=")
+        import platform
+        if platform.system() == "Windows":
+            if "url=file:///" in tile_url:
+                tile_url = tile_url.replace("url=file:///", "url=")
+            if "url=file%3A%2F%2F%2F" in tile_url:
+                tile_url = tile_url.replace("url=file%3A%2F%2F%2F", "url=")
+        else:
+            if "url=file://" in tile_url:
+                tile_url = tile_url.replace("url=file://", "url=")
+            if "url=file%3A%2F%2F" in tile_url:
+                tile_url = tile_url.replace("url=file%3A%2F%2F", "url=")
             
         asset["tile_url"] = tile_url
         

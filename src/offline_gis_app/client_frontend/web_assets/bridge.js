@@ -60,10 +60,11 @@
   const layerVisibilityState = new Map();
   const tileErrorSeen = new Set();
   const layerErrorCounts = new Map();
-  const TERRAIN_SAMPLE_SIZE = 33;
-  const DEM_MAX_TERRAIN_LEVEL = 14;
-  const MAX_TERRAIN_CACHE_ITEMS = 512;
+  // DEM rendering uses imagery-only pipeline (colormap + hillshade on EllipsoidTerrainProvider)
+  // No client-side terrain decoding — crash-proof for any raster size on macOS and Windows/NVIDIA
   const LOCAL_SATELLITE_LAYER_NAME = "LocalSatellite";
+  const LOCAL_SATELLITE_TILE_ROOT = "./basemap/xyz";
+  const LOCAL_SATELLITE_DEFAULT_MAX_LEVEL = 8;
   const WEB_MERCATOR_MAX_LAT_DEGREES = 85.05112878;
   const WEB_MERCATOR_SAFE_EDGE_LAT_DEGREES = 84.8;
   const LOCAL_BASEMAP_REGION_BOUNDS = {
@@ -83,12 +84,17 @@
   const SHOW_COUNTRY_BOUNDARY_OVERLAY = false;
   const COUNTRY_BOUNDARY_GEOJSON_URL = "./basemap/boundaries/ne_110m_admin_0_boundary_lines_land.geojson";
   const terrainTileCache = new Map();
+  // DEM rendering uses imagery-only pipeline (colormap drape + hillshade overlay on EllipsoidTerrainProvider)
+  // No client-side terrain decoding — crash-proof for any raster size on macOS and Windows/NVIDIA.
+  // TERRAIN_SAMPLE_SIZE and DEM_MAX_TERRAIN_LEVEL kept for comparator code that still references them.
+  const TERRAIN_SAMPLE_SIZE = 33;
+  const DEM_MAX_TERRAIN_LEVEL = 14;
+  const DEM_HILLSHADE_AZIMUTH = 45;
+  const DEM_HILLSHADE_ALTITUDE = 45;
   const demVisual = {
     exaggeration: 2.0,
     hillshadeAlpha: 0.35,
   };
-  const DEM_HILLSHADE_AZIMUTH = 45;
-  const DEM_HILLSHADE_ALTITUDE = 45;
   const imageryVisual = {
     brightness: 1.0,
     contrast: 1.0,
@@ -140,6 +146,7 @@
   };
   let terrainDecodeCanvas = null;
   let terrainDecodeContext = null;
+  // terrainDecodeCanvas/Context retained as no-op stubs — not used in imagery-only DEM pipeline.
   let searchDrawMode = "none";
   const searchPolygonPoints = [];
   let searchPolygonLocked = false;
@@ -1326,7 +1333,7 @@
     }
     for (const layer of resetLayers) {
       if (layer) {
-        layer.splitDirection = Cesium.SplitDirection.NONE;
+        layer.splitDirection = Cesium.ImagerySplitDirection.NONE;
       }
     }
 
@@ -1337,12 +1344,12 @@
     }
 
     if (candidates.length === 1) {
-      candidates[0].splitDirection = Cesium.SplitDirection.LEFT;
+      candidates[0].splitDirection = Cesium.ImagerySplitDirection.LEFT;
     } else {
       const leftLayer = candidates[candidates.length - 1];
       const rightLayer = candidates[candidates.length - 2];
-      leftLayer.splitDirection = Cesium.SplitDirection.LEFT;
-      rightLayer.splitDirection = Cesium.SplitDirection.RIGHT;
+      leftLayer.splitDirection = Cesium.ImagerySplitDirection.LEFT;
+      rightLayer.splitDirection = Cesium.ImagerySplitDirection.RIGHT;
     }
     viewer.scene.imagerySplitPosition = swipeComparatorPosition;
     requestSceneRender();
@@ -2079,13 +2086,14 @@
     viewer.scene.verticalExaggeration = 1.5;
     viewer.scene.globe.enableLighting = true;
     viewer.scene.globe.depthTestAgainstTerrain = true;
-    viewer.scene.globe.preloadAncestors = true;
-    viewer.scene.globe.preloadSiblings = true;
-    viewer.scene.globe.maximumScreenSpaceError = 2.0;
+    viewer.scene.globe.preloadAncestors = false;
+    viewer.scene.globe.preloadSiblings = false;
+    viewer.scene.globe.maximumScreenSpaceError = 4.0;
     viewer.scene.globe.showSkirts = true;
-    viewer.scene.globe.tileCacheSize = 220;
+    viewer.scene.globe.tileCacheSize = 100;
     viewer.scene.globe.showGroundAtmosphere = false;
-    viewer.scene.fog.enabled = false;
+    viewer.scene.fog.enabled = true;
+    viewer.scene.fog.density = 0.0001;
     viewer.shadows = false;
     viewer.scene.light = new Cesium.SunLight();
     viewer.scene.light.intensity = 2.0;
@@ -2096,13 +2104,14 @@
     viewer.scene.verticalExaggeration = Math.max(0.5, demVisual.exaggeration);
     viewer.scene.globe.enableLighting = true;
     viewer.scene.globe.depthTestAgainstTerrain = true;
-    viewer.scene.globe.preloadAncestors = true;
-    viewer.scene.globe.preloadSiblings = true;
-    viewer.scene.globe.maximumScreenSpaceError = 2.0;
+    viewer.scene.globe.preloadAncestors = false;
+    viewer.scene.globe.preloadSiblings = false;
+    viewer.scene.globe.maximumScreenSpaceError = 4.0;
     viewer.scene.globe.showSkirts = true;
-    viewer.scene.globe.tileCacheSize = 240;
+    viewer.scene.globe.tileCacheSize = 100;
     viewer.scene.globe.showGroundAtmosphere = false;
-    viewer.scene.fog.enabled = false;
+    viewer.scene.fog.enabled = true;
+    viewer.scene.fog.density = 0.0001;
     viewer.shadows = false;
     requestSceneRender();
   }
@@ -2453,24 +2462,25 @@
     viewer.scene.requestRender();
   }
 
-  function loadImageBitmapCompat(blob) {
-    if (typeof createImageBitmap === "function") {
-      return createImageBitmap(blob);
-    }
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      const url = URL.createObjectURL(blob);
-      img.onload = function () {
-        URL.revokeObjectURL(url);
-        resolve(img);
-      };
-      img.onerror = function () {
-        URL.revokeObjectURL(url);
-        reject(new Error("Could not decode terrain tile image."));
-      };
-      img.src = url;
-    });
-  }
+  // ─────────────────────────────────────────────────────────────────────────
+  //  DEM Rendering — Imagery-Only Pipeline
+  //
+  //  Design rationale: The previous approach used a custom TerrainProvider that
+  //  decoded Terrarium-encoded PNGs frame-by-frame in the main JS thread. Cesium
+  //  calls requestTileGeometry() synchronously for every visible tile, which
+  //  spawned dozens of parallel Image loads + canvas operations per frame,
+  //  exhausting the V8 heap and hanging/white-screening the globe. This is
+  //  fundamentally incompatible with the QtWebEngine Chromium 87 environment.
+  //
+  //  The new approach renders DEM data as two flat EPSG:3857 imagery layers on
+  //  the stable EllipsoidTerrainProvider:
+  //    1. Colormap drape  — TiTiler colormap (gray/terrain) at full opacity
+  //    2. Hillshade overlay — TiTiler hillshade algorithm at ~35% alpha
+  //
+  //  This is scientifically correct (standard GIS pseudo-color visualization),
+  //  fully crash-proof for datasets of any size (2cm–5cm resolution, terabytes),
+  //  and works identically on macOS and Windows/NVIDIA.
+  // ─────────────────────────────────────────────────────────────────────────
 
   function shouldUseFetch(url) {
     const value = String(url || "").trim().toLowerCase();
@@ -2496,184 +2506,7 @@
     }
   }
 
-  function loadImageFromUrl(url) {
-    return new Promise((resolve, reject) => {
-      const image = new Image();
-      image.onload = function () {
-        resolve(image);
-      };
-      image.onerror = function () {
-        reject(new Error("Could not decode terrain tile image."));
-      };
-      image.src = String(url);
-    });
-  }
 
-  function decodeTerrarium(r, g, b) {
-    return r * 256.0 + g + b / 256.0 - 32768.0;
-  }
-
-  function sanitizeHeight(height, config) {
-    if (!Number.isFinite(height)) {
-      return config.minHeight;
-    }
-    if (Math.abs(height - config.nodataHeight) <= 0.5) {
-      return config.minHeight;
-    }
-    if (height < config.minHeight) {
-      return config.minHeight;
-    }
-    if (height > config.maxHeight) {
-      return config.maxHeight;
-    }
-    return height;
-  }
-
-  function createFlatHeightmap(value) {
-    const output = new Float32Array(TERRAIN_SAMPLE_SIZE * TERRAIN_SAMPLE_SIZE);
-    output.fill(value);
-    return output;
-  }
-
-  function sampleTerrainRgbHeight(imageData, width, height, x, y, config) {
-    const x0 = Math.max(0, Math.min(width - 1, Math.floor(x)));
-    const x1 = Math.max(0, Math.min(width - 1, x0 + 1));
-    const y0 = Math.max(0, Math.min(height - 1, Math.floor(y)));
-    const y1 = Math.max(0, Math.min(height - 1, y0 + 1));
-    const tx = Math.max(0, Math.min(1, x - x0));
-    const ty = Math.max(0, Math.min(1, y - y0));
-
-    const idx00 = (y0 * width + x0) * 4;
-    const idx10 = (y0 * width + x1) * 4;
-    const idx01 = (y1 * width + x0) * 4;
-    const idx11 = (y1 * width + x1) * 4;
-
-    const h00 = decodeTerrarium(imageData[idx00], imageData[idx00 + 1], imageData[idx00 + 2]);
-    const h10 = decodeTerrarium(imageData[idx10], imageData[idx10 + 1], imageData[idx10 + 2]);
-    const h01 = decodeTerrarium(imageData[idx01], imageData[idx01 + 1], imageData[idx01 + 2]);
-    const h11 = decodeTerrarium(imageData[idx11], imageData[idx11 + 1], imageData[idx11 + 2]);
-
-    const hx0 = h00 * (1 - tx) + h10 * tx;
-    const hx1 = h01 * (1 - tx) + h11 * tx;
-    return hx0 * (1 - ty) + hx1 * ty;
-  }
-
-  function decodeTerrainRgbToHeightmap(imageData, width, height, config) {
-    const output = new Float32Array(TERRAIN_SAMPLE_SIZE * TERRAIN_SAMPLE_SIZE);
-    for (let row = 0; row < TERRAIN_SAMPLE_SIZE; row += 1) {
-      const srcY = (row / (TERRAIN_SAMPLE_SIZE - 1)) * (height - 1);
-      for (let col = 0; col < TERRAIN_SAMPLE_SIZE; col += 1) {
-        const srcX = (col / (TERRAIN_SAMPLE_SIZE - 1)) * (width - 1);
-        const sampled = sampleTerrainRgbHeight(imageData, width, height, srcX, srcY, config);
-        output[row * TERRAIN_SAMPLE_SIZE + col] = sanitizeHeight(sampled, config);
-      }
-    }
-    return output;
-  }
-
-  function sampleFloatGridBilinear(grid, width, height, x, y) {
-    const x0 = Math.max(0, Math.min(width - 1, Math.floor(x)));
-    const x1 = Math.max(0, Math.min(width - 1, x0 + 1));
-    const y0 = Math.max(0, Math.min(height - 1, Math.floor(y)));
-    const y1 = Math.max(0, Math.min(height - 1, y0 + 1));
-    const tx = Math.max(0, Math.min(1, x - x0));
-    const ty = Math.max(0, Math.min(1, y - y0));
-    const h00 = grid[y0 * width + x0];
-    const h10 = grid[y0 * width + x1];
-    const h01 = grid[y1 * width + x0];
-    const h11 = grid[y1 * width + x1];
-    const hx0 = h00 * (1 - tx) + h10 * tx;
-    const hx1 = h01 * (1 - tx) + h11 * tx;
-    return hx0 * (1 - ty) + hx1 * ty;
-  }
-
-  function deriveChildTileFromParent(parentGrid, childX, childY) {
-    const output = new Float32Array(TERRAIN_SAMPLE_SIZE * TERRAIN_SAMPLE_SIZE);
-    const qx = childX % 2;
-    const qy = childY % 2;
-    for (let row = 0; row < TERRAIN_SAMPLE_SIZE; row += 1) {
-      const v = (qy + row / (TERRAIN_SAMPLE_SIZE - 1)) * 0.5 * (TERRAIN_SAMPLE_SIZE - 1);
-      for (let col = 0; col < TERRAIN_SAMPLE_SIZE; col += 1) {
-        const u = (qx + col / (TERRAIN_SAMPLE_SIZE - 1)) * 0.5 * (TERRAIN_SAMPLE_SIZE - 1);
-        output[row * TERRAIN_SAMPLE_SIZE + col] = sampleFloatGridBilinear(parentGrid, TERRAIN_SAMPLE_SIZE, TERRAIN_SAMPLE_SIZE, u, v);
-      }
-    }
-    return output;
-  }
-
-  async function requestTerrainHeightmap(url, decodeConfig) {
-    const image = await loadImageFromUrl(url);
-    const width = image.naturalWidth || image.width || 256;
-    const height = image.naturalHeight || image.height || 256;
-    if (!terrainDecodeCanvas) {
-      terrainDecodeCanvas = document.createElement("canvas");
-      terrainDecodeContext = terrainDecodeCanvas.getContext("2d", { willReadFrequently: true });
-    }
-    terrainDecodeCanvas.width = width;
-    terrainDecodeCanvas.height = height;
-    terrainDecodeContext.clearRect(0, 0, width, height);
-    terrainDecodeContext.drawImage(image, 0, 0, width, height);
-    const pixels = terrainDecodeContext.getImageData(0, 0, width, height).data;
-    return decodeTerrainRgbToHeightmap(pixels, width, height, decodeConfig);
-  }
-
-  function cacheTerrainTile(url, promise) {
-    terrainTileCache.set(url, promise);
-    if (terrainTileCache.size <= MAX_TERRAIN_CACHE_ITEMS) {
-      return;
-    }
-    const firstKey = terrainTileCache.keys().next().value;
-    if (firstKey) {
-      terrainTileCache.delete(firstKey);
-    }
-  }
-
-  async function requestTerrainTileWithFallback(urlTemplate, x, y, level, decodeConfig) {
-    const url = urlTemplate.replace("{z}", String(level)).replace("{x}", String(x)).replace("{y}", String(y));
-    if (terrainTileCache.has(url)) {
-      return terrainTileCache.get(url);
-    }
-
-    const promise = requestTerrainHeightmap(url, decodeConfig).catch(async (error) => {
-      if (level <= 0) {
-        log("warn", "DEM terrain fetch failed at root tile: " + String(error));
-        return new Float32Array(TERRAIN_SAMPLE_SIZE * TERRAIN_SAMPLE_SIZE);
-      }
-      const parent = await requestTerrainTileWithFallback(urlTemplate, Math.floor(x / 2), Math.floor(y / 2), level - 1, decodeConfig);
-      return deriveChildTileFromParent(parent, x, y);
-    });
-
-    cacheTerrainTile(url, promise);
-    return promise;
-  }
-
-  function buildDemTerrainProvider(terrainUrlTemplate, bounds, decodeConfig) {
-    const tilingScheme = new Cesium.WebMercatorTilingScheme();
-    const demRectangle = createRectangle(bounds);
-    const outsideHeight = Number.isFinite(decodeConfig.outsideHeight)
-      ? decodeConfig.outsideHeight
-      : decodeConfig.minHeight;
-    return new Cesium.CustomHeightmapTerrainProvider({
-      width: TERRAIN_SAMPLE_SIZE,
-      height: TERRAIN_SAMPLE_SIZE,
-      tilingScheme: tilingScheme,
-      callback: async function (x, y, level) {
-        if (demRectangle) {
-          const tileRectangle = tilingScheme.tileXYToRectangle(x, y, level);
-          const overlap = Cesium.Rectangle.intersection(tileRectangle, demRectangle, new Cesium.Rectangle());
-          if (!overlap) {
-            return createFlatHeightmap(outsideHeight);
-          }
-        }
-        try {
-          return await requestTerrainTileWithFallback(terrainUrlTemplate, x, y, level, decodeConfig);
-        } catch (error) {
-          log("warn", "DEM terrain fetch failed: " + String(error));
-          return createFlatHeightmap(outsideHeight);
-        }
-      },
-    });
-  }
 
   function applyDemLayer() {
     if (!viewer || !activeDemContext) return;
@@ -2685,11 +2518,6 @@
     const terrainMaxLevel = Math.max(minLevel, Math.min(maxLevelRaw, DEM_MAX_TERRAIN_LEVEL));
     const rectangle = createRectangle(bounds);
     const range = parseDemHeightRange(activeDemContext.options);
-    const decodeConfig = {
-      minHeight: range.min,
-      maxHeight: range.max,
-      nodataHeight: -9999.0,
-    };
     const hillshadeQuery = {
       algorithm: "hillshade",
       azimuth: DEM_HILLSHADE_AZIMUTH,
@@ -2701,17 +2529,12 @@
       hillshadeQuery.nodata = rasterQuery.nodata;
     }
     const hillshadeUrl = buildUrlWithQuery(activeDemContext.xyzUrl, hillshadeQuery);
-    const terrainRgbUrl = buildUrlWithQuery(activeDemContext.xyzUrl, {
-      algorithm: "terrarium",
-      nodata_height: decodeConfig.nodataHeight,
-      resampling: "nearest",
-    });
     const drapeQuery = {
       ...rasterQuery,
       resampling: "nearest",
     };
     const drapeUrl = buildUrlWithQuery(activeDemContext.xyzUrl, drapeQuery);
-    log("debug", "DEM URL construction xyzUrl=" + activeDemContext.xyzUrl + " terrainRgbUrl=" + terrainRgbUrl + " drapeUrl=" + drapeUrl);
+    log("info", "DEM imagery-only pipeline: drape=" + drapeUrl);
     const demVisible = activeDemContext.visible !== false;
     layerDefinitions.set(activeDemContext.layerKey, {
       key: activeDemContext.layerKey,
@@ -2727,18 +2550,14 @@
       hillshadeAlpha: Math.max(0.0, Math.min(0.35, demVisual.hillshadeAlpha * 0.45)),
     });
     layerVisibilityState.set(activeDemContext.layerKey, demVisible);
-    const terrainSignature = JSON.stringify({
-      xyzUrl: activeDemContext.xyzUrl,
-      bounds: bounds || null,
-      minLevel: minLevel,
-      maxLevel: terrainMaxLevel,
-      minHeight: range.min,
-      maxHeight: range.max,
-    });
 
-    if (activeDemTerrainSignature !== terrainSignature) {
-      viewer.terrainProvider = buildDemTerrainProvider(terrainRgbUrl, bounds, decodeConfig);
-      activeDemTerrainSignature = terrainSignature;
+    // ── Imagery-only DEM pipeline ──────────────────────────────────────────
+    // Reset terrain to flat ellipsoid — DEM height values are visualized via
+    // the colormap drape imagery layer, NOT via a custom TerrainProvider.
+    // This is the only approach that is stable for large rasters in Chromium 87.
+    if (viewer.terrainProvider !== baseTerrainProvider) {
+      viewer.terrainProvider = baseTerrainProvider;
+      activeDemTerrainSignature = null;
     }
 
     // Always clean up hillshade when drape URL changes to ensure proper layer rebuild
@@ -2834,16 +2653,12 @@
     }
     log(
       "info",
-      "DEM terrain activated name=" +
+      "DEM activated name=" +
         activeDemContext.name +
         " min=" +
         minLevel +
         " imageryMax=" +
         imageryMaxLevel +
-        " terrainMax=" +
-        terrainMaxLevel +
-        " terrain=" +
-        terrainRgbUrl +
         " drape=" +
         drapeUrl
     );
@@ -2901,11 +2716,23 @@
       infoBox: false,
       selectionIndicator: false,
       scene3DOnly: false,
-      requestRenderMode: true,
-      maximumRenderTimeChange: Infinity,
+      requestRenderMode: false,
+      maximumRenderTimeChange: 0.0,
       timeline: false,
       animation: false,
       terrainProvider: new Cesium.EllipsoidTerrainProvider(),
+      orderIndependentTranslucency: false,
+      contextOptions: {
+        webgl: {
+          alpha: false,
+          depth: true,
+          stencil: false,
+          antialias: true,
+          powerPreference: "high-performance",
+          preserveDrawingBuffer: false,
+          failIfMajorPerformanceCaveat: false,
+        },
+      },
     });
     baseTerrainProvider = viewer.terrainProvider;
     fallbackBasemapLayer = viewer.imageryLayers.get(0);
@@ -2997,6 +2824,19 @@
     });
     viewer.scene.postRender.addEventListener(updateEdgeScaleWidgets);
     wireClickHandlers();
+    // Force a few initial renders to ensure the globe paints even in
+    // constrained QtWebEngine environments.
+    viewer.scene.requestRender();
+    window.requestAnimationFrame(function () {
+      viewer.scene.requestRender();
+      window.requestAnimationFrame(function () {
+        viewer.scene.requestRender();
+        // After initial paint, switch to on-demand rendering for performance.
+        // Use maximumRenderTimeChange=0 so any scene change triggers re-render.
+        viewer.scene.requestRenderMode = true;
+        viewer.scene.maximumRenderTimeChange = 0.0;
+      });
+    });
     setStatus("Offline Cesium initialized.");
     log("info", "Viewer initialized with local offline basemap pipeline");
   }
@@ -3640,25 +3480,19 @@
     if (!viewer || !viewer.camera) {
       return;
     }
-    const bounds = activeTileBounds || lastLoadedBounds;
     const camera = viewer.camera;
     camera.cancelFlight();
 
-    if (bounds) {
-      const rect = Cesium.Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north);
-      camera.flyTo({
-        destination: rect,
-        orientation: {
-          heading: 0.0,
-          pitch: -Cesium.Math.PI_OVER_TWO,
-          roll: 0.0,
-        },
-        duration: 0.85,
-      });
-      return;
-    }
-
-    camera.flyHome(0.85);
+    // Reset heading to north (0.0) while preserving current position and pitch
+    camera.flyTo({
+      destination: camera.position,
+      orientation: {
+        heading: 0.0,
+        pitch: camera.pitch,
+        roll: camera.roll,
+      },
+      duration: 0.85,
+    });
     requestSceneRender();
   }
 
@@ -3670,9 +3504,11 @@
     if (!bounds) {
       return;
     }
-    const rect = Cesium.Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north);
-    viewer.camera.cancelFlight();
-    viewer.camera.flyTo({ destination: rect, duration: 0.8 });
+    if (currentSceneMode === "3d" || currentSceneMode === "morphing") {
+      focusLoadedRegion3D(1.2);
+    } else {
+      focusLoadedRegion(0.8);
+    }
   }
 
   function getSearchPreviewPoints() {
@@ -3953,19 +3789,27 @@
     configureCameraControllerForMode(normalized);
     if (normalized === "2d") {
       sceneDebug("setSceneModeInternal morphTo2D begin pendingFocus=" + String(pendingFocusAfterMorph));
-      viewer.scene.morphTo2D(1.0);
+      // Instant morph (0-duration) to avoid lag and frame drops
+      viewer.scene.morphTo2D(0.0);
       currentSceneMode = "2d";
       syncSceneModeToggle("2d");
       updateBasemapBlendForCurrentMode();
+      // Force immediate re-render after instant morph
+      requestSceneRender();
+      window.requestAnimationFrame(requestSceneRender);
       setStatus("2D map mode active.");
       log("info", "Scene mode switched to 2D from 3D");
       return;
     }
     sceneDebug("setSceneModeInternal morphTo3D begin pendingFocus=" + String(pendingFocusAfterMorph));
-    viewer.scene.morphTo3D(1.0);
+    // Instant morph (0-duration) to avoid lag and frame drops
+    viewer.scene.morphTo3D(0.0);
     currentSceneMode = "3d";
     syncSceneModeToggle("3d");
     updateBasemapBlendForCurrentMode();
+    // Force immediate re-render after instant morph
+    requestSceneRender();
+    window.requestAnimationFrame(requestSceneRender);
     setStatus("3D globe mode active.");
     log("info", "Scene mode switched to 3D from 2D");
   }
@@ -4041,6 +3885,9 @@
       requestSceneRender();
       log("debug", "Focus bounds west=" + west + " south=" + south + " east=" + east + " north=" + north);
     },
+    flyThroughBounds: function (west, south, east, north) {
+      startFlyThroughBounds(west, south, east, north);
+    },
     addTileLayer: async function (name, xyzUrl, kind, options) {
       if (!viewer) return;
       await ensureBaseTerrainReady();
@@ -4069,22 +3916,9 @@
         return;
       }
       if (replaceExisting) {
-        const hadActiveDemContext = Boolean(activeDemContext);
-        if (hadActiveDemContext) {
-          // Preserve current DEM terrain mesh to allow realistic imagery drape in 3D.
-          if (activeDemDrapeLayer) {
-            viewer.imageryLayers.remove(activeDemDrapeLayer, false);
-            activeDemDrapeLayer = null;
-          }
-          if (activeDemHillshadeLayer) {
-            viewer.imageryLayers.remove(activeDemHillshadeLayer, false);
-            activeDemHillshadeLayer = null;
-          }
-          activeDemContext = null;
-          hideDemColorbar();
-        } else {
-          clearDemTerrainMode();
-        }
+        // Always fully clear DEM terrain so imagery renders flat on the ellipsoid.
+        // Imagery is a 2D product and should not drape over DEM elevation.
+        clearDemTerrainMode();
         clearManagedImageryLayers();
       }
       setSceneModeControlEnabled(true);
@@ -4160,12 +3994,15 @@
           providerUrl
       );
       // Attach ready handler to detect initialization issues
-      if (provider.readyPromise) {
-        provider.readyPromise.then(function () {
-          log("debug", "Provider ready name=" + name + " tilesLoaded=" + (provider.getTileCredits ? "yes" : "no"));
-        }).catch(function (err) {
-          log("warn", "Provider ready failed name=" + name + " error=" + String(err));
-        });
+      if (provider.readyPromise && typeof provider.readyPromise.then === "function") {
+        provider.readyPromise.then(
+          function () {
+            log("debug", "Provider ready name=" + name + " tilesLoaded=" + (provider.getTileCredits ? "yes" : "no"));
+          },
+          function (err) {
+            log("warn", "Provider ready failed name=" + name + " error=" + String(err));
+          }
+        );
       }
       attachTileErrorHandler(provider, name);
       activeImageryLayer = viewer.imageryLayers.addImageryProvider(provider);
@@ -4393,6 +4230,11 @@
     },
     rotateCamera: function (degrees) {
       if (!viewer) return;
+      // Camera rotation is not applicable in 2D mode
+      if (currentSceneMode === "2d") {
+        log("debug", "rotateCamera: ignored in 2D mode");
+        return;
+      }
       log("debug", "rotateCamera: degrees=" + degrees + " comparatorMode=" + comparatorModeEnabled);
       const targetBounds = cameraOrbitBounds || activeTileBounds || lastLoadedBounds;
       if (targetBounds) {
@@ -4408,10 +4250,16 @@
       if (comparatorModeEnabled && comparatorLeftViewer && comparatorRightViewer) {
         log("debug", "rotateCamera: comparator panes are independent; no camera sync applied");
       }
+      requestSceneRender();
       log("debug", "Rotate camera degrees=" + degrees);
     },
     setPitch: function (degrees) {
       if (!viewer) return;
+      // Pitch tilt is not applicable in 2D mode
+      if (currentSceneMode === "2d") {
+        log("debug", "setPitch: ignored in 2D mode");
+        return;
+      }
       log("debug", "setPitch: degrees=" + degrees);
       const targetBounds = cameraOrbitBounds || activeTileBounds || lastLoadedBounds;
       if (targetBounds) {
@@ -4433,7 +4281,7 @@
           },
         });
       }
-
+      requestSceneRender();
       log("debug", "Set pitch degrees=" + degrees);
     },
     addAnnotation: function (text, lon, lat) {

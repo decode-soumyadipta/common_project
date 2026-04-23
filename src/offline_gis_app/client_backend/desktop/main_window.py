@@ -192,9 +192,87 @@ class MainWindow(QMainWindow):
             # Fallback: try alternative path structure
             base_path = Path(__file__).resolve().parents[3] / "src" / "offline_gis_app" / "client_frontend" / "web_assets" / "index.html"
 
+        # Ensure the cesium/ directory is accessible from the same directory as index.html.
+        # The Cesium build files live in desktop/web_assets/cesium/ but index.html is in
+        # client_frontend/web_assets/.  We create a symlink (or copy on Windows) so that
+        # the relative path ./cesium/Cesium.js resolves correctly for QWebEngineView.
+        self._ensure_cesium_assets(base_path.parent)
+
         html_url = QUrl.fromLocalFile(str(base_path.resolve()))
         html_url.setQuery(f"v={int(time.time())}")
         self.web_view.setUrl(html_url)
+
+    @staticmethod
+    def _ensure_cesium_assets(web_assets_dir: Path) -> None:
+        """Ensure cesium/ and basemap/ directories are accessible from the web_assets directory.
+
+        The canonical Cesium build files and offline basemap tiles live in
+        desktop/web_assets/cesium/ and desktop/web_assets/basemap/ respectively.
+        index.html references ``./cesium/Cesium.js`` and bridge.js references
+        ``./basemap/xyz/`` relative to itself, so we need entries next to
+        index.html that resolve to the canonical locations.  On macOS / Linux we
+        create relative symlinks; on Windows we copy the directory trees.
+        """
+        import logging
+        import os
+        import platform
+        import shutil
+
+        logger = logging.getLogger("desktop.cesium_assets")
+        is_windows = platform.system().lower() == "windows"
+        desktop_web_assets = web_assets_dir.parent.parent / "desktop" / "web_assets"
+
+        def _link_dir(name: str, required_file: str | None = None) -> None:
+            link_path = web_assets_dir / name
+            canonical = desktop_web_assets / name
+
+            if not canonical.exists():
+                logger.warning(
+                    "Canonical %s directory not found at %s. Skipping.",
+                    name, canonical,
+                )
+                return
+
+            if required_file and not (canonical / required_file).exists():
+                logger.warning(
+                    "%s not found in %s. Run scripts/setup_cesium_assets.py to download it.",
+                    required_file, canonical,
+                )
+                return
+
+            # Already correct?
+            if link_path.exists() or link_path.is_symlink():
+                if link_path.is_symlink():
+                    resolved = link_path.resolve()
+                    if resolved == canonical.resolve():
+                        logger.debug("%s symlink already correct", name)
+                        return
+                    link_path.unlink()
+                elif link_path.is_dir():
+                    if required_file and (link_path / required_file).exists():
+                        logger.debug("%s directory already present with %s", name, required_file)
+                        return
+                    if not required_file:
+                        logger.debug("%s directory already present", name)
+                        return
+                    shutil.rmtree(str(link_path))
+                else:
+                    link_path.unlink()
+
+            if is_windows:
+                logger.info("Windows: copying %s assets to %s", name, link_path)
+                shutil.copytree(str(canonical), str(link_path))
+            else:
+                try:
+                    rel_path = os.path.relpath(str(canonical), str(link_path.parent))
+                    link_path.symlink_to(rel_path)
+                    logger.info("Created %s symlink: %s -> %s", name, link_path, rel_path)
+                except OSError:
+                    logger.warning("Symlink failed for %s, falling back to copy", name)
+                    shutil.copytree(str(canonical), str(link_path))
+
+        _link_dir("cesium", required_file="Cesium.js")
+        _link_dir("basemap")
 
     def _set_visualization_tools_visible(self, visible: bool) -> None:
         self._visualization_tools_enabled = bool(visible)

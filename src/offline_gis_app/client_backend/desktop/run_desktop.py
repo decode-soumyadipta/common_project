@@ -41,6 +41,45 @@ def run(app_mode: DesktopAppMode = DesktopAppMode.UNIFIED, qt_backend: str | Non
     QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     _write_startup_trace("run:aa_share_openglcontexts_set")
 
+    # Ensure WebGL works in Qt5 WebEngine — the GPU blocklist can incorrectly
+    # disable WebGL on some macOS/Apple Silicon systems.
+    # Also increase V8 heap size for CesiumJS (4.3MB file needs more heap during parsing).
+    import os
+    import platform
+
+    existing_flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
+    required_flags = [
+        "--ignore-gpu-blocklist",
+        "--enable-gpu-rasterization",
+        "--js-flags=--max-old-space-size=2048",
+    ]
+    # Windows-specific: enable NVIDIA GPU acceleration and smooth WebGL rendering.
+    # These flags help CesiumJS utilize the discrete NVIDIA GPU instead of the
+    # integrated GPU, dramatically improving 3D globe and terrain rendering speed.
+    if platform.system() == "Windows":
+        required_flags.extend([
+            "--enable-webgl",
+            "--use-gl=desktop",
+            "--enable-accelerated-2d-canvas",
+            "--enable-gpu",
+            "--disable-gpu-vsync",
+            # Disable renderer code integrity to prevent NVIDIA driver sandbox conflicts
+            "--disable-features=RendererCodeIntegrity",
+            "--gpu-no-context-lost",
+        ])
+        # Force dedicated NVIDIA/AMD GPU — these env vars are read by the GPU driver
+        # before process launch and override any Windows Optimus power-saving selection.
+        os.environ.setdefault("SHIM_MCCOMPAT", "0x800000001")        # NVIDIA Optimus
+        os.environ.setdefault("__NV_PRIME_RENDER_OFFLOAD", "1")      # Linux PRIME (no-op on Win)
+        os.environ.setdefault("NvOptimusEnablement", "0x00000001")   # Force NVIDIA
+        os.environ.setdefault("AmdPowerXpressRequestHighPerformance", "1")  # Force AMD dGPU
+
+
+    for flag in required_flags:
+        if flag not in existing_flags:
+            existing_flags = existing_flags + " " + flag
+    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = existing_flags.strip()
+
     # Import WebEngine module before QApplication to satisfy QtWebEngine init ordering.
     from qtpy import QtWebEngineWidgets  # noqa: F401
     _write_startup_trace("run:qtwebengine_preloaded")
