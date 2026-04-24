@@ -161,6 +161,12 @@
   let lastSearchCursorScreenPosition = null;
   let polygonVisibilityEnabled = true;
   let searchOverlayVisible = true;
+  let panModeActive = false;
+  let distanceScaleOverlay = null;
+  const searchVertexEntities = [];
+  const drawnPolygons = [];
+  let drawnPolygonCounter = 0;
+  let aoiPanelMinimized = false;
   let annotationVisibilityEnabled = true;
   let sceneModeControlEnabled = true;
   let currentSceneMode = "3d";
@@ -1763,21 +1769,12 @@
   }
 
   function syncSceneModeToggle(mode) {
-    const toggle = document.getElementById("sceneModeToggle");
-    if (!toggle) return;
-    toggle.checked = String(mode || "3d").toLowerCase() !== "2d";
+    // Moved to Python Qt UI
   }
 
   function setSceneModeControlEnabled(enabled) {
     sceneModeControlEnabled = Boolean(enabled);
-    const wrapper = document.getElementById("sceneModeControl");
-    const toggle = document.getElementById("sceneModeToggle");
-    if (wrapper) {
-      wrapper.classList.toggle("disabled", !sceneModeControlEnabled);
-    }
-    if (toggle) {
-      toggle.disabled = !sceneModeControlEnabled;
-    }
+    // Moved to Python Qt UI
   }
 
   function parseDemHeightRange(options) {
@@ -2150,10 +2147,12 @@
     controller.enableInputs = true;
     controller.enableTranslate = true;
     controller.enableZoom = true;
-    controller.enableRotate = !is2d;
-    controller.enableTilt = !is2d;
-    controller.enableLook = !is2d;
-    controller.inertiaSpin = is2d ? 0.0 : 0.86;
+    // When panModeActive is true, force 2D-like flat drag behavior even in 3D mode
+    const forceFlat = panModeActive || is2d;
+    controller.enableRotate = !forceFlat;
+    controller.enableTilt = !forceFlat;
+    controller.enableLook = !forceFlat;
+    controller.inertiaSpin = forceFlat ? 0.0 : 0.86;
     controller.inertiaTranslate = 0.86;
     controller.inertiaZoom = 0.74;
   }
@@ -2222,8 +2221,22 @@
     }
     const rect = Cesium.Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north);
     const sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, 0.0);
+    const hpr = new Cesium.HeadingPitchRange(cameraOrbitHeading, cameraOrbitPitch, cameraOrbitRange);
+    
     viewer.camera.cancelFlight();
-    viewer.camera.lookAt(sphere.center, new Cesium.HeadingPitchRange(cameraOrbitHeading, cameraOrbitPitch, cameraOrbitRange));
+    viewer.camera.lookAt(sphere.center, hpr);
+    
+    if (comparatorModeEnabled) {
+      if (comparatorLeftViewer && comparatorLeftViewer.camera) {
+        comparatorLeftViewer.camera.cancelFlight();
+        comparatorLeftViewer.camera.lookAt(sphere.center, hpr);
+      }
+      if (comparatorRightViewer && comparatorRightViewer.camera) {
+        comparatorRightViewer.camera.cancelFlight();
+        comparatorRightViewer.camera.lookAt(sphere.center, hpr);
+      }
+    }
+    
     requestSceneRender();
     return true;
   }
@@ -2889,7 +2902,7 @@
       const reason = event && event.reason ? String(event.reason) : "unknown";
       log("error", "Unhandled promise rejection: " + reason);
     });
-    setupSceneModeToggle();
+
     setup2DWheelZoomFallback();
     baseTerrainReadyPromise = attachOfflineTerrainPack();
     void attachLocalSatelliteBasemap();
@@ -2961,6 +2974,7 @@
     });
     viewer.scene.postRender.addEventListener(updateEdgeScaleWidgets);
     wireClickHandlers();
+    
     // Force a few initial renders to ensure the globe paints even in
     // constrained QtWebEngine environments.
     viewer.scene.requestRender();
@@ -2976,32 +2990,6 @@
     });
     setStatus("Offline Cesium initialized.");
     log("info", "Viewer initialized with local offline basemap pipeline");
-  }
-
-  function setupSceneModeToggle() {
-    const toggle = document.getElementById("sceneModeToggle");
-    if (!toggle) {
-      return;
-    }
-    toggle.checked = true;
-    toggle.addEventListener("change", function () {
-      sceneDebug(
-        "toggle.change checked=" +
-          String(toggle.checked) +
-          " sceneModeControlEnabled=" +
-          String(sceneModeControlEnabled) +
-          " detectSceneMode=" +
-          detectSceneMode() +
-          " currentSceneMode=" +
-          currentSceneMode
-      );
-      if (!sceneModeControlEnabled) {
-        toggle.checked = true;
-        sceneDebug("toggle.change blocked: sceneModeControlEnabled=false");
-        return;
-      }
-      window.offlineGIS.setSceneMode(toggle.checked ? "3d" : "2d");
-    });
   }
 
   function setup2DWheelZoomFallback() {
@@ -3287,21 +3275,20 @@
           return;
         }
 
-        const start = distanceMeasureAnchor;
-        clickedPoints.length = 0;
-        clickedPoints.push([start.lon, start.lat]);
-        clickedPoints.push([lon, lat]);
         const geodesic = new Cesium.EllipsoidGeodesic(
-          Cesium.Cartographic.fromDegrees(start.lon, start.lat),
+          Cesium.Cartographic.fromDegrees(distanceMeasureAnchor.lon, distanceMeasureAnchor.lat),
           Cesium.Cartographic.fromDegrees(lon, lat)
         );
+        let azDegrees = Cesium.Math.toDegrees(geodesic.startHeading);
+        if (azDegrees < 0) azDegrees += 360.0;
         clearMeasurementPreviewEntities();
         updateMeasurementEntities(
-          start.lon,
-          start.lat,
+          distanceMeasureAnchor.lon,
+          distanceMeasureAnchor.lat,
           lon,
           lat,
-          geodesic.surfaceDistance
+          geodesic.surfaceDistance,
+          azDegrees
         );
         distanceMeasureAnchor = { lon: lon, lat: lat };
         emitMeasurementUpdated(geodesic.surfaceDistance);
@@ -3328,17 +3315,19 @@
             Cesium.Cartographic.fromDegrees(distanceMeasureAnchor.lon, distanceMeasureAnchor.lat),
             Cesium.Cartographic.fromDegrees(lonLat.lon, lonLat.lat)
           );
+          let azDegrees = Cesium.Math.toDegrees(geodesic.startHeading);
+          if (azDegrees < 0) azDegrees += 360.0;
           updateMeasurementPreview(
             distanceMeasureAnchor.lon,
             distanceMeasureAnchor.lat,
             lonLat.lon,
             lonLat.lat,
-            geodesic.surfaceDistance
+            geodesic.surfaceDistance,
+            azDegrees
           );
         }
       }
       if (searchDrawMode === "polygon") {
-        setSearchCursorEnabled(true);
         updateSearchCursorOverlay(lastSearchCursorScreenPosition);
       }
       if (searchDrawMode !== "polygon" || searchPolygonPoints.length === 0) {
@@ -3362,15 +3351,6 @@
         log("info", "Distance measure mode ended by right-click");
       }
     }, Cesium.ScreenSpaceEventType.RIGHT_CLICK);
-
-    const polygonVisibilityToggle = document.getElementById("polygonVisibilityToggle");
-    if (polygonVisibilityToggle) {
-      polygonVisibilityToggle.addEventListener("change", function () {
-        polygonVisibilityEnabled = this.checked;
-        updatePolygonPreviewVisibility();
-        log("debug", "Polygon preview visibility toggled: " + (polygonVisibilityEnabled ? "shown" : "hidden"));
-      });
-    }
 
     viewer.canvas.addEventListener("mouseenter", function () {
       if (searchDrawMode === "polygon") {
@@ -3408,10 +3388,6 @@
 
   function setPolygonPreviewVisible(visible) {
     polygonVisibilityEnabled = Boolean(visible);
-    const toggle = document.getElementById("polygonVisibilityToggle");
-    if (toggle) {
-      toggle.checked = polygonVisibilityEnabled;
-    }
     updatePolygonPreviewVisibility();
   }
 
@@ -3435,6 +3411,13 @@
     if (searchAreaLabelEntity) {
       viewer.entities.remove(searchAreaLabelEntity);
       searchAreaLabelEntity = null;
+    }
+    // Clear vertex marker entities
+    while (searchVertexEntities.length > 0) {
+      const ve = searchVertexEntities.pop();
+      if (ve && viewer) {
+        viewer.entities.remove(ve);
+      }
     }
     requestSceneRender();
   }
@@ -3462,6 +3445,7 @@
       measurementLabelEntity = null;
     }
     clearMeasurementPreviewEntities();
+    clearDistanceScaleOverlay();
     requestSceneRender();
   }
 
@@ -3480,36 +3464,183 @@
     requestSceneRender();
   }
 
-  function updateMeasurementPreview(startLon, startLat, endLon, endLat, meters) {
+  // ── Distance Scale Overlay (screen-space ruler) ──
+  function ensureDistanceScaleOverlay() {
+    if (distanceScaleOverlay || !document.body) {
+      return;
+    }
+    const el = document.createElement("div");
+    el.id = "distanceScaleOverlay";
+    el.setAttribute("aria-hidden", "true");
+    el.style.cssText = [
+      "position:fixed",
+      "pointer-events:none",
+      "z-index:99999",
+      "display:none",
+      "transform-origin:0% 50%",
+    ].join(";");
+
+    // The bar itself
+    const bar = document.createElement("div");
+    bar.className = "distScaleBar";
+    bar.style.cssText = [
+      "height:6px",
+      "background:linear-gradient(90deg,rgba(255,255,255,0.92),rgba(220,230,255,0.88))",
+      "border:1px solid rgba(0,0,0,0.45)",
+      "border-radius:3px",
+      "box-shadow:0 1px 4px rgba(0,0,0,0.5)",
+      "position:relative",
+      "min-width:8px",
+    ].join(";");
+    el.appendChild(bar);
+
+    // Distance text
+    const distLabel = document.createElement("div");
+    distLabel.className = "distScaleText";
+    distLabel.style.cssText = [
+      "position:absolute",
+      "top:-22px",
+      "left:50%",
+      "transform:translateX(-50%)",
+      "color:#fff",
+      "font-size:12px",
+      "font-weight:700",
+      "font-family:'SF Mono','Menlo','Consolas',monospace",
+      "text-shadow:0 1px 3px rgba(0,0,0,0.85),0 0 6px rgba(0,0,0,0.5)",
+      "white-space:nowrap",
+      "letter-spacing:0.03em",
+    ].join(";");
+    bar.appendChild(distLabel);
+
+    // Azimuth text
+    const azLabel = document.createElement("div");
+    azLabel.className = "distScaleAz";
+    azLabel.style.cssText = [
+      "position:absolute",
+      "bottom:-20px",
+      "left:50%",
+      "transform:translateX(-50%)",
+      "color:rgba(255,255,255,0.85)",
+      "font-size:10px",
+      "font-weight:600",
+      "font-family:'SF Mono','Menlo','Consolas',monospace",
+      "text-shadow:0 1px 2px rgba(0,0,0,0.8)",
+      "white-space:nowrap",
+    ].join(";");
+    bar.appendChild(azLabel);
+
+    // Start endpoint tick
+    const tickStart = document.createElement("div");
+    tickStart.style.cssText = [
+      "position:absolute",
+      "left:-1px",
+      "top:-4px",
+      "width:2px",
+      "height:14px",
+      "background:rgba(255,255,255,0.9)",
+      "border-radius:1px",
+    ].join(";");
+    bar.appendChild(tickStart);
+
+    // End endpoint tick
+    const tickEnd = document.createElement("div");
+    tickEnd.className = "distScaleTickEnd";
+    tickEnd.style.cssText = [
+      "position:absolute",
+      "right:-1px",
+      "top:-4px",
+      "width:2px",
+      "height:14px",
+      "background:rgba(255,255,255,0.9)",
+      "border-radius:1px",
+    ].join(";");
+    bar.appendChild(tickEnd);
+
+    document.body.appendChild(el);
+    distanceScaleOverlay = el;
+  }
+
+  function updateDistanceScaleOverlay(startLon, startLat, endLon, endLat, meters, azimuth) {
+    ensureDistanceScaleOverlay();
+    if (!distanceScaleOverlay || !viewer || !viewer.canvas) {
+      return;
+    }
+    const startCart = Cesium.Cartesian3.fromDegrees(startLon, startLat);
+    const endCart = Cesium.Cartesian3.fromDegrees(endLon, endLat);
+    const startScreen = sceneToWindowCoordinates(viewer.scene, startCart);
+    const endScreen = sceneToWindowCoordinates(viewer.scene, endCart);
+    if (!startScreen || !endScreen || !Number.isFinite(startScreen.x) || !Number.isFinite(endScreen.x)) {
+      distanceScaleOverlay.style.display = "none";
+      return;
+    }
+    const canvasRect = viewer.canvas.getBoundingClientRect();
+    const sx = canvasRect.left + startScreen.x;
+    const sy = canvasRect.top + startScreen.y;
+    const ex = canvasRect.left + endScreen.x;
+    const ey = canvasRect.top + endScreen.y;
+    const dx = ex - sx;
+    const dy = ey - sy;
+    const pixelLen = Math.sqrt(dx * dx + dy * dy);
+    const angleDeg = Math.atan2(dy, dx) * (180.0 / Math.PI);
+
+    if (pixelLen < 4.0) {
+      distanceScaleOverlay.style.display = "none";
+      return;
+    }
+
+    distanceScaleOverlay.style.display = "block";
+    distanceScaleOverlay.style.left = sx.toFixed(1) + "px";
+    distanceScaleOverlay.style.top = sy.toFixed(1) + "px";
+    distanceScaleOverlay.style.transform = "rotate(" + angleDeg.toFixed(2) + "deg)";
+
+    const bar = distanceScaleOverlay.querySelector(".distScaleBar");
+    if (bar) {
+      bar.style.width = Math.max(8, pixelLen).toFixed(1) + "px";
+    }
+    const distLabel = distanceScaleOverlay.querySelector(".distScaleText");
+    if (distLabel) {
+      const distText = meters > 1000 ? (meters / 1000.0).toFixed(2) + " km" : meters.toFixed(1) + " m";
+      distLabel.textContent = distText;
+      // Counter-rotate text so it stays horizontal
+      distLabel.style.transform = "translateX(-50%) rotate(" + (-angleDeg).toFixed(2) + "deg)";
+    }
+    const azLabel = distanceScaleOverlay.querySelector(".distScaleAz");
+    if (azLabel) {
+      const azText = azimuth !== undefined ? "Az " + azimuth.toFixed(1) + "°" : "";
+      azLabel.textContent = azText;
+      azLabel.style.transform = "translateX(-50%) rotate(" + (-angleDeg).toFixed(2) + "deg)";
+    }
+  }
+
+  function clearDistanceScaleOverlay() {
+    if (distanceScaleOverlay) {
+      distanceScaleOverlay.style.display = "none";
+    }
+  }
+
+  function updateMeasurementPreview(startLon, startLat, endLon, endLat, meters, azimuth) {
     if (!viewer) {
       return;
     }
     clearMeasurementPreviewEntities();
     const start = Cesium.Cartesian3.fromDegrees(startLon, startLat);
     const end = Cesium.Cartesian3.fromDegrees(endLon, endLat);
-    const labelLon = (startLon + endLon) / 2.0;
-    const labelLat = (startLat + endLat) / 2.0;
 
     measurementPreviewLineEntity = viewer.entities.add({
       polyline: {
         positions: [start, end],
-        width: 2.0,
-        material: Cesium.Color.YELLOW.withAlpha(0.6),
+        width: 5.0,
+        material: new Cesium.PolylineOutlineMaterialProperty({
+          color: Cesium.Color.WHITE.withAlpha(0.8),
+          outlineWidth: 2.0,
+          outlineColor: Cesium.Color.BLACK.withAlpha(0.8)
+        }),
         clampToGround: true,
       },
     });
 
-    measurementPreviewLabelEntity = viewer.entities.add({
-      position: Cesium.Cartesian3.fromDegrees(labelLon, labelLat),
-      label: {
-        text: "Preview: " + meters.toFixed(2) + " m",
-        fillColor: Cesium.Color.WHITE,
-        showBackground: true,
-        backgroundColor: Cesium.Color.BLACK.withAlpha(0.6),
-        pixelOffset: new Cesium.Cartesian2(0, -18),
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-      },
-    });
+    // Update the screen-space scale bar overlay
+    updateDistanceScaleOverlay(startLon, startLat, endLon, endLat, meters, azimuth);
     requestSceneRender();
   }
 
@@ -3523,6 +3654,7 @@
       updatePolygonPreviewVisibility();
     }
     clearMeasurementPreviewEntities();
+    clearDistanceScaleOverlay();
     if (distanceMeasureModeEnabled) {
       clickedPoints.length = 0;
       setStatus("Distance tool enabled. Click first point to begin.");
@@ -3532,26 +3664,32 @@
   }
 
   function setPanMode(enabled) {
-    if (!enabled) {
-      return;
+    panModeActive = Boolean(enabled);
+    if (panModeActive) {
+      if (distanceMeasureModeEnabled) {
+        setDistanceMeasureMode(false);
+      }
+      if (searchDrawMode === "polygon") {
+        searchDrawMode = "none";
+        searchOverlayVisible = false;
+        setSearchCursorEnabled(false);
+        updatePolygonPreviewVisibility();
+      }
+      clearDistanceScaleOverlay();
+      // Force 2D-like flat drag: disable rotate/tilt/look
+      configureCameraControllerForMode(currentSceneMode);
+      setStatus("Pan mode enabled — drag to translate view.");
+      log("info", "Pan mode activated (2D-like drag)");
+    } else {
+      // Restore normal 3D interaction controls
+      configureCameraControllerForMode(currentSceneMode);
+      setStatus("Pan mode disabled — 3D navigation restored.");
+      log("info", "Pan mode deactivated (3D navigation restored)");
     }
-    if (distanceMeasureModeEnabled) {
-      setDistanceMeasureMode(false);
-    }
-    if (searchDrawMode === "polygon") {
-      searchDrawMode = "none";
-      searchOverlayVisible = false;
-      setSearchCursorEnabled(false);
-      updatePolygonPreviewVisibility();
-      setStatus("Pan mode enabled.");
-      requestSceneRender();
-      return;
-    }
-    setStatus("Pan mode enabled.");
     requestSceneRender();
   }
 
-  function updateMeasurementEntities(startLon, startLat, endLon, endLat, meters) {
+  function updateMeasurementEntities(startLon, startLat, endLon, endLat, meters, azimuth) {
     if (!viewer) {
       return;
     }
@@ -3561,11 +3699,18 @@
     const labelLon = (startLon + endLon) / 2.0;
     const labelLat = (startLat + endLat) / 2.0;
 
+    let distText = meters > 1000 ? (meters / 1000.0).toFixed(2) + " km" : meters.toFixed(2) + " m";
+    let azText = azimuth !== undefined ? azimuth.toFixed(1) + "°" : "N/A";
+
     measurementLineEntity = viewer.entities.add({
       polyline: {
         positions: [start, end],
-        width: 2.2,
-        material: Cesium.Color.YELLOW,
+        width: 6.0,
+        material: new Cesium.PolylineOutlineMaterialProperty({
+          color: Cesium.Color.WHITE,
+          outlineWidth: 2.5,
+          outlineColor: Cesium.Color.BLACK
+        }),
         clampToGround: true,
       },
     });
@@ -3573,11 +3718,12 @@
     measurementLabelEntity = viewer.entities.add({
       position: Cesium.Cartesian3.fromDegrees(labelLon, labelLat),
       label: {
-        text: meters.toFixed(2) + " m",
+        text: "Distance: " + distText + "\nAzimuth: " + azText,
         fillColor: Cesium.Color.WHITE,
         showBackground: true,
-        backgroundColor: Cesium.Color.BLACK.withAlpha(0.75),
-        pixelOffset: new Cesium.Cartesian2(0, -18),
+        backgroundColor: Cesium.Color.BLACK.withAlpha(0.9),
+        pixelOffset: new Cesium.Cartesian2(0, -28),
+        font: 'bold 15px sans-serif',
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
       },
     });
@@ -3772,8 +3918,46 @@
     }
   }
 
+  function syncSearchVertexEntities() {
+    if (!viewer) {
+      return;
+    }
+    // Remove excess vertex entities
+    while (searchVertexEntities.length > searchPolygonPoints.length) {
+      const ve = searchVertexEntities.pop();
+      if (ve) {
+        viewer.entities.remove(ve);
+      }
+    }
+    // Create or update vertex entities for each polygon point
+    for (let i = 0; i < searchPolygonPoints.length; i++) {
+      const pt = searchPolygonPoints[i];
+      if (i < searchVertexEntities.length) {
+        // Update position of existing entity
+        searchVertexEntities[i].position = Cesium.Cartesian3.fromDegrees(pt.lon, pt.lat);
+        searchVertexEntities[i].show = polygonVisibilityEnabled && searchOverlayVisible;
+      } else {
+        // Create new vertex entity
+        const ve = viewer.entities.add({
+          position: Cesium.Cartesian3.fromDegrees(pt.lon, pt.lat),
+          point: {
+            pixelSize: 9,
+            color: Cesium.Color.fromCssColorString("#f4c430"),
+            outlineColor: Cesium.Color.fromCssColorString("#1a1a1a"),
+            outlineWidth: 1.5,
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+          show: polygonVisibilityEnabled && searchOverlayVisible,
+        });
+        searchVertexEntities.push(ve);
+      }
+    }
+  }
+
   function updateSearchPolygonPreview() {
     ensureSearchPreviewEntities();
+    syncSearchVertexEntities();
     requestSceneRender();
   }
 
@@ -3791,15 +3975,29 @@
     }
     updateSearchPolygonPreview();
 
+    // Save drawn polygon for multi-polygon management
+    drawnPolygonCounter += 1;
+    const polyRecord = {
+      id: drawnPolygonCounter,
+      label: "Polygon " + drawnPolygonCounter,
+      points: searchPolygonPoints.slice(),
+      lineEntity: searchPreviewLineEntity,
+      polygonEntity: searchPreviewPolygonEntity,
+      areaLabelEntity: searchAreaLabelEntity,
+      vertexEntities: searchVertexEntities.slice(),
+      visible: polygonVisibilityEnabled,
+    };
+    drawnPolygons.push(polyRecord);
+    toggleAllDrawnPolygonsVisibility(polygonVisibilityEnabled);
+
     const polygonPayload = { points: searchPolygonPoints.slice() };
     searchDrawMode = "none";
     searchPolygonLocked = true;
     searchOverlayVisible = true;
     setSearchCursorEnabled(false);
-    const polygonToggleControl = document.getElementById("polygonToggleControl");
-    if (polygonToggleControl) {
-      polygonToggleControl.style.display = "flex";
-    }
+    // Removed DOM update for polygonToggleControl
+    // Update AOI panel
+    updateAoiPanel(searchPolygonPoints);
     setStatus("Search polygon ready");
     window.requestAnimationFrame(function () {
       emitSearchGeometry("polygon", polygonPayload);
@@ -3857,12 +4055,121 @@
 
   function formatArea(squareMeters) {
     if (!Number.isFinite(squareMeters) || squareMeters <= 0) {
-      return "0 m2";
+      return "0 m\u00b2";
     }
     if (squareMeters >= 1_000_000) {
-      return (squareMeters / 1_000_000).toFixed(2) + " km2";
+      return (squareMeters / 1_000_000).toFixed(2) + " km\u00b2";
     }
-    return Math.round(squareMeters) + " m2";
+    return Math.round(squareMeters) + " m\u00b2";
+  }
+
+  // ── AOI Polygon Panel & Dropdown Management ──
+  function updateAoiPanel(points) {
+    if (!Array.isArray(points) || points.length < 3) {
+      if (bridge && bridge.on_aoi_stats_updated) {
+        bridge.on_aoi_stats_updated(0, "0 m\u00b2");
+      }
+      return;
+    }
+    const area = computePolygonAreaSquareMeters(points);
+    const areaText = formatArea(area);
+    if (bridge && bridge.on_aoi_stats_updated) {
+      bridge.on_aoi_stats_updated(points.length, areaText);
+    }
+  }
+
+  function toggleAoiPanelMinimize() {
+    aoiPanelMinimized = !aoiPanelMinimized;
+  }
+
+  function updatePolygonDropdownUI() {
+    if (bridge && bridge.on_polygon_list_updated) {
+      const payload = drawnPolygons.map(poly => ({
+        id: poly.id,
+        label: poly.label,
+        points_count: poly.points.length,
+        visible: poly.visible
+      }));
+      bridge.on_polygon_list_updated(JSON.stringify(payload));
+    }
+  }
+
+  function toggleDrawnPolygonVisibility(polyId, visible) {
+    for (const poly of drawnPolygons) {
+      if (poly.id !== polyId) {
+        continue;
+      }
+      poly.visible = Boolean(visible);
+      if (poly.lineEntity) poly.lineEntity.show = poly.visible;
+      if (poly.polygonEntity) poly.polygonEntity.show = poly.visible;
+      if (poly.areaLabelEntity) poly.areaLabelEntity.show = poly.visible;
+      for (const ve of poly.vertexEntities || []) {
+        if (ve) ve.show = poly.visible;
+      }
+    }
+    requestSceneRender();
+  }
+
+  function toggleAllDrawnPolygonsVisibility(visible) {
+    const isVisible = Boolean(visible);
+    for (const poly of drawnPolygons) {
+      poly.visible = isVisible;
+      if (poly.lineEntity) poly.lineEntity.show = isVisible;
+      if (poly.polygonEntity) poly.polygonEntity.show = isVisible;
+      if (poly.areaLabelEntity) poly.areaLabelEntity.show = isVisible;
+      for (const ve of poly.vertexEntities || []) {
+        if (ve) ve.show = isVisible;
+      }
+    }
+    requestSceneRender();
+  }
+
+  const comparatorPolygonEntities = { left: [], right: [] };
+
+  function updateComparatorPolygons(visible) {
+    if (!comparatorModeEnabled || !comparatorLeftViewer || !comparatorRightViewer) {
+      return;
+    }
+    for (const ent of comparatorPolygonEntities.left) {
+      comparatorLeftViewer.entities.remove(ent);
+    }
+    for (const ent of comparatorPolygonEntities.right) {
+      comparatorRightViewer.entities.remove(ent);
+    }
+    comparatorPolygonEntities.left = [];
+    comparatorPolygonEntities.right = [];
+
+    if (!visible) {
+      return;
+    }
+
+    const addPolyToViewers = (pts, color, isDrawn) => {
+      if (!pts || pts.length < 3) return;
+      const degreesArray = pts.reduce((acc, p) => { acc.push(p.lon, p.lat); return acc; }, []);
+      const positions = Cesium.Cartesian3.fromDegreesArray(degreesArray);
+      const polylinePositions = Cesium.Cartesian3.fromDegreesArray(degreesArray.concat([pts[0].lon, pts[0].lat]));
+      
+      const polylineDesc = {
+        positions: polylinePositions,
+        width: isDrawn ? 3.0 : 2.0,
+        material: color,
+        clampToGround: true
+      };
+      const polygonDesc = {
+        hierarchy: positions,
+        material: color.withAlpha(0.2),
+        classificationType: Cesium.ClassificationType.TERRAIN
+      };
+      comparatorPolygonEntities.left.push(comparatorLeftViewer.entities.add({ polyline: polylineDesc, polygon: polygonDesc }));
+      comparatorPolygonEntities.right.push(comparatorRightViewer.entities.add({ polyline: polylineDesc, polygon: polygonDesc }));
+    };
+
+    for (const poly of drawnPolygons) {
+      addPolyToViewers(poly.points, Cesium.Color.YELLOW, true);
+    }
+    if (searchPolygonPoints && searchPolygonPoints.length >= 3) {
+      addPolyToViewers(searchPolygonPoints, Cesium.Color.CYAN, false);
+    }
   }
 
   function emitSearchGeometry(type, payload) {
@@ -4274,6 +4581,16 @@
         log("warn", "Layer visibility update ignored key=" + String(layerKey));
       }
     },
+    setPolygonVisibility: function (polyId, visible) {
+      toggleDrawnPolygonVisibility(polyId, visible);
+    },
+    setSearchPolygonVisibility: function (visible) {
+      polygonVisibilityEnabled = Boolean(visible);
+      updatePolygonPreviewVisibility();
+      toggleAllDrawnPolygonsVisibility(visible);
+      updateComparatorPolygons(visible);
+      log("debug", "All polygons visibility set to " + String(visible));
+    },
     flyThroughBounds: function (west, south, east, north) {
       startFlyThroughBounds(west, south, east, north);
     },
@@ -4297,7 +4614,12 @@
         notifyComparatorPaneState(comparatorSelectedPane);
         
         if (comparatorExaggChanged) {
-          scheduleComparatorDemRefresh(comparatorSelectedPane);
+          if (comparatorDemRefreshTimer !== null) {
+            window.clearTimeout(comparatorDemRefreshTimer);
+          }
+          comparatorDemRefreshTimer = window.setTimeout(() => {
+            scheduleComparatorDemRefresh(comparatorSelectedPane);
+          }, 500);
         }
         
         requestSceneRender();
@@ -4307,25 +4629,6 @@
       const exaggerationChanged = demVisual.exaggeration !== nextExaggeration;
       demVisual.exaggeration = nextExaggeration;
       demVisual.hillshadeAlpha = nextHillshadeAlpha;
-      
-      if (viewer && viewer.scene) {
-        if ("verticalExaggeration" in viewer.scene) {
-          viewer.scene.verticalExaggeration = demVisual.exaggeration;
-        }
-        if (viewer.scene.globe) {
-          viewer.scene.globe.terrainExaggeration = demVisual.exaggeration;
-        }
-      }
-      if (comparatorLeftViewer && comparatorLeftViewer.scene && comparatorRightViewer && comparatorRightViewer.scene) {
-        if ("verticalExaggeration" in comparatorLeftViewer.scene) {
-          comparatorLeftViewer.scene.verticalExaggeration = demVisual.exaggeration;
-          comparatorRightViewer.scene.verticalExaggeration = demVisual.exaggeration;
-        }
-        if (comparatorLeftViewer.scene.globe) {
-          comparatorLeftViewer.scene.globe.terrainExaggeration = demVisual.exaggeration;
-          comparatorRightViewer.scene.globe.terrainExaggeration = demVisual.exaggeration;
-        }
-      }
       
       if (activeDemHillshadeLayer) {
         // Apply alpha dynamically without artificially capping at 0.35
@@ -4337,11 +4640,11 @@
           window.clearTimeout(window.mainDemRefreshTimer);
         }
         window.mainDemRefreshTimer = window.setTimeout(() => {
+          log("info", "Applying new terrain geometry with exaggeration " + demVisual.exaggeration);
           applyDemLayer();
-        }, 300);
+        }, 500); // Debounce to prevent continuous flickering while dragging
       }
 
-      // Vertical exaggeration and layer alpha apply directly to the GPU in real-time.
       requestSceneRender();
     },
     setImageryProperties: function (brightness, contrast) {
@@ -4410,7 +4713,8 @@
         viewer.camera.rotateRight(Cesium.Math.toRadians(degrees));
       }
       if (comparatorModeEnabled && comparatorLeftViewer && comparatorRightViewer) {
-        log("debug", "rotateCamera: comparator panes are independent; no camera sync applied");
+        comparatorLeftViewer.camera.rotateRight(Cesium.Math.toRadians(degrees));
+        comparatorRightViewer.camera.rotateRight(Cesium.Math.toRadians(degrees));
       }
       requestSceneRender();
       log("debug", "Rotate camera degrees=" + degrees);
@@ -4434,14 +4738,30 @@
       if (!applyCameraOrbitTarget()) {
         log("debug", "setPitch: applyCameraOrbitTarget returned false, setting main viewer camera");
         const camera = viewer.camera;
-        camera.setView({
-          destination: camera.position,
-          orientation: {
+        const orientation = {
             heading: camera.heading,
             pitch: cameraOrbitPitch,
             roll: camera.roll,
-          },
+        };
+        camera.setView({
+          destination: camera.position,
+          orientation: orientation,
         });
+        
+        if (comparatorModeEnabled) {
+          if (comparatorLeftViewer && comparatorLeftViewer.camera) {
+            comparatorLeftViewer.camera.setView({
+              destination: comparatorLeftViewer.camera.position,
+              orientation: orientation,
+            });
+          }
+          if (comparatorRightViewer && comparatorRightViewer.camera) {
+            comparatorRightViewer.camera.setView({
+              destination: comparatorRightViewer.camera.position,
+              orientation: orientation,
+            });
+          }
+        }
       }
       requestSceneRender();
       log("debug", "Set pitch degrees=" + degrees);
@@ -4580,6 +4900,20 @@
       setSwipeComparatorEnabled(Boolean(enabled));
       log("info", "Comparator=" + String(Boolean(enabled)));
     },
+    setLayerAlpha: function (layerKey, alpha) {
+      if (!viewer || !viewer.imageryLayers) return;
+      const numAlpha = Math.max(0.0, Math.min(1.0, Number(alpha) || 0.0));
+      
+      const layer = managedImageryLayers.get(layerKey);
+      if (layer) {
+        layer.alpha = numAlpha;
+      } else if (activeDemContext && activeDemContext.layerKey === layerKey) {
+        if (activeDemDrapeLayer) {
+            activeDemDrapeLayer.alpha = numAlpha;
+        }
+      }
+      requestSceneRender();
+    },
     setComparator: function (enabled) {
       setSwipeComparatorEnabled(Boolean(enabled));
       log("info", "Comparator=" + String(Boolean(enabled)));
@@ -4609,10 +4943,7 @@
         searchOverlayVisible = false;
         setSearchCursorEnabled(false);
         updatePolygonPreviewVisibility();
-        const polygonToggleControl = document.getElementById("polygonToggleControl");
-        if (polygonToggleControl) {
-          polygonToggleControl.style.display = "none";
-        }
+        // Removed DOM update
         setStatus("Search draw disabled");
         requestSceneRender();
         return;
@@ -4623,10 +4954,7 @@
       searchCursorPoint = null;
       setPolygonPreviewVisible(true);
       setSearchCursorEnabled(!searchPolygonLocked);
-      const polygonToggleControl = document.getElementById("polygonToggleControl");
-      if (polygonToggleControl && searchPolygonPoints.length >= 3) {
-        polygonToggleControl.style.display = "flex";
-      }
+      // Removed DOM update
       if (searchPolygonLocked) {
         setStatus("Polygon restored. Clear geometry to start a new polygon.");
       } else {
@@ -4648,10 +4976,7 @@
       emitSearchGeometry("none", {});
       setPolygonPreviewVisible(true);
       setSearchCursorEnabled(false);
-      const polygonToggleControl = document.getElementById("polygonToggleControl");
-      if (polygonToggleControl) {
-        polygonToggleControl.style.display = "none";
-      }
+      // Removed DOM update
       setStatus("Search geometry cleared");
       requestSceneRender();
     },

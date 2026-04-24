@@ -9,6 +9,16 @@ class WebBridge(QObject):
     jsLogReceived = Signal(str, str)
     searchGeometryChanged = Signal(str, str)
     comparatorPaneStateChanged = Signal(str)
+    aoiStatsUpdated = Signal(int, str)
+    polygonListUpdated = Signal(str)
+
+    @Slot(int, str)
+    def on_aoi_stats_updated(self, vertices: int, area_text: str) -> None:
+        self.aoiStatsUpdated.emit(vertices, area_text)
+
+    @Slot(str)
+    def on_polygon_list_updated(self, payload_json: str) -> None:
+        self.polygonListUpdated.emit(payload_json)
 
     @Slot(float, float)
     def on_map_click(self, lon: float, lat: float) -> None:

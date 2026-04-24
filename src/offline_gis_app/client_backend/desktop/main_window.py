@@ -19,6 +19,7 @@ from qtpy.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSlider,
     QSplitter,
     QStyle,
     QToolBar,
@@ -34,11 +35,178 @@ from offline_gis_app.client_backend.desktop.icon_registry import IconRegistry
 from offline_gis_app.client_backend.desktop.titiler_manager import TiTilerManager
 from offline_gis_app.client_backend.desktop.web_page import LoggingWebEnginePage
 
+class LayerCompositorOverlay(QWidget):
+    def __init__(self, parent: QWidget, controller: DesktopController):
+        super().__init__(parent, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
+        self.controller = controller
+        self.setObjectName("compositorOverlay")
+        self.setStyleSheet(
+            """
+            QWidget#compositorOverlay {
+                background: rgba(248, 250, 252, 0.9);
+                border: 1px solid #c9d3df;
+                border-radius: 8px;
+            }
+            QLabel {
+                color: #1a2a3a;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            """
+        )
+        self.layout_main = QVBoxLayout(self)
+        self.layout_main.setContentsMargins(10, 10, 10, 10)
+        self.layout_main.setSpacing(8)
+
+        title = QLabel("Layer Opacities")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.layout_main.addWidget(title)
+
+        self.sliders_layout = QVBoxLayout()
+        self.layout_main.addLayout(self.sliders_layout)
+
+        self.sliders: dict[str, QSlider] = {}
+        self.hide()
+
+    def update_layers(self) -> None:
+        layers = self.controller.available_swipe_layer_options()
+        active_layers = [layer for layer in layers if layer.get("visible")]
+
+        # Clear old sliders
+        while self.sliders_layout.count():
+            item = self.sliders_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+            elif item.layout():
+                while item.layout().count():
+                    child = item.layout().takeAt(0)
+                    if child.widget():
+                        child.widget().deleteLater()
+                item.layout().deleteLater()
+
+        self.sliders.clear()
+
+        if not active_layers:
+            no_layers_label = QLabel("No active layers.")
+            self.sliders_layout.addWidget(no_layers_label)
+            return
+
+        for layer in active_layers:
+            row = QHBoxLayout()
+            label = QLabel(layer["label"])
+            label.setFixedWidth(120)
+            row.addWidget(label)
+
+            slider = QSlider(Qt.Orientation.Horizontal, self)
+            slider.setRange(0, 100)
+            slider.setValue(100)
+            row.addWidget(slider)
+
+            val_label = QLabel("100%")
+            val_label.setFixedWidth(40)
+            row.addWidget(val_label)
+
+            slider.valueChanged.connect(lambda v, l=val_label, p=layer["path"]: self._on_slider_changed(v, l, p))
+
+            self.sliders[layer["path"]] = slider
+            self.sliders_layout.addLayout(row)
+
+    def _on_slider_changed(self, value: int, label: QLabel, path: str) -> None:
+        label.setText(f"{value}%")
+        self._apply_settings()
+
+    def _apply_settings(self, *args: object) -> None:
+        if not self.isVisible():
+            return
+        layer_alphas = {path: slider.value() / 100.0 for path, slider in self.sliders.items()}
+        # Only set opacity. Pass enable_swipe=False and empty swipe_paths.
+        self.controller.apply_layer_compositor_settings(False, [], layer_alphas)
+
+    def apply_state(self, state_dict: dict) -> None:
+        pass
+
+
+import json
+
+class MapOverlayControls(QWidget):
+    def __init__(self, parent: QWidget, controller: DesktopController):
+        super().__init__(parent, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
+        self.controller = controller
+        self.setObjectName("mapOverlayControls")
+        self.setStyleSheet(
+            """
+            QWidget#mapOverlayControls {
+                background: rgba(18, 24, 38, 0.85);
+                border: 1px solid rgba(120, 160, 220, 0.28);
+                border-radius: 8px;
+            }
+            QLabel {
+                color: #e0e8f4;
+                font-size: 11px;
+                font-weight: 600;
+            }
+            QCheckBox {
+                color: #e0e8f4;
+                font-size: 11px;
+            }
+            """
+        )
+        self.layout_main = QVBoxLayout(self)
+        self.layout_main.setContentsMargins(10, 10, 10, 10)
+        self.layout_main.setSpacing(8)
+
+        # Scene Mode
+        self.scene_mode_combo = QComboBox()
+        self.scene_mode_combo.addItems(["3D Globe", "2D Map"])
+        self.scene_mode_combo.currentTextChanged.connect(self._on_scene_mode_changed)
+        self.layout_main.addWidget(self.scene_mode_combo)
+
+        # Polygon Visibility
+        self.polygon_visibility_checkbox = QCheckBox("Show Search AOI Polygon")
+        self.polygon_visibility_checkbox.setChecked(True)
+        self.polygon_visibility_checkbox.toggled.connect(self._on_polygon_visibility_toggled)
+        self.layout_main.addWidget(self.polygon_visibility_checkbox)
+
+        # AOI Stats
+        self.aoi_stats_label = QLabel("Area: 0 m\u00b2 | Vertices: 0")
+        self.aoi_stats_label.setWordWrap(True)
+        self.aoi_stats_label.setVisible(False)
+        self.layout_main.addWidget(self.aoi_stats_label)
+
+        self.setFixedWidth(200)
+
+        # Connect bridge signals
+        self.controller.bridge.aoiStatsUpdated.connect(self.update_aoi_stats)
+
+        self.hide()
+
+    def update_position(self) -> None:
+        parent_widget = self.parentWidget()
+        if parent_widget:
+            top_right = parent_widget.mapToGlobal(parent_widget.rect().topRight())
+            self.move(top_right.x() - self.width() - 20, top_right.y() + 20)
+
+    def _on_scene_mode_changed(self, text: str) -> None:
+        mode = "2d" if "2D" in text else "3d"
+        self.controller.web_view.page().runJavaScript(f"window.offlineGIS.setSceneMode('{mode}');")
+
+    def _on_polygon_visibility_toggled(self, checked: bool) -> None:
+        self.controller.web_view.page().runJavaScript(f"window.offlineGIS.setSearchPolygonVisibility({str(checked).lower()});")
+
+    def update_aoi_stats(self, vertices: int, area_text: str) -> None:
+        if vertices >= 3:
+            self.aoi_stats_label.setText(f"Area: {area_text}\nVertices: {vertices}")
+            self.aoi_stats_label.setVisible(True)
+        else:
+            self.aoi_stats_label.setVisible(False)
+        self.adjustSize()
+        main_win = self.window()
+        if hasattr(main_win, "_position_compositor_overlay"):
+            main_win._position_compositor_overlay()
+
 
 class MainWindow(QMainWindow):
-    IMAGERY_ONLY_ACTIONS: set[str] = {
-        "Layer Compositor",
-    }
+    IMAGERY_ONLY_ACTIONS: set[str] = set()
     DEM_ONLY_ACTIONS: set[str] = {
         "Elevation Profile",
         "Volume Cut/Fill",
@@ -46,6 +214,7 @@ class MainWindow(QMainWindow):
         "Slope & Aspect",
     }
     TOGGLE_ACTIONS: set[str] = {
+        "Layer Compositor",
         "Comparator",
         "Distance / Azimuth",
         "Pan",
@@ -65,7 +234,6 @@ class MainWindow(QMainWindow):
             "measurement",
             (
                 ("Distance / Azimuth", "measure_distance"),
-                ("Polygon Area", "measure_area"),
                 ("Elevation Profile", "elevation_profile"),
                 ("Volume Cut/Fill", "volume"),
                 ("Viewshed / LOS", "viewshed"),
@@ -175,6 +343,11 @@ class MainWindow(QMainWindow):
             toolbar_context_callback=self.set_toolbar_layer_context if app_mode != DesktopAppMode.SERVER else None,
         )
 
+        self.compositor_overlay = LayerCompositorOverlay(self.web_view, self.controller)
+        self.map_overlay_controls = MapOverlayControls(self.web_view, self.controller)
+        # Show map overlay controls by default
+        self.map_overlay_controls.show()
+
         for label, action in self.toolbar_actions.items():
             action.triggered.connect(
                 lambda checked=False, action_label=label: self._on_toolbar_action_triggered(action_label, checked)
@@ -279,6 +452,8 @@ class MainWindow(QMainWindow):
         self._refresh_toolbar_action_state()
         if hasattr(self, "controller") and not visible:
             self.controller.on_toolbar_group_disabled("visualization")
+            if hasattr(self, "compositor_overlay"):
+                self.compositor_overlay.hide()
 
     def _set_measurement_tools_visible(self, visible: bool) -> None:
         self._measurement_tools_enabled = bool(visible)
@@ -297,6 +472,19 @@ class MainWindow(QMainWindow):
             final_state = self.controller.handle_toolbar_action(action_label, checked=checked)
             if isinstance(final_state, bool):
                 action.setChecked(final_state)
+            return
+
+        if action_label == "Layer Compositor":
+            action = self.toolbar_actions.get(action_label)
+            if action is None:
+                return
+            if checked:
+                self._show_layer_compositor_overlay()
+                return
+            self.controller.disable_layer_compositor()
+            if hasattr(self, "compositor_overlay"):
+                self.compositor_overlay.hide()
+            action.setChecked(False)
             return
 
         final_state = self.controller.handle_toolbar_action(action_label, checked=checked)
@@ -320,6 +508,52 @@ class MainWindow(QMainWindow):
                 other_action = self.toolbar_actions.get(other_label)
                 if other_action is not None and other_action.isCheckable() and other_action.isChecked():
                     other_action.setChecked(False)
+
+    def _show_layer_compositor_overlay(self) -> None:
+        action = self.toolbar_actions.get("Layer Compositor")
+        if action is None:
+            return
+
+        layers = self.controller.available_swipe_layer_options()
+        active_layers = [layer for layer in layers if layer.get("visible")]
+        if not active_layers:
+            self.panel.log("No active layers available for compositor.")
+            action.setChecked(False)
+            return
+
+        self.compositor_overlay.update_layers()
+        self.compositor_overlay.show()
+        self.compositor_overlay.raise_()
+        self.compositor_overlay.adjustSize()
+        
+        self._position_compositor_overlay()
+        action.setChecked(True)
+
+    def showEvent(self, event: object) -> None:
+        super().showEvent(event)
+        if hasattr(self, "map_overlay_controls") and self.map_overlay_controls.isVisible():
+            self.map_overlay_controls.update_position()
+
+    def moveEvent(self, event: object) -> None:
+        super().moveEvent(event)
+        self._position_compositor_overlay()
+
+    def resizeEvent(self, event: object) -> None:
+        super().resizeEvent(event)
+        if hasattr(self, "compositor_overlay") and self.compositor_overlay.isVisible():
+            self._position_compositor_overlay()
+        if hasattr(self, "map_overlay_controls") and self.map_overlay_controls.isVisible():
+            self.map_overlay_controls.update_position()
+
+    def _position_compositor_overlay(self) -> None:
+        if not hasattr(self, "compositor_overlay") or not self.compositor_overlay.isVisible():
+            return
+        w = self.compositor_overlay.width()
+        top_right = self.web_view.mapToGlobal(self.web_view.rect().topRight())
+        y_offset = 20
+        if hasattr(self, "map_overlay_controls") and self.map_overlay_controls.isVisible():
+            y_offset += self.map_overlay_controls.height() + 10
+        self.compositor_overlay.move(top_right.x() - w - 20, top_right.y() + y_offset)
 
     def _show_comparator_dropdown(self) -> None:
         action = self.toolbar_actions.get("Comparator")
@@ -469,6 +703,8 @@ class MainWindow(QMainWindow):
             if success:
                 action.setChecked(True)
                 applied["done"] = True
+                if hasattr(self, "map_overlay_controls"):
+                    self.map_overlay_controls.polygon_visibility_checkbox.setChecked(False)
             else:
                 action.setChecked(False)
             self._refresh_toolbar_action_state()

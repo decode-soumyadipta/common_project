@@ -1058,7 +1058,6 @@ class DesktopController:
 
     def handle_toolbar_action(self, action_label: str, checked: bool | None = None) -> bool | None:
         handlers: dict[str, Callable[[], None]] = {
-            "Layer Compositor": self._toolbar_apply_layer_compositor,
             "Comparator": self._toolbar_toggle_comparator,
             "Distance / Azimuth": self._toolbar_measure_distance,
             "Polygon Area": self._toolbar_measure_polygon_area,
@@ -1321,9 +1320,30 @@ class DesktopController:
     def _toolbar_toggle_swipe_comparator(self, enabled: bool | None = None) -> bool:
         return self._toolbar_toggle_comparator(enabled=enabled)
 
-    def _toolbar_apply_layer_compositor(self) -> None:
-        self.apply_visual_settings(log_to_panel=True)
-        self.panel.log("Layer compositor updated from current brightness/contrast controls.")
+    def disable_layer_compositor(self) -> None:
+        self._run_js_call("setSwipeComparator", False)
+        self.panel.log("Layer Compositor disabled.")
+
+    def apply_layer_compositor_settings(self, enable_swipe: bool, swipe_paths: list[str], layer_alphas: dict[str, float]) -> bool:
+        for path, alpha in layer_alphas.items():
+            asset = self._search_result_assets_by_path.get(path)
+            if asset:
+                layer_key = path
+                self._run_js_call("setLayerAlpha", layer_key, alpha)
+
+        if enable_swipe and len(swipe_paths) >= 2:
+            left_path, right_path = swipe_paths[0], swipe_paths[1]
+            left_asset = self._search_result_assets_by_path.get(left_path) or {}
+            right_asset = self._search_result_assets_by_path.get(right_path) or {}
+            left_label = str(left_asset.get("file_name") or Path(left_path).name or "Layer A")
+            right_label = str(right_asset.get("file_name") or Path(right_path).name or "Layer B")
+            self._run_js_call("setSwipeComparatorLayers", str(left_asset.get("file_name") or ""), str(right_asset.get("file_name") or ""), left_label, right_label)
+            self._run_js_call("setSwipeComparator", True)
+        else:
+            self._run_js_call("setSwipeComparator", False)
+
+        self.panel.log("Layer compositor settings applied.")
+        return True
 
     def _toolbar_measure_distance(self, enabled: bool | None = None) -> bool:
         self._distance_measure_mode_enabled = (not self._distance_measure_mode_enabled) if enabled is None else bool(enabled)
@@ -2064,13 +2084,11 @@ class DesktopController:
             self.panel.dem_exaggeration_slider,
             self.panel.dem_hillshade_slider,
             self.panel.dem_color_mode_combo,
+            self.panel.pitch_slider,
+            self.panel.rotate_left_btn,
+            self.panel.rotate_right_btn,
         ):
             widget.setEnabled(dem_visible)
-
-        # Comparator panes have fixed DEM tilt rules; pitch control only applies to the main viewer.
-        self.panel.pitch_slider.setEnabled(not self._swipe_comparator_enabled)
-        self.panel.rotate_left_btn.setEnabled(not self._swipe_comparator_enabled)
-        self.panel.rotate_right_btn.setEnabled(not self._swipe_comparator_enabled)
 
         if self._toolbar_context_callback is not None:
             if dem_visible and imagery_visible:
@@ -2088,7 +2106,6 @@ class DesktopController:
             self._comparator_selected_layer_type = None
             self._run_js_call("setComparator", False)
             self.panel.log("Comparator disabled: at least two visible raster layers are required.")
-            self.panel.pitch_slider.setEnabled(True)
 
     def _is_dem_asset(self, asset: dict) -> bool:
         file_path = str(asset.get("file_path") or "")
