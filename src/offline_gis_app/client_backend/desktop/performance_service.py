@@ -14,7 +14,9 @@ class RenderPolicyRecommendation:
 class DesktopPerformanceService:
     """Provide adaptive cache/LOD recommendations for heavy raster scenes."""
 
-    def recommend_policy(self, *, asset_count: int, dem_loaded: bool) -> RenderPolicyRecommendation:
+    def recommend_policy(
+        self, *, asset_count: int, dem_loaded: bool
+    ) -> RenderPolicyRecommendation:
         if asset_count >= 50:
             return RenderPolicyRecommendation(
                 tile_cache_size=160,

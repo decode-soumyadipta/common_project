@@ -2,7 +2,9 @@ from pathlib import Path
 
 from offline_gis_app.server_ingestion.services.file_kind import detect_raster_kind
 from offline_gis_app.server_ingestion.services.metadata_models import RasterMetadata
-from offline_gis_app.server_ingestion.services.pyramiding_service import RasterPyramidingService
+from offline_gis_app.server_ingestion.services.pyramiding_service import (
+    RasterPyramidingService,
+)
 from offline_gis_app.utils.crs import normalize_crs
 from offline_gis_app.utils.geometry import Bounds
 
@@ -69,7 +71,9 @@ def _bounds_to_epsg4326(dataset) -> Bounds:
         dataset.bounds.top,
         densify_pts=21,
     )
-    transformed_bounds = Bounds(min_x=float(left), min_y=float(bottom), max_x=float(right), max_y=float(top))
+    transformed_bounds = Bounds(
+        min_x=float(left), min_y=float(bottom), max_x=float(right), max_y=float(top)
+    )
     if not _is_valid_epsg4326_bounds(transformed_bounds):
         raise MetadataExtractorError(
             "Transformed bounds are invalid for EPSG:4326. "

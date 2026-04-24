@@ -26,7 +26,11 @@ def configure_standalone_runtime(mode: str) -> Path:
     Existing environment variables win to preserve explicit operator overrides.
     """
 
-    app_home = Path(os.environ.get("OFFLINE_GIS_HOME", "")).expanduser() if os.environ.get("OFFLINE_GIS_HOME") else _default_app_home()
+    app_home = (
+        Path(os.environ.get("OFFLINE_GIS_HOME", "")).expanduser()
+        if os.environ.get("OFFLINE_GIS_HOME")
+        else _default_app_home()
+    )
     app_home = app_home.resolve()
     data_root = app_home / "data"
     logs_root = app_home / "logs"
@@ -43,7 +47,9 @@ def configure_standalone_runtime(mode: str) -> Path:
     os.environ.setdefault("TITILER_BASE_URL", "http://127.0.0.1:8081")
 
     api_port = os.environ.get("API_PORT", "8000")
-    server_host = (os.environ.get("OFFLINE_GIS_SERVER_HOST", "127.0.0.1") or "127.0.0.1").strip()
+    server_host = (
+        os.environ.get("OFFLINE_GIS_SERVER_HOST", "127.0.0.1") or "127.0.0.1"
+    ).strip()
 
     if mode == "server":
         # Server app is LAN-facing by default; still overridable via environment.

@@ -9,4 +9,3 @@ def test_bounds_centroid():
 def test_bounds_wkt_polygon():
     b = Bounds(min_x=1, min_y=2, max_x=3, max_y=4)
     assert b.to_wkt_polygon() == "POLYGON((1 2,3 2,3 4,1 4,1 2))"
-

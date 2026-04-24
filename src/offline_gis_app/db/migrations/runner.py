@@ -24,7 +24,10 @@ def apply_migrations(engine: Engine) -> None:
                     text(
                         "INSERT INTO schema_migrations(version, description) VALUES (:version, :description)"
                     ),
-                    {"version": version, "description": _migration_description(version)},
+                    {
+                        "version": version,
+                        "description": _migration_description(version),
+                    },
                 )
             except Exception as exc:  # noqa: BLE001
                 LOGGER.warning("Migration %s failed: %s", version, exc)
@@ -55,8 +58,14 @@ def _ordered_migrations() -> list[tuple[str, MigrationFn]]:
     return [
         ("20260417_002_ingest_queue_indexes", _migration_ingest_queue_indexes),
         ("20260418_001_legacy_schema_backfill", _migration_legacy_schema_backfill),
-        ("20260419_001_raster_bounds_spatial_index", _migration_raster_bounds_spatial_index),
-        ("20260422_001_ingest_item_stage_checkpoint", _migration_ingest_item_stage_checkpoint),
+        (
+            "20260419_001_raster_bounds_spatial_index",
+            _migration_raster_bounds_spatial_index,
+        ),
+        (
+            "20260422_001_ingest_item_stage_checkpoint",
+            _migration_ingest_item_stage_checkpoint,
+        ),
     ]
 
 
@@ -112,7 +121,9 @@ def _migration_raster_bounds_spatial_index(conn: Connection) -> None:
     if not _table_exists(conn, "raster_assets"):
         return
 
-    has_postgis = conn.execute(text("SELECT to_regproc('st_geomfromtext') IS NOT NULL")).scalar()
+    has_postgis = conn.execute(
+        text("SELECT to_regproc('st_geomfromtext') IS NOT NULL")
+    ).scalar()
     if not has_postgis:
         return
 
@@ -144,13 +155,17 @@ def _migration_ingest_item_stage_checkpoint(conn: Connection) -> None:
     )
 
 
-def _ensure_column(conn: Connection, table_name: str, column_name: str, column_type: str) -> None:
+def _ensure_column(
+    conn: Connection, table_name: str, column_name: str, column_type: str
+) -> None:
     if not _table_exists(conn, table_name):
         return
     columns = _table_columns(conn, table_name)
     if column_name in columns:
         return
-    conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"))
+    conn.execute(
+        text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+    )
 
 
 def _table_exists(conn: Connection, table_name: str) -> bool:

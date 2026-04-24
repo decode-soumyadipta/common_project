@@ -3,8 +3,12 @@ from __future__ import annotations
 from typing import Iterable
 from collections.abc import Callable
 
-from offline_gis_app.server_ingestion.services.ingestion_service.context import IngestionContext
-from offline_gis_app.server_ingestion.services.ingestion_service.contracts import IngestionStage
+from offline_gis_app.server_ingestion.services.ingestion_service.context import (
+    IngestionContext,
+)
+from offline_gis_app.server_ingestion.services.ingestion_service.contracts import (
+    IngestionStage,
+)
 
 
 class IngestionPipeline:

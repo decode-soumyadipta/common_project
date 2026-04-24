@@ -37,7 +37,9 @@ class RasterAsset(Base):
     width: Mapped[int] = mapped_column(nullable=False)
     height: Mapped[int] = mapped_column(nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
 
 
 class IngestJobStatus(str, Enum):
@@ -74,10 +76,14 @@ class IngestJob(Base):
     total_items: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     processed_items: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     failed_items: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    checkpoint_item_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    checkpoint_item_index: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_checkpoint_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -95,7 +101,9 @@ class IngestJobItem(Base):
     __tablename__ = "ingest_job_items"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    job_id: Mapped[str] = mapped_column(String(36), ForeignKey("ingest_jobs.id", ondelete="CASCADE"), nullable=False)
+    job_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("ingest_jobs.id", ondelete="CASCADE"), nullable=False
+    )
     item_index: Mapped[int] = mapped_column(Integer, nullable=False)
     file_path: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[IngestJobItemStatus] = mapped_column(
@@ -108,9 +116,12 @@ class IngestJobItem(Base):
     stage_attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_checkpoint_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    asset_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("raster_assets.id"), nullable=True)
+    asset_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("raster_assets.id"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
 
     job: Mapped[IngestJob] = relationship(back_populates="items")
-

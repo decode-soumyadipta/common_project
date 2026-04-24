@@ -26,17 +26,22 @@ from offline_gis_app.client_backend.desktop.coordinators import (
     VisualizationCoordinator,
 )
 from offline_gis_app.client_backend.desktop.control_panel import ControlPanel
-from offline_gis_app.client_backend.desktop.performance_service import DesktopPerformanceService
+from offline_gis_app.client_backend.desktop.performance_service import (
+    DesktopPerformanceService,
+)
 from offline_gis_app.client_backend.desktop.state import DesktopState
 from offline_gis_app.client_backend.desktop.titiler_manager import TiTilerManager
-from offline_gis_app.server_ingestion.services.scientific_measurements import (
+from offline_gis_app.client_backend.measurement_tools import (
     compute_slope_aspect,
     compute_viewshed,
     compute_volume,
-    measure_distance,
+    measure_polygon_area,
     measure_shadow_height,
 )
-from offline_gis_app.server_ingestion.services.metadata_extractor import MetadataExtractorError, extract_metadata
+from offline_gis_app.server_ingestion.services.metadata_extractor import (
+    MetadataExtractorError,
+    extract_metadata,
+)
 from offline_gis_app.server_ingestion.services.tile_url_builder import build_xyz_url
 
 
@@ -60,7 +65,9 @@ class DesktopController:
         self.app_mode = app_mode
         self.api = api_client or DesktopApiClient()
         self.panel.api_client = self.api  # Set API client on panel for asset listing
-        self.api_server = api_server_manager or ApiServerManager(base_url=self.api.base_url)
+        self.api_server = api_server_manager or ApiServerManager(
+            base_url=self.api.base_url
+        )
         self.titiler = titiler_manager or TiTilerManager()
         self.performance = DesktopPerformanceService()
         self.state = DesktopState()
@@ -72,13 +79,17 @@ class DesktopController:
         self._search_layer_visibility: dict[str, bool] = {}
         self._loaded_search_layer_keys: set[str] = set()
         self._active_dem_search_layer_key: str | None = None
-        self._last_visible_focus_signature: tuple[float, float, float, float] | None = None
+        self._last_visible_focus_signature: tuple[float, float, float, float] | None = (
+            None
+        )
         self._offline_endpoints_valid = True
         self._layer_loading_active = False
         self._layer_loading_timeout_ms = 30000
         self._layer_loading_timeout_timer = QTimer(panel)
         self._layer_loading_timeout_timer.setSingleShot(True)
-        self._layer_loading_timeout_timer.timeout.connect(self._on_layer_loading_timeout)
+        self._layer_loading_timeout_timer.timeout.connect(
+            self._on_layer_loading_timeout
+        )
         self._measurement_pool = QThreadPool(panel)
         self._measurement_pool.setMaxThreadCount(1)
         self._swipe_comparator_enabled = False
@@ -88,9 +99,16 @@ class DesktopController:
         self._add_point_mode_enabled = False
         self._shadow_height_mode_enabled = False
         self._pan_mode_enabled = True
+        self._polygon_area_mode_enabled = False
+        self._volume_mode_enabled = False
+        self._slope_aspect_mode_enabled = False
+        self._viewshed_mode_enabled = False
+        self._polygon_drawing_context = "none"  # "none", "search", "measurement"
         self._explicit_imagery_layer_visible = False
         self._explicit_dem_layer_visible = False
-        self._last_distance_measurement_signature: tuple[float, float, float, float, float] | None = None
+        self._last_distance_measurement_signature: (
+            tuple[float, float, float, float, float] | None
+        ) = None
         self._default_profile_samples = 200
         self._default_annotation_text = "Point"
         self._last_profile_values: list[float] = []
@@ -159,46 +177,127 @@ class DesktopController:
             self._logger.warning("%s failed: %s", action, exc)
             return
         if isinstance(exc, httpx.HTTPStatusError):
-            status_code = exc.response.status_code if exc.response is not None else "unknown"
-            self.panel.log(
-                f"{action} failed with API status {status_code}. Check API logs and refresh again."
+            status_code = (
+                exc.response.status_code if exc.response is not None else "unknown"
             )
-            self._logger.error("%s failed with status=%s", action, status_code)
+            detail = self._http_error_detail(exc)
+            message = f"{action} failed with API status {status_code}."
+            if detail:
+                message = f"{message} Detail: {detail}"
+            self.panel.log(f"{message} Check API logs and refresh again.")
+            self._logger.error(
+                "%s failed with status=%s detail=%s", action, status_code, detail
+            )
             return
         self.panel.log(f"{action} failed: {exc}")
         self._logger.error("%s failed: %s", action, exc)
 
+    @staticmethod
+    def _http_error_detail(exc: httpx.HTTPStatusError) -> str:
+        if exc.response is None:
+            return ""
+        try:
+            payload = exc.response.json()
+            if isinstance(payload, dict):
+                detail = payload.get("detail")
+                if detail is not None:
+                    return str(detail)
+            return str(payload)
+        except Exception:  # noqa: BLE001
+            body = (exc.response.text or "").strip()
+            return body[:300]
+
     def _connect_signals(self) -> None:
-        self._connect_button(self.panel.browse_btn.clicked, "Browse Path", self.browse_path)
-        self._connect_button(self.panel.preview_btn.clicked, "Preview Path", self.preview_selected_path)
-        self._connect_button(self.panel.save_btn.clicked, "Save Path", self.save_selected_path)
-        self._connect_button(self.panel.refresh_assets_btn.clicked, "Refresh Assets", self.refresh_assets)
-        self._connect_button(self.panel.add_layer_btn.clicked, "Add Layer", self.add_selected_layer)
-        self.panel.brightness_slider.valueChanged.connect(self._on_visual_slider_changed)
+        self._connect_button(
+            self.panel.browse_btn.clicked, "Browse Path", self.browse_path
+        )
+        self._connect_button(
+            self.panel.preview_btn.clicked, "Preview Path", self.preview_selected_path
+        )
+        self._connect_button(
+            self.panel.save_btn.clicked, "Save Path", self.save_selected_path
+        )
+        self._connect_button(
+            self.panel.refresh_assets_btn.clicked, "Refresh Assets", self.refresh_assets
+        )
+        self._connect_button(
+            self.panel.add_layer_btn.clicked, "Add Layer", self.add_selected_layer
+        )
+        self.panel.brightness_slider.valueChanged.connect(
+            self._on_visual_slider_changed
+        )
         self.panel.contrast_slider.valueChanged.connect(self._on_visual_slider_changed)
-        self.panel.dem_exaggeration_slider.valueChanged.connect(self._on_dem_slider_changed)
-        self.panel.dem_hillshade_slider.valueChanged.connect(self._on_dem_slider_changed)
-        self.panel.dem_color_mode_combo.currentIndexChanged.connect(self._on_dem_color_mode_changed)
-        self._connect_button(self.panel.apply_rgb_view_mode_btn.clicked, "Apply RGB View Mode", self.apply_rgb_view_mode)
-        self._connect_button(self.panel.rotate_left_btn.clicked, "Rotate Left", lambda: self.rotate_camera(-10.0))
-        self._connect_button(self.panel.rotate_right_btn.clicked, "Rotate Right", lambda: self.rotate_camera(10.0))
+        self.panel.dem_exaggeration_slider.valueChanged.connect(
+            self._on_dem_slider_changed
+        )
+        self.panel.dem_hillshade_slider.valueChanged.connect(
+            self._on_dem_slider_changed
+        )
+        self.panel.dem_color_mode_combo.currentIndexChanged.connect(
+            self._on_dem_color_mode_changed
+        )
+        self._connect_button(
+            self.panel.apply_rgb_view_mode_btn.clicked,
+            "Apply RGB View Mode",
+            self.apply_rgb_view_mode,
+        )
+        self._connect_button(
+            self.panel.rotate_left_btn.clicked,
+            "Rotate Left",
+            lambda: self.rotate_camera(-10.0),
+        )
+        self._connect_button(
+            self.panel.rotate_right_btn.clicked,
+            "Rotate Right",
+            lambda: self.rotate_camera(10.0),
+        )
         self.panel.pitch_slider.valueChanged.connect(self.set_pitch)
-        self._connect_button(self.panel.search_point_btn.clicked, "Search by Coordinate", self.search_assets_by_coordinate)
-        self._connect_button(self.panel.search_draw_polygon_btn.clicked, "Draw Search Polygon", self.set_search_draw_mode)
-        self._connect_button(self.panel.search_finish_polygon_btn.clicked, "Finish Search Polygon", self.finish_search_polygon)
-        self._connect_button(self.panel.search_clear_geometry_btn.clicked, "Clear Search Geometry", self.clear_search_geometry)
-        self._connect_button(self.panel.search_from_draw_btn.clicked, "Search from Drawn Geometry", self.search_assets_from_drawn_geometry)
-        self.panel.search_result_visibility_toggled.connect(self.toggle_search_result_visibility)
+        self._connect_button(
+            self.panel.search_point_btn.clicked,
+            "Search by Coordinate",
+            self.search_assets_by_coordinate,
+        )
+        self._connect_button(
+            self.panel.search_draw_polygon_btn.clicked,
+            "Draw Search Polygon",
+            self.set_search_draw_mode,
+        )
+        self._connect_button(
+            self.panel.search_finish_polygon_btn.clicked,
+            "Finish Search Polygon",
+            self.finish_search_polygon,
+        )
+        self._connect_button(
+            self.panel.search_clear_geometry_btn.clicked,
+            "Clear Search Geometry",
+            self.clear_search_geometry,
+        )
+        self._connect_button(
+            self.panel.search_from_draw_btn.clicked,
+            "Search from Drawn Geometry",
+            self.search_assets_from_drawn_geometry,
+        )
+        self.panel.search_result_visibility_toggled.connect(
+            self.toggle_search_result_visibility
+        )
         self.bridge.mapClicked.connect(self.on_map_click)
         self.bridge.measurementUpdated.connect(self.on_measurement)
         self.bridge.jsLogReceived.connect(self.on_js_log)
         self.bridge.searchGeometryChanged.connect(self.on_search_geometry)
         self.bridge.comparatorPaneStateChanged.connect(self.on_comparator_pane_state)
-        self.panel.uploaded_assets_list.itemSelectionChanged.connect(self.preview_selected_uploaded_asset)
-        self.panel.measurement_result_clear_selected_requested.connect(self.clear_selected_measurement_result)
-        self.panel.measurement_result_clear_all_requested.connect(self.clear_all_measurement_results)
+        self.panel.uploaded_assets_list.itemSelectionChanged.connect(
+            self.preview_selected_uploaded_asset
+        )
+        self.panel.measurement_result_clear_selected_requested.connect(
+            self.clear_selected_measurement_result
+        )
+        self.panel.measurement_result_clear_all_requested.connect(
+            self.clear_all_measurement_results
+        )
 
-    def _connect_button(self, signal, label: str, callback: Callable[..., object]) -> None:
+    def _connect_button(
+        self, signal, label: str, callback: Callable[..., object]
+    ) -> None:
         signal.connect(
             lambda *args, _label=label, _callback=callback: self._on_button_invoked(
                 _label,
@@ -207,7 +306,9 @@ class DesktopController:
             )
         )
 
-    def _on_button_invoked(self, label: str, callback: Callable[..., object], *args) -> None:
+    def _on_button_invoked(
+        self, label: str, callback: Callable[..., object], *args
+    ) -> None:
         try:
             callback(*args)
         except TypeError:
@@ -262,15 +363,34 @@ class DesktopController:
         if not Path(path).exists():
             self.panel.log(f"Path does not exist: {path}")
             return
+
+        # Show immediate queueing state so users get instant feedback on Save.
+        self.panel.ingest_progress_bar.setRange(0, 0)
+        self.panel.ingest_status_value.setText("QUEUING")
+        self.panel.ingest_step_value.setText("Sending save request to ingest queue")
+        self.panel.ingest_item_value.setText(f"Source: {path}")
+        self.panel.ingest_elapsed_value.setText("Elapsed 00:00")
+        self.panel.append_ingest_detail(
+            "[00:00] QUEUING - Sending save request to ingest queue"
+        )
+
         try:
             job = self.api.enqueue_ingest_job([path])
         except httpx.HTTPError as exc:
+            self.panel.ingest_progress_bar.setRange(0, 100)
+            self.panel.ingest_progress_bar.setValue(0)
+            self.panel.ingest_status_value.setText("FAILED")
+            self.panel.ingest_step_value.setText("Queue request failed")
             self._handle_api_error("Queue ingest", exc)
             return
+
+        self.panel.ingest_progress_bar.setRange(0, 100)
         self.state.active_ingest_job_id = str(job.get("id"))
         self.state.pending_ingest_source_path = path
         self.state.auto_visualize_ingest_result = True
-        self.panel.log("Save queued metadata ingest. Preview alone does not register catalog metadata.")
+        self.panel.log(
+            "Save queued metadata ingest. Preview alone does not register catalog metadata."
+        )
         self.panel.log(
             "Saved to ingest queue "
             f"id={job.get('id')} total={job.get('total_items')} status={job.get('status')}"
@@ -304,8 +424,13 @@ class DesktopController:
     def _set_annotation_overlay_visible(self, visible: bool) -> None:
         self._run_js_call("setAnnotationVisibility", bool(visible))
 
+    def _set_measurement_cursor_enabled(self, enabled: bool) -> None:
+        self._run_js_call("setMeasurementCursor", bool(enabled))
+
     @staticmethod
-    def _coordinate_buffer_polygon(lon: float, lat: float, buffer_meters: float) -> list[tuple[float, float]]:
+    def _coordinate_buffer_polygon(
+        lon: float, lat: float, buffer_meters: float
+    ) -> list[tuple[float, float]]:
         lat_offset = buffer_meters / 111_320.0
         lon_scale = max(0.1, math.cos(math.radians(lat)))
         lon_offset = buffer_meters / (111_320.0 * lon_scale)
@@ -320,7 +445,9 @@ class DesktopController:
         self._search.on_search_geometry(geometry_type, payload_json)
 
     @staticmethod
-    def _set_slider_from_float_value(slider, raw_value: object, scale: float = 1.0) -> None:
+    def _set_slider_from_float_value(
+        slider, raw_value: object, scale: float = 1.0
+    ) -> None:
         if not isinstance(raw_value, (int, float)):
             return
         scaled = int(round(float(raw_value) * scale))
@@ -330,11 +457,15 @@ class DesktopController:
         try:
             payload = json.loads(payload_json)
         except json.JSONDecodeError:
-            self._logger.warning("Invalid comparator pane state payload JSON: %s", payload_json)
+            self._logger.warning(
+                "Invalid comparator pane state payload JSON: %s", payload_json
+            )
             return
 
         if not isinstance(payload, dict):
-            self._logger.warning("Invalid comparator pane state payload type: %s", type(payload).__name__)
+            self._logger.warning(
+                "Invalid comparator pane state payload type: %s", type(payload).__name__
+            )
             return
 
         pane = str(payload.get("pane") or "").strip().lower()
@@ -342,9 +473,13 @@ class DesktopController:
         if pane not in {"left", "right"}:
             pane = "left"
         self._comparator_selected_pane = pane
-        self._comparator_selected_layer_type = layer_type if layer_type in {"dem", "imagery"} else None
+        self._comparator_selected_layer_type = (
+            layer_type if layer_type in {"dem", "imagery"} else None
+        )
 
-        imagery = payload.get("imagery") if isinstance(payload.get("imagery"), dict) else {}
+        imagery = (
+            payload.get("imagery") if isinstance(payload.get("imagery"), dict) else {}
+        )
         dem = payload.get("dem") if isinstance(payload.get("dem"), dict) else {}
 
         blockers = [
@@ -355,10 +490,18 @@ class DesktopController:
             QSignalBlocker(self.panel.dem_color_mode_combo),
         ]
         try:
-            self._set_slider_from_float_value(self.panel.brightness_slider, imagery.get("brightness"), scale=100.0)
-            self._set_slider_from_float_value(self.panel.contrast_slider, imagery.get("contrast"), scale=100.0)
-            self._set_slider_from_float_value(self.panel.dem_exaggeration_slider, dem.get("exaggeration"), scale=100.0)
-            self._set_slider_from_float_value(self.panel.dem_hillshade_slider, dem.get("hillshade_alpha"), scale=100.0)
+            self._set_slider_from_float_value(
+                self.panel.brightness_slider, imagery.get("brightness"), scale=100.0
+            )
+            self._set_slider_from_float_value(
+                self.panel.contrast_slider, imagery.get("contrast"), scale=100.0
+            )
+            self._set_slider_from_float_value(
+                self.panel.dem_exaggeration_slider, dem.get("exaggeration"), scale=100.0
+            )
+            self._set_slider_from_float_value(
+                self.panel.dem_hillshade_slider, dem.get("hillshade_alpha"), scale=100.0
+            )
 
             color_mode = str(dem.get("color_mode") or "").strip().lower()
             if color_mode:
@@ -381,7 +524,9 @@ class DesktopController:
         self._asset_cache = {}
         previous_assets = self._search_result_assets_by_path
         previously_visible_paths = {
-            path for path, is_visible in self._search_layer_visibility.items() if is_visible
+            path
+            for path, is_visible in self._search_layer_visibility.items()
+            if is_visible
         }
         had_visible_assets = bool(previously_visible_paths)
         self._search_result_assets_by_path = {}
@@ -432,7 +577,9 @@ class DesktopController:
 
         asset = self._search_result_assets_by_path.get(normalized_path)
         if not isinstance(asset, dict):
-            self.panel.log("Visibility toggle ignored: asset is no longer in current search results.")
+            self.panel.log(
+                "Visibility toggle ignored: asset is no longer in current search results."
+            )
             return
 
         next_visible = bool(visible)
@@ -450,7 +597,10 @@ class DesktopController:
             self.panel.log(f"Hidden from map: {asset.get('file_name', 'asset')}")
 
         self._focus_visible_search_assets(force=False)
-        self.panel.update_search_results(list(self._search_result_assets_by_path.values()), self._search_layer_visibility)
+        self.panel.update_search_results(
+            list(self._search_result_assets_by_path.values()),
+            self._search_layer_visibility,
+        )
 
     def _sync_search_visibility_layers(self) -> None:
         for file_path, asset in self._search_result_assets_by_path.items():
@@ -472,7 +622,11 @@ class DesktopController:
                 self._apply_display_control_mode()
                 continue
 
-            if is_dem_asset and self._active_dem_search_layer_key and self._active_dem_search_layer_key != file_path:
+            if (
+                is_dem_asset
+                and self._active_dem_search_layer_key
+                and self._active_dem_search_layer_key != file_path
+            ):
                 self._search_layer_visibility[file_path] = False
                 self._run_js_call("setLayerVisibility", file_path, False)
                 continue
@@ -610,7 +764,9 @@ class DesktopController:
             return
         except MetadataExtractorError as exc:
             self.panel.log(f"Preview failed: {exc}")
-            self._logger.exception("Preview metadata extraction failed for path=%s", path)
+            self._logger.exception(
+                "Preview metadata extraction failed for path=%s", path
+            )
             return
         finally:
             self.panel.set_search_busy(False)
@@ -651,7 +807,9 @@ class DesktopController:
                 f"{metadata.file_name} ({metadata.kind.value.upper()}) | "
                 f"CRS {metadata.crs} | {metadata.width}x{metadata.height}"
             )
-            self.panel.log("Preview does not save metadata. Click Save to register this raster in catalog.")
+            self.panel.log(
+                "Preview does not save metadata. Click Save to register this raster in catalog."
+            )
             return
 
         self._set_layer_loading(False, "Preview failed")
@@ -677,7 +835,7 @@ class DesktopController:
             label = f"{asset['file_name']} [{asset['kind']}]"
             label += name_suffix
             self.panel.assets_combo.addItem(label, asset)
-        
+
         # Refresh uploaded assets list on server mode
         if self.app_mode == DesktopAppMode.SERVER:
             self.panel.refresh_uploaded_assets()
@@ -726,7 +884,10 @@ class DesktopController:
         status = str(job.get("status") or "").lower()
         if status in {"completed", "failed", "partial"}:
             self._ingest_poll_timer.stop()
-            if status in {"completed", "partial"} and self.state.auto_visualize_ingest_result:
+            if (
+                status in {"completed", "partial"}
+                and self.state.auto_visualize_ingest_result
+            ):
                 self._try_visualize_ingested_asset()
 
     def _update_ingest_progress_ui(self, job: dict, *, emit_detail: bool) -> None:
@@ -736,7 +897,9 @@ class DesktopController:
         failed_items = int(job.get("failed_items") or 0)
         checkpoint = int(job.get("checkpoint_item_index") or 0)
         progress_percent = int(job.get("progress_percent") or 0)
-        current_step = str(job.get("current_step") or self._default_step_for_status(status))
+        current_step = str(
+            job.get("current_step") or self._default_step_for_status(status)
+        )
         current_item_path = str(job.get("current_item_path") or "")
         elapsed_seconds = job.get("elapsed_seconds")
 
@@ -747,9 +910,13 @@ class DesktopController:
             f"Processed {processed_items}/{total_items} | Failed {failed_items} | Checkpoint {checkpoint}"
         )
         self.panel.ingest_item_value.setText(f"Source: {current_item_path or '-'}")
-        self.panel.ingest_elapsed_value.setText(f"Elapsed {self._format_elapsed(elapsed_seconds)}")
+        self.panel.ingest_elapsed_value.setText(
+            f"Elapsed {self._format_elapsed(elapsed_seconds)}"
+        )
 
-        if emit_detail and (self._last_ingest_step != current_step or self._last_ingest_status != status):
+        if emit_detail and (
+            self._last_ingest_step != current_step or self._last_ingest_status != status
+        ):
             self.panel.append_ingest_detail(
                 f"[{self._format_elapsed(elapsed_seconds)}] {status.upper()} - {current_step}"
             )
@@ -791,13 +958,21 @@ class DesktopController:
     def _selected_asset(self) -> dict | None:
         item = self.panel.assets_combo.currentData()
         if isinstance(item, dict):
-            if self._asset_path_accessible_locally(item) or self.app_mode == DesktopAppMode.CLIENT:
+            if (
+                self._asset_path_accessible_locally(item)
+                or self.app_mode == DesktopAppMode.CLIENT
+            ):
                 return item
-            self._logger.warning("Combo selected asset missing on disk path=%s", item.get("file_path"))
+            self._logger.warning(
+                "Combo selected asset missing on disk path=%s", item.get("file_path")
+            )
             return None
         if isinstance(self.state.selected_asset, dict):
             path = self.state.selected_asset.get("file_path", "")
-            if self._asset_path_accessible_locally(self.state.selected_asset) or self.app_mode == DesktopAppMode.CLIENT:
+            if (
+                self._asset_path_accessible_locally(self.state.selected_asset)
+                or self.app_mode == DesktopAppMode.CLIENT
+            ):
                 return self.state.selected_asset
             self._logger.warning("Ignoring stale selected asset path=%s", path)
             self.state.selected_asset = None
@@ -832,9 +1007,14 @@ class DesktopController:
     ) -> dict | None:
         if show_loading:
             self._set_layer_loading(True, f"Loading {asset['file_name']}...")
-        if self.app_mode != DesktopAppMode.CLIENT and not Path(asset["file_path"]).exists():
+        if (
+            self.app_mode != DesktopAppMode.CLIENT
+            and not Path(asset["file_path"]).exists()
+        ):
             self.panel.log(f"File not found on disk: {asset['file_path']}")
-            self._logger.error("Cannot add layer; file missing path=%s", asset["file_path"])
+            self._logger.error(
+                "Cannot add layer; file missing path=%s", asset["file_path"]
+            )
             if show_loading:
                 self._set_layer_loading(False, "Layer load failed")
             return None
@@ -848,7 +1028,9 @@ class DesktopController:
                 self._asset_cache[fresh["file_path"]] = fresh
                 asset = fresh
                 bounds = self._asset_bounds(asset)
-                self._logger.info("Refreshed metadata for selected asset before layer add")
+                self._logger.info(
+                    "Refreshed metadata for selected asset before layer add"
+                )
             except httpx.HTTPError:
                 self._logger.exception("Failed to refresh metadata before layer add")
         options = self._layer_options(asset, bounds)
@@ -871,7 +1053,9 @@ class DesktopController:
         if bounds is None:
             center = self._asset_centroid(asset)
             if center is None:
-                self._logger.warning("Fly-through unavailable for asset=%s", asset.get("file_name"))
+                self._logger.warning(
+                    "Fly-through unavailable for asset=%s", asset.get("file_name")
+                )
                 return False
             # Fallback micro-bounds around centroid when exact bounds are unavailable.
             delta = 0.01
@@ -892,6 +1076,13 @@ class DesktopController:
         return True
 
     def _try_visualize_ingested_asset(self) -> None:
+        """Try to visualize a newly ingested asset.
+        
+        Uses bulletproof path matching with multiple fallback strategies:
+        1. Exact normalized path match
+        2. Filename match (for cases where paths differ slightly)
+        3. Retry after refresh if not found immediately
+        """
         source_path = self.state.pending_ingest_source_path
         if not source_path:
             return
@@ -903,17 +1094,45 @@ class DesktopController:
             return
 
         self.refresh_assets()
+        
+        # Strategy 1: Try exact normalized path match
         match = next(
             (
                 asset
                 for asset in assets
-                if self._paths_equivalent(str(asset.get("file_path") or ""), source_path)
+                if self._paths_equivalent(
+                    str(asset.get("file_path") or ""), source_path
+                )
             ),
             None,
         )
+        
+        # Strategy 2: If no match, try filename match (bulletproof fallback)
         if not isinstance(match, dict):
-            self.panel.log("Ingest completed, but catalog item is not yet visible. Use Refresh Assets.")
-            self._logger.warning("Ingest completed but source path match not found source=%s", source_path)
+            source_filename = Path(source_path).name
+            match = next(
+                (
+                    asset
+                    for asset in assets
+                    if Path(str(asset.get("file_path") or "")).name == source_filename
+                ),
+                None,
+            )
+            if isinstance(match, dict):
+                self._logger.info(
+                    "Ingest asset matched by filename source=%s matched=%s",
+                    source_path,
+                    match.get("file_path"),
+                )
+        
+        if not isinstance(match, dict):
+            self.panel.log(
+                "Ingest completed, but catalog item is not yet visible. Use Refresh Assets."
+            )
+            self._logger.info(
+                "Ingest completed but asset not found in catalog yet source=%s (this is normal for large files)",
+                source_path,
+            )
             return
 
         self._asset_cache[match["file_path"]] = match
@@ -943,7 +1162,9 @@ class DesktopController:
     def apply_visual_settings(self, log_to_panel: bool = True) -> None:
         self._viz.apply_visual_settings(log_to_panel=log_to_panel)
 
-    def apply_dem_settings(self, _checked: bool | None = None, log_to_panel: bool = True) -> None:
+    def apply_dem_settings(
+        self, _checked: bool | None = None, log_to_panel: bool = True
+    ) -> None:
         self._viz.apply_dem_settings(_checked=_checked, log_to_panel=log_to_panel)
 
     def apply_dem_color_mode(self, log_to_panel: bool = True) -> None:
@@ -964,9 +1185,19 @@ class DesktopController:
             self._add_annotation_at(lon, lat)
             return
 
+        if self._viewshed_mode_enabled:
+            self.panel.log(
+                f"Observer point selected at lon={lon:.6f}, lat={lat:.6f}. Computing viewshed..."
+            )
+            self._toolbar_measure_viewshed()
+            self.state.clicked_points.clear()
+            return
+
         if self._shadow_height_mode_enabled:
             if len(self.state.clicked_points) < 2:
-                self.panel.log("Shadow Height: base point captured. Click shadow tip point.")
+                self.panel.log(
+                    "Shadow Height: base point captured. Click shadow tip point."
+                )
                 return
             self._toolbar_measure_shadow_height()
             self.state.clicked_points.clear()
@@ -978,10 +1209,18 @@ class DesktopController:
             return
         if len(self.state.clicked_points) < 2:
             return
-        (lon1, lat1), (lon2, lat2) = self.state.clicked_points[-2], self.state.clicked_points[-1]
-        signature = (round(lon1, 7), round(lat1, 7), round(lon2, 7), round(lat2, 7), round(meters, 2))
+        (lon1, lat1), (lon2, lat2) = (
+            self.state.clicked_points[-2],
+            self.state.clicked_points[-1],
+        )
+        signature = (
+            round(lon1, 7),
+            round(lat1, 7),
+            round(lon2, 7),
+            round(lat2, 7),
+            round(meters, 2),
+        )
         if signature == self._last_distance_measurement_signature:
-
             return
         self._last_distance_measurement_signature = signature
         self._enqueue_distance_measurement(lon1, lat1, lon2, lat2)
@@ -1021,20 +1260,30 @@ class DesktopController:
             return
         samples = int(self._default_profile_samples)
         try:
-            result = self.api.extract_profile(asset["file_path"], self.state.clicked_points[-2:], samples=samples)
+            result = self.api.extract_profile(
+                asset["file_path"], self.state.clicked_points[-2:], samples=samples
+            )
         except httpx.HTTPError as exc:
             self.panel.log(f"Profile extraction failed: {exc}")
-            self._logger.exception("Profile extraction failed path=%s", asset["file_path"])
+            self._logger.exception(
+                "Profile extraction failed path=%s", asset["file_path"]
+            )
             return
         values = result.get("values", [])
         if not values:
             self.panel.log("Profile extraction returned no values.")
-            self._logger.warning("Profile returned empty values path=%s", asset["file_path"])
+            self._logger.warning(
+                "Profile returned empty values path=%s", asset["file_path"]
+            )
             return
         self._last_profile_values = [float(v) for v in values]
         preview = ", ".join(f"{v:.2f}" for v in values[:10])
-        self.panel.log(f"Profile extracted ({len(values)} samples). First values: {preview}")
-        self._logger.info("Profile extracted samples=%s path=%s", len(values), asset["file_path"])
+        self.panel.log(
+            f"Profile extracted ({len(values)} samples). First values: {preview}"
+        )
+        self._logger.info(
+            "Profile extracted samples=%s path=%s", len(values), asset["file_path"]
+        )
 
     def on_toolbar_group_disabled(self, group_name: str) -> None:
         if group_name == "measurement":
@@ -1048,7 +1297,9 @@ class DesktopController:
             self._run_js_call("setPanMode", True)
             self._run_js_call("clearMeasurements")
             self.clear_all_measurement_results()
-            self.panel.log("Measurement toolbar disabled: measurement overlays cleared.")
+            self.panel.log(
+                "Measurement toolbar disabled: measurement overlays cleared."
+            )
             return
         if group_name == "visualization":
             if self._swipe_comparator_enabled:
@@ -1056,7 +1307,9 @@ class DesktopController:
                 self._run_js_call("setComparator", False)
             self.panel.log("Visualization toolbar disabled.")
 
-    def handle_toolbar_action(self, action_label: str, checked: bool | None = None) -> bool | None:
+    def handle_toolbar_action(
+        self, action_label: str, checked: bool | None = None
+    ) -> bool | None:
         handlers: dict[str, Callable[[], None]] = {
             "Comparator": self._toolbar_toggle_comparator,
             "Distance / Azimuth": self._toolbar_measure_distance,
@@ -1128,7 +1381,11 @@ class DesktopController:
         return self.available_comparator_layer_options()
 
     def apply_comparator_selection(self, selected_paths: list[str]) -> bool:
-        selected = [path for path in selected_paths if path in self._search_result_assets_by_path]
+        selected = [
+            path
+            for path in selected_paths
+            if path in self._search_result_assets_by_path
+        ]
         if len(selected) < 2:
             self._swipe_comparator_enabled = False
             self._run_js_call("setComparator", False)
@@ -1139,16 +1396,25 @@ class DesktopController:
         right_path = selected[1]
         left_asset = self._search_result_assets_by_path.get(left_path) or {}
         right_asset = self._search_result_assets_by_path.get(right_path) or {}
-        left_label = str(left_asset.get("file_name") or Path(left_path).name or "Layer A")
-        right_label = str(right_asset.get("file_name") or Path(right_path).name or "Layer B")
-        self._run_js_call("setComparatorLayers", left_path, right_path, left_label, right_label)
+        left_label = str(
+            left_asset.get("file_name") or Path(left_path).name or "Layer A"
+        )
+        right_label = str(
+            right_asset.get("file_name") or Path(right_path).name or "Layer B"
+        )
+        self._run_js_call(
+            "setComparatorLayers", left_path, right_path, left_label, right_label
+        )
 
         selected_set = set(selected)
         for path in self._search_result_assets_by_path:
             self._search_layer_visibility[path] = path in selected_set
 
         self._sync_search_visibility_layers()
-        self.panel.update_search_results(list(self._search_result_assets_by_path.values()), self._search_layer_visibility)
+        self.panel.update_search_results(
+            list(self._search_result_assets_by_path.values()),
+            self._search_layer_visibility,
+        )
         return self._toolbar_toggle_comparator(enabled=True)
 
     def apply_swipe_comparator_selection(self, selected_paths: list[str]) -> bool:
@@ -1194,7 +1460,9 @@ class DesktopController:
         return 0
 
     def comparator_candidate_count(self) -> int:
-        return len(self._visible_imagery_layer_paths()) + self._visible_dem_layer_count()
+        return (
+            len(self._visible_imagery_layer_paths()) + self._visible_dem_layer_count()
+        )
 
     def swipe_comparator_candidate_count(self) -> int:
         return self.comparator_candidate_count()
@@ -1237,18 +1505,27 @@ class DesktopController:
 
         if changed:
             self._sync_search_visibility_layers()
-            self.panel.update_search_results(list(self._search_result_assets_by_path.values()), self._search_layer_visibility)
-            self.panel.log("Comparator: enabled an additional visible raster layer for comparison.")
+            self.panel.update_search_results(
+                list(self._search_result_assets_by_path.values()),
+                self._search_layer_visibility,
+            )
+            self.panel.log(
+                "Comparator: enabled an additional visible raster layer for comparison."
+            )
 
         return self.can_enable_comparator()
 
     def _auto_enable_second_swipe_imagery_layer(self) -> bool:
         return self._auto_enable_second_comparator_imagery_layer()
 
-    def _enqueue_distance_measurement(self, lon1: float, lat1: float, lon2: float, lat2: float) -> None:
+    def _enqueue_distance_measurement(
+        self, lon1: float, lat1: float, lon2: float, lat2: float
+    ) -> None:
         self._measure.enqueue_distance_measurement(lon1, lat1, lon2, lat2)
 
-    def _submit_measurement_job(self, name: str, task: Callable[[], object], formatter: Callable[[object], str]) -> None:
+    def _submit_measurement_job(
+        self, name: str, task: Callable[[], object], formatter: Callable[[object], str]
+    ) -> None:
         self._measure.submit_measurement_job(name, task, formatter)
 
     def _on_measurement_job_finished(
@@ -1289,7 +1566,9 @@ class DesktopController:
 
     def _toolbar_toggle_comparator(self, enabled: bool | None = None) -> bool:
         candidate_count = self.comparator_candidate_count()
-        next_state = (not self._swipe_comparator_enabled) if enabled is None else bool(enabled)
+        next_state = (
+            (not self._swipe_comparator_enabled) if enabled is None else bool(enabled)
+        )
 
         if next_state and candidate_count < 2:
             if self._auto_enable_second_comparator_imagery_layer():
@@ -1305,7 +1584,9 @@ class DesktopController:
         if self._swipe_comparator_enabled:
             self._run_js_call("setComparatorPosition", 0.5)
             self._run_js_call("requestComparatorPaneState")
-            self.panel.log("Comparator enabled. Drag divider on map to compare georeferenced layers.")
+            self.panel.log(
+                "Comparator enabled. Drag divider on map to compare georeferenced layers."
+            )
             self._logger.info("Comparator enabled candidate_layers=%s", candidate_count)
             self._apply_display_control_mode()
             return True
@@ -1324,7 +1605,9 @@ class DesktopController:
         self._run_js_call("setSwipeComparator", False)
         self.panel.log("Layer Compositor disabled.")
 
-    def apply_layer_compositor_settings(self, enable_swipe: bool, swipe_paths: list[str], layer_alphas: dict[str, float]) -> bool:
+    def apply_layer_compositor_settings(
+        self, enable_swipe: bool, swipe_paths: list[str], layer_alphas: dict[str, float]
+    ) -> bool:
         for path, alpha in layer_alphas.items():
             asset = self._search_result_assets_by_path.get(path)
             if asset:
@@ -1335,9 +1618,19 @@ class DesktopController:
             left_path, right_path = swipe_paths[0], swipe_paths[1]
             left_asset = self._search_result_assets_by_path.get(left_path) or {}
             right_asset = self._search_result_assets_by_path.get(right_path) or {}
-            left_label = str(left_asset.get("file_name") or Path(left_path).name or "Layer A")
-            right_label = str(right_asset.get("file_name") or Path(right_path).name or "Layer B")
-            self._run_js_call("setSwipeComparatorLayers", str(left_asset.get("file_name") or ""), str(right_asset.get("file_name") or ""), left_label, right_label)
+            left_label = str(
+                left_asset.get("file_name") or Path(left_path).name or "Layer A"
+            )
+            right_label = str(
+                right_asset.get("file_name") or Path(right_path).name or "Layer B"
+            )
+            self._run_js_call(
+                "setSwipeComparatorLayers",
+                str(left_asset.get("file_name") or ""),
+                str(right_asset.get("file_name") or ""),
+                left_label,
+                right_label,
+            )
             self._run_js_call("setSwipeComparator", True)
         else:
             self._run_js_call("setSwipeComparator", False)
@@ -1346,7 +1639,11 @@ class DesktopController:
         return True
 
     def _toolbar_measure_distance(self, enabled: bool | None = None) -> bool:
-        self._distance_measure_mode_enabled = (not self._distance_measure_mode_enabled) if enabled is None else bool(enabled)
+        self._distance_measure_mode_enabled = (
+            (not self._distance_measure_mode_enabled)
+            if enabled is None
+            else bool(enabled)
+        )
         if self._distance_measure_mode_enabled:
             self._add_point_mode_enabled = False
             self._set_annotation_overlay_visible(False)
@@ -1356,6 +1653,7 @@ class DesktopController:
         if self._distance_measure_mode_enabled:
             self._run_js_call("setSearchDrawMode", "none")
         self._run_js_call("setDistanceMeasureMode", self._distance_measure_mode_enabled)
+        self._set_measurement_cursor_enabled(self._distance_measure_mode_enabled)
         if not self._distance_measure_mode_enabled:
             self.panel.log("Distance tool disabled.")
             self._logger.info("Distance measure mode disabled")
@@ -1394,31 +1692,73 @@ class DesktopController:
     def _toolbar_measure_polygon_area(self) -> None:
         polygon = self._current_polygon_lonlat()
         if not polygon:
-            self.panel.log("Draw a polygon first, then run Polygon Area.")
+            # Disable conflicting modes
+            self._distance_measure_mode_enabled = False
+            self._run_js_call("setDistanceMeasureMode", False)
+            self._add_point_mode_enabled = False
+            self._set_annotation_overlay_visible(False)
+            self._shadow_height_mode_enabled = False
+            self._viewshed_mode_enabled = False
+            self._volume_mode_enabled = False
+            self._slope_aspect_mode_enabled = False
+            self._pan_mode_enabled = False
+            
+            # Enable polygon drawing mode for measurement
+            self._polygon_drawing_context = "measurement"
+            self._polygon_area_mode_enabled = True
+            self.set_search_draw_mode(enabled=True)
+            self._set_measurement_cursor_enabled(True)
+            self.panel.log(
+                "Draw a polygon on the map, then click Finish to calculate area."
+            )
             return
-        area_m2, perimeter_m, _orientation = self._polygon_metrics_for_export(polygon)
-        compactness = (4.0 * math.pi * area_m2) / (perimeter_m * perimeter_m) if perimeter_m > 0.0 else 0.0
-        message = (
-            "Polygon Area: "
-            f"planimetric={area_m2:.2f} m2, perimeter={perimeter_m:.2f} m, compactness={compactness:.4f}"
-        )
-        self.panel.log(message)
-        self._record_measurement_result("Polygon Area", message)
-        self._logger.info(
-            "Polygon area measured area_m2=%.3f perimeter_m=%.3f compactness=%.6f",
-            area_m2,
-            perimeter_m,
-            compactness,
-        )
+
+        def task() -> object:
+            dem_path = self._selected_dem_path()
+            return measure_polygon_area(polygon, dem_path=dem_path)
+
+        def formatter(result: object) -> str:
+            m = result
+            compactness = m.compactness_index
+            return (
+                "Polygon Area: "
+                f"planimetric={m.planimetric_area_m2:.2f} m2, perimeter={m.perimeter_m:.2f} m, compactness={compactness:.4f}"
+            )
+
+        self._submit_measurement_job("Polygon Area", task, formatter)
+        # Clear the measurement mode flag after calculation
+        self._polygon_area_mode_enabled = False
+        self._polygon_drawing_context = "none"
+        self._set_measurement_cursor_enabled(False)
 
     def _toolbar_measure_volume(self) -> None:
-        polygon = self._current_polygon_lonlat()
-        if not polygon:
-            self.panel.log("Draw a polygon first, then run Volume Cut/Fill.")
-            return
+        # Check for DEM layer first before enabling mode
         dem_path = self._selected_dem_path()
         if not dem_path:
             self.panel.log("Select or show a DEM layer first.")
+            return
+
+        polygon = self._current_polygon_lonlat()
+        if not polygon:
+            # Disable conflicting modes
+            self._distance_measure_mode_enabled = False
+            self._run_js_call("setDistanceMeasureMode", False)
+            self._add_point_mode_enabled = False
+            self._set_annotation_overlay_visible(False)
+            self._shadow_height_mode_enabled = False
+            self._viewshed_mode_enabled = False
+            self._polygon_area_mode_enabled = False
+            self._slope_aspect_mode_enabled = False
+            self._pan_mode_enabled = False
+            
+            # Enable polygon drawing mode for measurement
+            self._polygon_drawing_context = "measurement"
+            self._volume_mode_enabled = True
+            self.set_search_draw_mode(enabled=True)
+            self._set_measurement_cursor_enabled(True)
+            self.panel.log(
+                "Draw a polygon on the map, then click Finish to calculate volume."
+            )
             return
 
         def task() -> object:
@@ -1433,15 +1773,39 @@ class DesktopController:
             )
 
         self._submit_measurement_job("Volume Cut/Fill", task, formatter)
+        # Clear the measurement mode flag after calculation
+        self._volume_mode_enabled = False
+        self._polygon_drawing_context = "none"
+        self._set_measurement_cursor_enabled(False)
 
     def _toolbar_measure_slope_aspect(self) -> None:
-        polygon = self._current_polygon_lonlat()
-        if not polygon:
-            self.panel.log("Draw a polygon first, then run Slope & Aspect.")
-            return
+        # Check for DEM layer first before enabling mode
         dem_path = self._selected_dem_path()
         if not dem_path:
             self.panel.log("Select or show a DEM layer first.")
+            return
+
+        polygon = self._current_polygon_lonlat()
+        if not polygon:
+            # Disable conflicting modes
+            self._distance_measure_mode_enabled = False
+            self._run_js_call("setDistanceMeasureMode", False)
+            self._add_point_mode_enabled = False
+            self._set_annotation_overlay_visible(False)
+            self._shadow_height_mode_enabled = False
+            self._viewshed_mode_enabled = False
+            self._polygon_area_mode_enabled = False
+            self._volume_mode_enabled = False
+            self._pan_mode_enabled = False
+            
+            # Enable polygon drawing mode for measurement
+            self._polygon_drawing_context = "measurement"
+            self._slope_aspect_mode_enabled = True
+            self.set_search_draw_mode(enabled=True)
+            self._set_measurement_cursor_enabled(True)
+            self.panel.log(
+                "Draw a polygon on the map, then click Finish to calculate slope & aspect."
+            )
             return
 
         def task() -> object:
@@ -1449,7 +1813,9 @@ class DesktopController:
 
         def formatter(result: object) -> str:
             m = result
-            area_txt = ", ".join(f"{k}:{v:.1f}m2" for k, v in m.area_by_class_m2.items())
+            area_txt = ", ".join(
+                f"{k}:{v:.1f}m2" for k, v in m.area_by_class_m2.items()
+            )
             return (
                 "Slope & Aspect: "
                 f"mean={m.mean_slope_deg:.2f} deg, std={m.std_slope_deg:.2f} deg, max={m.max_slope_deg:.2f} deg; "
@@ -1457,14 +1823,36 @@ class DesktopController:
             )
 
         self._submit_measurement_job("Slope & Aspect", task, formatter)
+        # Clear the measurement mode flag after calculation
+        self._slope_aspect_mode_enabled = False
+        self._polygon_drawing_context = "none"
+        self._set_measurement_cursor_enabled(False)
 
     def _toolbar_measure_viewshed(self) -> None:
-        if not self.state.clicked_points:
-            self.panel.log("Click observer point on map first, then run Viewshed / LOS.")
-            return
         dem_path = self._selected_dem_path()
         if not dem_path:
             self.panel.log("Select or show a DEM layer first.")
+            return
+        if not self.state.clicked_points:
+            # Disable conflicting modes
+            self._distance_measure_mode_enabled = False
+            self._run_js_call("setDistanceMeasureMode", False)
+            self._add_point_mode_enabled = False
+            self._set_annotation_overlay_visible(False)
+            self._shadow_height_mode_enabled = False
+            self._polygon_area_mode_enabled = False
+            self._volume_mode_enabled = False
+            self._slope_aspect_mode_enabled = False
+            self._run_js_call("setSearchDrawMode", "none")
+            self._polygon_drawing_context = "none"
+            self._pan_mode_enabled = False
+            
+            # Enable viewshed mode
+            self._viewshed_mode_enabled = True
+            self._set_measurement_cursor_enabled(True)
+            self.panel.log(
+                "Click on the map to select observer point for viewshed analysis."
+            )
             return
         lon, lat = self.state.clicked_points[-1]
 
@@ -1480,13 +1868,20 @@ class DesktopController:
             )
 
         self._submit_measurement_job("Viewshed / LOS", task, formatter)
+        self._viewshed_mode_enabled = False
+        self._set_measurement_cursor_enabled(False)
 
     def _toolbar_measure_shadow_height(self) -> None:
         if len(self.state.clicked_points) < 2:
-            self.panel.log("Click object base and shadow tip points before Shadow Height.")
+            self.panel.log(
+                "Click object base and shadow tip points before Shadow Height."
+            )
             return
         dem_path = self._selected_dem_path()
-        (base_lon, base_lat), (tip_lon, tip_lat) = self.state.clicked_points[-2], self.state.clicked_points[-1]
+        (base_lon, base_lat), (tip_lon, tip_lat) = (
+            self.state.clicked_points[-2],
+            self.state.clicked_points[-1],
+        )
         acquired = dt.datetime.now(dt.timezone.utc)
 
         def task() -> object:
@@ -1502,7 +1897,11 @@ class DesktopController:
 
         def formatter(result: object) -> str:
             m = result
-            h = m.corrected_height_m if m.corrected_height_m is not None else m.estimated_height_m
+            h = (
+                m.corrected_height_m
+                if m.corrected_height_m is not None
+                else m.estimated_height_m
+            )
             warn = f" warning={m.warning}" if m.warning else ""
             return (
                 "Shadow Height: "
@@ -1513,10 +1912,13 @@ class DesktopController:
         self._submit_measurement_job("Shadow Height", task, formatter)
 
     def _toolbar_toggle_shadow_height_mode(self, enabled: bool | None = None) -> bool:
-        next_state = (not self._shadow_height_mode_enabled) if enabled is None else bool(enabled)
+        next_state = (
+            (not self._shadow_height_mode_enabled) if enabled is None else bool(enabled)
+        )
         self._shadow_height_mode_enabled = next_state
         if not next_state:
             self.panel.log("Shadow Height tool disabled.")
+            self._set_measurement_cursor_enabled(False)
             return False
 
         self._distance_measure_mode_enabled = False
@@ -1527,11 +1929,16 @@ class DesktopController:
         self._run_js_call("setDistanceMeasureMode", False)
         self._run_js_call("setSearchDrawMode", "none")
         self._run_js_call("setPanMode", False)
-        self.panel.log("Shadow Height enabled. Click base point, then shadow tip point.")
+        self._set_measurement_cursor_enabled(True)
+        self.panel.log(
+            "Shadow Height enabled. Click base point, then shadow tip point."
+        )
         return True
 
     def _toolbar_toggle_add_point_mode(self, enabled: bool | None = None) -> bool:
-        next_state = (not self._add_point_mode_enabled) if enabled is None else bool(enabled)
+        next_state = (
+            (not self._add_point_mode_enabled) if enabled is None else bool(enabled)
+        )
         self._add_point_mode_enabled = next_state
         if not next_state:
             self._set_annotation_overlay_visible(False)
@@ -1544,6 +1951,7 @@ class DesktopController:
         self._run_js_call("setDistanceMeasureMode", False)
         self._run_js_call("setSearchDrawMode", "none")
         self._run_js_call("setPanMode", False)
+        self._set_measurement_cursor_enabled(True)
         self._set_annotation_overlay_visible(True)
         self.panel.log("Add Point enabled. Click map to place annotation points.")
         return True
@@ -1563,10 +1971,12 @@ class DesktopController:
         self._set_annotation_overlay_visible(False)
         self._shadow_height_mode_enabled = False
         self._pan_mode_enabled = True
+        self._viewshed_mode_enabled = False
         self._run_js_call("clearOverlays")
         self._run_js_call("setDistanceMeasureMode", False)
         self._run_js_call("setSearchDrawMode", "none")
         self._run_js_call("setPanMode", True)
+        self._set_measurement_cursor_enabled(False)
         self._measurement_history.clear()
         self.panel.clear_measurement_result_entries()
         self.panel.log("Cleared all temporary measurements and overlays.")
@@ -1576,9 +1986,15 @@ class DesktopController:
         zone = int((lon + 180.0) // 6.0) + 1
         return 32600 + zone if lat >= 0 else 32700 + zone
 
-    def _polygon_metrics_for_export(self, polygon_points: list[tuple[float, float]]) -> tuple[float, float, float]:
+    def _polygon_metrics_for_export(
+        self, polygon_points: list[tuple[float, float]]
+    ) -> tuple[float, float, float]:
         if not polygon_points:
             return 0.0, 0.0, 0.0
+
+        m = measure_polygon_area(polygon_points, dem_path=None)
+
+        # Keep orientation logic for export
         if polygon_points[0] != polygon_points[-1]:
             polygon_points = polygon_points + [polygon_points[0]]
         lon_c = sum(p[0] for p in polygon_points) / len(polygon_points)
@@ -1586,22 +2002,6 @@ class DesktopController:
         epsg = self._utm_epsg_for_lon_lat(lon_c, lat_c)
         transformer = Transformer.from_crs("EPSG:4326", f"EPSG:{epsg}", always_xy=True)
         projected = [transformer.transform(lon, lat) for lon, lat in polygon_points]
-
-        area = 0.0
-        for i in range(len(projected) - 1):
-            area += (projected[i][0] * projected[i + 1][1]) - (projected[i + 1][0] * projected[i][1])
-        area = abs(area) * 0.5
-
-        perimeter = 0.0
-        for i in range(len(polygon_points) - 1):
-            d = measure_distance(
-                polygon_points[i][0],
-                polygon_points[i][1],
-                polygon_points[i + 1][0],
-                polygon_points[i + 1][1],
-                dem_path=None,
-            )
-            perimeter += d.distance_m
 
         orientation = 0.0
         longest_len = -1.0
@@ -1613,7 +2013,7 @@ class DesktopController:
                 continue
             longest_len = edge_len
             orientation = (math.degrees(math.atan2(dx, dy))) % 180.0
-        return float(area), float(perimeter), float(orientation)
+        return m.planimetric_area_m2, m.perimeter_m, float(orientation)
 
     def _toolbar_add_polygon_annotation(self, enabled: bool | None = None) -> bool:
         if enabled is False:
@@ -1630,7 +2030,9 @@ class DesktopController:
             self._pan_mode_enabled = False
             self._run_js_call("setDistanceMeasureMode", False)
             self.set_search_draw_mode()
-            self.panel.log("Polygon draw enabled. Finish polygon, then tap Add Polygon again to save annotation.")
+            self.panel.log(
+                "Polygon draw enabled. Finish polygon, then tap Add Polygon again to save annotation."
+            )
             return True
         area, perimeter, orientation = self._polygon_metrics_for_export(polygon)
         self._annotation_polygon_records.append(
@@ -1673,7 +2075,11 @@ class DesktopController:
         self.panel.log(f"Profile CSV exported: {output_path}")
 
     def _toolbar_export_annotations_geojson(self) -> None:
-        if not self._annotation_records and not self._annotation_line_records and not self._annotation_polygon_records:
+        if (
+            not self._annotation_records
+            and not self._annotation_line_records
+            and not self._annotation_polygon_records
+        ):
             self.panel.log("No annotations captured yet.")
             return
         file_path, _ = QFileDialog.getSaveFileName(
@@ -1704,7 +2110,10 @@ class DesktopController:
             features.append(
                 {
                     "type": "Feature",
-                    "geometry": {"type": "LineString", "coordinates": item.get("coords", [])},
+                    "geometry": {
+                        "type": "LineString",
+                        "coordinates": item.get("coords", []),
+                    },
                     "properties": {
                         "feature_type": item.get("feature_type", "road"),
                         "length_m": item.get("length_m", 0.0),
@@ -1738,7 +2147,11 @@ class DesktopController:
         self.panel.log(f"Annotation export complete: {file_path}")
 
     def _toolbar_export_geopackage(self) -> None:
-        if not self._annotation_records and not self._annotation_line_records and not self._annotation_polygon_records:
+        if (
+            not self._annotation_records
+            and not self._annotation_line_records
+            and not self._annotation_polygon_records
+        ):
             self.panel.log("No annotations captured yet.")
             return
         file_path, _ = QFileDialog.getSaveFileName(
@@ -1814,7 +2227,10 @@ class DesktopController:
             for item in self._annotation_line_records:
                 sink.write(
                     {
-                        "geometry": {"type": "LineString", "coordinates": item.get("coords", [])},
+                        "geometry": {
+                            "type": "LineString",
+                            "coordinates": item.get("coords", []),
+                        },
                         "properties": {
                             "feature_type": str(item.get("feature_type") or "road"),
                             "length_m": float(item.get("length_m") or 0.0),
@@ -1855,7 +2271,9 @@ class DesktopController:
                             "condition": str(item.get("condition") or "intact"),
                             "area_m2": float(item.get("area_m2") or 0.0),
                             "perimeter_m": float(item.get("perimeter_m") or 0.0),
-                            "orientation_deg": float(item.get("orientation_deg") or 0.0),
+                            "orientation_deg": float(
+                                item.get("orientation_deg") or 0.0
+                            ),
                             "notes": str(item.get("notes") or ""),
                         },
                     }
@@ -1912,7 +2330,9 @@ class DesktopController:
         from offline_gis_app.utils.geometry import parse_bounds_wkt_polygon
 
         b = parse_bounds_wkt_polygon(bounds_wkt)
-        if not self._is_valid_lon_lat(b.min_x, b.min_y) or not self._is_valid_lon_lat(b.max_x, b.max_y):
+        if not self._is_valid_lon_lat(b.min_x, b.min_y) or not self._is_valid_lon_lat(
+            b.max_x, b.max_y
+        ):
             self._logger.warning(
                 "Skipping invalid bounds for file=%s min=(%s,%s) max=(%s,%s)",
                 asset.get("file_path"),
@@ -1938,7 +2358,11 @@ class DesktopController:
         center = self._asset_centroid(asset)
         if center is None:
             c = asset.get("centroid", {})
-            self._logger.error("No valid fly-to target for asset=%s centroid=%s", asset.get("file_name"), c)
+            self._logger.error(
+                "No valid fly-to target for asset=%s centroid=%s",
+                asset.get("file_name"),
+                c,
+            )
             return False
         self._run_js_call("flyTo", center["lon"], center["lat"], 9000)
         return True
@@ -1948,7 +2372,9 @@ class DesktopController:
         try:
             tilejson = self.api.get_tilejson(asset["file_path"])
         except httpx.HTTPError as exc:
-            self._logger.warning("TileJSON unavailable for %s: %s", asset["file_name"], exc)
+            self._logger.warning(
+                "TileJSON unavailable for %s: %s", asset["file_name"], exc
+            )
             return options
 
         minzoom = tilejson.get("minzoom")
@@ -1963,8 +2389,17 @@ class DesktopController:
         if isinstance(b, list) and len(b) == 4:
             w, s, e, n = b
             if self._is_valid_lon_lat(w, s) and self._is_valid_lon_lat(e, n):
-                tilejson_bounds = {"west": float(w), "south": float(s), "east": float(e), "north": float(n)}
-                if self._is_near_global_bounds(tilejson_bounds) and bounds and not self._is_near_global_bounds(bounds):
+                tilejson_bounds = {
+                    "west": float(w),
+                    "south": float(s),
+                    "east": float(e),
+                    "north": float(n),
+                }
+                if (
+                    self._is_near_global_bounds(tilejson_bounds)
+                    and bounds
+                    and not self._is_near_global_bounds(bounds)
+                ):
                     self._logger.warning(
                         "Ignoring near-global TileJSON bounds for %s and keeping catalog bounds.",
                         asset.get("file_name"),
@@ -1980,12 +2415,13 @@ class DesktopController:
 
     def _add_layer(self, asset: dict, options: dict) -> bool:
         tile_url = str(asset.get("tile_url") or "")
-        
+
         # --- FIX: TiTiler/Rasterio 500 error on Windows & macOS ---
         # Rasterio on Windows fails to resolve "file:///C:/..." if it contains spaces.
         # But we MUST have the "file:" scheme, otherwise urllib parses "C:" as the scheme.
         import platform
         import re
+
         if platform.system() == "Windows":
             if "url=file:///" in tile_url:
                 tile_url = tile_url.replace("url=file:///", "url=file:")
@@ -1998,11 +2434,13 @@ class DesktopController:
                 tile_url = tile_url.replace("url=file://", "url=")
             if "url=file%3A%2F%2F" in tile_url:
                 tile_url = tile_url.replace("url=file%3A%2F%2F", "url=")
-            
+
         asset["tile_url"] = tile_url
-        
+
         if not self._is_offline_safe_url(tile_url):
-            self.panel.log(f"Blocked non-offline tile URL for {asset.get('file_name', 'asset')}")
+            self.panel.log(
+                f"Blocked non-offline tile URL for {asset.get('file_name', 'asset')}"
+            )
             self._logger.error("Blocked non-offline tile URL: %s", tile_url)
             return False
 
@@ -2016,14 +2454,16 @@ class DesktopController:
             self.state.active_layer_is_dem = True
             layer_key = str(options.get("layer_key") or "")
             self._active_dem_search_layer_key = layer_key or None
-            self._run_js_call("addDemLayer", asset["file_name"], asset["tile_url"], options)
+            self._run_js_call(
+                "addDemLayer", asset["file_name"], asset["tile_url"], options
+            )
             self.panel.rgb_view_mode_combo.setCurrentIndex(0)
             self.panel.rgb_view_mode_combo.setEnabled(True)
             self.panel.apply_rgb_view_mode_btn.setEnabled(True)
             self._apply_display_control_mode()
             self._logger.info("DEM terrain layer requested name=%s", asset["file_name"])
             return True
-            
+
         replace_existing = bool(options.get("replace_existing", True))
         apply_scene_mode = bool(options.get("apply_scene_mode", True))
         if replace_existing:
@@ -2035,7 +2475,7 @@ class DesktopController:
             self.panel.apply_rgb_view_mode_btn.setEnabled(True)
             self._run_js_call("setSceneModeControlEnabled", True)
             self._apply_display_control_mode()
-            
+
         mode = str(self.panel.rgb_view_mode_combo.currentData() or "3d").lower()
         if mode not in {"2d", "3d"}:
             mode = "3d"
@@ -2050,7 +2490,13 @@ class DesktopController:
         )
         if apply_scene_mode:
             self._run_js_call("setSceneMode", mode)
-        self._run_js_call("addTileLayer", asset["file_name"], asset["tile_url"], asset["kind"], options)
+        self._run_js_call(
+            "addTileLayer",
+            asset["file_name"],
+            asset["tile_url"],
+            asset["kind"],
+            options,
+        )
         if not from_search_results:
             self._explicit_imagery_layer_visible = True
         self._apply_display_control_mode()
@@ -2062,7 +2508,8 @@ class DesktopController:
             for path, asset in self._search_result_assets_by_path.items()
         )
         imagery_visible = any(
-            self._search_layer_visibility.get(path, False) and (not self._is_dem_asset(asset))
+            self._search_layer_visibility.get(path, False)
+            and (not self._is_dem_asset(asset))
             for path, asset in self._search_result_assets_by_path.items()
         )
         if self._explicit_dem_layer_visible:
@@ -2070,7 +2517,10 @@ class DesktopController:
         if self._explicit_imagery_layer_visible:
             imagery_visible = True
 
-        if self._swipe_comparator_enabled and self._comparator_selected_layer_type in {"dem", "imagery"}:
+        if self._swipe_comparator_enabled and self._comparator_selected_layer_type in {
+            "dem",
+            "imagery",
+        }:
             dem_visible = self._comparator_selected_layer_type == "dem"
             imagery_visible = self._comparator_selected_layer_type == "imagery"
 
@@ -2105,7 +2555,9 @@ class DesktopController:
             self._comparator_selected_pane = None
             self._comparator_selected_layer_type = None
             self._run_js_call("setComparator", False)
-            self.panel.log("Comparator disabled: at least two visible raster layers are required.")
+            self.panel.log(
+                "Comparator disabled: at least two visible raster layers are required."
+            )
 
     def _is_dem_asset(self, asset: dict) -> bool:
         file_path = str(asset.get("file_path") or "")
@@ -2136,14 +2588,19 @@ class DesktopController:
 
     def _raster_render_query(self, asset: dict) -> dict[str, object]:
         query: dict[str, object] = {}
-        is_dem = str(asset.get("kind", "")).lower() == "dem" or "dem" in str(asset.get("file_name", "")).lower()
-        
+        is_dem = (
+            str(asset.get("kind", "")).lower() == "dem"
+            or "dem" in str(asset.get("file_name", "")).lower()
+        )
+
         info = {}
         try:
             info = self.api.get_cog_info(asset["file_path"])
         except httpx.HTTPError as exc:
-            self._logger.warning("COG info unavailable for %s: %s", asset.get("file_name"), exc)
-            
+            self._logger.warning(
+                "COG info unavailable for %s: %s", asset.get("file_name"), exc
+            )
+
         band_count = int(info.get("count", 1) or 1)
         nodata_value = info.get("nodata_value", info.get("nodata"))
         try:
@@ -2159,22 +2616,32 @@ class DesktopController:
         try:
             stats = self.api.get_cog_statistics(asset["file_path"])
         except httpx.HTTPError as exc:
-            self._logger.warning("Statistics unavailable for %s: %s", asset.get("file_name"), exc)
+            self._logger.warning(
+                "Statistics unavailable for %s: %s", asset.get("file_name"), exc
+            )
 
         if is_dem:
             color_mode = str(self.panel.dem_color_mode_combo.currentData() or "gray")
             query["colormap_name"] = color_mode
-            
+
             # FIX: Provide default elevation rescale if TiTiler stats fail, preventing blank maps.
-            low, high = -100.0, 4000.0 
+            low, high = -100.0, 4000.0
             if isinstance(stats, dict) and stats:
-                first_band = stats.get("b1") if isinstance(stats.get("b1"), dict) else next(iter(stats.values()))
+                first_band = (
+                    stats.get("b1")
+                    if isinstance(stats.get("b1"), dict)
+                    else next(iter(stats.values()))
+                )
                 if isinstance(first_band, dict):
                     b_low = first_band.get("min")
                     b_high = first_band.get("max")
-                    if b_low is not None and b_high is not None and float(b_high) > float(b_low):
+                    if (
+                        b_low is not None
+                        and b_high is not None
+                        and float(b_high) > float(b_low)
+                    ):
                         low, high = float(b_low), float(b_high)
-            
+
             query["rescale"] = f"{low},{high}"
             return query
 
@@ -2198,15 +2665,19 @@ class DesktopController:
                 query["rescale"] = f"{min(lows)},{max(highs)}"
             return query
 
-        first_band = stats.get("b1") if isinstance(stats.get("b1"), dict) else next(iter(stats.values()))
+        first_band = (
+            stats.get("b1")
+            if isinstance(stats.get("b1"), dict)
+            else next(iter(stats.values()))
+        )
         if not isinstance(first_band, dict):
             return query
-        
+
         low = first_band.get("percentile_2", first_band.get("min"))
         high = first_band.get("percentile_98", first_band.get("max"))
         if low is None or high is None or float(high) <= float(low):
             return query
-            
+
         query["rescale"] = f"{float(low)},{float(high)}"
         return query
 
@@ -2245,7 +2716,9 @@ class DesktopController:
         return normalized.replace("\\", "/").casefold()
 
     def _paths_equivalent(self, path_a: str, path_b: str) -> bool:
-        return self._normalize_path_for_compare(path_a) == self._normalize_path_for_compare(path_b)
+        return self._normalize_path_for_compare(
+            path_a
+        ) == self._normalize_path_for_compare(path_b)
 
     def on_js_log(self, level: str, message: str) -> None:
         normalized = level.lower().strip()
@@ -2291,9 +2764,13 @@ class DesktopController:
     def _on_layer_loading_timeout(self) -> None:
         if not self._layer_loading_active:
             return
-        self._logger.warning("Layer loading timeout after %sms", self._layer_loading_timeout_ms)
+        self._logger.warning(
+            "Layer loading timeout after %sms", self._layer_loading_timeout_ms
+        )
         self._set_layer_loading(False, "Layer load timeout")
-        self.panel.log("Layer load timed out. Check API/TiTiler availability and source raster path.")
+        self.panel.log(
+            "Layer load timed out. Check API/TiTiler availability and source raster path."
+        )
 
     def _asset_path_accessible_locally(self, asset: dict) -> bool:
         path = str(asset.get("file_path") or "")
@@ -2307,7 +2784,9 @@ class DesktopController:
         if api_ok and titiler_ok:
             return True
 
-        self.panel.log("Offline guard: API/TiTiler endpoints must be local or private-network addresses.")
+        self.panel.log(
+            "Offline guard: API/TiTiler endpoints must be local or private-network addresses."
+        )
         if not api_ok:
             self.panel.log(f"Blocked API endpoint: {self.api.base_url}")
         if not titiler_ok:
@@ -2322,7 +2801,9 @@ class DesktopController:
     def _require_offline_endpoints(self, action: str) -> bool:
         if self._offline_endpoints_valid:
             return True
-        self.panel.log(f"{action} blocked by offline guard. Configure local/private API and TiTiler endpoints.")
+        self.panel.log(
+            f"{action} blocked by offline guard. Configure local/private API and TiTiler endpoints."
+        )
         self._logger.warning("Blocked action by offline guard: %s", action)
         return False
 

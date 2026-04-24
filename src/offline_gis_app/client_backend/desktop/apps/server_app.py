@@ -6,9 +6,14 @@ import traceback
 from pathlib import Path
 
 from offline_gis_app.client_backend.desktop.app_mode import DesktopAppMode
-from offline_gis_app.client_backend.desktop.qt_compat import QtDesktopRuntimeError, ensure_desktop_qt_runtime
+from offline_gis_app.client_backend.desktop.qt_compat import (
+    QtDesktopRuntimeError,
+    ensure_desktop_qt_runtime,
+)
 from offline_gis_app.client_backend.desktop.run_desktop import run
-from offline_gis_app.client_backend.desktop.standalone_runtime import configure_standalone_runtime
+from offline_gis_app.client_backend.desktop.standalone_runtime import (
+    configure_standalone_runtime,
+)
 
 
 def _write_error_log(message: str) -> None:

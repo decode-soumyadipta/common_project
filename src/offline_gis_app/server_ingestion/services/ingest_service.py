@@ -15,7 +15,9 @@ from offline_gis_app.server_ingestion.services.ingestion_service import (
     PrepareRasterStage,
     ValidatePathStage,
 )
-from offline_gis_app.server_ingestion.services.pyramiding_service import RasterPyramidingService
+from offline_gis_app.server_ingestion.services.pyramiding_service import (
+    RasterPyramidingService,
+)
 from offline_gis_app.server_ingestion.services.tiler_service import TiTilerUrlPolicy
 
 
@@ -53,10 +55,14 @@ def register_raster(
         progress_callback=progress_callback,
         resume_from_stage=resume_from_stage,
     )
-    context = _build_pipeline().run(context, on_stage_completed=stage_checkpoint_callback)
+    context = _build_pipeline().run(
+        context, on_stage_completed=stage_checkpoint_callback
+    )
 
     if context.metadata is None or context.asset is None or context.tile_url is None:
-        raise RuntimeError("Ingestion pipeline did not produce a complete asset payload")
+        raise RuntimeError(
+            "Ingestion pipeline did not produce a complete asset payload"
+        )
 
     if progress_callback:
         progress_callback("Metadata committed (source file remains on secure storage)")
@@ -72,4 +78,3 @@ def register_raster(
         "bounds_wkt": context.asset.bounds_wkt,
         "tile_url": context.tile_url,
     }
-

@@ -46,10 +46,12 @@ def _backend_runtime_available(backend: str) -> bool:
         if backend == "pyqt5":
             from PyQt5.QtWebEngineWidgets import QWebEngineView  # noqa: F401
             from PyQt5.QtWidgets import QApplication  # noqa: F401
+
             return True
         if backend == "pyqt6":
             from PyQt6.QtWebEngineWidgets import QWebEngineView  # noqa: F401
             from PyQt6.QtWidgets import QApplication  # noqa: F401
+
             return True
         return False
     except Exception:
@@ -60,8 +62,12 @@ def _probe_qtpy_backend(expected_backend: str) -> str:
     _clear_qtpy_modules()
     os.environ["QT_API"] = expected_backend
     from qtpy import API_NAME
-    from qtpy.QtWebEngineWidgets import QWebEnginePage, QWebEngineSettings, QWebEngineView  # noqa: F401
-    from qtpy.QtWidgets import QApplication  # noqa: F401
+    from qtpy.QtWebEngineWidgets import QWebEnginePage as _QWebEnginePage
+    from qtpy.QtWebEngineWidgets import QWebEngineSettings as _QWebEngineSettings
+    from qtpy.QtWebEngineWidgets import QWebEngineView as _QWebEngineView
+    from qtpy.QtWidgets import QApplication as _QApplication
+
+    _ = (_QWebEnginePage, _QWebEngineSettings, _QWebEngineView, _QApplication)
 
     return (API_NAME or expected_backend).lower()
 
@@ -72,7 +78,9 @@ def ensure_desktop_qt_runtime() -> str:
 
     if not _backend_runtime_available(selected):
         raise QtDesktopRuntimeError(
-            _desktop_runtime_help(selected, RuntimeError("Qt runtime not available for selected backend"))
+            _desktop_runtime_help(
+                selected, RuntimeError("Qt runtime not available for selected backend")
+            )
         )
 
     try:

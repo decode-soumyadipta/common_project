@@ -189,6 +189,19 @@
   const SEARCH_PENCIL_CURSOR = `url("${SEARCH_PENCIL_CURSOR_IMAGE}") 2 18, crosshair`;
   const ANNOTATION_EDIT_ICON_IMAGE =
     "data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2720%27 height=%2720%27 viewBox=%270 0 20 20%27%3E%3Ccircle cx=%2710%27 cy=%2710%27 r=%279%27 fill=%27rgba(255%2C255%2C255%2C0.92)%27 stroke=%27rgba(0%2C0%2C0%2C0.38)%27 stroke-width=%271.1%27/%3E%3Cpath d=%27M6.1 12.9l.5-2.2L11.8 5.5a1.3 1.3 0 011.8 0l.8.8a1.3 1.3 0 010 1.8L9.1 13.3l-2.2.5a.6.6 0 01-.8-.7z%27 fill=%27%23282f39%27/%3E%3Cpath d=%27M10.9 6.4l2.7 2.7%27 stroke=%27%23ffffff%27 stroke-width=%271%27 stroke-linecap=%27round%27/%3E%3C/svg%3E";
+  const _SB_COORD_THROTTLE_MS = 33; // ~30 fps
+  const _SB_RENDER_IDLE_DELAY_MS = 120;
+  let _sbLastCoordEmitMs = 0;
+  let _sbRenderBusy = false;
+  let _sbRenderIdleTimer = null;
+  
+  // Tile loading progress tracking
+  let _tileLoadingActive = false;
+  let _tilesPending = 0;
+  let _tilesLoaded = 0;
+  let _tileLoadStartTime = 0;
+  let _tileProgressCheckInterval = null;
+  const _TILE_PROGRESS_CHECK_MS = 100; // Check every 100ms
 
   function log(level, message) {
     const fn = console[level] || console.log;
@@ -213,6 +226,89 @@
     if (bridge && bridge.on_measurement) {
       bridge.on_measurement(meters);
     }
+  }
+
+  function setRenderBusyState(busy) {
+    if (!bridge || !bridge.on_render_busy) return;
+    if (busy) {
+      if (_sbRenderIdleTimer) {
+        clearTimeout(_sbRenderIdleTimer);
+        _sbRenderIdleTimer = null;
+      }
+      if (!_sbRenderBusy) {
+        _sbRenderBusy = true;
+        bridge.on_render_busy(true);
+      }
+      return;
+    }
+
+    if (_sbRenderIdleTimer) {
+      clearTimeout(_sbRenderIdleTimer);
+    }
+    _sbRenderIdleTimer = setTimeout(function () {
+      _sbRenderIdleTimer = null;
+      if (_sbRenderBusy) {
+        _sbRenderBusy = false;
+        bridge.on_render_busy(false);
+      }
+    }, _SB_RENDER_IDLE_DELAY_MS);
+  }
+  
+  function emitLoadingProgress(percent, message) {
+    if (!bridge || !bridge.on_loading_progress) return;
+    bridge.on_loading_progress(Math.round(percent), String(message || "Loading"));
+  }
+  
+  function startTileLoadingMonitor() {
+    if (_tileProgressCheckInterval) return;
+    
+    _tileLoadingActive = true;
+    _tileLoadStartTime = Date.now();
+    _tilesPending = 0;
+    _tilesLoaded = 0;
+    
+    emitLoadingProgress(0, "Loading tiles");
+    
+    _tileProgressCheckInterval = setInterval(function() {
+      if (!viewer || !viewer.scene || !viewer.scene.globe) {
+        stopTileLoadingMonitor();
+        return;
+      }
+      
+      const tilesLoading = viewer.scene.globe.tilesLoaded === false;
+      const tileLoadQueueLength = viewer.scene.globe._surface ? viewer.scene.globe._surface._tileLoadQueueHigh.length + viewer.scene.globe._surface._tileLoadQueueMedium.length + viewer.scene.globe._surface._tileLoadQueueLow.length : 0;
+      
+      if (tilesLoading || tileLoadQueueLength > 0) {
+        // Still loading
+        _tilesPending = Math.max(_tilesPending, tileLoadQueueLength);
+        _tilesLoaded = Math.max(0, _tilesPending - tileLoadQueueLength);
+        
+        let percent = 0;
+        if (_tilesPending > 0) {
+          percent = Math.min(95, Math.round((_tilesLoaded / _tilesPending) * 100));
+        } else {
+          // Indeterminate progress
+          const elapsed = Date.now() - _tileLoadStartTime;
+          percent = Math.min(50, Math.round((elapsed / 5000) * 50)); // Max 50% for indeterminate
+        }
+        
+        emitLoadingProgress(percent, "Loading tiles");
+      } else {
+        // Loading complete
+        emitLoadingProgress(100, "Complete");
+        stopTileLoadingMonitor();
+      }
+    }, _TILE_PROGRESS_CHECK_MS);
+  }
+  
+  function stopTileLoadingMonitor() {
+    if (_tileProgressCheckInterval) {
+      clearInterval(_tileProgressCheckInterval);
+      _tileProgressCheckInterval = null;
+    }
+    _tileLoadingActive = false;
+    _tilesPending = 0;
+    _tilesLoaded = 0;
   }
 
   function setSearchBusy(active, message) {
@@ -559,22 +655,33 @@
       log("debug", "setComparatorViewerModeByType: viewer or scene is null");
       return;
     }
-    // Strictly apply the global 2D/3D toggle to maintain uniform application state, ignoring layer type.
+
+    const isDem = String(layerType || "").toLowerCase() === "dem";
+
+    if (!isDem) {
+      // Imagery-only pane → force strict 2D flat map view.
+      // Morphing to SCENE2D prevents pitch/tilt altogether.
+      if (targetViewer.scene.mode !== Cesium.SceneMode.SCENE2D) {
+        targetViewer.scene.morphTo2D(0.0);
+        log("debug", "setComparatorViewerModeByType: imagery pane locked to 2D");
+      }
+      return;
+    }
+
+    // DEM pane → use global 2D/3D toggle so user controls perspective.
     const desiredMode = currentSceneMode === "2d" ? Cesium.SceneMode.SCENE2D : Cesium.SceneMode.SCENE3D;
     const currentMode = targetViewer.scene.mode;
-    log("debug", "setComparatorViewerModeByType: viewer=" + (targetViewer === comparatorLeftViewer ? "LEFT" : "RIGHT") + " desired=" + (desiredMode === Cesium.SceneMode.SCENE3D ? "3D" : "2D") + " current=" + (currentMode === Cesium.SceneMode.SCENE3D ? "3D" : "2D"));
-    
+    log("debug",
+      "setComparatorViewerModeByType: DEM pane viewer=" +
+      (targetViewer === comparatorLeftViewer ? "LEFT" : "RIGHT") +
+      " desired=" + (desiredMode === Cesium.SceneMode.SCENE3D ? "3D" : "2D") +
+      " current=" + (currentMode === Cesium.SceneMode.SCENE3D ? "3D" : "2D"));
     if (currentMode !== desiredMode) {
-      log("debug", "setComparatorViewerModeByType: Mode change needed, calling morph");
       if (desiredMode === Cesium.SceneMode.SCENE2D) {
         targetViewer.scene.morphTo2D(0.0);
-        log("debug", "setComparatorViewerModeByType: Called morphTo2D");
       } else {
         targetViewer.scene.morphTo3D(0.0);
-        log("debug", "setComparatorViewerModeByType: Called morphTo3D");
       }
-    } else {
-      log("debug", "setComparatorViewerModeByType: Mode already correct, skipping morph");
     }
   }
 
@@ -1561,6 +1668,22 @@
       applyCursorStyle(viewer.container, nextCursor);
     }
     setSearchCursorOverlayVisible(Boolean(enabled));
+  }
+
+  function setMeasurementCursorEnabled(enabled) {
+    if (!viewer || !viewer.canvas) {
+      return;
+    }
+    const cursorValue = enabled ? "crosshair" : "";
+    applyCursorStyle(viewer.canvas, cursorValue);
+    const mapElement = document.getElementById("cesiumContainer");
+    if (mapElement) {
+      applyCursorStyle(mapElement, cursorValue);
+      mapElement.classList.toggle("measurement-cursor-active", Boolean(enabled));
+    }
+    if (viewer.container) {
+      applyCursorStyle(viewer.container, cursorValue);
+    }
   }
 
   function sceneDebug(message) {
@@ -2974,6 +3097,7 @@
     });
     viewer.scene.postRender.addEventListener(updateEdgeScaleWidgets);
     wireClickHandlers();
+    wireStatusBarListeners();
     
     // Force a few initial renders to ensure the globe paints even in
     // constrained QtWebEngine environments.
@@ -3232,6 +3356,64 @@
     requestSceneRender();
   }
 
+  // ── Status-bar bridge emitters (QGIS-style) ──────────────────────────────
+  function emitMouseCoordinates(lon, lat) {
+    if (!bridge || !bridge.on_mouse_coordinates) return;
+    const now = Date.now();
+    if (now - _sbLastCoordEmitMs < _SB_COORD_THROTTLE_MS) return;
+    _sbLastCoordEmitMs = now;
+    // Sample terrain elevation at cursor position
+    let elevM = -9999;
+    try {
+      if (viewer && viewer.scene && viewer.scene.globe) {
+        const carto = Cesium.Cartographic.fromDegrees(lon, lat);
+        const sampled = viewer.scene.globe.getHeight(carto);
+        if (typeof sampled === "number" && Number.isFinite(sampled)) {
+          elevM = sampled;
+        }
+      }
+    } catch (_) {}
+    bridge.on_mouse_coordinates(lon, lat, elevM);
+  }
+
+  function emitCameraChanged() {
+    if (!bridge || !bridge.on_camera_changed || !viewer || !viewer.camera) return;
+    try {
+      // Compute approximate scale denominator from camera altitude + canvas size
+      const height = viewer.camera.positionCartographic.height;
+      const canvas = viewer.canvas;
+      const fovY = viewer.camera.frustum.fovy || 1.0472;
+      const visibleMeters = 2.0 * height * Math.tan(fovY * 0.5);
+      const pixelHeight = canvas.clientHeight || 1;
+      const metersPerPixel = visibleMeters / pixelHeight;
+      // 96 dpi screen: 1 pixel ≈ 0.000265 m physical → scale = mPx / 0.000265
+      const scaleDenom = metersPerPixel / 0.000265;
+
+      let headingDeg = Cesium.Math.toDegrees(viewer.camera.heading);
+      if (headingDeg < 0) headingDeg += 360.0;
+      bridge.on_camera_changed(scaleDenom, headingDeg);
+    } catch (_) {}
+  }
+
+  function wireStatusBarListeners() {
+    if (!viewer || !viewer.scene) return;
+    // Camera moved → update scale + heading + start tile loading monitor
+    viewer.camera.changed.addEventListener(function() {
+      emitCameraChanged();
+      if (!_tileLoadingActive) {
+        startTileLoadingMonitor();
+      }
+    });
+    viewer.camera.moveEnd.addEventListener(function() {
+      emitCameraChanged();
+      if (!_tileLoadingActive) {
+        startTileLoadingMonitor();
+      }
+    });
+    // Note: Render busy indicator removed - it was triggering on every frame
+    // causing constant "Busy" state. Now using tile loading progress instead.
+  }
+
   function wireClickHandlers() {
     const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
     handler.setInputAction(function (movement) {
@@ -3327,18 +3509,24 @@
           );
         }
       }
+      
+      // Always emit mouse coordinates for status bar (not just during polygon drawing)
+      const lonLat = getLonLatFromScreen(movement.endPosition);
+      if (lonLat) {
+        emitMouseCoordinates(lonLat.lon, lonLat.lat);
+      }
+      
       if (searchDrawMode === "polygon") {
         updateSearchCursorOverlay(lastSearchCursorScreenPosition);
       }
       if (searchDrawMode !== "polygon" || searchPolygonPoints.length === 0) {
         return;
       }
-      const lonLat = getLonLatFromScreen(movement.endPosition);
-      if (!lonLat) {
-        return;
+      // Update search polygon preview during drawing
+      if (lonLat) {
+        searchCursorPoint = { lon: lonLat.lon, lat: lonLat.lat };
+        updateSearchPolygonPreview();
       }
-      searchCursorPoint = { lon: lonLat.lon, lat: lonLat.lat };
-      updateSearchPolygonPreview();
     }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
     handler.setInputAction(function () {
@@ -3363,6 +3551,10 @@
       if (hoveredAnnotationEditEntity) {
         setAnnotationEditIconHoverState(hoveredAnnotationEditEntity, false);
         hoveredAnnotationEditEntity = null;
+      }
+      // Clear status bar coordinates when cursor leaves the map
+      if (bridge && bridge.on_mouse_coordinates) {
+        bridge.on_mouse_coordinates(0, 0, -9999);
       }
     });
   }
@@ -3656,10 +3848,12 @@
     clearMeasurementPreviewEntities();
     clearDistanceScaleOverlay();
     if (distanceMeasureModeEnabled) {
+      applyCursorStyle(viewer.canvas, "crosshair");
       clickedPoints.length = 0;
       setStatus("Distance tool enabled. Click first point to begin.");
       return;
     }
+    applyCursorStyle(viewer.canvas, "");
     setStatus("Distance tool disabled.");
   }
 
@@ -4494,6 +4688,8 @@
           " max=" +
           maxLevel
       );
+      // Start tile loading progress monitor
+      startTileLoadingMonitor();
     },
     addDemLayer: function (name, xyzUrl, options) {
       if (!viewer) return;
@@ -4932,6 +5128,10 @@
     setDistanceMeasureMode: function (enabled) {
       setDistanceMeasureMode(Boolean(enabled));
       log("info", "Distance measure mode=" + String(Boolean(enabled)));
+    },
+    setMeasurementCursor: function (enabled) {
+      setMeasurementCursorEnabled(Boolean(enabled));
+      log("debug", "Measurement cursor=" + String(Boolean(enabled)));
     },
     setPanMode: function (enabled) {
       setPanMode(Boolean(enabled));

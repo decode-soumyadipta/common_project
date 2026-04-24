@@ -28,16 +28,16 @@ def parse_bounds_wkt_polygon(wkt: str) -> Bounds:
     # Remove POLYGON, Z, M and all parenthesis robustly
     raw = wkt.upper().replace("POLYGON", "").replace("Z", "").replace("M", "")
     raw = raw.replace("(", "").replace(")", "").strip()
-    
+
     points = []
     for token in raw.split(","):
         parts = token.strip().split()
         if len(parts) >= 2:
             points.append((float(parts[0]), float(parts[1])))
-    
+
     if not points:
         return Bounds(0.0, 0.0, 0.0, 0.0)
-        
+
     xs = [p[0] for p in points]
     ys = [p[1] for p in points]
     return Bounds(min(xs), min(ys), max(xs), max(ys))

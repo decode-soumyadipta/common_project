@@ -28,7 +28,9 @@ def test_search_by_point(monkeypatch):
         _asset("a", Bounds(10, 10, 20, 20)),
         _asset("b", Bounds(30, 30, 40, 40)),
     ]
-    monkeypatch.setattr(CatalogRepository, "search_assets_by_point", lambda self, lon, lat: assets[:1])
+    monkeypatch.setattr(
+        CatalogRepository, "search_assets_by_point", lambda self, lon, lat: assets[:1]
+    )
 
     client = TestClient(create_app())
     response = client.post("/search/point", json={"lon": 15, "lat": 15})

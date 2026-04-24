@@ -25,8 +25,12 @@ class SearchCoordinator:
             if buffer_meters <= 0:
                 assets = c.api.search_assets_by_point(lon=lon, lat=lat)
             else:
-                polygon_points = self._coordinate_buffer_polygon(lon, lat, buffer_meters)
-                assets = c.api.search_assets_by_polygon(points=polygon_points, buffer_meters=0.0)
+                polygon_points = self._coordinate_buffer_polygon(
+                    lon, lat, buffer_meters
+                )
+                assets = c.api.search_assets_by_polygon(
+                    points=polygon_points, buffer_meters=0.0
+                )
             c.panel.set_search_busy(True, "Rendering results...", progress=78)
             c._apply_search_results(
                 assets,
@@ -85,6 +89,8 @@ class SearchCoordinator:
         c = self._controller
         next_state = True if enabled is None else bool(enabled)
         if not next_state:
+            if c._polygon_drawing_context == "measurement":
+                c._set_measurement_cursor_enabled(False)
             c.clear_search_geometry()
             c.panel.log("Polygon draw disabled.")
             c._set_search_draw_button_checked(False)
@@ -99,6 +105,8 @@ class SearchCoordinator:
             c._shadow_height_mode_enabled = False
         c._pan_mode_enabled = False
         c._run_js_call("setSearchDrawMode", "polygon")
+        if c._polygon_drawing_context == "measurement":
+            c._set_measurement_cursor_enabled(True)
         c._set_search_draw_button_checked(True)
         c.panel.log("Polygon draw mode enabled.")
 
@@ -106,6 +114,16 @@ class SearchCoordinator:
         c = self._controller
         c._run_js_call("finishSearchPolygon")
         c._set_search_draw_button_checked(False)
+
+        # Check if polygon was drawn for measurement context
+        if c._polygon_drawing_context == "measurement":
+            if c._polygon_area_mode_enabled:
+                c._toolbar_measure_polygon_area()
+            elif c._volume_mode_enabled:
+                c._toolbar_measure_volume()
+            elif c._slope_aspect_mode_enabled:
+                c._toolbar_measure_slope_aspect()
+            c._polygon_drawing_context = "none"
 
     def clear_search_geometry(self) -> None:
         c = self._controller
@@ -130,7 +148,9 @@ class SearchCoordinator:
             c.panel.log("Polygon ready. Click Search to run overlap scan.")
 
     @staticmethod
-    def _coordinate_buffer_polygon(lon: float, lat: float, buffer_meters: float) -> list[tuple[float, float]]:
+    def _coordinate_buffer_polygon(
+        lon: float, lat: float, buffer_meters: float
+    ) -> list[tuple[float, float]]:
         lat_offset = buffer_meters / 111_320.0
         lon_scale = max(0.1, math.cos(math.radians(lat)))
         lon_offset = buffer_meters / (111_320.0 * lon_scale)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
@@ -8,10 +9,14 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Callable
 
+from sqlalchemy.exc import OperationalError, ProgrammingError
+
 from offline_gis_app.config.settings import settings
-from offline_gis_app.server_ingestion.repository.ingest_job_repository import IngestJobRepository
+from offline_gis_app.server_ingestion.repository.ingest_job_repository import (
+    IngestJobRepository,
+)
 from offline_gis_app.db.models import IngestJob, IngestJobItemStatus, IngestJobStatus
-from offline_gis_app.db.session import SessionLocal
+from offline_gis_app.db.session import SessionLocal, init_db
 from offline_gis_app.server_ingestion.services.ingest_service import register_raster
 
 LOGGER = logging.getLogger("services.ingest_queue")
@@ -20,6 +25,7 @@ LOGGER = logging.getLogger("services.ingest_queue")
 @dataclass(frozen=True)
 class IngestJobView:
     """Serializable view model exposed by ingest API endpoints."""
+
     id: str
     status: str
     total_items: int
@@ -46,6 +52,7 @@ class _RuntimeProgress:
 
 class IngestQueueService:
     """Background ingest queue coordinator with retry/checkpoint support."""
+
     def __init__(
         self,
         session_factory: Callable[[], Any],
@@ -67,7 +74,9 @@ class IngestQueueService:
         """Start the queue executor if it is not already running."""
         with self._lock:
             if self._executor is None:
-                self._executor = ThreadPoolExecutor(max_workers=self._max_workers, thread_name_prefix="ingest-queue")
+                self._executor = ThreadPoolExecutor(
+                    max_workers=self._max_workers, thread_name_prefix="ingest-queue"
+                )
 
     def shutdown(self) -> None:
         """Stop accepting new queue work and tear down executor state."""
@@ -85,10 +94,54 @@ class IngestQueueService:
         if not cleaned:
             raise ValueError("No ingest paths provided")
 
-        with self._session_factory() as session:
-            repo = IngestJobRepository(session)
-            job = repo.create_job(cleaned)
-            view = _job_to_view(job)
+        schema_refreshed = False
+        for attempt in range(1, 4):
+            try:
+                with self._session_factory() as session:
+                    repo = IngestJobRepository(session)
+                    job = repo.create_job(cleaned)
+                    view = _job_to_view(job)
+                break
+            except (OperationalError, ProgrammingError) as exc:
+                message = str(exc).lower()
+                schema_issue = any(
+                    token in message
+                    for token in (
+                        "no such table",
+                        "undefined table",
+                        "does not exist",
+                        "unknown column",
+                        "has no column",
+                    )
+                )
+                db_locked = "database is locked" in message
+                db_readonly = "readonly" in message
+                db_busy = "database is busy" in message
+
+                if schema_issue and not schema_refreshed:
+                    LOGGER.warning(
+                        "Queue enqueue detected schema drift; re-running init_db and retrying",
+                        exc_info=True,
+                    )
+                    init_db()
+                    schema_refreshed = True
+                    continue
+
+                if db_locked and attempt < 3:
+                    time.sleep(0.15 * attempt)
+                    continue
+
+                if (db_locked or db_busy) and attempt >= 3:
+                    raise RuntimeError(
+                        "Queue ingest failed: database is busy/locked. Retry in a few seconds."
+                    ) from exc
+
+                if db_readonly:
+                    raise RuntimeError(
+                        "Queue ingest failed: database is read-only. Check DB file permissions."
+                    ) from exc
+
+                raise
 
         self._set_runtime_progress(job.id, "Queued for metadata ingest", None)
 
@@ -136,7 +189,9 @@ class IngestQueueService:
             for job in jobs:
                 if job.status == IngestJobStatus.RUNNING:
                     repo.set_job_status(job, IngestJobStatus.QUEUED)
-                    self._set_runtime_progress(job.id, "Recovering interrupted ingest job", None)
+                    self._set_runtime_progress(
+                        job.id, "Recovering interrupted ingest job", None
+                    )
 
         with self._session_factory() as session:
             repo = IngestJobRepository(session)
@@ -205,7 +260,9 @@ class IngestQueueService:
                     last_error=None,
                 )
 
-            self._set_runtime_stage(job_id, str(item.checkpoint_stage or "validate_source_path"))
+            self._set_runtime_stage(
+                job_id, str(item.checkpoint_stage or "validate_source_path")
+            )
 
             def _persist_stage_checkpoint(stage_name: str) -> None:
                 with self._session_factory() as callback_session:
@@ -218,7 +275,9 @@ class IngestQueueService:
                     result = register_raster(
                         Path(item.file_path),
                         session,
-                        progress_callback=lambda step: self._set_runtime_progress(job_id, step, item.file_path),
+                        progress_callback=lambda step: self._set_runtime_progress(
+                            job_id, step, item.file_path
+                        ),
                         resume_from_stage=item.checkpoint_stage,
                         stage_checkpoint_callback=_persist_stage_checkpoint,
                     )
@@ -235,10 +294,14 @@ class IngestQueueService:
                     tracked_job = repo.get_job(job_id)
                     if tracked_job is not None:
                         repo.refresh_job_counters(tracked_job)
-                self._set_runtime_progress(job_id, "Catalog entry indexed", item.file_path)
+                self._set_runtime_progress(
+                    job_id, "Catalog entry indexed", item.file_path
+                )
                 processed_since_checkpoint += 1
             except Exception as exc:  # noqa: BLE001
-                LOGGER.exception("Ingest item failed job=%s path=%s", job_id, item.file_path)
+                LOGGER.exception(
+                    "Ingest item failed job=%s path=%s", job_id, item.file_path
+                )
                 retry_allowed = attempts < self._item_max_retries
                 if retry_allowed:
                     runtime_step = f"Retry scheduled after failure ({attempts}/{self._item_max_retries})"
@@ -268,8 +331,12 @@ class IngestQueueService:
                     repo = IngestJobRepository(session)
                     job = repo.get_job(job_id)
                     if job is not None:
-                        self._set_runtime_progress(job_id, "Checkpoint saved", item.file_path)
-                        repo.mark_job_checkpoint(job, checkpoint_item_index=item.item_index)
+                        self._set_runtime_progress(
+                            job_id, "Checkpoint saved", item.file_path
+                        )
+                        repo.mark_job_checkpoint(
+                            job, checkpoint_item_index=item.item_index
+                        )
                 processed_since_checkpoint = 0
 
     def _finish_job(self, job_id: str) -> None:
@@ -285,15 +352,21 @@ class IngestQueueService:
 
             if refreshed.failed_items > 0 and refreshed.processed_items > 0:
                 repo.mark_job_terminal(refreshed, IngestJobStatus.PARTIAL)
-                self._set_runtime_progress(job_id, "Completed with partial failures", None)
+                self._set_runtime_progress(
+                    job_id, "Completed with partial failures", None
+                )
             elif refreshed.failed_items > 0 and refreshed.processed_items == 0:
-                repo.mark_job_terminal(refreshed, IngestJobStatus.FAILED, last_error=refreshed.last_error)
+                repo.mark_job_terminal(
+                    refreshed, IngestJobStatus.FAILED, last_error=refreshed.last_error
+                )
                 self._set_runtime_progress(job_id, "Failed", None)
             else:
                 repo.mark_job_terminal(refreshed, IngestJobStatus.COMPLETED)
                 self._set_runtime_progress(job_id, "Completed", None)
 
-    def _set_runtime_progress(self, job_id: str, step: str | None, item_path: str | None) -> None:
+    def _set_runtime_progress(
+        self, job_id: str, step: str | None, item_path: str | None
+    ) -> None:
         with self._lock:
             existing = self._runtime_progress.get(job_id)
             stage = existing.current_item_stage if existing else None
@@ -324,7 +397,11 @@ class IngestQueueService:
         if view.started_at:
             try:
                 started = datetime.fromisoformat(view.started_at)
-                anchor = datetime.fromisoformat(view.completed_at) if view.completed_at else datetime.utcnow()
+                anchor = (
+                    datetime.fromisoformat(view.completed_at)
+                    if view.completed_at
+                    else datetime.utcnow()
+                )
                 elapsed_seconds = max(0.0, (anchor - started).total_seconds())
             except ValueError:
                 elapsed_seconds = None
@@ -348,7 +425,6 @@ class IngestQueueService:
         )
 
 
-
 def _job_to_view(job: IngestJob) -> IngestJobView:
     """Convert ORM ingest job model into API view payload."""
     return IngestJobView(
@@ -360,7 +436,9 @@ def _job_to_view(job: IngestJob) -> IngestJobView:
         checkpoint_item_index=job.checkpoint_item_index,
         started_at=job.started_at.isoformat() if job.started_at else None,
         completed_at=job.completed_at.isoformat() if job.completed_at else None,
-        last_checkpoint_at=job.last_checkpoint_at.isoformat() if job.last_checkpoint_at else None,
+        last_checkpoint_at=job.last_checkpoint_at.isoformat()
+        if job.last_checkpoint_at
+        else None,
         last_error=job.last_error,
     )
 

@@ -16,4 +16,3 @@ class RasterMetadata:
     resolution_y: float
     width: int
     height: int
-

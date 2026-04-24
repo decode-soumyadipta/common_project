@@ -4,7 +4,9 @@ import numpy as np
 import rasterio
 from rasterio.transform import from_origin
 
-from offline_gis_app.server_ingestion.services.metadata_extractor import extract_metadata
+from offline_gis_app.server_ingestion.services.metadata_extractor import (
+    extract_metadata,
+)
 
 
 def test_extract_metadata_transforms_bounds_to_wgs84(tmp_path: Path):
@@ -29,4 +31,3 @@ def test_extract_metadata_transforms_bounds_to_wgs84(tmp_path: Path):
     lon, lat = metadata.bounds.centroid()
     assert -180.0 <= lon <= 180.0
     assert -90.0 <= lat <= 90.0
-

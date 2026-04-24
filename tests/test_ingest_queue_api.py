@@ -23,7 +23,10 @@ def test_enqueue_ingest_job(monkeypatch):
             last_error=None,
         )
 
-    monkeypatch.setattr("offline_gis_app.server_backend.routes.ingest.ingest_queue_service.enqueue_paths", fake_enqueue)
+    monkeypatch.setattr(
+        "offline_gis_app.server_backend.routes.ingest.ingest_queue_service.enqueue_paths",
+        fake_enqueue,
+    )
 
     response = client.post("/ingest/queue", json={"paths": ["/tmp/a.tif"]})
     assert response.status_code == 200

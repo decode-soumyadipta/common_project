@@ -5,7 +5,10 @@ import uvicorn
 from offline_gis_app.server_backend.app import app
 from offline_gis_app.config.settings import settings
 from offline_gis_app.client_backend.desktop.app_mode import DesktopAppMode
-from offline_gis_app.client_backend.desktop.qt_compat import QtDesktopRuntimeError, ensure_desktop_qt_runtime
+from offline_gis_app.client_backend.desktop.qt_compat import (
+    QtDesktopRuntimeError,
+    ensure_desktop_qt_runtime,
+)
 
 
 def run_api() -> None:
@@ -25,7 +28,9 @@ def run_desktop(mode: DesktopAppMode = DesktopAppMode.UNIFIED) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Offline 3D GIS launcher")
-    parser.add_argument("target", choices=["api", "desktop", "desktop-server", "desktop-client"])
+    parser.add_argument(
+        "target", choices=["api", "desktop", "desktop-server", "desktop-client"]
+    )
     args = parser.parse_args()
     if args.target == "api":
         run_api()
@@ -35,4 +40,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

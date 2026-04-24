@@ -3,7 +3,11 @@ from typing import Any
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from offline_gis_app.server_backend.schemas import BBoxSearchRequest, CoordinateSearchRequest, PolygonSearchRequest
+from offline_gis_app.server_backend.schemas import (
+    BBoxSearchRequest,
+    CoordinateSearchRequest,
+    PolygonSearchRequest,
+)
 from offline_gis_app.server_backend.catalog.catalog_repository import CatalogRepository
 from offline_gis_app.server_backend.catalog.service import CatalogService
 from offline_gis_app.db.session import get_session
@@ -20,14 +24,18 @@ def list_assets(session: Session = Depends(get_session)) -> list[dict[str, Any]]
 
 
 @router.post("/point")
-def search_by_point(request: CoordinateSearchRequest, session: Session = Depends(get_session)) -> list[dict[str, Any]]:
+def search_by_point(
+    request: CoordinateSearchRequest, session: Session = Depends(get_session)
+) -> list[dict[str, Any]]:
     """Return assets whose bounds intersect the provided lon/lat point."""
     service = CatalogService(CatalogRepository(session))
     return service.search_by_point(request.lon, request.lat)
 
 
 @router.post("/bbox")
-def search_by_bbox(request: BBoxSearchRequest, session: Session = Depends(get_session)) -> list[dict[str, Any]]:
+def search_by_bbox(
+    request: BBoxSearchRequest, session: Session = Depends(get_session)
+) -> list[dict[str, Any]]:
     """Return assets whose bounds intersect the supplied bounding box."""
     service = CatalogService(CatalogRepository(session))
     return service.search_by_bbox(
@@ -39,7 +47,9 @@ def search_by_bbox(request: BBoxSearchRequest, session: Session = Depends(get_se
 
 
 @router.post("/polygon")
-def search_by_polygon(request: PolygonSearchRequest, session: Session = Depends(get_session)) -> list[dict[str, Any]]:
+def search_by_polygon(
+    request: PolygonSearchRequest, session: Session = Depends(get_session)
+) -> list[dict[str, Any]]:
     """Return assets intersecting a polygon, optionally buffered in meters."""
     service = CatalogService(CatalogRepository(session))
     points = [(point.lon, point.lat) for point in request.points]

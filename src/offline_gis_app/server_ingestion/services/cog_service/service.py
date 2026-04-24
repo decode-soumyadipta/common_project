@@ -22,25 +22,37 @@ class CogPreparationService:
     def prepare(self, source_path: Path) -> CogPreparationResult:
         source = source_path.resolve()
         if not settings.ingest_enable_cog_conversion:
-            return CogPreparationResult(source_path=source, working_path=source, converted=False)
+            return CogPreparationResult(
+                source_path=source, working_path=source, converted=False
+            )
 
         suffix = source.suffix.lower()
         if suffix not in {".tif", ".tiff", ".jp2", ".j2k"}:
-            return CogPreparationResult(source_path=source, working_path=source, converted=False)
+            return CogPreparationResult(
+                source_path=source, working_path=source, converted=False
+            )
 
         if self._looks_like_cog(source):
-            return CogPreparationResult(source_path=source, working_path=source, converted=False)
+            return CogPreparationResult(
+                source_path=source, working_path=source, converted=False
+            )
 
         cog_path = self._target_cog_path(source)
         if cog_path.exists() and not settings.ingest_cog_overwrite:
-            return CogPreparationResult(source_path=source, working_path=cog_path, converted=False)
+            return CogPreparationResult(
+                source_path=source, working_path=cog_path, converted=False
+            )
 
         try:
             import rasterio  # type: ignore
             from rasterio.shutil import copy as rio_copy  # type: ignore
         except Exception:
-            LOGGER.warning("COG conversion skipped because rasterio COG support is unavailable")
-            return CogPreparationResult(source_path=source, working_path=source, converted=False)
+            LOGGER.warning(
+                "COG conversion skipped because rasterio COG support is unavailable"
+            )
+            return CogPreparationResult(
+                source_path=source, working_path=source, converted=False
+            )
 
         try:
             with rasterio.open(source) as src:
@@ -55,11 +67,17 @@ class CogPreparationService:
                     RESAMPLING=settings.cog_overview_resampling,
                     OVERVIEWS="AUTO",
                 )
-            LOGGER.info("COG conversion succeeded source=%s target=%s", source, cog_path)
-            return CogPreparationResult(source_path=source, working_path=cog_path, converted=True)
+            LOGGER.info(
+                "COG conversion succeeded source=%s target=%s", source, cog_path
+            )
+            return CogPreparationResult(
+                source_path=source, working_path=cog_path, converted=True
+            )
         except Exception as exc:  # noqa: BLE001
             LOGGER.warning("COG conversion failed for %s: %s", source, exc)
-            return CogPreparationResult(source_path=source, working_path=source, converted=False)
+            return CogPreparationResult(
+                source_path=source, working_path=source, converted=False
+            )
 
     @staticmethod
     def _target_cog_path(source_path: Path) -> Path:

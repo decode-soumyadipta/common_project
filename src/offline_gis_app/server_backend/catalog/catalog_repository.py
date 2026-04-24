@@ -77,22 +77,33 @@ class CatalogRepository:
             ids = self._select_asset_ids(stmt, {"lon": lon, "lat": lat})
             return self._load_assets_by_ids(ids)
         # Optimized memory-efficient search for SQLite without loading full ORM objects
-        stmt = select(RasterAsset.id, RasterAsset.bounds_wkt).order_by(RasterAsset.created_at.desc())
+        stmt = select(RasterAsset.id, RasterAsset.bounds_wkt).order_by(
+            RasterAsset.created_at.desc()
+        )
         matching_ids = []
         for asset_id, wkt in self._session.execute(stmt):
             try:
                 parsed_bounds = parse_bounds_wkt_polygon(wkt)
-                asset_box = _SimpleBounds(parsed_bounds.min_x, parsed_bounds.min_y, parsed_bounds.max_x, parsed_bounds.max_y)
+                asset_box = _SimpleBounds(
+                    parsed_bounds.min_x,
+                    parsed_bounds.min_y,
+                    parsed_bounds.max_x,
+                    parsed_bounds.max_y,
+                )
                 if asset_box.contains(lon, lat):
                     matching_ids.append(asset_id)
             except Exception:
                 pass
-                
+
         return self._load_assets_by_ids(matching_ids)
 
-    def search_assets_by_bbox(self, west: float, south: float, east: float, north: float) -> list[RasterAsset]:
+    def search_assets_by_bbox(
+        self, west: float, south: float, east: float, north: float
+    ) -> list[RasterAsset]:
         """Find assets that intersect a bounding box."""
-        query_west, query_south, query_east, query_north = _normalized_bounds(west, south, east, north)
+        query_west, query_south, query_east, query_north = _normalized_bounds(
+            west, south, east, north
+        )
 
         if self._is_postgresql():
             stmt = text(
@@ -122,22 +133,31 @@ class CatalogRepository:
             return self._load_assets_by_ids(ids)
 
         query = _SimpleBounds(query_west, query_south, query_east, query_north)
-        
+
         # Optimized memory-efficient search for SQLite without loading full ORM objects
-        stmt = select(RasterAsset.id, RasterAsset.bounds_wkt).order_by(RasterAsset.created_at.desc())
+        stmt = select(RasterAsset.id, RasterAsset.bounds_wkt).order_by(
+            RasterAsset.created_at.desc()
+        )
         matching_ids = []
         for asset_id, wkt in self._session.execute(stmt):
             try:
                 parsed_bounds = parse_bounds_wkt_polygon(wkt)
-                asset_box = _SimpleBounds(parsed_bounds.min_x, parsed_bounds.min_y, parsed_bounds.max_x, parsed_bounds.max_y)
+                asset_box = _SimpleBounds(
+                    parsed_bounds.min_x,
+                    parsed_bounds.min_y,
+                    parsed_bounds.max_x,
+                    parsed_bounds.max_y,
+                )
                 if asset_box.intersects(query):
                     matching_ids.append(asset_id)
             except Exception:
                 pass
-                
+
         return self._load_assets_by_ids(matching_ids)
 
-    def search_assets_by_polygon(self, points: list[tuple[float, float]], buffer_meters: float = 0.0) -> list[RasterAsset]:
+    def search_assets_by_polygon(
+        self, points: list[tuple[float, float]], buffer_meters: float = 0.0
+    ) -> list[RasterAsset]:
         """Find assets that intersect a polygon, optionally buffered in meters."""
         polygon_wkt = _polygon_to_wkt(points)
         if self._is_postgresql():
@@ -168,19 +188,26 @@ class CatalogRepository:
             return self._load_assets_by_ids(ids)
 
         fallback = _simple_polygon_bounds(points, buffer_meters)
-        
+
         # Optimized memory-efficient search for SQLite without loading full ORM objects
-        stmt = select(RasterAsset.id, RasterAsset.bounds_wkt).order_by(RasterAsset.created_at.desc())
+        stmt = select(RasterAsset.id, RasterAsset.bounds_wkt).order_by(
+            RasterAsset.created_at.desc()
+        )
         matching_ids = []
         for asset_id, wkt in self._session.execute(stmt):
             try:
                 parsed_bounds = parse_bounds_wkt_polygon(wkt)
-                asset_box = _SimpleBounds(parsed_bounds.min_x, parsed_bounds.min_y, parsed_bounds.max_x, parsed_bounds.max_y)
+                asset_box = _SimpleBounds(
+                    parsed_bounds.min_x,
+                    parsed_bounds.min_y,
+                    parsed_bounds.max_x,
+                    parsed_bounds.max_y,
+                )
                 if asset_box.intersects(fallback):
                     matching_ids.append(asset_id)
             except Exception:
                 pass
-        
+
         return self._load_assets_by_ids(matching_ids)
 
     def _is_postgresql(self) -> bool:
@@ -237,7 +264,9 @@ def _polygon_to_wkt(points: list[tuple[float, float]]) -> str:
     return f"POLYGON(({','.join(point_tokens)}))"
 
 
-def _simple_polygon_bounds(points: list[tuple[float, float]], buffer_meters: float) -> _SimpleBounds:
+def _simple_polygon_bounds(
+    points: list[tuple[float, float]], buffer_meters: float
+) -> _SimpleBounds:
     """Approximate polygon search with bounds-only fallback for non-PostGIS engines."""
     lons = [float(lon) for lon, _lat in points]
     lats = [float(lat) for _lon, lat in points]
@@ -255,6 +284,8 @@ def _simple_polygon_bounds(points: list[tuple[float, float]], buffer_meters: flo
     return _SimpleBounds(west, south, east, north)
 
 
-def _normalized_bounds(west: float, south: float, east: float, north: float) -> tuple[float, float, float, float]:
+def _normalized_bounds(
+    west: float, south: float, east: float, north: float
+) -> tuple[float, float, float, float]:
     """Return bounds with guaranteed west<=east and south<=north ordering."""
     return min(west, east), min(south, north), max(west, east), max(south, north)

@@ -150,7 +150,9 @@ class IconRegistry:
         tinted.fill(Qt.GlobalColor.transparent)
         tint_painter = QPainter(tinted)
         tint_painter.drawPixmap(0, 0, pixmap)
-        tint_painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+        tint_painter.setCompositionMode(
+            QPainter.CompositionMode.CompositionMode_SourceIn
+        )
         tint_painter.fillRect(tinted.rect(), QColor(color))
         tint_painter.end()
         return QIcon(tinted)
@@ -181,7 +183,9 @@ def download_qgis_icons(output_dir: Path | None = None) -> tuple[int, list[str]]
     output = output_dir or ICON_DIR
     output.mkdir(parents=True, exist_ok=True)
 
-    base_url = "https://raw.githubusercontent.com/qgis/QGIS/master/images/themes/default/"
+    base_url = (
+        "https://raw.githubusercontent.com/qgis/QGIS/master/images/themes/default/"
+    )
     downloaded = 0
     failed: list[str] = []
 
@@ -202,8 +206,14 @@ def download_qgis_icons(output_dir: Path | None = None) -> tuple[int, list[str]]
 
 def _main() -> int:
     parser = argparse.ArgumentParser(description="QGIS icon bootstrap helper")
-    parser.add_argument("--download", action="store_true", help="Download missing icons into client_frontend/icons")
-    parser.add_argument("--list-missing", action="store_true", help="List unresolved icon files")
+    parser.add_argument(
+        "--download",
+        action="store_true",
+        help="Download missing icons into client_frontend/icons",
+    )
+    parser.add_argument(
+        "--list-missing", action="store_true", help="List unresolved icon files"
+    )
     args = parser.parse_args()
 
     if args.download:

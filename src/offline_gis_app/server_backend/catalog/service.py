@@ -20,12 +20,20 @@ class CatalogService:
         assets = self._repo.search_assets_by_point(lon, lat)
         return [self._serialize_asset(asset) for asset in assets]
 
-    def search_by_bbox(self, west: float, south: float, east: float, north: float) -> list[dict[str, Any]]:
-        assets = self._repo.search_assets_by_bbox(west=west, south=south, east=east, north=north)
+    def search_by_bbox(
+        self, west: float, south: float, east: float, north: float
+    ) -> list[dict[str, Any]]:
+        assets = self._repo.search_assets_by_bbox(
+            west=west, south=south, east=east, north=north
+        )
         return [self._serialize_asset(asset) for asset in assets]
 
-    def search_by_polygon(self, points: list[tuple[float, float]], buffer_meters: float = 0.0) -> list[dict[str, Any]]:
-        assets = self._repo.search_assets_by_polygon(points, buffer_meters=buffer_meters)
+    def search_by_polygon(
+        self, points: list[tuple[float, float]], buffer_meters: float = 0.0
+    ) -> list[dict[str, Any]]:
+        assets = self._repo.search_assets_by_polygon(
+            points, buffer_meters=buffer_meters
+        )
         return [self._serialize_asset(asset) for asset in assets]
 
     @staticmethod

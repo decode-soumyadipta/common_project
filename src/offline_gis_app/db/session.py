@@ -1,3 +1,8 @@
+"""Database session management and initialization.
+
+This module provides SQLAlchemy session management, database initialization,
+and connection event handlers for PostgreSQL and SQLite databases.
+"""
 import logging
 from collections.abc import Generator
 
@@ -14,21 +19,39 @@ LOGGER = logging.getLogger("db.session")
 engine = create_engine(settings.database_url, future=True)
 
 # Enable PostGIS extension on PostgreSQL
-if 'postgresql' in settings.database_url:
+if "postgresql" in settings.database_url:
+
     @event.listens_for(engine, "connect")
     def enable_postgis(dbapi_conn, _connection_record):
+        """Enable PostGIS extension on PostgreSQL connection.
+        
+        Args:
+            dbapi_conn: Database API connection object.
+            _connection_record: Connection record (unused but required by SQLAlchemy).
+        """
         try:
             with dbapi_conn.cursor() as cursor:
                 cursor.execute("CREATE EXTENSION IF NOT EXISTS postgis;")
                 dbapi_conn.commit()
         except Exception:  # noqa: BLE001
             dbapi_conn.rollback()
-            LOGGER.debug("PostGIS extension activation skipped during connection setup", exc_info=True)
+            LOGGER.debug(
+                "PostGIS extension activation skipped during connection setup",
+                exc_info=True,
+            )
+
 
 # Enable WAL mode on SQLite for concurrent read/write (Server/Client processes)
-if 'sqlite' in settings.database_url:
+if "sqlite" in settings.database_url:
+
     @event.listens_for(engine, "connect")
-    def set_sqlite_pragma(dbapi_conn, connection_record):
+    def set_sqlite_pragma(dbapi_conn, _connection_record):
+        """Set SQLite pragmas for WAL mode and synchronous mode.
+        
+        Args:
+            dbapi_conn: Database API connection object.
+            _connection_record: Connection record (unused but required by SQLAlchemy).
+        """
         try:
             cursor = dbapi_conn.cursor()
             cursor.execute("PRAGMA journal_mode=WAL;")
@@ -37,7 +60,10 @@ if 'sqlite' in settings.database_url:
         except Exception:
             pass
 
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, class_=Session)
+
+SessionLocal = sessionmaker(
+    bind=engine, autoflush=False, autocommit=False, class_=Session
+)
 
 
 def init_db() -> None:
@@ -50,10 +76,16 @@ def init_db() -> None:
 
 
 def get_session() -> Generator[Session, None, None]:
-    """Yield a transactional SQLAlchemy session for request handlers."""
+    """Yield a transactional SQLAlchemy session for request handlers.
+    
+    Yields:
+        Session: SQLAlchemy session instance.
+        
+    Note:
+        Session is automatically closed after use.
+    """
     session = SessionLocal()
     try:
         yield session
     finally:
         session.close()
-

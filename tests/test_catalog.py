@@ -30,4 +30,3 @@ def test_upsert_and_list_assets():
         saved = repo.upsert_asset(metadata)
         assert saved.file_name == "a.tif"
         assert len(repo.list_assets()) == 1
-

@@ -3,7 +3,9 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 
 from offline_gis_app.server_backend.schemas import ProfileRequest
-from offline_gis_app.server_ingestion.services.metadata_extractor import MetadataExtractorError
+from offline_gis_app.server_ingestion.services.metadata_extractor import (
+    MetadataExtractorError,
+)
 from offline_gis_app.server_ingestion.services.profile_service import sample_profile
 
 
@@ -20,4 +22,3 @@ def profile(request: ProfileRequest) -> dict:
     except (ValueError, MetadataExtractorError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"values": values, "samples": request.samples}
-

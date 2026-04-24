@@ -4,7 +4,9 @@ from pathlib import Path
 
 import numpy as np
 
-from offline_gis_app.server_ingestion.services.metadata_extractor import _read_with_rasterio
+from offline_gis_app.server_ingestion.services.metadata_extractor import (
+    _read_with_rasterio,
+)
 
 
 def _transform_line_points_to_dataset_crs(
@@ -23,7 +25,9 @@ def _transform_line_points_to_dataset_crs(
     try:
         from rasterio.warp import transform  # type: ignore
     except ImportError as exc:
-        raise ValueError("rasterio.warp is required for CRS profile transformation.") from exc
+        raise ValueError(
+            "rasterio.warp is required for CRS profile transformation."
+        ) from exc
 
     lons = [float(lon) for lon, _lat in line_points]
     lats = [float(lat) for _lon, lat in line_points]
@@ -31,7 +35,9 @@ def _transform_line_points_to_dataset_crs(
     return [(float(x), float(y)) for x, y in zip(xs, ys)]
 
 
-def sample_profile(path: Path, line_points: list[tuple[float, float]], samples: int) -> list[float]:
+def sample_profile(
+    path: Path, line_points: list[tuple[float, float]], samples: int
+) -> list[float]:
     """Sample raster elevation values between the first and last supplied points."""
     if samples < 2:
         raise ValueError("samples must be at least 2")
@@ -59,4 +65,3 @@ def sample_profile(path: Path, line_points: list[tuple[float, float]], samples: 
         if all(np.isnan(value) for value in values):
             raise ValueError("Profile transect falls outside raster extent.")
     return values
-

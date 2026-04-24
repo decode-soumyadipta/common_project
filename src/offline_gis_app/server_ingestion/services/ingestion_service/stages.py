@@ -1,15 +1,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 
 from offline_gis_app.server_backend.catalog.catalog_repository import CatalogRepository
 from offline_gis_app.server_ingestion.services.cog_service import CogPreparationService
 from offline_gis_app.server_ingestion.services.file_kind import detect_raster_kind
-from offline_gis_app.server_ingestion.services.ingestion_service.context import IngestionContext
-from offline_gis_app.server_ingestion.services.ingestion_service.contracts import IngestionStage
-from offline_gis_app.server_ingestion.services.metadata_extractor import extract_metadata
-from offline_gis_app.server_ingestion.services.pyramiding_service import RasterPyramidingService
+from offline_gis_app.server_ingestion.services.ingestion_service.context import (
+    IngestionContext,
+)
+from offline_gis_app.server_ingestion.services.ingestion_service.contracts import (
+    IngestionStage,
+)
+from offline_gis_app.server_ingestion.services.metadata_extractor import (
+    extract_metadata,
+)
+from offline_gis_app.server_ingestion.services.pyramiding_service import (
+    RasterPyramidingService,
+)
 from offline_gis_app.server_ingestion.services.tiler_service import TiTilerUrlPolicy
 
 
@@ -20,7 +27,9 @@ class ValidatePathStage(IngestionStage):
 
     def run(self, context: IngestionContext) -> None:
         if not context.source_path.exists():
-            raise FileNotFoundError(f"Raster path does not exist: {context.source_path}")
+            raise FileNotFoundError(
+                f"Raster path does not exist: {context.source_path}"
+            )
         context.working_path = context.source_path.resolve()
 
 

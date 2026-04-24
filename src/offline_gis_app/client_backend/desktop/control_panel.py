@@ -79,7 +79,9 @@ class ClientCollapsibleSection(QFrame):
 
         def _apply_state(self) -> None:
             arrow_icon = self.style().standardIcon(
-                QStyle.StandardPixmap.SP_ArrowDown if self._expanded else QStyle.StandardPixmap.SP_ArrowRight
+                QStyle.StandardPixmap.SP_ArrowDown
+                if self._expanded
+                else QStyle.StandardPixmap.SP_ArrowRight
             )
             self._arrow_label.setPixmap(arrow_icon.pixmap(14, 14))
 
@@ -92,7 +94,13 @@ class ClientCollapsibleSection(QFrame):
                 return
             super().mousePressEvent(event)
 
-    def __init__(self, title: str, content: QWidget, expanded: bool = True, parent: QWidget | None = None):
+    def __init__(
+        self,
+        title: str,
+        content: QWidget,
+        expanded: bool = True,
+        parent: QWidget | None = None,
+    ):
         super().__init__(parent)
         self.setObjectName("clientCollapseSection")
         self._content = content
@@ -138,7 +146,12 @@ class ControlPanel(QWidget):
     measurement_result_clear_selected_requested = Signal()
     measurement_result_clear_all_requested = Signal()
 
-    def __init__(self, parent: QWidget | None = None, app_mode: DesktopAppMode = DesktopAppMode.UNIFIED, api_client: DesktopApiClient | None = None):
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        app_mode: DesktopAppMode = DesktopAppMode.UNIFIED,
+        api_client: DesktopApiClient | None = None,
+    ):
         super().__init__(parent)
         self.api_client = api_client
         self.setMinimumWidth(380)
@@ -150,14 +163,20 @@ class ControlPanel(QWidget):
         self.sections.setMinimumWidth(360)
 
         self.path_edit = QLineEdit()
-        self.path_edit.setPlaceholderText("Select local/LAN raster path (GeoTIFF / JP2 / MBTiles / DEM)...")
+        self.path_edit.setPlaceholderText(
+            "Select local/LAN raster path (GeoTIFF / JP2 / MBTiles / DEM)..."
+        )
         self.browse_btn = QPushButton("Browse")
         self.preview_btn = QPushButton("Preview")
         self.save_btn = QPushButton("Save")
 
         self.browse_btn.setToolTip("Pick raster from local disk or secure LAN mount.")
-        self.preview_btn.setToolTip("Preview raster on the globe without saving it to catalog.")
-        self.save_btn.setToolTip("Save by queueing ingest with checkpoint + resume support.")
+        self.preview_btn.setToolTip(
+            "Preview raster on the globe without saving it to catalog."
+        )
+        self.save_btn.setToolTip(
+            "Save by queueing ingest with checkpoint + resume support."
+        )
 
         self.upload_box = QGroupBox("Ingest")
         upload_layout = QVBoxLayout(self.upload_box)
@@ -187,13 +206,27 @@ class ControlPanel(QWidget):
         self.uploaded_assets_list.setHorizontalHeaderLabels(
             ["#", "File Name", "Type", "CRS", "Cell Size", "Dimensions", "Added"]
         )
-        self.uploaded_assets_list.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.uploaded_assets_list.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.uploaded_assets_list.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.uploaded_assets_list.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        self.uploaded_assets_list.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        self.uploaded_assets_list.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
-        self.uploaded_assets_list.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
+        self.uploaded_assets_list.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeToContents
+        )
+        self.uploaded_assets_list.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.Stretch
+        )
+        self.uploaded_assets_list.horizontalHeader().setSectionResizeMode(
+            2, QHeaderView.ResizeToContents
+        )
+        self.uploaded_assets_list.horizontalHeader().setSectionResizeMode(
+            3, QHeaderView.ResizeToContents
+        )
+        self.uploaded_assets_list.horizontalHeader().setSectionResizeMode(
+            4, QHeaderView.ResizeToContents
+        )
+        self.uploaded_assets_list.horizontalHeader().setSectionResizeMode(
+            5, QHeaderView.ResizeToContents
+        )
+        self.uploaded_assets_list.horizontalHeader().setSectionResizeMode(
+            6, QHeaderView.ResizeToContents
+        )
         self.uploaded_assets_list.setColumnWidth(0, 40)
         self.uploaded_assets_list.setColumnWidth(1, 220)
         self.uploaded_assets_list.setColumnWidth(2, 78)
@@ -210,10 +243,10 @@ class ControlPanel(QWidget):
             QTableWidget::item:selected { background: #e8f4ff; }
             QHeaderView::section { background: #f5f5f5; padding: 2px; border: none; border-right: 1px solid #d0d0d0; }
         """)
-        
+
         self.assets_refresh_btn = QPushButton("Refresh Catalog")
         self.assets_refresh_btn.setToolTip("Refresh the list of uploaded assets.")
-        
+
         self.uploaded_box = QGroupBox("Uploaded Assets")
         uploaded_layout = QVBoxLayout(self.uploaded_box)
         uploaded_layout.addWidget(self.uploaded_assets_list, 1)
@@ -234,7 +267,9 @@ class ControlPanel(QWidget):
         self.refresh_assets_btn = QPushButton("Refresh")
         self.add_layer_btn = QPushButton("Load Selected")
 
-        self.assets_combo.setToolTip("Catalog entries are metadata records. Raw data stays on storage.")
+        self.assets_combo.setToolTip(
+            "Catalog entries are metadata records. Raw data stays on storage."
+        )
         self.add_layer_btn.setToolTip("Render selected raster as imagery overlay.")
         self.refresh_assets_btn.setToolTip("Refresh asset list from catalog.")
 
@@ -249,13 +284,13 @@ class ControlPanel(QWidget):
         assets_layout.setSpacing(12)
         assets_layout.setContentsMargins(10, 10, 10, 10)
         assets_layout.addWidget(self.assets_combo)
-        
+
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
         btn_row.addWidget(self.refresh_assets_btn)
         btn_row.addWidget(self.add_layer_btn)
         assets_layout.addLayout(btn_row)
-        
+
         assets_layout.addWidget(self.layer_load_status)
         assets_layout.addWidget(self.layer_load_progress)
         assets_layout.addStretch()
@@ -269,7 +304,9 @@ class ControlPanel(QWidget):
         self.search_coord_lat.setDecimals(6)
         self.search_coord_lat.setSingleStep(0.0001)
         self.search_point_btn = QPushButton("Coordinate Search")
-        self.search_point_btn.setToolTip("Search around lon/lat using the configured buffer radius in meters.")
+        self.search_point_btn.setToolTip(
+            "Search around lon/lat using the configured buffer radius in meters."
+        )
 
         for box in (
             self.search_coord_lon,
@@ -289,8 +326,12 @@ class ControlPanel(QWidget):
         self.search_from_draw_btn = QPushButton("Search")
         self.search_draw_polygon_btn.setToolTip("Start polygon drawing on the map.")
         self.search_finish_polygon_btn.setToolTip("Complete the active polygon.")
-        self.search_clear_geometry_btn.setToolTip("Clear the current polygon from the map.")
-        self.search_from_draw_btn.setToolTip("Search catalog assets overlapping the drawn polygon.")
+        self.search_clear_geometry_btn.setToolTip(
+            "Clear the current polygon from the map."
+        )
+        self.search_from_draw_btn.setToolTip(
+            "Search catalog assets overlapping the drawn polygon."
+        )
         self.search_point_btn.setObjectName("searchPrimaryButton")
         self.search_from_draw_btn.setObjectName("searchPrimaryButton")
         for button in (
@@ -315,7 +356,7 @@ class ControlPanel(QWidget):
         search_layout = QVBoxLayout(self.search_box)
         search_layout.setSpacing(8)
         search_layout.setContentsMargins(8, 8, 8, 8)
-        
+
         # Point search
         point_label = QLabel("<b>Point Search</b>")
         search_layout.addWidget(point_label)
@@ -337,9 +378,9 @@ class ControlPanel(QWidget):
         point_actions_row.addWidget(self.search_point_btn)
         point_actions_row.addStretch()
         search_layout.addLayout(point_actions_row)
-        
+
         search_layout.addSpacing(6)
-        
+
         # Draw search
         draw_label = QLabel("<b>Polygon Search</b>")
         search_layout.addWidget(draw_label)
@@ -354,21 +395,39 @@ class ControlPanel(QWidget):
 
         search_layout.addSpacing(8)
         search_layout.addWidget(QLabel("<b>Search Results</b>"))
-        self.search_results_summary = QLabel("Matches: 0 | DEM: 0 | Imagery: 0 | CRS: - | Latest: -")
+        self.search_results_summary = QLabel(
+            "Matches: 0 | DEM: 0 | Imagery: 0 | CRS: - | Latest: -"
+        )
         self.search_results_summary.setStyleSheet("font-weight: 600; color: #2a2a2a;")
         search_layout.addWidget(self.search_results_summary)
 
         self.search_results_table = QTableWidget(0, 5)
-        self.search_results_table.setHorizontalHeaderLabels(["File", "Kind", "CRS", "Added", "View"])
-        self.search_results_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.search_results_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self.search_results_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.search_results_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        self.search_results_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.search_results_table.setHorizontalHeaderLabels(
+            ["File", "Kind", "CRS", "Added", "View"]
+        )
+        self.search_results_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.Stretch
+        )
+        self.search_results_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeToContents
+        )
+        self.search_results_table.horizontalHeader().setSectionResizeMode(
+            2, QHeaderView.ResizeToContents
+        )
+        self.search_results_table.horizontalHeader().setSectionResizeMode(
+            3, QHeaderView.ResizeToContents
+        )
+        self.search_results_table.horizontalHeader().setSectionResizeMode(
+            4, QHeaderView.ResizeToContents
+        )
         self.search_results_table.verticalHeader().setVisible(False)
         self.search_results_table.verticalHeader().setDefaultSectionSize(22)
-        self.search_results_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.search_results_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.search_results_table.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.search_results_table.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
         self.search_results_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.search_results_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.search_results_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -404,26 +463,32 @@ class ControlPanel(QWidget):
         )
         self._set_search_results_table_visible_rows(5)
         search_layout.addWidget(self.search_results_table)
-        
+
         search_layout.addStretch()
 
         self.brightness_slider = QSlider(Qt.Orientation.Horizontal)
         self.brightness_slider.setRange(0, 200)
         self.brightness_slider.setValue(100)
         self.brightness_value = QLabel()
-        self.brightness_value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.brightness_value.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         self.brightness_value.setMinimumWidth(64)
         self.contrast_slider = QSlider(Qt.Orientation.Horizontal)
         self.contrast_slider.setRange(10, 300)
         self.contrast_slider.setValue(100)
         self.contrast_value = QLabel()
-        self.contrast_value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.contrast_value.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         self.contrast_value.setMinimumWidth(64)
         self.pitch_slider = QSlider(Qt.Orientation.Horizontal)
         self.pitch_slider.setRange(-85, -10)
         self.pitch_slider.setValue(-45)
         self.pitch_value = QLabel()
-        self.pitch_value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.pitch_value.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         self.pitch_value.setMinimumWidth(64)
         self.rotate_left_btn = QPushButton("Rotate Left")
         self.rotate_right_btn = QPushButton("Rotate Right")
@@ -431,13 +496,17 @@ class ControlPanel(QWidget):
         self.dem_exaggeration_slider.setRange(50, 800)
         self.dem_exaggeration_slider.setValue(150)
         self.dem_exaggeration_value = QLabel()
-        self.dem_exaggeration_value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.dem_exaggeration_value.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         self.dem_exaggeration_value.setMinimumWidth(64)
         self.dem_hillshade_slider = QSlider(Qt.Orientation.Horizontal)
         self.dem_hillshade_slider.setRange(0, 100)
         self.dem_hillshade_slider.setValue(75)
         self.dem_hillshade_value = QLabel()
-        self.dem_hillshade_value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.dem_hillshade_value.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         self.dem_hillshade_value.setMinimumWidth(64)
         self.dem_color_mode_combo = QComboBox()
         self.dem_color_mode_combo.addItem("White relief", "gray")
@@ -450,7 +519,9 @@ class ControlPanel(QWidget):
             "RGB can switch between an offline 3D terrain scene and a flat 2D map view."
         )
         self.apply_rgb_view_mode_btn = QPushButton("Apply View Mode")
-        self.apply_rgb_view_mode_btn.setToolTip("Switch the active raster between 3D terrain and 2D map views.")
+        self.apply_rgb_view_mode_btn.setToolTip(
+            "Switch the active raster between 3D terrain and 2D map views."
+        )
         self.rgb_view_mode_combo.setVisible(False)
         self.apply_rgb_view_mode_btn.setVisible(False)
 
@@ -458,7 +529,7 @@ class ControlPanel(QWidget):
         view_layout = QVBoxLayout(self.view_box)
         view_layout.setSpacing(14)
         view_layout.setContentsMargins(10, 10, 10, 10)
-        
+
         # RGB Layer controls
         rgb_label = QLabel("<b>Imagery</b>")
         view_layout.addWidget(rgb_label)
@@ -472,9 +543,9 @@ class ControlPanel(QWidget):
         contrast_layout.addWidget(self.contrast_slider, 1)
         contrast_layout.addWidget(self.contrast_value)
         view_layout.addLayout(contrast_layout)
-        
+
         view_layout.addSpacing(8)
-        
+
         # Camera controls
         camera_label = QLabel("<b>Camera</b>")
         view_layout.addWidget(camera_label)
@@ -488,9 +559,9 @@ class ControlPanel(QWidget):
         rotate_layout.addWidget(self.rotate_left_btn, 1)
         rotate_layout.addWidget(self.rotate_right_btn, 1)
         view_layout.addLayout(rotate_layout)
-        
+
         view_layout.addSpacing(8)
-        
+
         # DEM-specific controls (initially hidden)
         dem_label = QLabel("<b>Terrain</b>")
         view_layout.addWidget(dem_label)
@@ -508,7 +579,7 @@ class ControlPanel(QWidget):
         dem_color_layout.addWidget(QLabel("Style:"))
         dem_color_layout.addWidget(self.dem_color_mode_combo, 1)
         view_layout.addLayout(dem_color_layout)
-        
+
         view_layout.addStretch()
 
         for slider in (
@@ -526,7 +597,7 @@ class ControlPanel(QWidget):
         self.status_box = QTextEdit()
         self.status_box.setReadOnly(True)
         self.status_box.setMaximumHeight(120)
-        
+
         self.log_box = QGroupBox("Activity Log")
         log_layout = QVBoxLayout(self.log_box)
         log_layout.setSpacing(8)
@@ -547,7 +618,9 @@ class ControlPanel(QWidget):
         measurement_results_layout.setSpacing(8)
         measurement_results_layout.setContentsMargins(10, 10, 10, 10)
         self.measurement_results_list = QListWidget()
-        self.measurement_results_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.measurement_results_list.setSelectionMode(
+            QAbstractItemView.SingleSelection
+        )
         self.measurement_results_list.setMinimumHeight(96)
         self.measurement_results_list.setMaximumHeight(160)
         measurement_results_layout.addWidget(self.measurement_results_list)
@@ -555,8 +628,12 @@ class ControlPanel(QWidget):
         measurement_results_btn_row.setSpacing(8)
         self.clear_selected_measurement_btn = QPushButton("Clear Selected")
         self.clear_all_measurements_btn = QPushButton("Clear All")
-        self.clear_selected_measurement_btn.clicked.connect(self.measurement_result_clear_selected_requested.emit)
-        self.clear_all_measurements_btn.clicked.connect(self.measurement_result_clear_all_requested.emit)
+        self.clear_selected_measurement_btn.clicked.connect(
+            self.measurement_result_clear_selected_requested.emit
+        )
+        self.clear_all_measurements_btn.clicked.connect(
+            self.measurement_result_clear_all_requested.emit
+        )
         measurement_results_btn_row.addWidget(self.clear_selected_measurement_btn, 1)
         measurement_results_btn_row.addWidget(self.clear_all_measurements_btn, 1)
         measurement_results_layout.addLayout(measurement_results_btn_row)
@@ -567,19 +644,19 @@ class ControlPanel(QWidget):
         data_layout.addWidget(self.upload_box)
         data_layout.addWidget(self.ingest_progress_box)
         data_layout.addWidget(self.assets_box, 1)
-        
+
         self.search_section = QWidget(self)
         search_section_layout = QVBoxLayout(self.search_section)
         search_section_layout.setContentsMargins(8, 8, 8, 8)
         search_section_layout.setSpacing(10)
         search_section_layout.addWidget(self.search_box)
-        
+
         self.view_section = QWidget(self)
         view_section_layout = QVBoxLayout(self.view_section)
         view_section_layout.setContentsMargins(8, 8, 8, 8)
         view_section_layout.setSpacing(10)
         view_section_layout.addWidget(self.view_box)
-        
+
         self.analysis_section = QWidget(self)
         analysis_layout = QVBoxLayout(self.analysis_section)
         analysis_layout.setContentsMargins(8, 8, 8, 8)
@@ -599,7 +676,8 @@ class ControlPanel(QWidget):
             ("Activity Log", self.log_box, False),
         ]
         self._client_original_group_titles = {
-            section: section.title() for _name, section, _expanded in self._client_section_specs
+            section: section.title()
+            for _name, section, _expanded in self._client_section_specs
         }
         self._client_collapsible_sections: list[ClientCollapsibleSection] = []
         self._server_refresh_connected = False
@@ -702,7 +780,9 @@ class ControlPanel(QWidget):
         if self._client_collapsible_sections:
             return
         for name, section_widget, expanded in self._client_section_specs:
-            collapsible = ClientCollapsibleSection(name, section_widget, expanded=expanded, parent=self)
+            collapsible = ClientCollapsibleSection(
+                name, section_widget, expanded=expanded, parent=self
+            )
             self._client_collapsible_sections.append(collapsible)
 
     def _set_client_group_title_visibility(self, visible: bool) -> None:
@@ -711,7 +791,9 @@ class ControlPanel(QWidget):
             section_widget.setTitle(original_title if visible else "")
             section_widget.setFlat(not visible)
 
-    def update_search_results(self, assets: list[dict], visibility_by_path: dict[str, bool] | None = None) -> None:
+    def update_search_results(
+        self, assets: list[dict], visibility_by_path: dict[str, bool] | None = None
+    ) -> None:
         self.search_results_table.setRowCount(0)
         self.search_results_table.setSortingEnabled(False)
         visibility_map = visibility_by_path or {}
@@ -723,7 +805,11 @@ class ControlPanel(QWidget):
         )
 
         total_matches = len(sorted_assets)
-        dem_count = sum(1 for asset in sorted_assets if str(asset.get("kind") or "").lower() == "dem")
+        dem_count = sum(
+            1
+            for asset in sorted_assets
+            if str(asset.get("kind") or "").lower() == "dem"
+        )
         imagery_count = max(0, total_matches - dem_count)
         visible_count = sum(
             1
@@ -741,7 +827,11 @@ class ControlPanel(QWidget):
             crs_summary = ", ".join(crs_values[:2]) + f" (+{len(crs_values) - 2} more)"
         else:
             crs_summary = ", ".join(crs_values) if crs_values else "-"
-        latest_date = self._format_search_created_at(sorted_assets[0].get("created_at")) if sorted_assets else "-"
+        latest_date = (
+            self._format_search_created_at(sorted_assets[0].get("created_at"))
+            if sorted_assets
+            else "-"
+        )
         self.search_results_summary.setText(
             f"Matches: {total_matches} | DEM: {dem_count} | Imagery: {imagery_count} | Visible: {visible_count} | CRS: {crs_summary} | Latest: {latest_date}"
         )
@@ -764,7 +854,9 @@ class ControlPanel(QWidget):
                 toggle_button.setEnabled(False)
             else:
                 toggle_button.clicked.connect(
-                    lambda _checked=False, path=file_path, visible=is_visible: self.search_result_visibility_toggled.emit(path, not visible)
+                    lambda _checked=False, path=file_path, visible=is_visible: (
+                        self.search_result_visibility_toggled.emit(path, not visible)
+                    )
                 )
 
             self.search_results_table.setItem(row, 0, QTableWidgetItem(file_name))
@@ -779,7 +871,9 @@ class ControlPanel(QWidget):
         header_height = self.search_results_table.horizontalHeader().sizeHint().height()
         row_height = self.search_results_table.verticalHeader().defaultSectionSize()
         frame_height = self.search_results_table.frameWidth() * 2
-        total_height = header_height + (row_height * max(1, visible_rows)) + frame_height
+        total_height = (
+            header_height + (row_height * max(1, visible_rows)) + frame_height
+        )
         self.search_results_table.setMinimumHeight(total_height)
         self.search_results_table.setMaximumHeight(total_height)
 
@@ -886,11 +980,16 @@ class ControlPanel(QWidget):
     def clear_measurement_result_entries(self) -> None:
         self.measurement_results_list.clear()
 
-    def set_search_busy(self, active: bool, message: str = "Searching...", progress: int | None = None) -> None:
+    def set_search_busy(
+        self, active: bool, message: str = "Searching...", progress: int | None = None
+    ) -> None:
         if active:
             if self._search_busy_dialog is None:
                 import time
-                parent_widget = self.window() if isinstance(self.window(), QWidget) else self
+
+                parent_widget = (
+                    self.window() if isinstance(self.window(), QWidget) else self
+                )
                 dialog = QProgressDialog(message, "", 0, 100, parent_widget)
                 dialog.setWindowTitle("Please wait")
                 dialog.setCancelButton(None)
@@ -919,9 +1018,11 @@ class ControlPanel(QWidget):
                 self._search_busy_value = 5
                 if self._search_busy_timer is None:
                     self._search_busy_timer = QTimer(self)
-                    self._search_busy_timer.timeout.connect(self._update_search_busy_timer)
+                    self._search_busy_timer.timeout.connect(
+                        self._update_search_busy_timer
+                    )
                 self._search_busy_timer.start(100)
-            
+
             dialog = self._search_busy_dialog
             if dialog is None:
                 return
@@ -933,6 +1034,7 @@ class ControlPanel(QWidget):
             dialog.setValue(self._search_busy_value)
             if self._search_busy_start_time is not None:
                 import time
+
                 elapsed = time.time() - self._search_busy_start_time
                 dialog.setLabelText(f"{self._search_busy_message} {elapsed:.1f}s")
             else:
@@ -957,11 +1059,14 @@ class ControlPanel(QWidget):
         if self._search_busy_dialog is None or self._search_busy_start_time is None:
             return
         import time
+
         elapsed = time.time() - self._search_busy_start_time
         # Keep a visibly moving bar while backend search is running.
         self._search_busy_value = min(94, max(self._search_busy_value + 1, 5))
         self._search_busy_dialog.setValue(self._search_busy_value)
-        self._search_busy_dialog.setLabelText(f"{self._search_busy_message} {elapsed:.1f}s")
+        self._search_busy_dialog.setLabelText(
+            f"{self._search_busy_message} {elapsed:.1f}s"
+        )
 
     def _center_search_busy_dialog(self) -> None:
         if self._search_busy_dialog is None:
@@ -982,28 +1087,38 @@ class ControlPanel(QWidget):
         """Fetch and display list of uploaded assets from the catalog."""
         if not self.api_client:
             self.uploaded_assets_list.setRowCount(1)
-            self.uploaded_assets_list.setItem(0, 0, QTableWidgetItem("Waiting for API..."))
+            self.uploaded_assets_list.setItem(
+                0, 0, QTableWidgetItem("Waiting for API...")
+            )
             return
-        
+
         try:
             assets = self.api_client.list_assets()
             self.uploaded_assets_list.setRowCount(0)
-            
+
             if not assets:
                 self.uploaded_assets_list.setRowCount(1)
-                self.uploaded_assets_list.setItem(0, 0, QTableWidgetItem("No assets ingested yet"))
+                self.uploaded_assets_list.setItem(
+                    0, 0, QTableWidgetItem("No assets ingested yet")
+                )
                 return
-            
+
             # Sort by ingest timestamp (most recent first)
-            sorted_assets = sorted(assets, key=lambda a: a.get("created_at", ""), reverse=True)
-            
+            sorted_assets = sorted(
+                assets, key=lambda a: a.get("created_at", ""), reverse=True
+            )
+
             for row, asset in enumerate(sorted_assets, start=1):
                 filename = str(asset.get("file_name") or "Unknown")
                 timestamp = asset.get("created_at")
                 kind = str(asset.get("kind") or "Unknown").upper()
                 crs = str(asset.get("crs") or "-")
-                cell_size = self._format_asset_cell_size(asset.get("resolution_x"), asset.get("resolution_y"))
-                dimensions = self._format_asset_dimensions(asset.get("width"), asset.get("height"))
+                cell_size = self._format_asset_cell_size(
+                    asset.get("resolution_x"), asset.get("resolution_y")
+                )
+                dimensions = self._format_asset_dimensions(
+                    asset.get("width"), asset.get("height")
+                )
                 formatted_date = self._format_asset_created_at(timestamp)
 
                 self.uploaded_assets_list.insertRow(row - 1)
@@ -1016,13 +1131,21 @@ class ControlPanel(QWidget):
                 self.uploaded_assets_list.setItem(row - 1, 1, file_item)
                 self.uploaded_assets_list.setItem(row - 1, 2, QTableWidgetItem(kind))
                 self.uploaded_assets_list.setItem(row - 1, 3, QTableWidgetItem(crs))
-                self.uploaded_assets_list.setItem(row - 1, 4, QTableWidgetItem(cell_size))
-                self.uploaded_assets_list.setItem(row - 1, 5, QTableWidgetItem(dimensions))
-                self.uploaded_assets_list.setItem(row - 1, 6, QTableWidgetItem(formatted_date))
-        
+                self.uploaded_assets_list.setItem(
+                    row - 1, 4, QTableWidgetItem(cell_size)
+                )
+                self.uploaded_assets_list.setItem(
+                    row - 1, 5, QTableWidgetItem(dimensions)
+                )
+                self.uploaded_assets_list.setItem(
+                    row - 1, 6, QTableWidgetItem(formatted_date)
+                )
+
         except Exception as e:
             self.uploaded_assets_list.setRowCount(1)
-            self.uploaded_assets_list.setItem(0, 0, QTableWidgetItem(f"Error loading assets: {str(e)}"))
+            self.uploaded_assets_list.setItem(
+                0, 0, QTableWidgetItem(f"Error loading assets: {str(e)}")
+            )
 
     def _apply_panel_styles(self) -> None:
         self.setStyleSheet(

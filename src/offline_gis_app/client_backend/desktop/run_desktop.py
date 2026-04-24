@@ -5,7 +5,9 @@ import sys
 from pathlib import Path
 
 from offline_gis_app.client_backend.desktop.app_mode import DesktopAppMode
-from offline_gis_app.client_backend.desktop.logging_setup import configure_desktop_logging
+from offline_gis_app.client_backend.desktop.logging_setup import (
+    configure_desktop_logging,
+)
 from offline_gis_app.client_backend.desktop.qt_compat import ensure_desktop_qt_runtime
 
 
@@ -13,19 +15,30 @@ def _write_startup_trace(message: str) -> None:
     try:
         log_dir = Path.home() / "OfflineGIS"
         log_dir.mkdir(parents=True, exist_ok=True)
-        with open(log_dir / "client_startup_trace.log", "a", encoding="utf-8") as handle:
+        with open(
+            log_dir / "client_startup_trace.log", "a", encoding="utf-8"
+        ) as handle:
             handle.write(message + "\n")
     except Exception:
         pass
 
 
-def run(app_mode: DesktopAppMode = DesktopAppMode.UNIFIED, qt_backend: str | None = None) -> int:
+def run(
+    app_mode: DesktopAppMode = DesktopAppMode.UNIFIED, qt_backend: str | None = None
+) -> int:
     _write_startup_trace("run:enter")
     backend = (qt_backend or ensure_desktop_qt_runtime()).lower()
     _write_startup_trace(f"run:backend={backend}")
     try:
-        from qtpy.QtWidgets import QApplication, QLabel, QMessageBox, QVBoxLayout, QWidget
+        from qtpy.QtWidgets import (
+            QApplication,
+            QLabel,
+            QMessageBox,
+            QVBoxLayout,
+            QWidget,
+        )
         from qtpy.QtCore import QCoreApplication, Qt, QTimer
+
         _write_startup_trace("run:qt_widgets_import_ok")
     except Exception as exc:  # pragma: no cover - runtime defensive branch
         _write_startup_trace(f"run:qt_widgets_import_error={exc!r}")
@@ -57,23 +70,28 @@ def run(app_mode: DesktopAppMode = DesktopAppMode.UNIFIED, qt_backend: str | Non
     # These flags help CesiumJS utilize the discrete NVIDIA GPU instead of the
     # integrated GPU, dramatically improving 3D globe and terrain rendering speed.
     if platform.system() == "Windows":
-        required_flags.extend([
-            "--enable-webgl",
-            "--use-gl=desktop",
-            "--enable-accelerated-2d-canvas",
-            "--enable-gpu",
-            "--disable-gpu-vsync",
-            # Disable renderer code integrity to prevent NVIDIA driver sandbox conflicts
-            "--disable-features=RendererCodeIntegrity",
-            "--gpu-no-context-lost",
-        ])
+        required_flags.extend(
+            [
+                "--enable-webgl",
+                "--use-gl=desktop",
+                "--enable-accelerated-2d-canvas",
+                "--enable-gpu",
+                "--disable-gpu-vsync",
+                # Disable renderer code integrity to prevent NVIDIA driver sandbox conflicts
+                "--disable-features=RendererCodeIntegrity",
+                "--gpu-no-context-lost",
+            ]
+        )
         # Force dedicated NVIDIA/AMD GPU — these env vars are read by the GPU driver
         # before process launch and override any Windows Optimus power-saving selection.
-        os.environ.setdefault("SHIM_MCCOMPAT", "0x800000001")        # NVIDIA Optimus
-        os.environ.setdefault("__NV_PRIME_RENDER_OFFLOAD", "1")      # Linux PRIME (no-op on Win)
-        os.environ.setdefault("NvOptimusEnablement", "0x00000001")   # Force NVIDIA
-        os.environ.setdefault("AmdPowerXpressRequestHighPerformance", "1")  # Force AMD dGPU
-
+        os.environ.setdefault("SHIM_MCCOMPAT", "0x800000001")  # NVIDIA Optimus
+        os.environ.setdefault(
+            "__NV_PRIME_RENDER_OFFLOAD", "1"
+        )  # Linux PRIME (no-op on Win)
+        os.environ.setdefault("NvOptimusEnablement", "0x00000001")  # Force NVIDIA
+        os.environ.setdefault(
+            "AmdPowerXpressRequestHighPerformance", "1"
+        )  # Force AMD dGPU
 
     for flag in required_flags:
         if flag not in existing_flags:
@@ -82,6 +100,7 @@ def run(app_mode: DesktopAppMode = DesktopAppMode.UNIFIED, qt_backend: str | Non
 
     # Import WebEngine module before QApplication to satisfy QtWebEngine init ordering.
     from qtpy import QtWebEngineWidgets  # noqa: F401
+
     _write_startup_trace("run:qtwebengine_preloaded")
 
     app = QApplication(sys.argv)
@@ -91,7 +110,9 @@ def run(app_mode: DesktopAppMode = DesktopAppMode.UNIFIED, qt_backend: str | Non
     # feedback even if heavy initialization takes a few seconds.
     startup_window = QWidget()
     startup_window.setWindowTitle("Offline 3D GIS - Loading")
-    startup_window.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
+    startup_window.setWindowFlags(
+        Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint
+    )
     startup_window.setMinimumSize(420, 120)
     startup_layout = QVBoxLayout(startup_window)
     startup_layout.addWidget(QLabel("Starting Offline 3D GIS..."))
@@ -115,7 +136,8 @@ def run(app_mode: DesktopAppMode = DesktopAppMode.UNIFIED, qt_backend: str | Non
             _write_startup_trace("run:main_window_init_done")
             window.show()
             window.setWindowState(
-                (window.windowState() & ~Qt.WindowState.WindowMinimized) | Qt.WindowState.WindowActive
+                (window.windowState() & ~Qt.WindowState.WindowMinimized)
+                | Qt.WindowState.WindowActive
             )
             window.raise_()
             window.activateWindow()

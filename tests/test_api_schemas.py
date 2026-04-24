@@ -1,7 +1,11 @@
 import pytest
 from pydantic import ValidationError
 
-from offline_gis_app.server_backend.schemas import BBoxSearchRequest, CoordinateSearchRequest, ProfileRequest
+from offline_gis_app.server_backend.schemas import (
+    BBoxSearchRequest,
+    CoordinateSearchRequest,
+    ProfileRequest,
+)
 
 
 def test_coordinate_search_request_rejects_invalid_lon_lat():

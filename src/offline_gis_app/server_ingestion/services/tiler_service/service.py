@@ -23,23 +23,23 @@ class TiTilerUrlPolicy:
         path = source_path.strip()
         if not path:
             raise ValueError("source_path cannot be empty")
-        
+
         # Strip out file:// prefixes if they were added elsewhere
         if path.startswith("file:///"):
             path = path[8:]
         elif path.startswith("file://"):
             path = path[7:]
-            
+
         normalized = path.replace("\\", "/")
-        
+
         # Clean up double slashes (preserve UNC network paths starting with //)
         if normalized.startswith("//"):
             tail = normalized[2:]
             while "//" in tail:
                 tail = tail.replace("//", "/")
             return "//" + tail
-            
+
         while "//" in normalized:
             normalized = normalized.replace("//", "/")
-            
+
         return normalized

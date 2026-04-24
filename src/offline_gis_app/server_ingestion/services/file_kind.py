@@ -14,4 +14,3 @@ def detect_raster_kind(path: Path) -> RasterKind:
     if suffix == ".mbtiles":
         return RasterKind.MBTILES
     return RasterKind.UNKNOWN
-

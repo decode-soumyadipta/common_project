@@ -7,7 +7,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MAIN_WINDOW_PATH = ROOT / "src/offline_gis_app/client_backend/desktop/main_window.py"
 CONTROLLER_PATH = ROOT / "src/offline_gis_app/client_backend/desktop/controller.py"
-ICON_REGISTRY_PATH = ROOT / "src/offline_gis_app/client_backend/desktop/icon_registry.py"
+ICON_REGISTRY_PATH = (
+    ROOT / "src/offline_gis_app/client_backend/desktop/icon_registry.py"
+)
 
 
 def _module_ast(path: Path) -> ast.Module:
@@ -29,7 +31,11 @@ def _class_constant(class_node: ast.ClassDef, name: str):
                 if isinstance(target, ast.Name) and target.id == name:
                     value = node.value
                     break
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == name:
+        elif (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == name
+        ):
             value = node.value
         if value is not None:
             return ast.literal_eval(value)
@@ -42,7 +48,11 @@ def _module_constant(module: ast.Module, name: str):
             for target in node.targets:
                 if isinstance(target, ast.Name) and target.id == name:
                     return ast.literal_eval(node.value)
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == name:
+        elif (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == name
+        ):
             return ast.literal_eval(node.value)
     raise AssertionError(f"Constant not found: {name}")
 
@@ -64,12 +74,18 @@ def _controller_handler_labels() -> set[str]:
     module = _module_ast(CONTROLLER_PATH)
     controller = _class_node(module, "DesktopController")
     for node in controller.body:
-        if not isinstance(node, ast.FunctionDef) or node.name != "handle_toolbar_action":
+        if (
+            not isinstance(node, ast.FunctionDef)
+            or node.name != "handle_toolbar_action"
+        ):
             continue
         for statement in node.body:
             if not isinstance(statement, ast.AnnAssign):
                 continue
-            if not isinstance(statement.target, ast.Name) or statement.target.id != "handlers":
+            if (
+                not isinstance(statement.target, ast.Name)
+                or statement.target.id != "handlers"
+            ):
                 continue
             if not isinstance(statement.value, ast.Dict):
                 continue
@@ -95,7 +111,9 @@ def test_toolbar_icon_manifest_uses_unique_icons_for_toolbar_keys() -> None:
 
     filenames = [icon_manifest[key] for key in toolbar_keys]
     duplicates = sorted({name for name in filenames if filenames.count(name) > 1})
-    assert not duplicates, f"Toolbar icon filenames should be unique per action, duplicates: {duplicates}"
+    assert not duplicates, (
+        f"Toolbar icon filenames should be unique per action, duplicates: {duplicates}"
+    )
 
 
 def test_controller_toolbar_handlers_cover_all_toolbar_labels() -> None:

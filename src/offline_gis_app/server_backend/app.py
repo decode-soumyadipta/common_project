@@ -7,7 +7,9 @@ from offline_gis_app.server_backend.routes.ingest import router as ingest_router
 from offline_gis_app.server_backend.routes.profile import router as profile_router
 from offline_gis_app.server_backend.routes.search import router as search_router
 from offline_gis_app.db.session import init_db
-from offline_gis_app.server_ingestion.services.ingest_queue_service import ingest_queue_service
+from offline_gis_app.server_ingestion.services.ingest_queue_service import (
+    ingest_queue_service,
+)
 
 
 @asynccontextmanager

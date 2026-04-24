@@ -4,7 +4,12 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from offline_gis_app.db.models import IngestJob, IngestJobItem, IngestJobItemStatus, IngestJobStatus
+from offline_gis_app.db.models import (
+    IngestJob,
+    IngestJobItem,
+    IngestJobItemStatus,
+    IngestJobStatus,
+)
 
 
 class IngestJobRepository:
@@ -49,7 +54,15 @@ class IngestJobRepository:
     def list_recoverable_jobs(self) -> list[IngestJob]:
         stmt = (
             select(IngestJob)
-            .where(IngestJob.status.in_([IngestJobStatus.QUEUED, IngestJobStatus.RUNNING, IngestJobStatus.PAUSED]))
+            .where(
+                IngestJob.status.in_(
+                    [
+                        IngestJobStatus.QUEUED,
+                        IngestJobStatus.RUNNING,
+                        IngestJobStatus.PAUSED,
+                    ]
+                )
+            )
             .order_by(IngestJob.created_at.asc())
         )
         return list(self._session.scalars(stmt))
@@ -59,7 +72,9 @@ class IngestJobRepository:
             select(IngestJobItem)
             .where(
                 IngestJobItem.job_id == job_id,
-                IngestJobItem.status.in_([IngestJobItemStatus.PENDING, IngestJobItemStatus.FAILED]),
+                IngestJobItem.status.in_(
+                    [IngestJobItemStatus.PENDING, IngestJobItemStatus.FAILED]
+                ),
             )
             .order_by(IngestJobItem.item_index.asc())
         )
@@ -78,7 +93,9 @@ class IngestJobRepository:
         self._session.add(job)
         self._session.commit()
 
-    def set_job_status(self, job: IngestJob, status: IngestJobStatus, *, last_error: str | None = None) -> None:
+    def set_job_status(
+        self, job: IngestJob, status: IngestJobStatus, *, last_error: str | None = None
+    ) -> None:
         job.status = status
         job.last_error = last_error
         job.updated_at = datetime.utcnow()
@@ -93,7 +110,9 @@ class IngestJobRepository:
         self._session.add(job)
         self._session.commit()
 
-    def mark_job_terminal(self, job: IngestJob, status: IngestJobStatus, last_error: str | None = None) -> None:
+    def mark_job_terminal(
+        self, job: IngestJob, status: IngestJobStatus, last_error: str | None = None
+    ) -> None:
         now = datetime.utcnow()
         job.status = status
         job.last_error = last_error
@@ -164,8 +183,12 @@ class IngestJobRepository:
     def refresh_job_counters(self, job: IngestJob) -> None:
         stmt = select(IngestJobItem.status).where(IngestJobItem.job_id == job.id)
         statuses = list(self._session.scalars(stmt))
-        job.processed_items = sum(1 for status in statuses if status == IngestJobItemStatus.SUCCEEDED)
-        job.failed_items = sum(1 for status in statuses if status == IngestJobItemStatus.FAILED)
+        job.processed_items = sum(
+            1 for status in statuses if status == IngestJobItemStatus.SUCCEEDED
+        )
+        job.failed_items = sum(
+            1 for status in statuses if status == IngestJobItemStatus.FAILED
+        )
         job.total_items = len(statuses)
         job.updated_at = datetime.utcnow()
         self._session.add(job)

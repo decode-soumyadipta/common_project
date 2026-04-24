@@ -19,4 +19,3 @@ def test_profile_endpoint(monkeypatch):
     response = client.post("/profile/elevation", json=payload)
     assert response.status_code == 200
     assert response.json()["values"] == [1.0, 2.0, 3.0]
-

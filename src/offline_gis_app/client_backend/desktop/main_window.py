@@ -1,3 +1,10 @@
+"""Main window module for the Offline GIS Desktop application.
+
+This module provides the main window UI components including:
+- LayerCompositorOverlay: Overlay for adjusting layer opacities
+- MapOverlayControls: Controls for scene mode and polygon visibility
+- MainWindow: Primary application window with toolbar and web view
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -32,11 +39,25 @@ from offline_gis_app.client_backend.desktop.bridge import WebBridge
 from offline_gis_app.client_backend.desktop.control_panel import ControlPanel
 from offline_gis_app.client_backend.desktop.controller import DesktopController
 from offline_gis_app.client_backend.desktop.icon_registry import IconRegistry
+from offline_gis_app.client_backend.desktop.status_bar import GISStatusBar
 from offline_gis_app.client_backend.desktop.titiler_manager import TiTilerManager
 from offline_gis_app.client_backend.desktop.web_page import LoggingWebEnginePage
 
+
 class LayerCompositorOverlay(QWidget):
+    """Overlay widget for adjusting layer opacities in the compositor mode.
+    
+    This widget displays sliders for each active layer, allowing users to
+    adjust the opacity of individual layers in real-time.
+    """
+    
     def __init__(self, parent: QWidget, controller: DesktopController):
+        """Initialize the layer compositor overlay.
+        
+        Args:
+            parent: Parent widget (typically the web view).
+            controller: Desktop controller instance for layer management.
+        """
         super().__init__(parent, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
         self.controller = controller
         self.setObjectName("compositorOverlay")
@@ -69,6 +90,11 @@ class LayerCompositorOverlay(QWidget):
         self.hide()
 
     def update_layers(self) -> None:
+        """Update the overlay with current active layers and their sliders.
+        
+        Clears existing sliders and creates new ones for all visible layers.
+        Each slider controls the opacity of its corresponding layer.
+        """
         layers = self.controller.available_swipe_layer_options()
         active_layers = [layer for layer in layers if layer.get("visible")]
 
@@ -106,30 +132,69 @@ class LayerCompositorOverlay(QWidget):
             val_label.setFixedWidth(40)
             row.addWidget(val_label)
 
-            slider.valueChanged.connect(lambda v, l=val_label, p=layer["path"]: self._on_slider_changed(v, l, p))
+            slider.valueChanged.connect(
+                lambda value, value_label=val_label, layer_path=layer["path"]: (
+                    self._on_slider_changed(
+                        value,
+                        value_label,
+                        layer_path,
+                    )
+                )
+            )
 
             self.sliders[layer["path"]] = slider
             self.sliders_layout.addLayout(row)
 
     def _on_slider_changed(self, value: int, label: QLabel, path: str) -> None:
+        """Handle slider value changes.
+        
+        Args:
+            value: New slider value (0-100).
+            label: Label widget to update with percentage.
+            path: File path of the layer being adjusted.
+        """
         label.setText(f"{value}%")
         self._apply_settings()
 
     def _apply_settings(self, *args: object) -> None:
+        """Apply current slider values to the layer compositor.
+        
+        Args:
+            *args: Unused arguments from signal connections.
+        """
         if not self.isVisible():
             return
-        layer_alphas = {path: slider.value() / 100.0 for path, slider in self.sliders.items()}
+        layer_alphas = {
+            path: slider.value() / 100.0 for path, slider in self.sliders.items()
+        }
         # Only set opacity. Pass enable_swipe=False and empty swipe_paths.
         self.controller.apply_layer_compositor_settings(False, [], layer_alphas)
 
     def apply_state(self, state_dict: dict) -> None:
+        """Apply saved state to the layer compositor overlay.
+        
+        Args:
+            state_dict: Dictionary containing saved state (currently unused).
+        """
         pass
 
 
-import json
-
 class MapOverlayControls(QWidget):
+    """Overlay widget for map display controls.
+    
+    Provides controls for:
+    - Scene mode (3D Globe vs 2D Map)
+    - Search polygon visibility
+    - Area of Interest (AOI) statistics display
+    """
+    
     def __init__(self, parent: QWidget, controller: DesktopController):
+        """Initialize the map overlay controls.
+        
+        Args:
+            parent: Parent widget (typically the web view).
+            controller: Desktop controller instance.
+        """
         super().__init__(parent, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
         self.controller = controller
         self.setObjectName("mapOverlayControls")
@@ -161,10 +226,13 @@ class MapOverlayControls(QWidget):
         self.scene_mode_combo.currentTextChanged.connect(self._on_scene_mode_changed)
         self.layout_main.addWidget(self.scene_mode_combo)
 
-        # Polygon Visibility
+        # Polygon Visibility (hidden by default, shown only when polygon exists)
         self.polygon_visibility_checkbox = QCheckBox("Show Search AOI Polygon")
         self.polygon_visibility_checkbox.setChecked(True)
-        self.polygon_visibility_checkbox.toggled.connect(self._on_polygon_visibility_toggled)
+        self.polygon_visibility_checkbox.setVisible(False)  # Hidden until polygon exists
+        self.polygon_visibility_checkbox.toggled.connect(
+            self._on_polygon_visibility_toggled
+        )
         self.layout_main.addWidget(self.polygon_visibility_checkbox)
 
         # AOI Stats
@@ -181,24 +249,63 @@ class MapOverlayControls(QWidget):
         self.hide()
 
     def update_position(self) -> None:
+        """Update the overlay position to top-right corner of parent widget."""
         parent_widget = self.parentWidget()
-        if parent_widget:
-            top_right = parent_widget.mapToGlobal(parent_widget.rect().topRight())
-            self.move(top_right.x() - self.width() - 20, top_right.y() + 20)
+        if parent_widget and parent_widget.isVisible():
+            # Get the parent widget's geometry in global coordinates
+            parent_rect = parent_widget.rect()
+            top_right = parent_widget.mapToGlobal(parent_rect.topRight())
+            
+            # Adjust position to stay within parent bounds
+            x_pos = top_right.x() - self.width() - 20
+            y_pos = top_right.y() + 20
+            
+            # Ensure it doesn't go off screen when window is resized
+            if x_pos < 0:
+                x_pos = 10
+            if y_pos < 0:
+                y_pos = 10
+                
+            self.move(x_pos, y_pos)
 
     def _on_scene_mode_changed(self, text: str) -> None:
+        """Handle scene mode changes between 3D and 2D.
+        
+        Args:
+            text: Selected mode text ("3D Globe" or "2D Map").
+        """
         mode = "2d" if "2D" in text else "3d"
-        self.controller.web_view.page().runJavaScript(f"window.offlineGIS.setSceneMode('{mode}');")
+        self.controller.web_view.page().runJavaScript(
+            f"window.offlineGIS.setSceneMode('{mode}');"
+        )
 
     def _on_polygon_visibility_toggled(self, checked: bool) -> None:
-        self.controller.web_view.page().runJavaScript(f"window.offlineGIS.setSearchPolygonVisibility({str(checked).lower()});")
+        """Handle search polygon visibility toggle.
+        
+        Args:
+            checked: True to show polygon, False to hide.
+        """
+        self.controller.web_view.page().runJavaScript(
+            f"window.offlineGIS.setSearchPolygonVisibility({str(checked).lower()});"
+        )
 
     def update_aoi_stats(self, vertices: int, area_text: str) -> None:
+        """Update the AOI statistics display.
+        
+        Args:
+            vertices: Number of vertices in the polygon.
+            area_text: Formatted area text with units.
+        """
         if vertices >= 3:
+            # Polygon exists - show checkbox and stats
+            self.polygon_visibility_checkbox.setVisible(True)
             self.aoi_stats_label.setText(f"Area: {area_text}\nVertices: {vertices}")
             self.aoi_stats_label.setVisible(True)
         else:
+            # No polygon - hide checkbox and stats
+            self.polygon_visibility_checkbox.setVisible(False)
             self.aoi_stats_label.setVisible(False)
+        
         self.adjustSize()
         main_win = self.window()
         if hasattr(main_win, "_position_compositor_overlay"):
@@ -206,6 +313,22 @@ class MapOverlayControls(QWidget):
 
 
 class MainWindow(QMainWindow):
+    """Main application window for the Offline GIS Desktop.
+    
+    Provides the primary UI including:
+    - Toolbar with visualization, measurement, and navigation tools
+    - Control panel for data management
+    - Web view for Cesium-based 3D/2D map display
+    - Status bar with coordinate and camera information
+    - Overlay controls for layer management
+    
+    Attributes:
+        IMAGERY_ONLY_ACTIONS: Actions available only for imagery layers.
+        DEM_ONLY_ACTIONS: Actions available only for DEM layers.
+        TOGGLE_ACTIONS: Actions that can be toggled on/off.
+        TOOLBAR_GROUPS: Organized groups of toolbar actions.
+    """
+    
     IMAGERY_ONLY_ACTIONS: set[str] = set()
     DEM_ONLY_ACTIONS: set[str] = {
         "Elevation Profile",
@@ -234,10 +357,12 @@ class MainWindow(QMainWindow):
             "measurement",
             (
                 ("Distance / Azimuth", "measure_distance"),
+                ("Polygon Area", "measure_polygon_area"),
                 ("Elevation Profile", "elevation_profile"),
                 ("Volume Cut/Fill", "volume"),
                 ("Viewshed / LOS", "viewshed"),
                 ("Slope & Aspect", "slope_aspect"),
+                ("Shadow Height", "shadow_height"),
                 ("Clear Last", "clear_last"),
                 ("Clear All", "clear_all"),
             ),
@@ -274,6 +399,11 @@ class MainWindow(QMainWindow):
     )
 
     def __init__(self, app_mode: DesktopAppMode = DesktopAppMode.UNIFIED):
+        """Initialize the main window.
+        
+        Args:
+            app_mode: Application mode (UNIFIED, CLIENT, or SERVER).
+        """
         super().__init__()
         self.app_mode = app_mode
         self.setWindowTitle(self._window_title_for_mode(app_mode))
@@ -318,8 +448,12 @@ class MainWindow(QMainWindow):
         self.web_view = QWebEngineView(self)
         self.web_view.setPage(LoggingWebEnginePage(self.web_view))
         web_settings = self.web_view.settings()
-        web_settings.setAttribute(QWebEngineSettings.LocalContentCanAccessRemoteUrls, True)
-        web_settings.setAttribute(QWebEngineSettings.LocalContentCanAccessFileUrls, True)
+        web_settings.setAttribute(
+            QWebEngineSettings.LocalContentCanAccessRemoteUrls, True
+        )
+        web_settings.setAttribute(
+            QWebEngineSettings.LocalContentCanAccessFileUrls, True
+        )
         splitter = QSplitter(self)
         splitter.addWidget(self.panel_scroll)
         splitter.addWidget(self.web_view)
@@ -340,7 +474,9 @@ class MainWindow(QMainWindow):
             bridge=self.bridge,
             titiler_manager=self.titiler_manager,
             app_mode=app_mode,
-            toolbar_context_callback=self.set_toolbar_layer_context if app_mode != DesktopAppMode.SERVER else None,
+            toolbar_context_callback=self.set_toolbar_layer_context
+            if app_mode != DesktopAppMode.SERVER
+            else None,
         )
 
         self.compositor_overlay = LayerCompositorOverlay(self.web_view, self.controller)
@@ -348,22 +484,54 @@ class MainWindow(QMainWindow):
         # Show map overlay controls by default
         self.map_overlay_controls.show()
 
+        # ── QGIS-style status bar ────────────────────────────────────────
+        self.gis_status_bar = GISStatusBar(self)
+        self.setStatusBar(self.gis_status_bar)
+        self.bridge.mouseCoordinates.connect(self.gis_status_bar.on_mouse_coordinates)
+        self.bridge.cameraChanged.connect(self.gis_status_bar.on_camera_changed)
+        self.bridge.loadingProgress.connect(self.gis_status_bar.on_loading_progress)
+
         for label, action in self.toolbar_actions.items():
             action.triggered.connect(
-                lambda checked=False, action_label=label: self._on_toolbar_action_triggered(action_label, checked)
+                lambda checked=False, action_label=label: (
+                    self._on_toolbar_action_triggered(action_label, checked)
+                )
             )
 
-        if self.visualization_tools_switch is not None and self.measurement_tools_switch is not None:
-            self.visualization_tools_switch.toggled.connect(self._set_visualization_tools_visible)
-            self.measurement_tools_switch.toggled.connect(self._set_measurement_tools_visible)
-            self._set_visualization_tools_visible(bool(self.visualization_tools_switch.isChecked()))
-            self._set_measurement_tools_visible(bool(self.measurement_tools_switch.isChecked()))
+        if (
+            self.visualization_tools_switch is not None
+            and self.measurement_tools_switch is not None
+        ):
+            self.visualization_tools_switch.toggled.connect(
+                self._set_visualization_tools_visible
+            )
+            self.measurement_tools_switch.toggled.connect(
+                self._set_measurement_tools_visible
+            )
+            self._set_visualization_tools_visible(
+                bool(self.visualization_tools_switch.isChecked())
+            )
+            self._set_measurement_tools_visible(
+                bool(self.measurement_tools_switch.isChecked())
+            )
 
-        base_path = Path(__file__).resolve().parents[2] / "client_frontend" / "web_assets" / "index.html"
+        base_path = (
+            Path(__file__).resolve().parents[2]
+            / "client_frontend"
+            / "web_assets"
+            / "index.html"
+        )
 
         if not base_path.exists():
             # Fallback: try alternative path structure
-            base_path = Path(__file__).resolve().parents[3] / "src" / "offline_gis_app" / "client_frontend" / "web_assets" / "index.html"
+            base_path = (
+                Path(__file__).resolve().parents[3]
+                / "src"
+                / "offline_gis_app"
+                / "client_frontend"
+                / "web_assets"
+                / "index.html"
+            )
 
         # Ensure the cesium/ directory is accessible from the same directory as index.html.
         # The Cesium build files live in desktop/web_assets/cesium/ but index.html is in
@@ -402,14 +570,16 @@ class MainWindow(QMainWindow):
             if not canonical.exists():
                 logger.warning(
                     "Canonical %s directory not found at %s. Skipping.",
-                    name, canonical,
+                    name,
+                    canonical,
                 )
                 return
 
             if required_file and not (canonical / required_file).exists():
                 logger.warning(
                     "%s not found in %s. Run scripts/setup_cesium_assets.py to download it.",
-                    required_file, canonical,
+                    required_file,
+                    canonical,
                 )
                 return
 
@@ -423,7 +593,9 @@ class MainWindow(QMainWindow):
                     link_path.unlink()
                 elif link_path.is_dir():
                     if required_file and (link_path / required_file).exists():
-                        logger.debug("%s directory already present with %s", name, required_file)
+                        logger.debug(
+                            "%s directory already present with %s", name, required_file
+                        )
                         return
                     if not required_file:
                         logger.debug("%s directory already present", name)
@@ -439,7 +611,9 @@ class MainWindow(QMainWindow):
                 try:
                     rel_path = os.path.relpath(str(canonical), str(link_path.parent))
                     link_path.symlink_to(rel_path)
-                    logger.info("Created %s symlink: %s -> %s", name, link_path, rel_path)
+                    logger.info(
+                        "Created %s symlink: %s -> %s", name, link_path, rel_path
+                    )
                 except OSError:
                     logger.warning("Symlink failed for %s, falling back to copy", name)
                     shutil.copytree(str(canonical), str(link_path))
@@ -448,6 +622,11 @@ class MainWindow(QMainWindow):
         _link_dir("basemap")
 
     def _set_visualization_tools_visible(self, visible: bool) -> None:
+        """Show or hide visualization tools in the toolbar.
+        
+        Args:
+            visible: True to show tools, False to hide.
+        """
         self._visualization_tools_enabled = bool(visible)
         self._refresh_toolbar_action_state()
         if hasattr(self, "controller") and not visible:
@@ -456,12 +635,23 @@ class MainWindow(QMainWindow):
                 self.compositor_overlay.hide()
 
     def _set_measurement_tools_visible(self, visible: bool) -> None:
+        """Show or hide measurement tools in the toolbar.
+        
+        Args:
+            visible: True to show tools, False to hide.
+        """
         self._measurement_tools_enabled = bool(visible)
         self._refresh_toolbar_action_state()
         if hasattr(self, "controller") and not visible:
             self.controller.on_toolbar_group_disabled("measurement")
 
     def _on_toolbar_action_triggered(self, action_label: str, checked: bool) -> None:
+        """Handle toolbar action triggers.
+        
+        Args:
+            action_label: Label of the triggered action.
+            checked: Checked state for toggle actions.
+        """
         if action_label == "Comparator":
             action = self.toolbar_actions.get(action_label)
             if action is None:
@@ -469,7 +659,9 @@ class MainWindow(QMainWindow):
             if checked:
                 self._show_comparator_dropdown()
                 return
-            final_state = self.controller.handle_toolbar_action(action_label, checked=checked)
+            final_state = self.controller.handle_toolbar_action(
+                action_label, checked=checked
+            )
             if isinstance(final_state, bool):
                 action.setChecked(final_state)
             return
@@ -487,7 +679,9 @@ class MainWindow(QMainWindow):
             action.setChecked(False)
             return
 
-        final_state = self.controller.handle_toolbar_action(action_label, checked=checked)
+        final_state = self.controller.handle_toolbar_action(
+            action_label, checked=checked
+        )
         action = self.toolbar_actions.get(action_label)
         if action is None or not action.isCheckable():
             return
@@ -506,10 +700,15 @@ class MainWindow(QMainWindow):
                 if other_label == action_label:
                     continue
                 other_action = self.toolbar_actions.get(other_label)
-                if other_action is not None and other_action.isCheckable() and other_action.isChecked():
+                if (
+                    other_action is not None
+                    and other_action.isCheckable()
+                    and other_action.isChecked()
+                ):
                     other_action.setChecked(False)
 
     def _show_layer_compositor_overlay(self) -> None:
+        """Show the layer compositor overlay for adjusting layer opacities."""
         action = self.toolbar_actions.get("Layer Compositor")
         if action is None:
             return
@@ -525,37 +724,66 @@ class MainWindow(QMainWindow):
         self.compositor_overlay.show()
         self.compositor_overlay.raise_()
         self.compositor_overlay.adjustSize()
-        
+
         self._position_compositor_overlay()
         action.setChecked(True)
 
     def showEvent(self, event: object) -> None:
+        """Handle window show event.
+        
+        Args:
+            event: Show event object.
+        """
         super().showEvent(event)
-        if hasattr(self, "map_overlay_controls") and self.map_overlay_controls.isVisible():
+        if (
+            hasattr(self, "map_overlay_controls")
+            and self.map_overlay_controls.isVisible()
+        ):
             self.map_overlay_controls.update_position()
 
     def moveEvent(self, event: object) -> None:
+        """Handle window move event.
+        
+        Args:
+            event: Move event object.
+        """
         super().moveEvent(event)
         self._position_compositor_overlay()
 
     def resizeEvent(self, event: object) -> None:
+        """Handle window resize event.
+        
+        Args:
+            event: Resize event object.
+        """
         super().resizeEvent(event)
         if hasattr(self, "compositor_overlay") and self.compositor_overlay.isVisible():
             self._position_compositor_overlay()
-        if hasattr(self, "map_overlay_controls") and self.map_overlay_controls.isVisible():
+        if (
+            hasattr(self, "map_overlay_controls")
+            and self.map_overlay_controls.isVisible()
+        ):
             self.map_overlay_controls.update_position()
 
     def _position_compositor_overlay(self) -> None:
-        if not hasattr(self, "compositor_overlay") or not self.compositor_overlay.isVisible():
+        """Position the compositor overlay in the top-right corner of the web view."""
+        if (
+            not hasattr(self, "compositor_overlay")
+            or not self.compositor_overlay.isVisible()
+        ):
             return
         w = self.compositor_overlay.width()
         top_right = self.web_view.mapToGlobal(self.web_view.rect().topRight())
         y_offset = 20
-        if hasattr(self, "map_overlay_controls") and self.map_overlay_controls.isVisible():
+        if (
+            hasattr(self, "map_overlay_controls")
+            and self.map_overlay_controls.isVisible()
+        ):
             y_offset += self.map_overlay_controls.height() + 10
         self.compositor_overlay.move(top_right.x() - w - 20, top_right.y() + y_offset)
 
     def _show_comparator_dropdown(self) -> None:
+        """Show the comparator layer selection dropdown dialog."""
         action = self.toolbar_actions.get("Comparator")
         if action is None:
             return
@@ -626,7 +854,9 @@ class MainWindow(QMainWindow):
             item = QListWidgetItem(layer["label"], layer_list)
             item.setData(Qt.ItemDataRole.UserRole, layer["path"])
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Checked if layer["visible"] else Qt.CheckState.Unchecked)
+            item.setCheckState(
+                Qt.CheckState.Checked if layer["visible"] else Qt.CheckState.Unchecked
+            )
         layout.addWidget(layer_list)
 
         info_label = QLabel("Select up to 4 layers.")
@@ -656,7 +886,9 @@ class MainWindow(QMainWindow):
             if target_index >= 0:
                 if layout_combo.currentIndex() != target_index:
                     layout_combo.setCurrentIndex(target_index)
-                info_label.setText(f"{selected_count} layer(s) selected. Layout locked to {selected_count} panes.")
+                info_label.setText(
+                    f"{selected_count} layer(s) selected. Layout locked to {selected_count} panes."
+                )
                 apply_button.setEnabled(True)
                 return
 
@@ -696,7 +928,9 @@ class MainWindow(QMainWindow):
 
             pane_count = int(layout_combo.currentData())
             if len(selected_paths) != pane_count:
-                self.panel.log(f"Select exactly {pane_count} layers for selected layout.")
+                self.panel.log(
+                    f"Select exactly {pane_count} layers for selected layout."
+                )
                 return
 
             success = self.controller.apply_comparator_selection(selected_paths)
@@ -704,7 +938,9 @@ class MainWindow(QMainWindow):
                 action.setChecked(True)
                 applied["done"] = True
                 if hasattr(self, "map_overlay_controls"):
-                    self.map_overlay_controls.polygon_visibility_checkbox.setChecked(False)
+                    self.map_overlay_controls.polygon_visibility_checkbox.setChecked(
+                        False
+                    )
             else:
                 action.setChecked(False)
             self._refresh_toolbar_action_state()
@@ -721,6 +957,11 @@ class MainWindow(QMainWindow):
             action.setChecked(False)
 
     def set_toolbar_layer_context(self, context: str) -> None:
+        """Set the current layer context for toolbar action filtering.
+        
+        Args:
+            context: Layer context ("none", "imagery", "dem", or "mixed").
+        """
         normalized = str(context or "none").lower()
         if normalized not in {"none", "imagery", "dem", "mixed"}:
             normalized = "none"
@@ -728,6 +969,7 @@ class MainWindow(QMainWindow):
         self._refresh_toolbar_action_state()
 
     def _refresh_toolbar_action_state(self) -> None:
+        """Refresh toolbar action visibility and enabled state based on current context."""
         for label, action in self.toolbar_actions.items():
             group = self.action_group_by_label.get(label, "")
             if group == "visualization" and not self._visualization_tools_enabled:
@@ -743,12 +985,18 @@ class MainWindow(QMainWindow):
 
             # Contextual filtering only applies to visualization and measurement actions.
             if group in {"visualization", "measurement"}:
-                if self._toolbar_layer_context == "imagery" and label in self.DEM_ONLY_ACTIONS:
+                if (
+                    self._toolbar_layer_context == "imagery"
+                    and label in self.DEM_ONLY_ACTIONS
+                ):
                     action.setVisible(False)
                     if action.isCheckable():
                         action.setChecked(False)
                     continue
-                if self._toolbar_layer_context == "dem" and label in self.IMAGERY_ONLY_ACTIONS:
+                if (
+                    self._toolbar_layer_context == "dem"
+                    and label in self.IMAGERY_ONLY_ACTIONS
+                ):
                     action.setVisible(False)
                     if action.isCheckable():
                         action.setChecked(False)
@@ -756,7 +1004,10 @@ class MainWindow(QMainWindow):
 
             action.setVisible(True)
 
-            if group in {"visualization", "measurement"} and self._toolbar_layer_context == "none":
+            if (
+                group in {"visualization", "measurement"}
+                and self._toolbar_layer_context == "none"
+            ):
                 action.setEnabled(False)
                 if action.isCheckable():
                     action.setChecked(False)
@@ -771,6 +1022,15 @@ class MainWindow(QMainWindow):
                         action.setChecked(False)
 
     def _toolbar_icon(self, tool_name: str, fallback: QStyle.StandardPixmap) -> QIcon:
+        """Get icon for toolbar action.
+        
+        Args:
+            tool_name: Name of the tool.
+            fallback: Fallback standard pixmap if custom icon not found.
+            
+        Returns:
+            QIcon for the toolbar action.
+        """
         icon = IconRegistry.get(tool_name, size=24)
         if icon.isNull():
             return self.style().standardIcon(fallback)
@@ -787,6 +1047,18 @@ class MainWindow(QMainWindow):
         QCheckBox,
         QCheckBox,
     ]:
+        """Create and configure the main toolbar.
+        
+        Returns:
+            Tuple containing:
+                - QToolBar: The main toolbar widget
+                - dict[str, QAction]: Mapping of action labels to QAction objects
+                - list[QAction]: List of visualization actions
+                - list[QAction]: List of measurement actions
+                - dict[str, str]: Mapping of action labels to group names
+                - QCheckBox: Visualization tools toggle checkbox
+                - QCheckBox: Measurement tools toggle checkbox
+        """
         toolbar = QToolBar("Main")
         toolbar.setObjectName("desktopMainToolbar")
         toolbar.setMovable(False)
@@ -910,6 +1182,14 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _window_title_for_mode(app_mode: DesktopAppMode) -> str:
+        """Get window title based on application mode.
+        
+        Args:
+            app_mode: Application mode.
+            
+        Returns:
+            Window title string.
+        """
         if app_mode == DesktopAppMode.SERVER:
             return "Offline GIS Server Desktop"
         if app_mode == DesktopAppMode.CLIENT:

@@ -15,7 +15,9 @@ class DesktopApiClient:
         api_host = settings.api_host
         if api_host in {"0.0.0.0", "::"}:
             api_host = "127.0.0.1"
-        default_base = settings.server_api_base_url or f"http://{api_host}:{settings.api_port}"
+        default_base = (
+            settings.server_api_base_url or f"http://{api_host}:{settings.api_port}"
+        )
         self._base_url = (base_url or default_base).rstrip("/")
         self._titiler_base = settings.titiler_base_url.rstrip("/")
 
@@ -35,7 +37,9 @@ class DesktopApiClient:
             return False
 
     def register_raster(self, path: str) -> dict[str, Any]:
-        response = httpx.post(f"{self._base_url}/ingest/register", json={"path": path}, timeout=30.0)
+        response = httpx.post(
+            f"{self._base_url}/ingest/register", json={"path": path}, timeout=30.0
+        )
         response.raise_for_status()
         return response.json()
 
@@ -53,7 +57,9 @@ class DesktopApiClient:
         response.raise_for_status()
         return response.json()
 
-    def search_assets_by_bbox(self, west: float, south: float, east: float, north: float) -> list[dict[str, Any]]:
+    def search_assets_by_bbox(
+        self, west: float, south: float, east: float, north: float
+    ) -> list[dict[str, Any]]:
         response = httpx.post(
             f"{self._base_url}/search/bbox",
             json={"west": west, "south": south, "east": east, "north": north},
@@ -62,17 +68,23 @@ class DesktopApiClient:
         response.raise_for_status()
         return response.json()
 
-    def search_assets_by_polygon(self, points: list[tuple[float, float]], buffer_meters: float = 0.0) -> list[dict[str, Any]]:
+    def search_assets_by_polygon(
+        self, points: list[tuple[float, float]], buffer_meters: float = 0.0
+    ) -> list[dict[str, Any]]:
         payload = {
             "points": [{"lon": lon, "lat": lat} for lon, lat in points],
             "buffer_meters": buffer_meters,
         }
-        response = httpx.post(f"{self._base_url}/search/polygon", json=payload, timeout=30.0)
+        response = httpx.post(
+            f"{self._base_url}/search/polygon", json=payload, timeout=30.0
+        )
         response.raise_for_status()
         return response.json()
 
     def enqueue_ingest_job(self, paths: list[str]) -> dict[str, Any]:
-        response = httpx.post(f"{self._base_url}/ingest/queue", json={"paths": paths}, timeout=30.0)
+        response = httpx.post(
+            f"{self._base_url}/ingest/queue", json={"paths": paths}, timeout=30.0
+        )
         response.raise_for_status()
         return response.json()
 
@@ -82,7 +94,9 @@ class DesktopApiClient:
         return response.json()
 
     def resume_ingest_job(self, job_id: str) -> dict[str, Any]:
-        response = httpx.post(f"{self._base_url}/ingest/jobs/{job_id}/resume", timeout=20.0)
+        response = httpx.post(
+            f"{self._base_url}/ingest/jobs/{job_id}/resume", timeout=20.0
+        )
         response.raise_for_status()
         return response.json()
 
@@ -97,7 +111,9 @@ class DesktopApiClient:
             "line_points": [{"lon": lon, "lat": lat} for lon, lat in line_points],
             "samples": samples,
         }
-        response = httpx.post(f"{self._base_url}/profile/elevation", json=payload, timeout=60.0)
+        response = httpx.post(
+            f"{self._base_url}/profile/elevation", json=payload, timeout=60.0
+        )
         response.raise_for_status()
         return response.json()
 

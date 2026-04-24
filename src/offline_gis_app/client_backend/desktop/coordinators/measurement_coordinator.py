@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 
 from offline_gis_app.client_backend.desktop.measurement_worker import MeasurementWorker
-from offline_gis_app.server_ingestion.services.scientific_measurements import measure_distance
+from offline_gis_app.client_backend.measurement_tools import measure_distance
 
 
 class MeasurementCoordinator:
@@ -12,7 +12,9 @@ class MeasurementCoordinator:
     def __init__(self, controller):
         self._controller = controller
 
-    def enqueue_distance_measurement(self, lon1: float, lat1: float, lon2: float, lat2: float) -> None:
+    def enqueue_distance_measurement(
+        self, lon1: float, lat1: float, lon2: float, lat2: float
+    ) -> None:
         c = self._controller
         dem_path = self.selected_dem_path()
 
@@ -36,22 +38,40 @@ class MeasurementCoordinator:
             return (
                 "Distance/Azimuth: "
                 f"2D={d.distance_m:.3f} m, az_fwd={d.azimuth_fwd_deg:.2f} deg, az_back={d.azimuth_back_deg:.2f} deg"
-                + (f", dz={d.dz_m:+.3f} m, 3D={d.distance_3d_m:.3f} m" if d.distance_3d_m is not None else "")
+                + (
+                    f", dz={d.dz_m:+.3f} m, 3D={d.distance_3d_m:.3f} m"
+                    if d.distance_3d_m is not None
+                    else ""
+                )
             )
 
         self.submit_measurement_job("Distance/Azimuth", task, formatter)
 
     def submit_measurement_job(self, name: str, task, formatter) -> None:
         c = self._controller
+        
+        # Emit progress start
+        if hasattr(c, 'bridge') and hasattr(c.bridge, 'on_loading_progress'):
+            c.bridge.on_loading_progress(0, f"Computing {name}")
+        
         worker = MeasurementWorker(name=name, task=task)
         worker.signals.finished.connect(
-            lambda job_name, result, error, fmt=formatter: self.on_measurement_job_finished(job_name, result, error, fmt)
+            lambda job_name, result, error, fmt=formatter: (
+                self.on_measurement_job_finished(job_name, result, error, fmt)
+            )
         )
         c._measurement_pool.start(worker)
         c.panel.log(f"{name} started...")
 
-    def on_measurement_job_finished(self, name: str, result: object, error: str, formatter) -> None:
+    def on_measurement_job_finished(
+        self, name: str, result: object, error: str, formatter
+    ) -> None:
         c = self._controller
+        
+        # Emit progress complete
+        if hasattr(c, 'bridge') and hasattr(c.bridge, 'on_loading_progress'):
+            c.bridge.on_loading_progress(100, "Complete")
+        
         if error:
             c.panel.log(f"{name} failed: {error}")
             c._logger.error("Measurement job failed name=%s error=%s", name, error)

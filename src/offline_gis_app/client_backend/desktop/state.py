@@ -14,4 +14,3 @@ class DesktopState:
     active_layer_is_dem: bool = False
     pending_ingest_source_path: str | None = None
     auto_visualize_ingest_result: bool = False
-
