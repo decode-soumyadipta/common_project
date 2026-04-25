@@ -25,18 +25,19 @@ ICON_MANIFEST: dict[str, str] = {
     "swipe_comparator": "mActionSplitFeatures.svg",
     # Measurement tools
     "measure_distance": "mActionMeasure.svg",
+    "measure_polygon_area": "mActionMeasureArea.svg",
     "measure_area": "mActionMeasureArea.svg",
     "elevation_profile": "mActionNewElevationProfile.svg",
     "volume": "mActionCalculateField.svg",
-    "viewshed": "mActionPanToSelected.svg",
+    "viewshed": "mActionIdentify.svg",          # Viewshed/LOS — identify icon
     "slope_aspect": "mActionMeasureAngle.svg",
+    "shadow_height": "mActionMeasureAngle.svg",  # Shadow height — angle icon
     "clear_last": "mActionUndo.svg",
     "clear_all": "mActionDeleteSelected.svg",
     # Annotation tools
     "annotate_point": "mActionCapturePoint.svg",
     "annotate_line": "mActionCaptureLine.svg",
     "annotate_polygon": "mActionCapturePolygon.svg",
-    "shadow_height": "mActionMeasure.svg",
     "edit_annotation": "mActionToggleEditing.svg",
     "delete_annotation": "mActionDeleteSelected.svg",
     "lock_annotation": "mActionToggleEditing.svg",

@@ -189,14 +189,10 @@ class MapOverlayControls(QWidget):
     """
     
     def __init__(self, parent: QWidget, controller: DesktopController):
-        """Initialize the map overlay controls.
-        
-        Args:
-            parent: Parent widget (typically the web view).
-            controller: Desktop controller instance.
-        """
+        """Initialize the map overlay controls."""
         super().__init__(parent, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
         self.controller = controller
+        self._special_mode_active = False  # True when comparator or compositor is active
         self.setObjectName("mapOverlayControls")
         self.setStyleSheet(
             """
@@ -248,61 +244,50 @@ class MapOverlayControls(QWidget):
 
         self.hide()
 
+    def set_special_mode(self, active: bool) -> None:
+        """Call when comparator or compositor mode is activated/deactivated.
+        
+        Hides the AOI polygon checkbox in special modes.
+        """
+        self._special_mode_active = bool(active)
+        # Force a visibility refresh
+        if self._special_mode_active:
+            self.polygon_visibility_checkbox.setVisible(False)
+            self.aoi_stats_label.setVisible(False)
+            self.adjustSize()
+
     def update_position(self) -> None:
         """Update the overlay position to top-right corner of parent widget."""
         parent_widget = self.parentWidget()
         if parent_widget and parent_widget.isVisible():
-            # Get the parent widget's geometry in global coordinates
             parent_rect = parent_widget.rect()
             top_right = parent_widget.mapToGlobal(parent_rect.topRight())
-            
-            # Adjust position to stay within parent bounds
             x_pos = top_right.x() - self.width() - 20
             y_pos = top_right.y() + 20
-            
-            # Ensure it doesn't go off screen when window is resized
             if x_pos < 0:
                 x_pos = 10
             if y_pos < 0:
                 y_pos = 10
-                
             self.move(x_pos, y_pos)
 
     def _on_scene_mode_changed(self, text: str) -> None:
-        """Handle scene mode changes between 3D and 2D.
-        
-        Args:
-            text: Selected mode text ("3D Globe" or "2D Map").
-        """
         mode = "2d" if "2D" in text else "3d"
         self.controller.web_view.page().runJavaScript(
             f"window.offlineGIS.setSceneMode('{mode}');"
         )
 
     def _on_polygon_visibility_toggled(self, checked: bool) -> None:
-        """Handle search polygon visibility toggle.
-        
-        Args:
-            checked: True to show polygon, False to hide.
-        """
         self.controller.web_view.page().runJavaScript(
             f"window.offlineGIS.setSearchPolygonVisibility({str(checked).lower()});"
         )
 
     def update_aoi_stats(self, vertices: int, area_text: str) -> None:
-        """Update the AOI statistics display.
-        
-        Args:
-            vertices: Number of vertices in the polygon.
-            area_text: Formatted area text with units.
-        """
-        if vertices >= 3:
-            # Polygon exists - show checkbox and stats
+        """Update the AOI statistics display."""
+        if vertices >= 3 and not self._special_mode_active:
             self.polygon_visibility_checkbox.setVisible(True)
             self.aoi_stats_label.setText(f"Area: {area_text}\nVertices: {vertices}")
             self.aoi_stats_label.setVisible(True)
         else:
-            # No polygon - hide checkbox and stats
             self.polygon_visibility_checkbox.setVisible(False)
             self.aoi_stats_label.setVisible(False)
         
@@ -357,7 +342,6 @@ class MainWindow(QMainWindow):
             "measurement",
             (
                 ("Distance / Azimuth", "measure_distance"),
-                ("Polygon Area", "measure_polygon_area"),
                 ("Elevation Profile", "elevation_profile"),
                 ("Volume Cut/Fill", "volume"),
                 ("Viewshed / LOS", "viewshed"),
@@ -658,12 +642,29 @@ class MainWindow(QMainWindow):
                 return
             if checked:
                 self._show_comparator_dropdown()
+                # Gray out Layer Compositor while Comparator is active
+                compositor_action = self.toolbar_actions.get("Layer Compositor")
+                if compositor_action is not None:
+                    compositor_action.setEnabled(False)
+                    compositor_action.setChecked(False)
+                    if hasattr(self, "compositor_overlay"):
+                        self.compositor_overlay.hide()
+                # Hide AOI checkbox in comparator mode
+                if hasattr(self, "map_overlay_controls"):
+                    self.map_overlay_controls.set_special_mode(True)
                 return
             final_state = self.controller.handle_toolbar_action(
                 action_label, checked=checked
             )
             if isinstance(final_state, bool):
                 action.setChecked(final_state)
+            # Re-enable Layer Compositor when Comparator is off
+            compositor_action = self.toolbar_actions.get("Layer Compositor")
+            if compositor_action is not None:
+                compositor_action.setEnabled(True)
+            # Restore AOI checkbox visibility
+            if hasattr(self, "map_overlay_controls"):
+                self.map_overlay_controls.set_special_mode(False)
             return
 
         if action_label == "Layer Compositor":
@@ -672,11 +673,26 @@ class MainWindow(QMainWindow):
                 return
             if checked:
                 self._show_layer_compositor_overlay()
+                # Gray out Comparator while Layer Compositor is active
+                comparator_action = self.toolbar_actions.get("Comparator")
+                if comparator_action is not None:
+                    comparator_action.setEnabled(False)
+                    comparator_action.setChecked(False)
+                # Hide AOI checkbox in compositor mode
+                if hasattr(self, "map_overlay_controls"):
+                    self.map_overlay_controls.set_special_mode(True)
                 return
             self.controller.disable_layer_compositor()
             if hasattr(self, "compositor_overlay"):
                 self.compositor_overlay.hide()
             action.setChecked(False)
+            # Re-enable Comparator when Layer Compositor is off
+            comparator_action = self.toolbar_actions.get("Comparator")
+            if comparator_action is not None:
+                comparator_action.setEnabled(True)
+            # Restore AOI checkbox visibility
+            if hasattr(self, "map_overlay_controls"):
+                self.map_overlay_controls.set_special_mode(False)
             return
 
         final_state = self.controller.handle_toolbar_action(
@@ -1005,7 +1021,7 @@ class MainWindow(QMainWindow):
             action.setVisible(True)
 
             if (
-                group in {"visualization", "measurement"}
+                group == "measurement"
                 and self._toolbar_layer_context == "none"
             ):
                 action.setEnabled(False)

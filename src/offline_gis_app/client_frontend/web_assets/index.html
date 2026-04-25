@@ -53,6 +53,32 @@
           <div class="comparatorCoords" id="comparatorCoordsRight">lon: ---, lat: ---</div>
         </div>
       </div>
+
+      <!-- Compass widget — bottom-right, real-time heading, click to reset North-up -->
+      <div id="compassWidget" title="Click to reset North-up and fit assets" aria-label="Compass">
+        <svg id="compassSvg" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+          <!-- Outer ring -->
+          <circle cx="32" cy="32" r="30" fill="rgba(14,22,38,0.82)" stroke="rgba(180,200,230,0.55)" stroke-width="1.5"/>
+          <!-- Cardinal tick marks -->
+          <line x1="32" y1="4"  x2="32" y2="10" stroke="rgba(200,220,245,0.7)" stroke-width="1.2"/>
+          <line x1="32" y1="54" x2="32" y2="60" stroke="rgba(200,220,245,0.7)" stroke-width="1.2"/>
+          <line x1="4"  y1="32" x2="10" y2="32" stroke="rgba(200,220,245,0.7)" stroke-width="1.2"/>
+          <line x1="54" y1="32" x2="60" y2="32" stroke="rgba(200,220,245,0.7)" stroke-width="1.2"/>
+          <!-- Compass needle group — rotated by JS -->
+          <g id="compassNeedle">
+            <!-- North (red) -->
+            <polygon points="32,8 28,32 32,28 36,32" fill="#e84040"/>
+            <!-- South (white) -->
+            <polygon points="32,56 28,32 32,36 36,32" fill="rgba(230,238,252,0.9)"/>
+            <!-- Centre dot -->
+            <circle cx="32" cy="32" r="3.5" fill="rgba(230,238,252,0.95)" stroke="rgba(14,22,38,0.6)" stroke-width="1"/>
+          </g>
+          <!-- N label -->
+          <text x="32" y="20" text-anchor="middle" dominant-baseline="middle"
+                font-size="8" font-weight="700" font-family="monospace"
+                fill="rgba(230,238,252,0.9)" id="compassNLabel">N</text>
+        </svg>
+      </div>
     </div>
   </body>
 </html>

@@ -61,37 +61,47 @@ def run(
     import platform
 
     existing_flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
+    # Core flags applied on all platforms
     required_flags = [
         "--ignore-gpu-blocklist",
         "--enable-gpu-rasterization",
-        "--js-flags=--max-old-space-size=2048",
+        "--enable-webgl",
+        "--enable-accelerated-2d-canvas",
+        "--enable-gpu",
+        "--gpu-no-context-lost",
+        "--js-flags=--max-old-space-size=4096",  # 4 GB V8 heap for large COG metadata
     ]
-    # Windows-specific: enable NVIDIA GPU acceleration and smooth WebGL rendering.
-    # These flags help CesiumJS utilize the discrete NVIDIA GPU instead of the
-    # integrated GPU, dramatically improving 3D globe and terrain rendering speed.
-    if platform.system() == "Windows":
-        required_flags.extend(
-            [
-                "--enable-webgl",
-                "--use-gl=desktop",
-                "--enable-accelerated-2d-canvas",
-                "--enable-gpu",
-                "--disable-gpu-vsync",
-                # Disable renderer code integrity to prevent NVIDIA driver sandbox conflicts
-                "--disable-features=RendererCodeIntegrity",
-                "--gpu-no-context-lost",
-            ]
-        )
-        # Force dedicated NVIDIA/AMD GPU — these env vars are read by the GPU driver
-        # before process launch and override any Windows Optimus power-saving selection.
-        os.environ.setdefault("SHIM_MCCOMPAT", "0x800000001")  # NVIDIA Optimus
-        os.environ.setdefault(
-            "__NV_PRIME_RENDER_OFFLOAD", "1"
-        )  # Linux PRIME (no-op on Win)
-        os.environ.setdefault("NvOptimusEnablement", "0x00000001")  # Force NVIDIA
-        os.environ.setdefault(
-            "AmdPowerXpressRequestHighPerformance", "1"
-        )  # Force AMD dGPU
+
+    system = platform.system()
+
+    if system == "Windows":
+        # Windows: force NVIDIA discrete GPU via Optimus override
+        required_flags.extend([
+            "--use-gl=desktop",
+            "--disable-gpu-vsync",
+            "--disable-features=RendererCodeIntegrity",
+        ])
+        os.environ.setdefault("SHIM_MCCOMPAT", "0x800000001")       # NVIDIA Optimus
+        os.environ.setdefault("NvOptimusEnablement", "0x00000001")   # Force NVIDIA dGPU
+        os.environ.setdefault("AmdPowerXpressRequestHighPerformance", "1")  # Force AMD dGPU
+        os.environ.setdefault("__NV_PRIME_RENDER_OFFLOAD", "1")      # Linux PRIME (no-op on Win)
+
+    elif system == "Linux":
+        # Linux: NVIDIA PRIME offload for discrete GPU
+        required_flags.extend([
+            "--use-gl=desktop",
+            "--disable-gpu-vsync",
+        ])
+        os.environ.setdefault("__NV_PRIME_RENDER_OFFLOAD", "1")
+        os.environ.setdefault("__GLX_VENDOR_LIBRARY_NAME", "nvidia")
+        os.environ.setdefault("__VK_LAYER_NV_optimus", "NVIDIA_only")
+
+    elif system == "Darwin":
+        # macOS: use Metal-backed GL for best performance on Apple Silicon / AMD / NVIDIA eGPU
+        required_flags.extend([
+            "--use-gl=angle",
+            "--use-angle=metal",
+        ])
 
     for flag in required_flags:
         if flag not in existing_flags:

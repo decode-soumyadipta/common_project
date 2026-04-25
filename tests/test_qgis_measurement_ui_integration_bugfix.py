@@ -76,17 +76,19 @@ def controller(qapp, mock_panel, mock_web_view):
 def test_status_bar_updates_coordinates_and_clears_invalid_sample(qapp):
     status_bar = GISStatusBar()
 
+    # Test 1: Valid coordinates with DEM elevation
     status_bar.on_mouse_coordinates(87.2314, 23.7102, 312.5)
     assert "87.2314" in status_bar._lon_box.label.text()
     assert "23.7102" in status_bar._lat_box.label.text()
     assert "312" in status_bar._elev_box.label.text()
 
+    # Test 2: Valid coordinates (0,0) but no DEM available (-9999)
+    # Lon/Lat/UTM should show, but elevation should be blank
     status_bar.on_mouse_coordinates(0.0, 0.0, -9999.0)
-    assert status_bar._lon_box.label.text() == "Lon: —"
-    assert status_bar._lat_box.label.text() == "Lat: —"
-    assert status_bar._utm_box.label.text() == "UTM: —"
-    assert status_bar._elev_box.label.text() == "Elev: —"
-
+    assert "0.000000" in status_bar._lon_box.label.text()
+    assert "0.000000" in status_bar._lat_box.label.text()
+    assert "31N" in status_bar._utm_box.label.text()  # UTM zone for 0,0
+    assert status_bar._elev_box.label.text() == "Elev: —"  # No DEM = blank elevation
 
 def test_polygon_measurement_button_enables_crosshair_and_draw_mode(controller):
     controller.state.clicked_points = []

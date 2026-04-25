@@ -286,3 +286,37 @@ body,
   }
 }
 
+
+/* ── Compass widget ─────────────────────────────────────────────────────── */
+#compassWidget {
+  position: absolute;
+  bottom: 48px;
+  left: 16px;           /* bottom-LEFT corner */
+  width: 72px;
+  height: 72px;
+  z-index: 20;
+  cursor: pointer;
+  user-select: none;
+  filter: drop-shadow(0 2px 8px rgba(0,0,0,0.65));
+  /* No CSS transition — rotation is driven by rAF for maximum fluidity */
+}
+
+#compassWidget:hover {
+  filter: drop-shadow(0 3px 14px rgba(80,160,255,0.7));
+}
+
+#compassWidget:active {
+  filter: drop-shadow(0 1px 4px rgba(0,0,0,0.4));
+}
+
+#compassSvg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ── Measurement tool cursors ───────────────────────────────────────────── */
+.measure-distance-cursor-active,
+.measure-distance-cursor-active * {
+  cursor: crosshair !important;
+}

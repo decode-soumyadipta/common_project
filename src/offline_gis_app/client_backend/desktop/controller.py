@@ -1651,6 +1651,8 @@ class DesktopController:
         self._pan_mode_enabled = not self._distance_measure_mode_enabled
         self._last_distance_measurement_signature = None
         if self._distance_measure_mode_enabled:
+            # Disable pan mode in JS so clicks reach the distance tool handler
+            self._run_js_call("setPanMode", False)
             self._run_js_call("setSearchDrawMode", "none")
         self._run_js_call("setDistanceMeasureMode", self._distance_measure_mode_enabled)
         self._set_measurement_cursor_enabled(self._distance_measure_mode_enabled)

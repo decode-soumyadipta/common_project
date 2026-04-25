@@ -229,13 +229,10 @@ class GISStatusBar(QStatusBar):
         Args:
             lon: Longitude in degrees.
             lat: Latitude in degrees.
-            elevation_m: Elevation in meters.
+            elevation_m: Elevation in meters (-9999 if no DEM available).
         """
-        if (
-            not (math.isfinite(lon) and math.isfinite(lat))
-            or not math.isfinite(elevation_m)
-            or elevation_m <= -9000.0
-        ):
+        # Check if coordinates are valid
+        if not (math.isfinite(lon) and math.isfinite(lat)):
             self.clear_coordinates()
             return
 
@@ -251,9 +248,14 @@ class GISStatusBar(QStatusBar):
         utm_text = self._format_utm_coordinates(lon, lat)
         self._utm_box.label.setText(f"UTM: {utm_text}")
 
-        # Elevation
-        elev_text = f"{elevation_m:,.{self._elev_decimal_places}f} m"
-        self._elev_box.label.setText(f"Elev: {elev_text}")
+        # Elevation - only show when DEM data is available
+        # -9999 indicates no DEM terrain is loaded
+        if math.isfinite(elevation_m) and elevation_m > -9000.0:
+            elev_text = f"{elevation_m:,.{self._elev_decimal_places}f} m"
+            self._elev_box.label.setText(f"Elev: {elev_text}")
+        else:
+            # No DEM available - keep box visible but blank
+            self._elev_box.label.setText("Elev: —")
 
     @Slot(float, float)
     def on_camera_changed(self, scale_denominator: float, heading_deg: float) -> None:
