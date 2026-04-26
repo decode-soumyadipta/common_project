@@ -359,9 +359,9 @@
           comparatorRightViewer.scene.requestRender();
         }
       };
-      // Two passes: one after layout, one after paint
       setTimeout(_resizeAndRender, 50);
       setTimeout(_resizeAndRender, 300);
+      setTimeout(_resizeAndRender, 800);
     }
   }
 
@@ -1641,36 +1641,64 @@
       // div is display:none at creation time — causing a permanently black pane.
       setComparatorWindowsVisible(true);
       setSelectedComparatorPane(comparatorSelectedPane, false);
-      // 80 ms delay lets the browser reflow before Cesium measures the canvas
-      setTimeout(function () {
-        // Force explicit pixel dimensions on the viewer divs before creating Cesium
-        // viewers — on Windows the flex layout may not have reflowed yet.
-        var _winW = window.innerWidth || document.documentElement.clientWidth || 800;
-        var _winH = window.innerHeight || document.documentElement.clientHeight || 600;
-        var _paneW = Math.floor((_winW - 6) / 2);
-        ["comparatorLeftViewer", "comparatorRightViewer",
-         "comparatorPaneLeft", "comparatorPaneRight"].forEach(function (id) {
-          var el = document.getElementById(id);
-          if (el && el.clientWidth === 0) {
-            el.style.width = _paneW + "px";
-            el.style.height = _winH + "px";
-            log("info", "Comparator forced size on #" + id + ": " + _paneW + "x" + _winH);
-          }
-        });
+
+      // Wait for two animation frames so the browser has fully reflowed the
+      // flex layout before Cesium measures the canvas dimensions.
+      // On Windows this is more reliable than a fixed setTimeout.
+      function _initComparatorAfterReflow() {
         var _cw = document.getElementById("comparatorWindows");
-        if (_cw && _cw.clientWidth === 0) {
-          _cw.style.width = _winW + "px";
-          _cw.style.height = _winH + "px";
+        var _cwW = _cw ? _cw.offsetWidth : 0;
+        var _cwH = _cw ? _cw.offsetHeight : 0;
+
+        // If the comparator window still has zero size, fall back to window dims
+        if (_cwW < 10) _cwW = window.innerWidth || 800;
+        if (_cwH < 10) _cwH = window.innerHeight || 600;
+
+        // Count actual pane divs to divide width correctly (2, 3, or 4 panes)
+        var _panes = _cw ? _cw.querySelectorAll(".comparatorPane") : [];
+        var _numPanes = _panes.length || 2;
+        var _numDividers = Math.max(0, _numPanes - 1);
+        var _paneW = Math.floor((_cwW - _numDividers * 6) / _numPanes);
+
+        log("info", "Comparator init: cwSize=" + _cwW + "x" + _cwH +
+            " panes=" + _numPanes + " paneW=" + _paneW);
+
+        // Force explicit sizes on viewer divs so Cesium gets non-zero canvas
+        for (var _pi = 0; _pi < _panes.length; _pi++) {
+          var _pane = _panes[_pi];
+          if (_pane.offsetWidth < 10) {
+            _pane.style.width = _paneW + "px";
+            _pane.style.height = _cwH + "px";
+          }
+          var _viewer = _pane.querySelector(".comparatorViewer");
+          if (_viewer) {
+            _viewer.style.width = _paneW + "px";
+            _viewer.style.height = _cwH + "px";
+          }
         }
 
         ensureComparatorViewers();
+
         if (comparatorLeftViewer && comparatorRightViewer) {
           comparatorLeftViewer.resize();
           comparatorRightViewer.resize();
-          log("info", "Comparator canvas after resize: left=" +
+          log("info", "Comparator canvas: left=" +
               comparatorLeftViewer.canvas.width + "x" + comparatorLeftViewer.canvas.height +
               " right=" + comparatorRightViewer.canvas.width + "x" + comparatorRightViewer.canvas.height);
         }
+
+        // Remove forced inline sizes after 300ms so CSS flex takes over for resizes
+        setTimeout(function () {
+          for (var _ci = 0; _ci < _panes.length; _ci++) {
+            _panes[_ci].style.width = "";
+            _panes[_ci].style.height = "";
+            var _v = _panes[_ci].querySelector(".comparatorViewer");
+            if (_v) { _v.style.width = ""; _v.style.height = ""; }
+          }
+          if (comparatorLeftViewer) { try { comparatorLeftViewer.resize(); } catch (_) {} }
+          if (comparatorRightViewer) { try { comparatorRightViewer.resize(); } catch (_) {} }
+        }, 300);
+
         refreshComparatorLayers();
         const bounds = activeTileBounds || lastLoadedBounds;
         if (bounds && comparatorLeftViewer && comparatorRightViewer) {
@@ -1686,7 +1714,12 @@
         } else {
           setStatus("Comparator enabled. Panes are independently controllable.");
         }
-      }, 80);
+      }
+
+      // Two rAF passes guarantee the browser has painted at least once
+      requestAnimationFrame(function () {
+        requestAnimationFrame(_initComparatorAfterReflow);
+      });
     } else {
       setComparatorWindowsVisible(false);
       setStatus("Comparator disabled.");
