@@ -1042,6 +1042,26 @@ class DesktopController:
             if show_loading:
                 self._set_layer_loading(False, "Layer load failed")
             return None
+
+        # Auto-convert to COG if the source is a plain GeoTIFF.
+        # Non-COG files fail to tile on Windows and are slower everywhere.
+        # The COG is written next to the source (e.g. dem.cog.tif) and reused.
+        if self.app_mode != DesktopAppMode.CLIENT:
+            try:
+                from offline_gis_app.server_ingestion.services.cog_service import (
+                    CogPreparationService,
+                )
+                cog_result = CogPreparationService().prepare(Path(asset["file_path"]))
+                if cog_result.working_path != Path(asset["file_path"]):
+                    asset = dict(asset)  # don't mutate the original
+                    asset["file_path"] = str(cog_result.working_path)
+                    asset["tile_url"] = build_xyz_url(str(cog_result.working_path))
+                    if cog_result.converted:
+                        self.panel.log(
+                            f"COG conversion complete: {cog_result.working_path.name}"
+                        )
+            except Exception:
+                self._logger.debug("COG preparation skipped", exc_info=True)
         if not self.titiler.ensure_running():
             self.panel.log("Warning: TiTiler could not start. Layer may not draw.")
             self._logger.error("TiTiler unavailable before add layer")
