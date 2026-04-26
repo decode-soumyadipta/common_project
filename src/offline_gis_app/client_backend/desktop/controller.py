@@ -796,15 +796,37 @@ class DesktopController:
             self.panel.set_search_busy(False)
 
         centroid_x, centroid_y = metadata.bounds.centroid()
+
+        # Convert to COG before previewing — same as the ingest pipeline.
+        # Non-COG GeoTIFFs fail to tile on Windows. The COG is written next to
+        # the source (e.g. coal 14_2024_4.cog.tif) and reused on next load.
+        working_source = source
+        if self.app_mode != DesktopAppMode.CLIENT:
+            try:
+                from offline_gis_app.server_ingestion.services.cog_service import (
+                    CogPreparationService,
+                )
+                if not CogPreparationService._looks_like_cog(source):
+                    self.panel.log(f"Preparing COG for {source.name}…")
+                    self._set_layer_loading(True, f"Converting {source.name} to COG…")
+                cog_result = CogPreparationService().prepare(source)
+                working_source = cog_result.working_path
+                if cog_result.converted:
+                    self.panel.log(f"COG ready: {working_source.name}")
+                self._logger.info("COG prepare: source=%s working=%s converted=%s",
+                                  source.name, working_source.name, cog_result.converted)
+            except Exception:
+                self._logger.warning("COG preparation failed for preview", exc_info=True)
+
         preview_asset = {
             "id": f"preview:{source}",
             "file_name": metadata.file_name,
-            "file_path": str(source),
+            "file_path": str(working_source),
             "kind": metadata.kind.value,
             "crs": metadata.crs,
             "centroid": {"lon": centroid_x, "lat": centroid_y},
             "bounds_wkt": metadata.bounds.to_wkt_polygon(),
-            "tile_url": build_xyz_url(str(source)),
+            "tile_url": build_xyz_url(str(working_source)),
         }
 
         self.state.selected_asset = preview_asset
