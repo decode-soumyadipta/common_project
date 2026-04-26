@@ -1978,6 +1978,23 @@
     return Cesium.Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north);
   }
 
+  // Encode a query parameter value.
+  // For the "url" key (file path passed to TiTiler/GDAL), preserve ":" and "/"
+  // so Windows paths like "C:/Users/..." survive the round-trip through
+  // decodeURIComponent → encodeURIComponent in buildUrlWithQuery.
+  // All other values use standard encodeURIComponent.
+  function _encodeParamValue(key, value) {
+    if (key === "url") {
+      // Encode everything except unreserved chars, ":", "/", and "@"
+      // This matches what Python's urllib.parse.quote(s, safe="/:@") produces.
+      return encodeURIComponent(value)
+        .replace(/%3A/gi, ":")
+        .replace(/%2F/gi, "/")
+        .replace(/%40/gi, "@");
+    }
+    return encodeURIComponent(value);
+  }
+
   function buildUrlWithQuery(url, extraQuery) {
     const splitIndex = url.indexOf("?");
     const base = splitIndex >= 0 ? url.slice(0, splitIndex) : url;
@@ -2006,10 +2023,10 @@
       }
       if (Array.isArray(value)) {
         return value.map(function (item) {
-          return encodeURIComponent(key) + "=" + encodeURIComponent(String(item));
+          return encodeURIComponent(key) + "=" + _encodeParamValue(key, String(item));
         }).join("&");
       }
-      return encodeURIComponent(key) + "=" + encodeURIComponent(String(value));
+      return encodeURIComponent(key) + "=" + _encodeParamValue(key, String(value));
     }).filter(Boolean);
     
     const merged = paramPairs.join("&");
