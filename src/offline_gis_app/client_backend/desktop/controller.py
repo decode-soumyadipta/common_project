@@ -2940,6 +2940,10 @@ class DesktopController:
             # nearest resampling avoids interpolated reads that fail on non-COG
             # GeoTIFFs on Windows (GDAL "Read failed" error)
             query["resampling"] = "nearest"
+            # Set nodata=0 to prevent GDAL "INIT_DEST NO_DATA without defined nodata"
+            # error on Windows when the file has no nodata value defined.
+            if "nodata" not in query:
+                query["nodata"] = 0
 
         stats = {}
         try:

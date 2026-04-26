@@ -58,6 +58,8 @@ def configure_standalone_runtime(mode: str) -> Path:
     os.environ.setdefault("VSI_CACHE_SIZE", "10000000")
     os.environ.setdefault("GDAL_CACHEMAX", "512")
     os.environ.setdefault("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR")
+    # Fix GDAL 3.x "INIT_DEST NO_DATA" bug on Windows for files without nodata
+    os.environ.setdefault("GDAL_TIFF_INTERNAL_MASK", "NO")
 
     api_port = os.environ.get("API_PORT", "8000")
     server_host = (

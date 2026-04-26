@@ -121,15 +121,14 @@ class TiTilerManager:
 
         env["GDAL_DISABLE_READDIR_ON_OPEN"] = "EMPTY_DIR"
         env["GDAL_HTTP_MERGE_CONSECUTIVE_RANGES"] = "YES"
-        # Force GDAL to use a single-threaded read path on Windows.
-        # Non-COG GeoTIFFs fail with "Read failed" on Windows when GDAL tries
-        # concurrent block reads. VSI_CACHE and GDAL_CACHEMAX improve performance.
+        # Fix "INIT_DEST was set to NO_DATA, but a NoData value was not defined"
+        # — a GDAL 3.x bug on Windows when tiling files without a nodata value.
+        env["GDAL_TIFF_INTERNAL_MASK"] = "NO"
         env["GDAL_NUM_THREADS"] = "1"
         env["VSI_CACHE"] = "TRUE"
-        env["VSI_CACHE_SIZE"] = "10000000"   # 10 MB VSI cache
-        env["GDAL_CACHEMAX"] = "512"          # 512 MB GDAL block cache
+        env["VSI_CACHE_SIZE"] = "10000000"
+        env["GDAL_CACHEMAX"] = "512"
         env["CPL_VSIL_USE_TEMP_FILE_FOR_RANDOM_WRITE"] = "NO"
-        env["GDAL_TIFF_INTERNAL_MASK"] = "YES"
         env["GDAL_TIFF_OVR_BLOCKSIZE"] = "512"
         # Suppress numpy cast warnings that spam stderr
         warning_filter = "ignore:invalid value encountered in cast:RuntimeWarning"
