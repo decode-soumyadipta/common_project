@@ -5353,19 +5353,12 @@
         clearManagedImageryLayers();
       }
       setSceneModeControlEnabled(true);
-      let providerUrl = xyzUrl;
+      // Use buildUrlWithQuery (same as DEM pipeline) to fully pre-encode the url=
+      // query parameter value via encodeURIComponent.  This prevents Cesium's
+      // UrlTemplateImageryProvider from double-encoding already-encoded sequences
+      // like %20 (space) → %2520, which would make GDAL fail to find the file.
       const extraQuery = options && options.query ? options.query : {};
-      const qp = new URLSearchParams();
-      Object.entries(extraQuery).forEach(([k, v]) => {
-        if (v === null || v === undefined) return;
-        if (Array.isArray(v)) {
-          v.forEach((item) => qp.append(k, String(item)));
-          return;
-        }
-        qp.set(k, String(v));
-      });
-      const qpText = qp.toString();
-      if (qpText) providerUrl += (providerUrl.includes("?") ? "&" : "?") + qpText;
+      const providerUrl = buildUrlWithQuery(xyzUrl, extraQuery);
       log("debug", "Imagery URL construction baseUrl=" + xyzUrl + " finalUrl=" + providerUrl);
       const bounds = options && options.bounds ? options.bounds : null;
       const normalizedBounds = normalizeBounds(bounds);

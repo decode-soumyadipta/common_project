@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import platform
 from typing import Any
 from urllib.parse import quote
 
@@ -143,10 +144,30 @@ class DesktopApiClient:
 
     @staticmethod
     def _to_file_url(file_path: str) -> str:
+        """Convert a local file path to a URL suitable for TiTiler's GDAL backend.
+
+        On Windows, GDAL/rasterio cannot reliably open ``file:///C:/path with spaces/``
+        URLs.  The raw ``C:/...`` form (the same approach used by TiTilerUrlPolicy)
+        works correctly because GDAL treats a leading drive letter as an absolute
+        Windows path without needing the ``file://`` scheme.
+
+        On macOS/Linux, ``file:///abs/path`` is standard and works fine.
+        UNC network paths (``//server/share``) keep the ``file:`` scheme on all
+        platforms.
+        """
         normalized = file_path.strip().replace("\\", "/")
         if not normalized:
             raise ValueError("file_path cannot be empty")
 
+        # Strip any existing file:// prefix so we start from a clean path.
+        if normalized.startswith("file:///"):
+            normalized = normalized[8:]
+        elif normalized.startswith("file://"):
+            normalized = normalized[7:]
+        elif normalized.startswith("file:"):
+            normalized = normalized[5:]
+
+        # Collapse accidental double-slashes (preserve UNC ``//server/share``).
         if normalized.startswith("//"):
             tail = normalized[2:]
             while "//" in tail:
@@ -156,16 +177,21 @@ class DesktopApiClient:
             while "//" in normalized:
                 normalized = normalized.replace("//", "/")
 
-        if normalized.startswith("file://"):
-            return normalized
-
+        # Windows absolute path: ``C:/...``
+        # On Windows: return the raw path — GDAL handles it natively and spaces
+        # are safe because the caller will percent-encode the whole string.
         if len(normalized) >= 3 and normalized[1] == ":" and normalized[2] == "/":
-            return f"file:///{normalized}"
+            if platform.system() == "Windows":
+                return normalized  # e.g. "C:/Users/Foo Bar/data.tif"
+            return f"file:///{normalized}"  # macOS/Linux cross-test compatibility
 
+        # UNC network path: ``//server/share/...``
         if normalized.startswith("//"):
             return f"file:{normalized}"
 
+        # Absolute POSIX path: ``/abs/path``
         if normalized.startswith("/"):
             return f"file://{normalized}"
 
+        # Relative or unknown — best-effort.
         return f"file:///{normalized}"
