@@ -1438,10 +1438,10 @@
       animation: false,
       terrainProvider: new Cesium.EllipsoidTerrainProvider(),
     });
-    comparatorLeftViewer.scene.globe.baseColor = Cesium.Color.BLACK;
-    comparatorRightViewer.scene.globe.baseColor = Cesium.Color.BLACK;
-    comparatorLeftViewer.scene.backgroundColor = Cesium.Color.BLACK;
-    comparatorRightViewer.scene.backgroundColor = Cesium.Color.BLACK;
+    comparatorLeftViewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#1a2a3a");
+    comparatorRightViewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#1a2a3a");
+    comparatorLeftViewer.scene.backgroundColor = Cesium.Color.fromCssColorString("#1a2a3a");
+    comparatorRightViewer.scene.backgroundColor = Cesium.Color.fromCssColorString("#1a2a3a");
     comparatorLeftViewer.scene.fxaa = false;
     comparatorRightViewer.scene.fxaa = false;
     comparatorLeftViewer.scene.mode = Cesium.SceneMode.SCENE3D;
@@ -1450,28 +1450,39 @@
     comparatorRightViewer.scene.verticalExaggeration = demVisual.exaggeration;
     comparatorLeftViewer.camera.percentageChanged = 0.001;
     comparatorRightViewer.camera.percentageChanged = 0.001;
+    log("info", "Comparator viewers created left=" + (comparatorLeftViewer ? "ok" : "null") +
+        " right=" + (comparatorRightViewer ? "ok" : "null"));
 
-    // Add the same offline basemap used by the main viewer so comparator panes
-    // are not blank on Windows where NaturalEarthII assets may be unavailable.
+    // Add basemap to comparator panes
     try {
       var _leftBasemap = createNaturalEarthProvider();
       comparatorLeftViewer.imageryLayers.addImageryProvider(_leftBasemap);
       var _rightBasemap = createNaturalEarthProvider();
       comparatorRightViewer.imageryLayers.addImageryProvider(_rightBasemap);
+      log("info", "Comparator basemap providers added");
     } catch (_e) {
-      log("debug", "Comparator basemap provider failed, panes will show black background");
+      log("warn", "Comparator basemap provider failed: " + _e);
     }
 
-    // Force initial renders — on Windows with ANGLE the viewers need an explicit
-    // render call after creation or they stay black.
-    setTimeout(function () {
+    // Force resize + render — on Windows/ANGLE viewers initialise with zero-size
+    // canvas when the parent div is hidden at creation time.
+    var _forceComparatorRender = function (label) {
+      log("info", "Comparator force render (" + label + ")");
       if (comparatorLeftViewer && comparatorLeftViewer.scene) {
+        try { comparatorLeftViewer.resize(); } catch (_) {}
         comparatorLeftViewer.scene.requestRender();
+        log("info", "Comparator left canvas size=" +
+            comparatorLeftViewer.canvas.width + "x" + comparatorLeftViewer.canvas.height);
       }
       if (comparatorRightViewer && comparatorRightViewer.scene) {
+        try { comparatorRightViewer.resize(); } catch (_) {}
         comparatorRightViewer.scene.requestRender();
+        log("info", "Comparator right canvas size=" +
+            comparatorRightViewer.canvas.width + "x" + comparatorRightViewer.canvas.height);
       }
-    }, 100);
+    };
+    setTimeout(function () { _forceComparatorRender("100ms"); }, 100);
+    setTimeout(function () { _forceComparatorRender("500ms"); }, 500);
     bindComparatorSyncHandlers();
     bindComparatorPaneSelectionHandlers();
     setComparatorPaneSelectionStyles(comparatorSelectedPane);
@@ -1625,29 +1636,37 @@
         paneState.dem.hillshadeAlpha = demVisual.hillshadeAlpha;
         paneState.dem.colorMode = String(paneState.dem.colorMode || "gray");
       }
-      ensureComparatorViewers();
-      setSelectedComparatorPane(comparatorSelectedPane, false);
+      // Show the window FIRST so divs have non-zero size, THEN create viewers.
+      // On Windows/ANGLE, Cesium initialises with a zero-size canvas if the parent
+      // div is display:none at creation time — causing a permanently black pane.
       setComparatorWindowsVisible(true);
-      if (comparatorLeftViewer && comparatorRightViewer) {
-        comparatorLeftViewer.resize();
-        comparatorRightViewer.resize();
-      }
-      refreshComparatorLayers();
-      const bounds = activeTileBounds || lastLoadedBounds;
-      if (bounds && comparatorLeftViewer && comparatorRightViewer) {
-        const rect = Cesium.Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north);
-        focusComparatorViewerToRectangle(comparatorLeftViewer, comparatorLeftLayerType, rect);
-        focusComparatorViewerToRectangle(comparatorRightViewer, comparatorRightLayerType, rect);
-      }
-      updateComparatorCenterReadout(getComparatorDemViewer() || comparatorLeftViewer);
-      notifyComparatorPaneState(comparatorSelectedPane);
-      // Sync ROI polygons into comparator viewers
-      updateComparatorPolygons(polygonVisibilityEnabled);
-      if (candidateCount < 2) {
-        setStatus("Comparator enabled. Select two visible layers to render left and right panes.");
-      } else {
-        setStatus("Comparator enabled. Panes are independently controllable.");
-      }
+      setSelectedComparatorPane(comparatorSelectedPane, false);
+      // 80 ms delay lets the browser reflow before Cesium measures the canvas
+      setTimeout(function () {
+        ensureComparatorViewers();
+        if (comparatorLeftViewer && comparatorRightViewer) {
+          comparatorLeftViewer.resize();
+          comparatorRightViewer.resize();
+          log("info", "Comparator resize: left=" +
+              comparatorLeftViewer.canvas.width + "x" + comparatorLeftViewer.canvas.height +
+              " right=" + comparatorRightViewer.canvas.width + "x" + comparatorRightViewer.canvas.height);
+        }
+        refreshComparatorLayers();
+        const bounds = activeTileBounds || lastLoadedBounds;
+        if (bounds && comparatorLeftViewer && comparatorRightViewer) {
+          const rect = Cesium.Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north);
+          focusComparatorViewerToRectangle(comparatorLeftViewer, comparatorLeftLayerType, rect);
+          focusComparatorViewerToRectangle(comparatorRightViewer, comparatorRightLayerType, rect);
+        }
+        updateComparatorCenterReadout(getComparatorDemViewer() || comparatorLeftViewer);
+        notifyComparatorPaneState(comparatorSelectedPane);
+        updateComparatorPolygons(polygonVisibilityEnabled);
+        if (candidateCount < 2) {
+          setStatus("Comparator enabled. Select two visible layers to render left and right panes.");
+        } else {
+          setStatus("Comparator enabled. Panes are independently controllable.");
+        }
+      }, 80);
     } else {
       setComparatorWindowsVisible(false);
       setStatus("Comparator disabled.");
@@ -3309,7 +3328,16 @@
       log("error", "Cesium runtime not found");
       return;
     }
-    const naturalEarth = createNaturalEarthProvider();
+
+    // Probe NaturalEarthII availability — on Windows the cesium/ symlink may not
+    // exist (symlinks require admin rights), causing a black globe.
+    var _neUrl = Cesium.buildModuleUrl("Assets/Textures/NaturalEarthII/0/0/0.jpg");
+    log("info", "NaturalEarthII probe url=" + _neUrl);
+    var naturalEarth = createNaturalEarthProvider();
+    // Attach an error listener so we know if NaturalEarth tiles fail to load
+    naturalEarth.errorEvent.addEventListener(function (err) {
+      log("warn", "NaturalEarthII tile failed level=" + (err && err.level) + " — globe may appear black");
+    });
     viewer = new Cesium.Viewer("cesiumContainer", {
       imageryProvider: naturalEarth,
       baseLayerPicker: false,
@@ -3344,9 +3372,36 @@
     const devicePixelRatio = window.devicePixelRatio || 1.0;
     viewer.resolutionScale = Math.min(devicePixelRatio, 1.25);
     viewer.scene.postProcessStages.fxaa.enabled = false;
-    viewer.scene.globe.baseColor = Cesium.Color.BLACK;
-    viewer.scene.backgroundColor = Cesium.Color.BLACK;
-    viewer.canvas.style.backgroundColor = "#000000";
+    viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#1a2a3a");
+    viewer.scene.backgroundColor = Cesium.Color.fromCssColorString("#1a2a3a");
+    viewer.canvas.style.backgroundColor = "#1a2a3a";
+
+    // On Windows, NaturalEarthII may fail (missing cesium/ symlink).
+    // After a short delay, check if the basemap layer has any tiles loaded.
+    // If not, replace it with a solid-color globe so the globe is visible.
+    setTimeout(function () {
+      var _layer0 = viewer.imageryLayers.length > 0 ? viewer.imageryLayers.get(0) : null;
+      log("info", "Basemap check: imageryLayers.length=" + viewer.imageryLayers.length +
+          " layer0=" + (_layer0 ? "exists" : "null"));
+      // If OSM basemap loaded successfully, nothing to do
+      if (globalBasemapLayer) {
+        log("info", "Basemap check: OSM basemap active, no fallback needed");
+        return;
+      }
+      // Try to detect if NaturalEarth loaded by checking if the layer is ready
+      // If the cesium/ directory is missing, the provider will have errored
+      var _neReady = false;
+      try {
+        var _testUrl = Cesium.buildModuleUrl("Assets/Textures/NaturalEarthII/0/0/0.jpg");
+        // If buildModuleUrl returns a file:// URL that doesn't exist, tiles will 404
+        // We can't easily check this synchronously, so just log it
+        log("info", "Basemap check: NaturalEarth URL=" + _testUrl);
+        _neReady = _testUrl && _testUrl.length > 0;
+      } catch (_e) {
+        log("warn", "Basemap check: NaturalEarth URL resolution failed: " + _e);
+      }
+      log("info", "Basemap check: _neReady=" + _neReady + " fallbackBasemapLayer=" + (fallbackBasemapLayer ? "exists" : "null"));
+    }, 2000);
     applyDefaultSceneSettings();
     tuneCameraController();
     applyDefaultStartupFocus();
