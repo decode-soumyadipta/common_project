@@ -5268,6 +5268,11 @@
     const nearRange = Math.max(compute3DFocusRange(lastLoadedBounds), sphere.radius * 1.4);
     const farRange = Math.min(Math.max(nearRange * 3.25, 280.0), 4500000.0);
 
+    // Clamp near range so the camera never goes below ~80 m above the bounding
+    // sphere surface — prevents the "enters the globe / black surroundings" bug
+    // caused by the camera clipping through terrain during the fly-through arc.
+    const safeNearRange = Math.max(nearRange, sphere.radius * 0.5, 80.0);
+
     viewer.camera.cancelFlight();
     viewer.camera.flyToBoundingSphere(sphere, {
       offset: new Cesium.HeadingPitchRange(
@@ -5280,8 +5285,8 @@
         viewer.camera.flyToBoundingSphere(sphere, {
           offset: new Cesium.HeadingPitchRange(
             Cesium.Math.toRadians(30),
-            Cesium.Math.toRadians(-26),
-            nearRange
+            Cesium.Math.toRadians(-35),   // steeper pitch — keeps camera above terrain
+            safeNearRange
           ),
           duration: 3.2,
         });
