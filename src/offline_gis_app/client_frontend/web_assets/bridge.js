@@ -1218,8 +1218,9 @@
 
     ensureComparatorViewers(activeKeys.length);
     
-    // Hide all panes/dividers first
-    for (var i = 0; i < 4; i++) {
+    // ensureComparatorViewers already activated the correct panes/dividers.
+    // Just make sure panes beyond the active count are hidden.
+    for (var i = activeKeys.length; i < 4; i++) {
       var pane = document.getElementById("comparatorPane" + i);
       var div = document.getElementById("comparatorDivider" + i);
       if (pane) pane.classList.remove("active");
@@ -1350,6 +1351,26 @@
 
   const comparatorViewers = [];
   function ensureComparatorViewers(count) {
+    // CRITICAL (Windows/ANGLE): The comparatorPane divs must have display:block
+    // BEFORE Cesium creates its canvas, otherwise the canvas gets zero size and
+    // stays permanently black.  Activate all needed panes now, before any viewer
+    // is constructed.
+    for (var pi = 0; pi < count; pi++) {
+      var paneEl = document.getElementById("comparatorPane" + pi);
+      if (paneEl) paneEl.classList.add("active");
+      if (pi < count - 1) {
+        var divEl = document.getElementById("comparatorDivider" + pi);
+        if (divEl) divEl.classList.add("active");
+      }
+    }
+    // Hide panes beyond the requested count
+    for (var hi = count; hi < 4; hi++) {
+      var hPane = document.getElementById("comparatorPane" + hi);
+      var hDiv  = document.getElementById("comparatorDivider" + hi);
+      if (hPane) hPane.classList.remove("active");
+      if (hDiv)  hDiv.classList.remove("active");
+    }
+
     for (var i = 0; i < count; i++) {
       if (comparatorViewers[i]) continue;
       const vId = "comparatorViewer" + i;
@@ -1380,6 +1401,22 @@
       
       comparatorViewers[i] = v;
     }
+
+    // Force resize on all viewers — Windows/ANGLE needs this even after the
+    // panes are visible, because the flex layout may not have fully settled yet.
+    function _forceResizeAll() {
+      comparatorViewers.forEach(function(v) {
+        if (!v) return;
+        try { v.resize(); } catch(_) {}
+        if (v.scene) v.scene.requestRender();
+      });
+    }
+    setTimeout(_forceResizeAll, 0);
+    setTimeout(_forceResizeAll, 80);
+    setTimeout(_forceResizeAll, 250);
+    setTimeout(_forceResizeAll, 600);
+    setTimeout(_forceResizeAll, 1200);
+
     bindComparatorPaneSelectionHandlers();
   }
   
