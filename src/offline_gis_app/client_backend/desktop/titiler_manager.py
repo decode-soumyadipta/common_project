@@ -73,6 +73,7 @@ class TiTilerManager:
             "from titiler.application.main import app\n"
             "from starlette.middleware.base import BaseHTTPMiddleware\n"
             "from starlette.requests import Request\n"
+            "import urllib.parse\n"
             "\n"
             "class _WinPathFix(BaseHTTPMiddleware):\n"
             "    async def dispatch(self, request, call_next):\n"
@@ -90,11 +91,21 @@ class TiTilerManager:
         env = os.environ.copy()
 
         # ── GDAL/PROJ data paths ──────────────────────────────────────────────
-        # On Windows with conda, GDAL_DATA and PROJ_DATA must point into the
-        # conda env's share/ directories.  Without these, rasterio/GDAL cannot
-        # find projection definitions and every COG tile request fails.
         _python_exe = Path(sys.executable).resolve()
-        _env_root = _python_exe.parent          # conda env root on Windows
+        _env_root = _python_exe.parent          # conda env root on Windows (bin folder)
+        
+        # On Windows/Conda, the DLLs (GEOS for shapely, GDAL for rasterio) are in Library/bin.
+        # We must ensure this is in the PATH of the subprocess.
+        _env_lib_bin = _env_root / "Library" / "bin"
+        _env_scripts = _env_root / "Scripts"
+        _new_paths = [str(_env_root), str(_env_scripts), str(_env_lib_bin)]
+        
+        existing_path = env.get("PATH", "")
+        if existing_path:
+            env["PATH"] = os.pathsep.join(_new_paths + [existing_path])
+        else:
+            env["PATH"] = os.pathsep.join(_new_paths)
+
         # conda layout: <env>\Library\share\gdal  and  <env>\Library\share\proj
         _gdal_data_candidate = _env_root / "Library" / "share" / "gdal"
         _proj_data_candidate = _env_root / "Library" / "share" / "proj"

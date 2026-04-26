@@ -1197,18 +1197,10 @@
     }
     const visibleKeys = [];
     for (const [key, visible] of layerVisibilityState.entries()) {
-      if (!visible) {
-        continue;
-      }
-      if (!layerDefinitions.has(key)) {
-        continue;
-      }
+      if (!visible || !layerDefinitions.has(key)) continue;
       visibleKeys.push(key);
     }
-    if (visibleKeys.length < 2) {
-      return [null, null];
-    }
-    return [visibleKeys[0], visibleKeys[1]];
+    return visibleKeys.slice(0, 4);
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1220,65 +1212,42 @@
   // ═══════════════════════════════════════════════════════════════════════════
 
   function refreshComparatorLayers(options) {
-    if (!comparatorModeEnabled || !comparatorLeftViewer || !comparatorRightViewer) {
-      return;
-    }
-    const preserveView = Boolean(options && options.preserveView);
-    const [leftKey, rightKey] = resolveComparatorLayerKeys();
-    if (!leftKey || !rightKey) {
-      return;
-    }
-    const leftDef = layerDefinitions.get(leftKey);
-    const rightDef = layerDefinitions.get(rightKey);
-    if (!leftDef || !rightDef) {
-      return;
+    if (!comparatorModeEnabled) return;
+    const activeKeys = resolveComparatorLayerKeys();
+    if (activeKeys.length < 2) return;
+
+    ensureComparatorViewers(activeKeys.length);
+    
+    // Hide all panes/dividers first
+    for (var i = 0; i < 4; i++) {
+      var pane = document.getElementById("comparatorPane" + i);
+      var div = document.getElementById("comparatorDivider" + i);
+      if (pane) pane.classList.remove("active");
+      if (div) div.classList.remove("active");
     }
 
-    resetComparatorViewerLayers(comparatorLeftViewer);
-    resetComparatorViewerLayers(comparatorRightViewer);
-    applyLayerDefinitionToViewer(comparatorLeftViewer, leftDef, "left");
-    applyLayerDefinitionToViewer(comparatorRightViewer, rightDef, "right");
-    comparatorLeftLayerType = String(leftDef.type || "imagery");
-    comparatorRightLayerType = String(rightDef.type || "imagery");
-    setComparatorViewerModeByType(comparatorLeftViewer, comparatorLeftLayerType);
-    setComparatorViewerModeByType(comparatorRightViewer, comparatorRightLayerType);
+    activeKeys.forEach((key, idx) => {
+      const def = layerDefinitions.get(key);
+      const viewer = comparatorViewers[idx];
+      const pane = document.getElementById("comparatorPane" + idx);
+      const div = document.getElementById("comparatorDivider" + idx);
+      
+      if (!def || !viewer || !pane) return;
+      
+      pane.classList.add("active");
+      if (idx < activeKeys.length - 1 && div) div.classList.add("active");
+
+      resetComparatorViewerLayers(viewer);
+      applyLayerDefinitionToViewer(viewer, def, idx === 0 ? "left" : "right"); // mapping legacy paneKey
+      
+      const title = document.getElementById("comparatorTitle" + idx);
+      if (title) title.textContent = def.label || ("Layer " + (idx + 1));
+      
+      viewer.resize();
+    });
+
     syncComparatorTerrainProviders();
-    applyComparatorPaneVisualState("left");
-    applyComparatorPaneVisualState("right");
-
-    const leftTitle = document.getElementById("comparatorTitleLeft");
-    const rightTitle = document.getElementById("comparatorTitleRight");
-    if (leftTitle) {
-      leftTitle.textContent = leftDef.label || "Left layer";
-    }
-    if (rightTitle) {
-      rightTitle.textContent = rightDef.label || "Right layer";
-    }
-
-    if (!preserveView && viewer && comparatorLeftViewer) {
-      const leftRect = rectangleFromBounds(leftDef.bounds || null);
-      const rightRect = rectangleFromBounds(rightDef.bounds || null);
-      if (leftRect) {
-        focusComparatorViewerToRectangle(comparatorLeftViewer, comparatorLeftLayerType, leftRect);
-      }
-      if (rightRect) {
-        focusComparatorViewerToRectangle(comparatorRightViewer, comparatorRightLayerType, rightRect);
-      }
-    }
-    updateComparatorCenterReadout(getComparatorDemViewer() || comparatorLeftViewer);
     setSelectedComparatorPane(comparatorSelectedPane, true);
-
-    enforceComparatorDemLayerOrder("left", comparatorLeftViewer);
-    enforceComparatorDemLayerOrder("right", comparatorRightViewer);
-    const leftRectAfterRefresh = comparatorLeftViewer.camera.computeViewRectangle(comparatorLeftViewer.scene.globe.ellipsoid);
-    const rightRectAfterRefresh = comparatorRightViewer.camera.computeViewRectangle(comparatorRightViewer.scene.globe.ellipsoid);
-    if (leftRectAfterRefresh) {
-      recordComparatorSourceRectangle(comparatorLeftViewer, leftRectAfterRefresh, "refreshComparatorLayers-left");
-    }
-    if (rightRectAfterRefresh) {
-      recordComparatorSourceRectangle(comparatorRightViewer, rightRectAfterRefresh, "refreshComparatorLayers-right");
-    }
-    requestSceneRender();
   }
 
   function scheduleComparatorDemRefresh(paneKey) {
@@ -1379,111 +1348,42 @@
     }, COMPARATOR_DEM_REFRESH_DEBOUNCE_MS);
   }
 
-  function setSwipeComparatorLayerKeys(leftLayerKey, rightLayerKey, leftLabel, rightLabel) {
-    swipeComparatorLeftLayerKey = String(leftLayerKey || "") || null;
-    swipeComparatorRightLayerKey = String(rightLayerKey || "") || null;
-    if (swipeComparatorLeftLayerKey && !layerVisibilityState.has(swipeComparatorLeftLayerKey)) {
-      layerVisibilityState.set(swipeComparatorLeftLayerKey, true);
+  const comparatorViewers = [];
+  function ensureComparatorViewers(count) {
+    for (var i = 0; i < count; i++) {
+      if (comparatorViewers[i]) continue;
+      const vId = "comparatorViewer" + i;
+      const v = new Cesium.Viewer(vId, {
+        imageryProvider: false,
+        baseLayerPicker: false,
+        geocoder: false,
+        navigationHelpButton: false,
+        sceneModePicker: false,
+        homeButton: false,
+        fullscreenButton: false,
+        infoBox: false,
+        selectionIndicator: false,
+        scene3DOnly: false,
+        requestRenderMode: false,
+        timeline: false,
+        animation: false,
+        terrainProvider: new Cesium.EllipsoidTerrainProvider(),
+      });
+      v.scene.globe.baseColor = Cesium.Color.BLACK;
+      v.scene.backgroundColor = Cesium.Color.BLACK;
+      v.scene.mode = Cesium.SceneMode.SCENE3D;
+      v.camera.percentageChanged = 0.001;
+      
+      try {
+        v.imageryLayers.addImageryProvider(createNaturalEarthProvider());
+      } catch(e) {}
+      
+      comparatorViewers[i] = v;
     }
-    if (swipeComparatorRightLayerKey && !layerVisibilityState.has(swipeComparatorRightLayerKey)) {
-      layerVisibilityState.set(swipeComparatorRightLayerKey, true);
-    }
-
-    const leftTitle = document.getElementById("comparatorTitleLeft");
-    const rightTitle = document.getElementById("comparatorTitleRight");
-    if (leftTitle && leftLabel) {
-      leftTitle.textContent = String(leftLabel);
-    }
-    if (rightTitle && rightLabel) {
-      rightTitle.textContent = String(rightLabel);
-    }
-    refreshComparatorLayers();
+    bindComparatorPaneSelectionHandlers();
   }
-
-  function ensureComparatorViewers() {
-    if (comparatorLeftViewer && comparatorRightViewer) {
-      bindComparatorPaneSelectionHandlers();
-      setComparatorPaneSelectionStyles(comparatorSelectedPane);
-      return;
-    }
-    comparatorLeftViewer = new Cesium.Viewer("comparatorLeftViewer", {
-      imageryProvider: false,
-      baseLayerPicker: false,
-      geocoder: false,
-      navigationHelpButton: false,
-      sceneModePicker: false,
-      homeButton: false,
-      fullscreenButton: false,
-      infoBox: false,
-      selectionIndicator: false,
-      scene3DOnly: false,
-      requestRenderMode: false,
-      timeline: false,
-      animation: false,
-      terrainProvider: new Cesium.EllipsoidTerrainProvider(),
-    });
-    comparatorRightViewer = new Cesium.Viewer("comparatorRightViewer", {
-      imageryProvider: false,
-      baseLayerPicker: false,
-      geocoder: false,
-      navigationHelpButton: false,
-      sceneModePicker: false,
-      homeButton: false,
-      fullscreenButton: false,
-      infoBox: false,
-      selectionIndicator: false,
-      scene3DOnly: false,
-      requestRenderMode: false,
-      timeline: false,
-      animation: false,
-      terrainProvider: new Cesium.EllipsoidTerrainProvider(),
-    });
-    comparatorLeftViewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#1a2a3a");
-    comparatorRightViewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#1a2a3a");
-    comparatorLeftViewer.scene.backgroundColor = Cesium.Color.fromCssColorString("#1a2a3a");
-    comparatorRightViewer.scene.backgroundColor = Cesium.Color.fromCssColorString("#1a2a3a");
-    comparatorLeftViewer.scene.fxaa = false;
-    comparatorRightViewer.scene.fxaa = false;
-    comparatorLeftViewer.scene.mode = Cesium.SceneMode.SCENE3D;
-    comparatorRightViewer.scene.mode = Cesium.SceneMode.SCENE3D;
-    comparatorLeftViewer.scene.verticalExaggeration = demVisual.exaggeration;
-    comparatorRightViewer.scene.verticalExaggeration = demVisual.exaggeration;
-    comparatorLeftViewer.camera.percentageChanged = 0.001;
-    comparatorRightViewer.camera.percentageChanged = 0.001;
-    log("info", "Comparator viewers created left=" + (comparatorLeftViewer ? "ok" : "null") +
-        " right=" + (comparatorRightViewer ? "ok" : "null"));
-
-    // Add basemap to comparator panes
-    try {
-      var _leftBasemap = createNaturalEarthProvider();
-      comparatorLeftViewer.imageryLayers.addImageryProvider(_leftBasemap);
-      var _rightBasemap = createNaturalEarthProvider();
-      comparatorRightViewer.imageryLayers.addImageryProvider(_rightBasemap);
-      log("info", "Comparator basemap providers added");
-    } catch (_e) {
-      log("warn", "Comparator basemap provider failed: " + _e);
-    }
-
-    // Force resize + render — on Windows/ANGLE viewers initialise with zero-size
-    // canvas when the parent div is hidden at creation time.
-    var _forceComparatorRender = function (label) {
-      log("info", "Comparator force render (" + label + ")");
-      if (comparatorLeftViewer && comparatorLeftViewer.scene) {
-        try { comparatorLeftViewer.resize(); } catch (_) {}
-        comparatorLeftViewer.scene.requestRender();
-        log("info", "Comparator left canvas size=" +
-            comparatorLeftViewer.canvas.width + "x" + comparatorLeftViewer.canvas.height);
-      }
-      if (comparatorRightViewer && comparatorRightViewer.scene) {
-        try { comparatorRightViewer.resize(); } catch (_) {}
-        comparatorRightViewer.scene.requestRender();
-        log("info", "Comparator right canvas size=" +
-            comparatorRightViewer.canvas.width + "x" + comparatorRightViewer.canvas.height);
-      }
-    };
-    setTimeout(function () { _forceComparatorRender("100ms"); }, 100);
-    setTimeout(function () { _forceComparatorRender("500ms"); }, 500);
-    bindComparatorSyncHandlers();
+  
+  function bindComparatorSyncHandlers() {
     bindComparatorPaneSelectionHandlers();
     setComparatorPaneSelectionStyles(comparatorSelectedPane);
   }
@@ -1650,69 +1550,32 @@
         var _cwW = _cw ? _cw.offsetWidth : 0;
         var _cwH = _cw ? _cw.offsetHeight : 0;
 
-        // If the comparator window still has zero size, fall back to window dims
-        if (_cwW < 10) _cwW = window.innerWidth || 800;
-        if (_cwH < 10) _cwH = window.innerHeight || 600;
+        // If the comparator window still has zero size (common on Windows Qt startup), fall back to window dims
+        if (_cwW < 100) _cwW = window.innerWidth || 800;
+        if (_cwH < 100) _cwH = window.innerHeight || 600;
 
-        // Count actual pane divs to divide width correctly (2, 3, or 4 panes)
-        var _panes = _cw ? _cw.querySelectorAll(".comparatorPane") : [];
-        var _numPanes = _panes.length || 2;
-        var _numDividers = Math.max(0, _numPanes - 1);
-        var _paneW = Math.floor((_cwW - _numDividers * 6) / _numPanes);
+        // Count actual active panes
+        var _activeKeys = resolveComparatorLayerKeys();
+        var _numPanes = _activeKeys.length || 2;
 
-        log("info", "Comparator init: cwSize=" + _cwW + "x" + _cwH +
-            " panes=" + _numPanes + " paneW=" + _paneW);
+        log("info", "Comparator init: cwSize=" + _cwW + "x" + _cwH + " panes=" + _numPanes);
 
-        // Force explicit sizes on viewer divs so Cesium gets non-zero canvas
-        for (var _pi = 0; _pi < _panes.length; _pi++) {
-          var _pane = _panes[_pi];
-          if (_pane.offsetWidth < 10) {
-            _pane.style.width = _paneW + "px";
-            _pane.style.height = _cwH + "px";
-          }
-          var _viewer = _pane.querySelector(".comparatorViewer");
-          if (_viewer) {
-            _viewer.style.width = _paneW + "px";
-            _viewer.style.height = _cwH + "px";
-          }
-        }
-
-        ensureComparatorViewers();
-
-        if (comparatorLeftViewer && comparatorRightViewer) {
-          comparatorLeftViewer.resize();
-          comparatorRightViewer.resize();
-          log("info", "Comparator canvas: left=" +
-              comparatorLeftViewer.canvas.width + "x" + comparatorLeftViewer.canvas.height +
-              " right=" + comparatorRightViewer.canvas.width + "x" + comparatorRightViewer.canvas.height);
-        }
-
-        // Remove forced inline sizes after 300ms so CSS flex takes over for resizes
-        setTimeout(function () {
-          for (var _ci = 0; _ci < _panes.length; _ci++) {
-            _panes[_ci].style.width = "";
-            _panes[_ci].style.height = "";
-            var _v = _panes[_ci].querySelector(".comparatorViewer");
-            if (_v) { _v.style.width = ""; _v.style.height = ""; }
-          }
-          if (comparatorLeftViewer) { try { comparatorLeftViewer.resize(); } catch (_) {} }
-          if (comparatorRightViewer) { try { comparatorRightViewer.resize(); } catch (_) {} }
-        }, 300);
-
+        ensureComparatorViewers(_numPanes);
         refreshComparatorLayers();
+        
+        // Final resize to fix ANGLE black screen issues
+        setTimeout(function() {
+          if (typeof comparatorViewers !== "undefined" && Array.isArray(comparatorViewers)) {
+            comparatorViewers.forEach(function(v) { if(v) v.resize(); });
+          }
+        }, 100);
+
         const bounds = activeTileBounds || lastLoadedBounds;
-        if (bounds && comparatorLeftViewer && comparatorRightViewer) {
+        if (bounds && typeof comparatorViewers !== "undefined") {
           const rect = Cesium.Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north);
-          focusComparatorViewerToRectangle(comparatorLeftViewer, comparatorLeftLayerType, rect);
-          focusComparatorViewerToRectangle(comparatorRightViewer, comparatorRightLayerType, rect);
-        }
-        updateComparatorCenterReadout(getComparatorDemViewer() || comparatorLeftViewer);
-        notifyComparatorPaneState(comparatorSelectedPane);
-        updateComparatorPolygons(polygonVisibilityEnabled);
-        if (candidateCount < 2) {
-          setStatus("Comparator enabled. Select two visible layers to render left and right panes.");
-        } else {
-          setStatus("Comparator enabled. Panes are independently controllable.");
+          comparatorViewers.forEach(function(v) {
+            if (v) focusComparatorViewerToRectangle(v, "imagery", rect);
+          });
         }
       }
 
@@ -5747,10 +5610,14 @@
       setDemColorMode(normalized);
     },
     setSwipeComparatorLayers: function (leftLayerKey, rightLayerKey, leftLabel, rightLabel) {
-      setSwipeComparatorLayerKeys(leftLayerKey, rightLayerKey, leftLabel, rightLabel);
+      if (typeof refreshComparatorLayers === "function") {
+        refreshComparatorLayers();
+      }
     },
     setComparatorLayers: function (leftLayerKey, rightLayerKey, leftLabel, rightLabel) {
-      setSwipeComparatorLayerKeys(leftLayerKey, rightLayerKey, leftLabel, rightLabel);
+      if (typeof refreshComparatorLayers === "function") {
+        refreshComparatorLayers();
+      }
     },
     setLayerVisibility: function (layerKey, visible) {
       const applied = setLayerVisibilityByKey(String(layerKey || ""), Boolean(visible));

@@ -32,13 +32,19 @@ body,
 .comparatorPane {
   position: relative;
   flex: 1 1 0;
+  min-width: 0;
   pointer-events: auto;
-  background: rgba(8, 14, 24, 0.06);
-  border: 2px solid rgba(255, 255, 255, 0.9);
+  background: rgba(8, 14, 24, 1.0);
+  border: 2px solid rgba(255, 255, 255, 0.4);
   box-sizing: border-box;
   overflow: hidden;
   cursor: pointer;
   transition: border-color 140ms ease, box-shadow 140ms ease;
+  display: none;
+}
+
+.comparatorPane.active {
+  display: block;
 }
 
 .comparatorPane.selected {
@@ -47,15 +53,20 @@ body,
 }
 
 .comparatorPane.selected .comparatorTitle {
-  background: rgba(28, 20, 8, 0.66);
+  background: rgba(28, 20, 8, 0.86);
   color: rgba(255, 246, 220, 0.98);
 }
 
 .comparatorDivider {
-  width: 6px;
-  background: rgba(255, 255, 255, 0.95);
-  box-shadow: 0 0 0 1px rgba(200, 212, 228, 0.4);
+  width: 4px;
+  background: rgba(255, 255, 255, 0.15);
+  box-shadow: inset 1px 0 0 rgba(255,255,255,0.05);
   pointer-events: none;
+  display: none;
+}
+
+.comparatorDivider.active {
+  display: block;
 }
 
 .comparatorViewer {
