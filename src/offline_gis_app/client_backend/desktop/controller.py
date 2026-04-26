@@ -2885,6 +2885,9 @@ class DesktopController:
 
         if band_count >= 3 and not is_dem:
             query["bidx"] = [1, 2, 3]
+            # nearest resampling avoids interpolated reads that fail on non-COG
+            # GeoTIFFs on Windows (GDAL "Read failed" error)
+            query["resampling"] = "nearest"
 
         stats = {}
         try:

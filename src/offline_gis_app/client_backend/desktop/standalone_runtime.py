@@ -51,6 +51,14 @@ def configure_standalone_runtime(mode: str) -> Path:
     # COG tile request fails with "Failed to obtain image tile".
     _configure_gdal_proj_paths()
 
+    # ── GDAL performance / compatibility settings ─────────────────────────────
+    # These fix "Read failed" errors on Windows with non-COG GeoTIFFs.
+    os.environ.setdefault("GDAL_NUM_THREADS", "1")
+    os.environ.setdefault("VSI_CACHE", "TRUE")
+    os.environ.setdefault("VSI_CACHE_SIZE", "10000000")
+    os.environ.setdefault("GDAL_CACHEMAX", "512")
+    os.environ.setdefault("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR")
+
     api_port = os.environ.get("API_PORT", "8000")
     server_host = (
         os.environ.get("OFFLINE_GIS_SERVER_HOST", "127.0.0.1") or "127.0.0.1"
