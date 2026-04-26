@@ -449,21 +449,25 @@
     }
   }
 
-  function updateComparatorCenterReadout(sourceViewer) {
+  function updateComparatorCenterReadout(sourceViewer, paneIdx) {
     if (!comparatorModeEnabled) {
       return;
     }
-    const targetViewer = sourceViewer || comparatorLeftViewer;
+    var idx = (typeof paneIdx === "number") ? paneIdx : comparatorViewers.indexOf(sourceViewer);
+    var targetViewer = sourceViewer || comparatorViewers[0];
     if (!targetViewer || !targetViewer.canvas) {
-      updateComparatorCrosshair(NaN, NaN);
       return;
     }
-    const center = new Cesium.Cartesian2(
+    var center = new Cesium.Cartesian2(
       targetViewer.canvas.clientWidth * 0.5,
       targetViewer.canvas.clientHeight * 0.5,
     );
-    const lonLat = getLonLatFromViewer(targetViewer, center);
-    updateComparatorCrosshair(lonLat ? lonLat.lon : NaN, lonLat ? lonLat.lat : NaN, null, null);
+    var lonLat = getLonLatFromViewer(targetViewer, center);
+    var text = lonLat
+      ? "lon: " + lonLat.lon.toFixed(6) + ", lat: " + lonLat.lat.toFixed(6)
+      : "lon: ---, lat: ---";
+    var coords = document.getElementById("comparatorCoords" + (idx >= 0 ? idx : 0));
+    if (coords) coords.textContent = text;
   }
 
   function sceneToWindowCoordinates(targetScene, worldCartesian) {
@@ -838,70 +842,76 @@
   }
 
   function bindComparatorSyncHandlers() {
-    const leftContainer = document.getElementById("comparatorLeftViewer");
-    const rightContainer = document.getElementById("comparatorRightViewer");
-    if (!leftContainer || !rightContainer || !comparatorLeftViewer || !comparatorRightViewer) {
-      return;
+    // Wire camera-change and mousemove for all active comparator panes.
+    // Uses comparatorViewers[] array — works for 2, 3, or 4 panes.
+    var _numActive = comparatorViewers.filter(Boolean).length;
+    for (var _bi = 0; _bi < _numActive; _bi++) {
+      (function(idx) {
+        var v = comparatorViewers[idx];
+        if (!v) return;
+        var container = document.getElementById("comparatorViewer" + idx);
+        if (!container) return;
+
+        // Camera change → update coords readout for this pane
+        v.camera.changed.addEventListener(function () {
+          if (comparatorModeEnabled) {
+            updateComparatorCenterReadout(v, idx);
+          }
+        });
+
+        // Wheel → update coords
+        container.addEventListener("wheel", function () {
+          if (comparatorModeEnabled) updateComparatorCenterReadout(v, idx);
+        }, { passive: true });
+
+        // Mousemove → project geo position to all other panes' crosshairs
+        container.addEventListener("mousemove", function (event) {
+          if (!comparatorModeEnabled || !v) return;
+          var rect = container.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) return;
+          var localX = event.clientX - rect.left;
+          var localY = event.clientY - rect.top;
+          var srcPos = new Cesium.Cartesian2(localX, localY);
+          var srcCartesian = getCartesianFromViewer(v, srcPos);
+          var srcLonLat = srcCartesian
+            ? cartesianToLonLat(srcCartesian)
+            : getLonLatFromViewer(v, srcPos);
+
+          log("debug", "CURSOR_SYNC pane=" + idx +
+            " lon=" + (srcLonLat ? srcLonLat.lon.toFixed(5) : "null") +
+            " lat=" + (srcLonLat ? srcLonLat.lat.toFixed(5) : "null") +
+            " cartesian=" + (srcCartesian ? "ok" : "null"));
+
+          // Update crosshair on every pane
+          var _total = comparatorViewers.filter(Boolean).length;
+          for (var _pi = 0; _pi < _total; _pi++) {
+            var targetV = comparatorViewers[_pi];
+            var crosshair = document.querySelector("#comparatorPane" + _pi + " .comparatorCrosshair");
+            var coords = document.getElementById("comparatorCoords" + _pi);
+            if (!crosshair) continue;
+
+            var screenPos;
+            if (_pi === idx) {
+              screenPos = srcPos;
+            } else if (srcCartesian && targetV) {
+              screenPos = projectCartesianToViewer(targetV, srcCartesian);
+            } else {
+              screenPos = null;
+            }
+
+            applyCrosshairScreenPosition(crosshair, targetV, screenPos);
+
+            if (coords) {
+              coords.textContent = srcLonLat
+                ? "lon: " + srcLonLat.lon.toFixed(6) + ", lat: " + srcLonLat.lat.toFixed(6)
+                : "lon: ---, lat: ---";
+            }
+          }
+        });
+      })(_bi);
     }
-
-    comparatorLeftViewer.camera.changed.addEventListener(function () {
-      if (comparatorModeEnabled) {
-        updateComparatorCenterReadout(comparatorLeftViewer);
-      }
-    });
-    comparatorRightViewer.camera.changed.addEventListener(function () {
-      if (comparatorModeEnabled) {
-        updateComparatorCenterReadout(comparatorRightViewer);
-      }
-    });
-
-    function attachCursorBridge(container, sourceViewer) {
-      container.addEventListener("wheel", function () {
-        if (comparatorModeEnabled) {
-          updateComparatorCenterReadout(sourceViewer);
-        }
-      }, { passive: true });
-      container.addEventListener("mousemove", function (event) {
-        if (!comparatorModeEnabled || !sourceViewer) {
-          return;
-        }
-        const rect = container.getBoundingClientRect();
-        if (rect.width <= 0 || rect.height <= 0) {
-          return;
-        }
-        const localX = event.clientX - rect.left;
-        const localY = event.clientY - rect.top;
-        const sourceScreenPosition = new Cesium.Cartesian2(localX, localY);
-        const sourceCartesian = getCartesianFromViewer(sourceViewer, sourceScreenPosition);
-        const sourceLonLat = sourceCartesian
-          ? cartesianToLonLat(sourceCartesian)
-          : getLonLatFromViewer(sourceViewer, sourceScreenPosition);
-
-        let leftScreenPosition = null;
-        let rightScreenPosition = null;
-        if (sourceViewer === comparatorLeftViewer) {
-          leftScreenPosition = sourceScreenPosition;
-          rightScreenPosition = sourceCartesian
-            ? projectCartesianToViewer(comparatorRightViewer, sourceCartesian)
-            : null;
-        } else {
-          rightScreenPosition = sourceScreenPosition;
-          leftScreenPosition = sourceCartesian
-            ? projectCartesianToViewer(comparatorLeftViewer, sourceCartesian)
-            : null;
-        }
-
-        updateComparatorCrosshair(
-          sourceLonLat ? sourceLonLat.lon : NaN,
-          sourceLonLat ? sourceLonLat.lat : NaN,
-          leftScreenPosition,
-          rightScreenPosition,
-        );
-      });
-    }
-
-    attachCursorBridge(leftContainer, comparatorLeftViewer);
-    attachCursorBridge(rightContainer, comparatorRightViewer);
+    bindComparatorPaneSelectionHandlers();
+    setComparatorPaneSelectionStyles(comparatorSelectedPane);
   }
 
   function rectangleFromBounds(bounds) {
@@ -933,13 +943,14 @@
   }
 
   function setComparatorPaneSelectionStyles(selectedPane) {
-    const leftPane = document.getElementById("comparatorPaneLeft");
-    const rightPane = document.getElementById("comparatorPaneRight");
-    if (leftPane) {
-      leftPane.classList.toggle("selected", selectedPane === "left");
-    }
-    if (rightPane) {
-      rightPane.classList.toggle("selected", selectedPane === "right");
+    var _numActive = comparatorViewers.filter(Boolean).length;
+    for (var _ssi = 0; _ssi < 4; _ssi++) {
+      var pane = document.getElementById("comparatorPane" + _ssi);
+      if (!pane) continue;
+      // pane0 = "left", pane1+ = "right"
+      var isSelected = (_ssi === 0 && selectedPane === "left") ||
+                       (_ssi > 0  && selectedPane === "right");
+      pane.classList.toggle("selected", isSelected);
     }
   }
 
@@ -985,19 +996,17 @@
   }
 
   function bindComparatorPaneSelectionHandlers() {
-    const leftPane = document.getElementById("comparatorPaneLeft");
-    const rightPane = document.getElementById("comparatorPaneRight");
-    if (leftPane && !leftPane.dataset.selectionBound) {
-      leftPane.dataset.selectionBound = "1";
-      leftPane.addEventListener("pointerdown", function () {
-        setSelectedComparatorPane("left", true);
-      });
-    }
-    if (rightPane && !rightPane.dataset.selectionBound) {
-      rightPane.dataset.selectionBound = "1";
-      rightPane.addEventListener("pointerdown", function () {
-        setSelectedComparatorPane("right", true);
-      });
+    var _numActive = comparatorViewers.filter(Boolean).length;
+    for (var _si = 0; _si < _numActive; _si++) {
+      (function(idx) {
+        var pane = document.getElementById("comparatorPane" + idx);
+        if (!pane || pane.dataset.selectionBound) return;
+        pane.dataset.selectionBound = "1";
+        pane.addEventListener("pointerdown", function () {
+          // Map index 0→"left", 1→"right", others→"right"
+          setSelectedComparatorPane(idx === 0 ? "left" : "right", true);
+        });
+      })(_si);
     }
   }
 
@@ -1419,11 +1428,6 @@
 
     bindComparatorPaneSelectionHandlers();
   }
-  
-  function bindComparatorSyncHandlers() {
-    bindComparatorPaneSelectionHandlers();
-    setComparatorPaneSelectionStyles(comparatorSelectedPane);
-  }
 
   function getSwipeCandidateLayers() {
     const visibleLayers = [];
@@ -1599,6 +1603,7 @@
 
         ensureComparatorViewers(_numPanes);
         refreshComparatorLayers();
+        bindComparatorSyncHandlers();
 
         // DEBUG: log pane and canvas sizes immediately after creation
         function _debugPaneSizes(label) {
