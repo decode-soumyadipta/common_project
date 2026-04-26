@@ -1979,14 +1979,12 @@
   }
 
   // Encode a query parameter value.
-  // For the "url" key (file path passed to TiTiler/GDAL), preserve ":" and "/"
-  // so Windows paths like "C:/Users/..." survive the round-trip through
-  // decodeURIComponent → encodeURIComponent in buildUrlWithQuery.
+  // For the "url" key (file path / file URI passed to TiTiler/GDAL), preserve
+  // ":", "/", and "@" so Windows paths like "file:///C:/Users/..." and plain
+  // "C:/Users/..." survive the decode→encode round-trip in buildUrlWithQuery.
   // All other values use standard encodeURIComponent.
   function _encodeParamValue(key, value) {
     if (key === "url") {
-      // Encode everything except unreserved chars, ":", "/", and "@"
-      // This matches what Python's urllib.parse.quote(s, safe="/:@") produces.
       return encodeURIComponent(value)
         .replace(/%3A/gi, ":")
         .replace(/%2F/gi, "/")
