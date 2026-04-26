@@ -1224,6 +1224,13 @@
       return;
     }
 
+    // Imagery pane — always force strict 2D flat map, no tilt ever
+    log("info", "COMP_IMAGERY pane=" + paneKey + " forcing SCENE2D for imagery viewer sceneMode=" + targetViewer.scene.mode);
+    if (targetViewer.scene && targetViewer.scene.mode !== Cesium.SceneMode.SCENE2D) {
+      targetViewer.scene.morphTo2D(0.0);
+      log("info", "COMP_IMAGERY pane=" + paneKey + " morphTo2D issued");
+    }
+
     const provider = new Cesium.UrlTemplateImageryProvider({
       url: definition.url,
       maximumLevel: definition.maxLevel,
@@ -1239,7 +1246,20 @@
       layer.contrast = Math.max(0.1, Number(paneVisual.imagery.contrast) || 1.0);
     }
     targetViewer.__comparatorPrimaryLayer = layer;
-  }
+
+    // Re-enforce 2D after a short delay — Windows/ANGLE can revert the mode
+    var _imgViewer = targetViewer;
+    var _imgPaneKey = paneKey;
+    function _enforce2D() {
+      if (!_imgViewer || !_imgViewer.scene) return;
+      if (_imgViewer.scene.mode !== Cesium.SceneMode.SCENE2D) {
+        log("info", "COMP_IMAGERY pane=" + _imgPaneKey + " re-enforcing SCENE2D");
+        _imgViewer.scene.morphTo2D(0.0);
+      }
+      if (_imgViewer.scene) _imgViewer.scene.requestRender();
+    }
+    setTimeout(_enforce2D, 80);
+    setTimeout(_enforce2D, 400);
 
   function resetComparatorViewerLayers(targetViewer) {
     if (!targetViewer) {
@@ -5895,10 +5915,14 @@
         log("debug", "rotateCamera: no targetBounds, rotating main viewer directly");
         viewer.camera.rotateRight(Cesium.Math.toRadians(degrees));
       }
-      // Apply to all active comparator DEM panes
+      // Apply to all active comparator DEM panes (skip 2D imagery panes)
       if (comparatorModeEnabled && Array.isArray(comparatorViewers)) {
         comparatorViewers.forEach(function(cv, ci) {
           if (!cv) return;
+          if (cv.scene && cv.scene.mode !== Cesium.SceneMode.SCENE3D) {
+            log("debug", "rotateCamera: skipping comparatorViewer[" + ci + "] — imagery pane in 2D");
+            return;
+          }
           log("debug", "rotateCamera: applying to comparatorViewer[" + ci + "]");
           cv.camera.rotateRight(Cesium.Math.toRadians(degrees));
           if (cv.scene) cv.scene.requestRender();
@@ -5941,8 +5965,11 @@
       if (comparatorModeEnabled && Array.isArray(comparatorViewers)) {
         comparatorViewers.forEach(function(cv, ci) {
           if (!cv || !cv.scene) return;
-          // Only apply to 3D panes (DEM panes)
-          if (cv.scene.mode !== Cesium.SceneMode.SCENE3D) return;
+          // Only apply to 3D panes (DEM panes) — imagery panes stay in 2D
+          if (cv.scene.mode !== Cesium.SceneMode.SCENE3D) {
+            log("debug", "setPitch: skipping comparatorViewer[" + ci + "] — not SCENE3D (imagery pane)");
+            return;
+          }
           var bounds = activeTileBounds || lastLoadedBounds;
           if (!bounds) return;
           var rect = Cesium.Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north);
