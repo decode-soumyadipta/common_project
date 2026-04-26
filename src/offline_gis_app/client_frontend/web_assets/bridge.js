@@ -5917,16 +5917,35 @@
         viewer.camera.rotateRight(Cesium.Math.toRadians(degrees));
       }
       // Apply to all active comparator DEM panes (skip 2D imagery panes)
+      // Use lookAt locked to DEM bounds so camera stays focused on the layer
       if (comparatorModeEnabled && Array.isArray(comparatorViewers)) {
         comparatorViewers.forEach(function(cv, ci) {
-          if (!cv) return;
-          if (cv.scene && cv.scene.mode !== Cesium.SceneMode.SCENE3D) {
+          if (!cv || !cv.scene) return;
+          if (cv.scene.mode !== Cesium.SceneMode.SCENE3D) {
             log("debug", "rotateCamera: skipping comparatorViewer[" + ci + "] — imagery pane in 2D");
             return;
           }
-          log("debug", "rotateCamera: applying to comparatorViewer[" + ci + "]");
-          cv.camera.rotateRight(Cesium.Math.toRadians(degrees));
-          if (cv.scene) cv.scene.requestRender();
+          var bounds = activeTileBounds || lastLoadedBounds;
+          if (!bounds) {
+            log("debug", "rotateCamera: no bounds for comparatorViewer[" + ci + "], skipping");
+            return;
+          }
+          var rect = Cesium.Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north);
+          var sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, 0.0);
+          var range = Math.max(sphere.radius * 1.9, 900.0);
+          // Accumulate heading on the viewer's current heading
+          var newHeading = cv.camera.heading + Cesium.Math.toRadians(degrees);
+          var pitch = getComparatorDemPitchRadians();
+          log("debug", "rotateCamera: comparatorViewer[" + ci + "] heading=" +
+            Cesium.Math.toDegrees(newHeading).toFixed(1) + "° pitch=" +
+            Cesium.Math.toDegrees(pitch).toFixed(1) + "° range=" + range.toFixed(0));
+          try {
+            cv.camera.lookAt(sphere.center, new Cesium.HeadingPitchRange(newHeading, pitch, range));
+            cv.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+          } catch(e) {
+            log("warn", "rotateCamera: comparatorViewer[" + ci + "] lookAt failed: " + e);
+          }
+          cv.scene.requestRender();
         });
       }
       requestSceneRender();
