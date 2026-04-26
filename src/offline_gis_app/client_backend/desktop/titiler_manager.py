@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import logging
 import os
+import platform
 import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import Sequence
 
 import httpx
@@ -29,37 +31,114 @@ class TiTilerManager:
         if self.is_ready():
             return True
         self._start_process()
-        for _ in range(20):
+        for _ in range(40):          # up to 10 s — Windows process startup is slower
             if self.is_ready():
                 self._logger.info("TiTiler is ready")
                 return True
             time.sleep(0.25)
+        # Log stderr snippet from the subprocess to help diagnose Windows failures
+        if self._process is not None and self._process.stderr is not None:
+            try:
+                import select as _select
+                # Non-blocking read on Windows via os.read with a short timeout
+                import threading
+                _lines: list[str] = []
+                def _drain():
+                    try:
+                        for line in self._process.stderr:
+                            _lines.append(line.decode("utf-8", errors="replace"))
+                            if len(_lines) > 20:
+                                break
+                    except Exception:
+                        pass
+                t = threading.Thread(target=_drain, daemon=True)
+                t.start()
+                t.join(timeout=0.5)
+                if _lines:
+                    self._logger.error("TiTiler stderr: %s", "".join(_lines[:20]))
+            except Exception:
+                pass
         self._logger.error("TiTiler failed health check after auto-start")
         return False
 
     def _start_process(self) -> None:
         if self._process and self._process.poll() is None:
             return
+
         bootstrap_code = (
             "import shapely; "
             "import uvicorn; "
             "from titiler.application.main import app; "
             "uvicorn.run(app, host='127.0.0.1', port=8081, log_level='warning')"
         )
-        command: Sequence[str] = (
-            sys.executable,
-            "-c",
-            bootstrap_code,
-        )
+
         env = os.environ.copy()
+
+        # ── GDAL/PROJ data paths ──────────────────────────────────────────────
+        # On Windows with conda, GDAL_DATA and PROJ_DATA must point into the
+        # conda env's share/ directories.  Without these, rasterio/GDAL cannot
+        # find projection definitions and every COG tile request fails.
+        _python_exe = Path(sys.executable).resolve()
+        _env_root = _python_exe.parent          # conda env root on Windows
+        # conda layout: <env>\Library\share\gdal  and  <env>\Library\share\proj
+        _gdal_data_candidate = _env_root / "Library" / "share" / "gdal"
+        _proj_data_candidate = _env_root / "Library" / "share" / "proj"
+        # venv / non-conda layout: <env>\Lib\site-packages\pyproj\proj_dir\share\proj
+        if not _proj_data_candidate.exists():
+            try:
+                import pyproj
+                _proj_data_candidate = Path(pyproj.datadir.get_data_dir())
+            except Exception:
+                pass
+        if not _gdal_data_candidate.exists():
+            try:
+                import rasterio
+                _gdal_data_candidate = Path(rasterio.__file__).parent / "gdal_data"
+            except Exception:
+                pass
+
+        if _gdal_data_candidate.exists():
+            env.setdefault("GDAL_DATA", str(_gdal_data_candidate))
+        if Path(str(_proj_data_candidate)).exists():
+            env.setdefault("PROJ_DATA", str(_proj_data_candidate))
+            env.setdefault("PROJ_LIB",  str(_proj_data_candidate))
+
         env["GDAL_DISABLE_READDIR_ON_OPEN"] = "EMPTY_DIR"
         env["GDAL_HTTP_MERGE_CONSECUTIVE_RANGES"] = "YES"
+        # Suppress numpy cast warnings that spam stderr
         warning_filter = "ignore:invalid value encountered in cast:RuntimeWarning"
         existing_filters = env.get("PYTHONWARNINGS", "").strip()
         env["PYTHONWARNINGS"] = (
-            f"{existing_filters},{warning_filter}"
-            if existing_filters
-            else warning_filter
+            f"{existing_filters},{warning_filter}" if existing_filters else warning_filter
         )
-        self._process = subprocess.Popen(command, env=env)
-        self._logger.warning("Auto-started TiTiler process pid=%s", self._process.pid)
+
+        command: Sequence[str] = (sys.executable, "-c", bootstrap_code)
+
+        # ── Windows-specific subprocess flags ─────────────────────────────────
+        kwargs: dict = dict(env=env, stderr=subprocess.PIPE)
+        if platform.system() == "Windows":
+            # CREATE_NO_WINDOW (0x08000000): suppress console flash
+            # CREATE_NEW_PROCESS_GROUP (0x00000200): isolate signal handling
+            kwargs["creationflags"] = 0x08000000 | 0x00000200
+
+        self._process = subprocess.Popen(command, **kwargs)
+        self._logger.warning(
+            "Auto-started TiTiler process pid=%s gdal_data=%s proj_data=%s",
+            self._process.pid,
+            env.get("GDAL_DATA", "not-set"),
+            env.get("PROJ_DATA", "not-set"),
+        )
+        # Give the process 500 ms to fail fast (import error, port conflict, etc.)
+        # and log stderr if it exits immediately.
+        time.sleep(0.5)
+        if self._process.poll() is not None:
+            try:
+                stderr_out = self._process.stderr.read().decode("utf-8", errors="replace") if self._process.stderr else ""
+            except Exception:
+                stderr_out = ""
+            self._logger.error(
+                "TiTiler process exited immediately (rc=%s). stderr: %s",
+                self._process.returncode,
+                stderr_out[:2000],
+            )
+            self._process = None
