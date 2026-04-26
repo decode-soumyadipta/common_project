@@ -1643,11 +1643,31 @@
       setSelectedComparatorPane(comparatorSelectedPane, false);
       // 80 ms delay lets the browser reflow before Cesium measures the canvas
       setTimeout(function () {
+        // Force explicit pixel dimensions on the viewer divs before creating Cesium
+        // viewers — on Windows the flex layout may not have reflowed yet.
+        var _winW = window.innerWidth || document.documentElement.clientWidth || 800;
+        var _winH = window.innerHeight || document.documentElement.clientHeight || 600;
+        var _paneW = Math.floor((_winW - 6) / 2);
+        ["comparatorLeftViewer", "comparatorRightViewer",
+         "comparatorPaneLeft", "comparatorPaneRight"].forEach(function (id) {
+          var el = document.getElementById(id);
+          if (el && el.clientWidth === 0) {
+            el.style.width = _paneW + "px";
+            el.style.height = _winH + "px";
+            log("info", "Comparator forced size on #" + id + ": " + _paneW + "x" + _winH);
+          }
+        });
+        var _cw = document.getElementById("comparatorWindows");
+        if (_cw && _cw.clientWidth === 0) {
+          _cw.style.width = _winW + "px";
+          _cw.style.height = _winH + "px";
+        }
+
         ensureComparatorViewers();
         if (comparatorLeftViewer && comparatorRightViewer) {
           comparatorLeftViewer.resize();
           comparatorRightViewer.resize();
-          log("info", "Comparator resize: left=" +
+          log("info", "Comparator canvas after resize: left=" +
               comparatorLeftViewer.canvas.width + "x" + comparatorLeftViewer.canvas.height +
               " right=" + comparatorRightViewer.canvas.width + "x" + comparatorRightViewer.canvas.height);
         }
