@@ -1260,6 +1260,7 @@
     }
     setTimeout(_enforce2D, 80);
     setTimeout(_enforce2D, 400);
+  }
 
   function resetComparatorViewerLayers(targetViewer) {
     if (!targetViewer) {
