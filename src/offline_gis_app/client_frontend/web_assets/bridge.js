@@ -927,17 +927,19 @@
   }
 
   function getComparatorPaneViewer(paneKey) {
-    if (paneKey === "right") {
-      return comparatorRightViewer;
-    }
-    return comparatorLeftViewer;
+    // Map "left"→index 0, "right"→index 1
+    var idx = (paneKey === "right") ? 1 : 0;
+    return (Array.isArray(comparatorViewers) && comparatorViewers[idx]) || null;
   }
 
   function getComparatorPaneLayerType(paneKey) {
-    if (paneKey === "right") {
-      return comparatorRightLayerType;
-    }
-    return comparatorLeftLayerType;
+    var idx = (paneKey === "right") ? 1 : 0;
+    var v = Array.isArray(comparatorViewers) ? comparatorViewers[idx] : null;
+    if (!v) return null;
+    var key = v.__comparatorLayerKey || null;
+    if (!key) return null;
+    var def = layerDefinitions.get(key);
+    return (def && def.type) ? String(def.type) : null;
   }
 
   function getComparatorPaneVisual(paneKey) {
@@ -5893,9 +5895,14 @@
         log("debug", "rotateCamera: no targetBounds, rotating main viewer directly");
         viewer.camera.rotateRight(Cesium.Math.toRadians(degrees));
       }
-      if (comparatorModeEnabled && comparatorLeftViewer && comparatorRightViewer) {
-        comparatorLeftViewer.camera.rotateRight(Cesium.Math.toRadians(degrees));
-        comparatorRightViewer.camera.rotateRight(Cesium.Math.toRadians(degrees));
+      // Apply to all active comparator DEM panes
+      if (comparatorModeEnabled && Array.isArray(comparatorViewers)) {
+        comparatorViewers.forEach(function(cv, ci) {
+          if (!cv) return;
+          log("debug", "rotateCamera: applying to comparatorViewer[" + ci + "]");
+          cv.camera.rotateRight(Cesium.Math.toRadians(degrees));
+          if (cv.scene) cv.scene.requestRender();
+        });
       }
       requestSceneRender();
       log("debug", "Rotate camera degrees=" + degrees);
@@ -5928,22 +5935,30 @@
           destination: camera.position,
           orientation: orientation,
         });
-        
-        if (comparatorModeEnabled) {
-          if (comparatorLeftViewer && comparatorLeftViewer.camera) {
-            comparatorLeftViewer.camera.setView({
-              destination: comparatorLeftViewer.camera.position,
-              orientation: orientation,
-            });
-          }
-          if (comparatorRightViewer && comparatorRightViewer.camera) {
-            comparatorRightViewer.camera.setView({
-              destination: comparatorRightViewer.camera.position,
-              orientation: orientation,
-            });
-          }
-        }
       }
+
+      // Apply pitch to all active comparator DEM panes via lookAt so it works on Windows/ANGLE
+      if (comparatorModeEnabled && Array.isArray(comparatorViewers)) {
+        comparatorViewers.forEach(function(cv, ci) {
+          if (!cv || !cv.scene) return;
+          // Only apply to 3D panes (DEM panes)
+          if (cv.scene.mode !== Cesium.SceneMode.SCENE3D) return;
+          var bounds = activeTileBounds || lastLoadedBounds;
+          if (!bounds) return;
+          var rect = Cesium.Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north);
+          var sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, 0.0);
+          var range = Math.max(sphere.radius * 1.9, 900.0);
+          log("debug", "setPitch: applying to comparatorViewer[" + ci + "] pitch=" + degrees + "° range=" + range.toFixed(0));
+          try {
+            cv.camera.lookAt(sphere.center, new Cesium.HeadingPitchRange(cv.camera.heading, cameraOrbitPitch, range));
+            cv.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+          } catch(e) {
+            log("warn", "setPitch: comparatorViewer[" + ci + "] lookAt failed: " + e);
+          }
+          cv.scene.requestRender();
+        });
+      }
+
       requestSceneRender();
       log("debug", "Set pitch degrees=" + degrees);
     },

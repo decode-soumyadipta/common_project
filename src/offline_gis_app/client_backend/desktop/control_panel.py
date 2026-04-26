@@ -816,7 +816,7 @@ class ControlPanel(QWidget):
         visible_count = sum(
             1
             for asset in sorted_assets
-            if visibility_map.get(str(asset.get("file_path") or ""), False)
+            if visibility_map.get(str(asset.get("file_path") or ""), True)
         )
         crs_values = sorted(
             {
@@ -847,7 +847,7 @@ class ControlPanel(QWidget):
             crs = str(asset.get("crs") or "-")
             created_at = self._format_search_created_at(asset.get("created_at"))
             file_path = str(asset.get("file_path") or "")
-            is_visible = visibility_map.get(file_path, False)
+            is_visible = visibility_map.get(file_path, True)
             toggle_button = QPushButton("👁" if is_visible else "🚫")
             toggle_button.setObjectName("searchVisibilityToggle")
             toggle_button.setToolTip("Hide from map" if is_visible else "Show on map")
