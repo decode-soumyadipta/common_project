@@ -326,11 +326,10 @@
     if (viewer && viewer.scene && typeof viewer.scene.requestRender === "function") {
       viewer.scene.requestRender();
     }
-    if (comparatorLeftViewer && comparatorLeftViewer.scene) {
-      comparatorLeftViewer.scene.requestRender();
-    }
-    if (comparatorRightViewer && comparatorRightViewer.scene) {
-      comparatorRightViewer.scene.requestRender();
+    if (Array.isArray(comparatorViewers)) {
+      comparatorViewers.forEach(function (v) {
+        if (v && v.scene) v.scene.requestRender();
+      });
     }
   }
 
@@ -349,14 +348,15 @@
       // On Windows/ANGLE, Cesium viewers initialise with a zero-size canvas when
       // the parent div is display:none at creation time.  Force a resize + render
       // after the flex layout has been applied so the canvas fills the pane.
+      // Works for 2, 3, or 4 panes via the comparatorViewers[] array.
       var _resizeAndRender = function () {
-        if (comparatorLeftViewer && comparatorLeftViewer.scene) {
-          try { comparatorLeftViewer.resize(); } catch (_) {}
-          comparatorLeftViewer.scene.requestRender();
-        }
-        if (comparatorRightViewer && comparatorRightViewer.scene) {
-          try { comparatorRightViewer.resize(); } catch (_) {}
-          comparatorRightViewer.scene.requestRender();
+        if (Array.isArray(comparatorViewers)) {
+          comparatorViewers.forEach(function (v) {
+            if (v && v.scene) {
+              try { v.resize(); } catch (_) {}
+              v.scene.requestRender();
+            }
+          });
         }
       };
       setTimeout(_resizeAndRender, 50);
