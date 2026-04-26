@@ -504,6 +504,11 @@
     if (nearNadir) {
       return COMPARATOR_DEM_DEFAULT_PITCH;
     }
+    // Also clamp: if pitch is very shallow (near 0°) use the default tilt
+    const tooShallow = Math.abs(pitch) < Cesium.Math.toRadians(10.0);
+    if (tooShallow) {
+      return COMPARATOR_DEM_DEFAULT_PITCH;
+    }
     return Math.max(COMPARATOR_DEM_MIN_PITCH, Math.min(COMPARATOR_DEM_MAX_PITCH, pitch));
   }
 
@@ -1142,6 +1147,17 @@
       const demState = paneVisual ? paneVisual.dem : comparatorPaneVisualState.left.dem;
       const drapeUrl = buildComparatorDemDrapeUrl(definition, demState);
       const hillshadeUrl = buildComparatorDemHillshadeUrl(definition, demState);
+
+      // Force 3D globe mode for DEM panes — must happen BEFORE adding layers
+      // so Cesium initialises the 3D scene graph correctly on Windows/ANGLE.
+      log("info", "COMP_DEM pane=" + paneKey + " forcing SCENE3D for DEM viewer");
+      if (targetViewer.scene && targetViewer.scene.mode !== Cesium.SceneMode.SCENE3D) {
+        targetViewer.scene.morphTo3D(0.0);
+        log("info", "COMP_DEM pane=" + paneKey + " morphTo3D issued");
+      } else {
+        log("info", "COMP_DEM pane=" + paneKey + " already SCENE3D mode=" + targetViewer.scene.mode);
+      }
+
       const demProvider = new Cesium.UrlTemplateImageryProvider({
         url: drapeUrl,
         maximumLevel: definition.maxLevel,
@@ -1150,9 +1166,6 @@
         enablePickFeatures: false,
         rectangle: rectangle,
       });
-      if (targetViewer.scene) {
-        targetViewer.scene.requestRender();
-      }
       const demLayer = targetViewer.imageryLayers.addImageryProvider(demProvider);
       demLayer.alpha = 1.0;
       targetViewer.__comparatorPrimaryLayer = demLayer;
@@ -1170,6 +1183,42 @@
         targetViewer.__comparatorHillshadeLayer = hsLayer;
       }
       enforceComparatorDemLayerOrder(paneKey, targetViewer);
+
+      // Apply tilted 3D camera after a short delay to let morphTo3D settle.
+      // On Windows/ANGLE the scene mode transition is async — we need to wait
+      // at least one frame before lookAt works correctly.
+      if (rectangle) {
+        var _demRect = rectangle;
+        var _demViewer = targetViewer;
+        var _demPaneKey = paneKey;
+        function _applyDemCamera() {
+          if (!_demViewer || !_demViewer.scene) return;
+          var pitch = getComparatorDemPitchRadians();
+          var sphere = Cesium.BoundingSphere.fromRectangle3D(_demRect, Cesium.Ellipsoid.WGS84, 0.0);
+          var range = Math.max(sphere.radius * 1.9, 900.0);
+          log("info", "COMP_DEM pane=" + _demPaneKey +
+            " applying camera pitch=" + Cesium.Math.toDegrees(pitch).toFixed(1) +
+            "° range=" + range.toFixed(0) + "m" +
+            " sceneMode=" + _demViewer.scene.mode);
+          try {
+            _demViewer.camera.lookAt(
+              sphere.center,
+              new Cesium.HeadingPitchRange(0.0, pitch, range)
+            );
+            _demViewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+          } catch(e) {
+            log("warn", "COMP_DEM pane=" + _demPaneKey + " lookAt failed: " + e);
+          }
+          _demViewer.scene.requestRender();
+        }
+        setTimeout(_applyDemCamera, 50);
+        setTimeout(_applyDemCamera, 300);
+        setTimeout(_applyDemCamera, 700);
+      }
+
+      if (targetViewer.scene) {
+        targetViewer.scene.requestRender();
+      }
       return;
     }
 
@@ -1401,7 +1450,11 @@
       });
       v.scene.globe.baseColor = Cesium.Color.BLACK;
       v.scene.backgroundColor = Cesium.Color.BLACK;
-      v.scene.mode = Cesium.SceneMode.SCENE3D;
+      // Start in 3D — use morphTo3D so the scene graph initialises correctly
+      // on Windows/ANGLE (direct scene.mode assignment can leave it in a broken state)
+      if (v.scene.mode !== Cesium.SceneMode.SCENE3D) {
+        v.scene.morphTo3D(0.0);
+      }
       v.camera.percentageChanged = 0.001;
       
       try {
