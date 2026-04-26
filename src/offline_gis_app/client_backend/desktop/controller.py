@@ -2684,25 +2684,15 @@ class DesktopController:
     def _add_layer(self, asset: dict, options: dict) -> bool:
         tile_url = str(asset.get("tile_url") or "")
         # Normalize the tile URL for TiTiler / GDAL on all platforms.
-        # TiTilerUrlPolicy.build_url() already produces the correct raw path on Windows
-        # (e.g. "url=C:/Users/Foo/file.tif") — no file:// prefix needed because GDAL
-        # recognises a leading drive-letter as an absolute Windows path.
-        # We only need to STRIP any accidental file:///C:/ or file:C:/ prefixes that
-        # may sneak in from other code paths.  Do NOT re-add them.
+        # On Windows, TiTilerUrlPolicy.build_url() now produces file:///C:/... URIs
+        # which GDAL handles correctly. Do NOT strip the file:/// prefix — without it
+        # FastAPI/starlette prepends a "/" making the path "/C:/..." which GDAL rejects.
+        # On macOS/Linux, bare /abs/path is correct; strip any accidental file:/// prefix.
         import platform
         import re
 
-        if platform.system() == "Windows":
-            # Strip any file:/// or file:// or file: prefix so GDAL sees raw C:/...
-            tile_url = re.sub(r"url=file:/{0,3}([a-zA-Z]:)", r"url=\1", tile_url)
-            # Same for percent-encoded variants (file%3A%2F%2F%2F)
-            tile_url = re.sub(
-                r"url=file%3A(?:%2F){1,3}([a-zA-Z](?:%3A|:))",
-                lambda m: "url=" + m.group(1).replace("%3A", ":"),
-                tile_url,
-            )
-        else:
-            # macOS / Linux: strip file:///  or file://  so GDAL sees a bare /abs/path.
+        if platform.system() != "Windows":
+            # macOS / Linux: strip file:/// so GDAL sees a bare /abs/path.
             if "url=file:///" in tile_url:
                 tile_url = tile_url.replace("url=file:///", "url=/")
             elif "url=file://" in tile_url:
