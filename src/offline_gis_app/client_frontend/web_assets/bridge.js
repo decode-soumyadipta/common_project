@@ -344,6 +344,25 @@
     root.classList.toggle("active", enabled);
     root.setAttribute("aria-hidden", enabled ? "false" : "true");
     map.style.display = enabled ? "none" : "block";
+
+    if (enabled) {
+      // On Windows/ANGLE, Cesium viewers initialise with a zero-size canvas when
+      // the parent div is display:none at creation time.  Force a resize + render
+      // after the flex layout has been applied so the canvas fills the pane.
+      var _resizeAndRender = function () {
+        if (comparatorLeftViewer && comparatorLeftViewer.scene) {
+          try { comparatorLeftViewer.resize(); } catch (_) {}
+          comparatorLeftViewer.scene.requestRender();
+        }
+        if (comparatorRightViewer && comparatorRightViewer.scene) {
+          try { comparatorRightViewer.resize(); } catch (_) {}
+          comparatorRightViewer.scene.requestRender();
+        }
+      };
+      // Two passes: one after layout, one after paint
+      setTimeout(_resizeAndRender, 50);
+      setTimeout(_resizeAndRender, 300);
+    }
   }
 
   function getCartesianFromViewer(targetViewer, screenPosition) {
@@ -3435,10 +3454,24 @@
       viewer.scene.requestRender();
       window.requestAnimationFrame(function () {
         viewer.scene.requestRender();
-        // After initial paint, switch to on-demand rendering for performance.
-        // Use maximumRenderTimeChange=0 so any scene change triggers re-render.
-        viewer.scene.requestRenderMode = true;
-        viewer.scene.maximumRenderTimeChange = 0.0;
+        // On Windows/ANGLE, requestRenderMode can cause freezes because ANGLE
+        // doesn't always trigger re-renders on scene changes.  Keep continuous
+        // rendering on Windows; use on-demand on macOS/Linux for performance.
+        var _isWindows = navigator.platform && navigator.platform.indexOf("Win") >= 0;
+        if (_isWindows) {
+          // Continuous rendering on Windows — no freeze risk
+          viewer.scene.requestRenderMode = false;
+          // Heartbeat: force a render every 500 ms to prevent stale frames
+          setInterval(function () {
+            if (viewer && viewer.scene) {
+              viewer.scene.requestRender();
+            }
+          }, 500);
+        } else {
+          // On-demand rendering on macOS/Linux for performance
+          viewer.scene.requestRenderMode = true;
+          viewer.scene.maximumRenderTimeChange = 0.0;
+        }
       });
     });
     setStatus("Offline Cesium initialized.");

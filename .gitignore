@@ -69,3 +69,4 @@ src/offline_gis_app/client_frontend/web_assets/basemap/boundaries/
 grep_3dtiles.txt
 GIS_APP_SPEC.md
 src/offline_gis_app/client_frontend/icons/README.md
+src/offline_gis_app/client_frontend/web_assets/basemap
