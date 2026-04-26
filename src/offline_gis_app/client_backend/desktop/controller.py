@@ -1051,14 +1051,19 @@ class DesktopController:
                 from offline_gis_app.server_ingestion.services.cog_service import (
                     CogPreparationService,
                 )
-                cog_result = CogPreparationService().prepare(Path(asset["file_path"]))
-                if cog_result.working_path != Path(asset["file_path"]):
+                src_path = Path(asset["file_path"])
+                if not CogPreparationService._looks_like_cog(src_path):
+                    self.panel.log(f"Converting to COG for fast tiling: {src_path.name}…")
+                    if show_loading:
+                        self._set_layer_loading(True, f"Converting {src_path.name} to COG…")
+                cog_result = CogPreparationService().prepare(src_path)
+                if cog_result.working_path != src_path:
                     asset = dict(asset)  # don't mutate the original
                     asset["file_path"] = str(cog_result.working_path)
                     asset["tile_url"] = build_xyz_url(str(cog_result.working_path))
                     if cog_result.converted:
                         self.panel.log(
-                            f"COG conversion complete: {cog_result.working_path.name}"
+                            f"COG ready: {cog_result.working_path.name}"
                         )
             except Exception:
                 self._logger.debug("COG preparation skipped", exc_info=True)

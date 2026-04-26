@@ -98,12 +98,27 @@ class CogPreparationService:
 
         try:
             with rasterio.open(path) as dataset:
+                # Only trust the GDAL COG driver as definitive proof.
+                # A plain GeoTIFF with overviews is NOT a COG — it lacks internal
+                # tiling and the overview placement required for efficient random reads.
                 if str(dataset.driver).upper() == "COG":
                     return True
                 if dataset.driver != "GTiff":
                     return False
+                # Must be internally tiled AND have overviews to be COG-compatible
                 if not dataset.is_tiled:
                     return False
-                return bool(dataset.overviews(1))
+                if not dataset.overviews(1):
+                    return False
+                # Check block size — COGs use 256x512 or 512x512 blocks
+                # Plain GeoTIFFs typically use full-width strips (block_shapes[0][1] == width)
+                block_shapes = dataset.block_shapes
+                if not block_shapes:
+                    return False
+                rows, cols = block_shapes[0]
+                # If the block width equals the full raster width, it's a strip layout — not COG
+                if cols >= dataset.width:
+                    return False
+                return True
         except Exception:
             return False
