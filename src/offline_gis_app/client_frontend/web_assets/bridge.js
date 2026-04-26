@@ -1382,7 +1382,7 @@
       return;
     }
     comparatorLeftViewer = new Cesium.Viewer("comparatorLeftViewer", {
-      imageryProvider: createNaturalEarthProvider(),
+      imageryProvider: false,
       baseLayerPicker: false,
       geocoder: false,
       navigationHelpButton: false,
@@ -1392,14 +1392,13 @@
       infoBox: false,
       selectionIndicator: false,
       scene3DOnly: false,
-      requestRenderMode: true,
-      maximumRenderTimeChange: Infinity,
+      requestRenderMode: false,
       timeline: false,
       animation: false,
       terrainProvider: new Cesium.EllipsoidTerrainProvider(),
     });
     comparatorRightViewer = new Cesium.Viewer("comparatorRightViewer", {
-      imageryProvider: createNaturalEarthProvider(),
+      imageryProvider: false,
       baseLayerPicker: false,
       geocoder: false,
       navigationHelpButton: false,
@@ -1409,8 +1408,7 @@
       infoBox: false,
       selectionIndicator: false,
       scene3DOnly: false,
-      requestRenderMode: true,
-      maximumRenderTimeChange: Infinity,
+      requestRenderMode: false,
       timeline: false,
       animation: false,
       terrainProvider: new Cesium.EllipsoidTerrainProvider(),
@@ -1427,6 +1425,28 @@
     comparatorRightViewer.scene.verticalExaggeration = demVisual.exaggeration;
     comparatorLeftViewer.camera.percentageChanged = 0.001;
     comparatorRightViewer.camera.percentageChanged = 0.001;
+
+    // Add the same offline basemap used by the main viewer so comparator panes
+    // are not blank on Windows where NaturalEarthII assets may be unavailable.
+    try {
+      var _leftBasemap = createNaturalEarthProvider();
+      comparatorLeftViewer.imageryLayers.addImageryProvider(_leftBasemap);
+      var _rightBasemap = createNaturalEarthProvider();
+      comparatorRightViewer.imageryLayers.addImageryProvider(_rightBasemap);
+    } catch (_e) {
+      log("debug", "Comparator basemap provider failed, panes will show black background");
+    }
+
+    // Force initial renders — on Windows with ANGLE the viewers need an explicit
+    // render call after creation or they stay black.
+    setTimeout(function () {
+      if (comparatorLeftViewer && comparatorLeftViewer.scene) {
+        comparatorLeftViewer.scene.requestRender();
+      }
+      if (comparatorRightViewer && comparatorRightViewer.scene) {
+        comparatorRightViewer.scene.requestRender();
+      }
+    }, 100);
     bindComparatorSyncHandlers();
     bindComparatorPaneSelectionHandlers();
     setComparatorPaneSelectionStyles(comparatorSelectedPane);
