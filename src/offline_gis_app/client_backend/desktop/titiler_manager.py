@@ -66,9 +66,25 @@ class TiTilerManager:
             return
 
         bootstrap_code = (
-            "import shapely; "
-            "import uvicorn; "
-            "from titiler.application.main import app; "
+            "import sys, platform, re;"
+            "from titiler.application.main import app;"
+            # On Windows, starlette/uvicorn decodes 'url=C:/...' query params and
+            # the path router prepends a leading '/' making it '/C:/...' which GDAL
+            # rejects.  We patch the ASGI app with a lightweight middleware that
+            # rewrites the 'url' query parameter before it reaches TiTiler/GDAL.
+            "from starlette.middleware.base import BaseHTTPMiddleware;"
+            "from starlette.requests import Request;"
+            "import urllib.parse;"
+            "class _WinPathFix(BaseHTTPMiddleware):"
+            "  async def dispatch(self, request, call_next):"
+            "    if platform.system() == 'Windows' and 'url' in request.query_params:"
+            "      raw = request.scope.get('query_string', b'').decode('utf-8', errors='replace');"
+            "      fixed = re.sub(r'(?<=[?&])url=%2F([A-Za-z](?:%3A|:))', lambda m: 'url=' + m.group(1).replace('%3A', ':'), raw);"
+            "      fixed = re.sub(r'(?<=[?&])url=/([A-Za-z]:)', r'url=\\1', fixed);"
+            "      request.scope['query_string'] = fixed.encode('utf-8');"
+            "    return await call_next(request);"
+            "app.add_middleware(_WinPathFix);"
+            "import uvicorn;"
             "uvicorn.run(app, host='127.0.0.1', port=8081, log_level='warning')"
         )
 

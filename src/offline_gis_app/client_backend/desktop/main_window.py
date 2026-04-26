@@ -434,6 +434,15 @@ class MainWindow(QMainWindow):
         web_settings.setAttribute(
             QWebEngineSettings.LocalContentCanAccessFileUrls, True
         )
+        # Disable disk cache so local JS/CSS changes are always picked up.
+        # For a local file:// app there is no benefit to caching — it only
+        # causes stale bridge.js to be served after code updates.
+        try:
+            from qtpy.QtWebEngineWidgets import QWebEngineProfile
+            profile = self.web_view.page().profile()
+            profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.NoCache)
+        except Exception:
+            pass
 
         # ── Elevation profile panel (hidden until first profile) ──────────
         # It sits ONLY under the map column (web_view), not the full window.
