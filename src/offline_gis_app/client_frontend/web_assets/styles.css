@@ -23,16 +23,20 @@ body,
   z-index: 26;
   pointer-events: none;
   background: transparent;
+  align-items: stretch;
 }
 
 #comparatorWindows.active {
   display: flex;
+  align-items: stretch;
 }
 
 .comparatorPane {
   position: relative;
   flex: 1 1 0;
   min-width: 0;
+  min-height: 0;
+  height: 100%;
   pointer-events: auto;
   background: rgba(8, 14, 24, 1.0);
   border: 2px solid rgba(255, 255, 255, 0.4);
@@ -44,7 +48,7 @@ body,
 }
 
 .comparatorPane.active {
-  display: block;
+  display: flex;
 }
 
 .comparatorPane.selected {
@@ -59,6 +63,7 @@ body,
 
 .comparatorDivider {
   width: 4px;
+  align-self: stretch;
   background: rgba(255, 255, 255, 0.15);
   box-shadow: inset 1px 0 0 rgba(255,255,255,0.05);
   pointer-events: none;
