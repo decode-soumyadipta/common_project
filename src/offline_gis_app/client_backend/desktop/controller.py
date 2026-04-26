@@ -1052,21 +1052,26 @@ class DesktopController:
                     CogPreparationService,
                 )
                 src_path = Path(asset["file_path"])
+                self._logger.info("COG check: %s is_cog=%s", src_path.name,
+                                  CogPreparationService._looks_like_cog(src_path))
                 if not CogPreparationService._looks_like_cog(src_path):
                     self.panel.log(f"Converting to COG for fast tiling: {src_path.name}…")
                     if show_loading:
                         self._set_layer_loading(True, f"Converting {src_path.name} to COG…")
                 cog_result = CogPreparationService().prepare(src_path)
+                self._logger.info("COG result: working_path=%s converted=%s",
+                                  cog_result.working_path, cog_result.converted)
                 if cog_result.working_path != src_path:
                     asset = dict(asset)  # don't mutate the original
                     asset["file_path"] = str(cog_result.working_path)
                     asset["tile_url"] = build_xyz_url(str(cog_result.working_path))
+                    self._logger.info("COG tile_url updated to: %s", asset["tile_url"])
                     if cog_result.converted:
                         self.panel.log(
                             f"COG ready: {cog_result.working_path.name}"
                         )
             except Exception:
-                self._logger.debug("COG preparation skipped", exc_info=True)
+                self._logger.warning("COG preparation failed", exc_info=True)
         if not self.titiler.ensure_running():
             self.panel.log("Warning: TiTiler could not start. Layer may not draw.")
             self._logger.error("TiTiler unavailable before add layer")

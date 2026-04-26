@@ -74,7 +74,40 @@ class CogPreparationService:
                 source_path=source, working_path=cog_path, converted=True
             )
         except Exception as exc:  # noqa: BLE001
-            LOGGER.warning("COG conversion failed for %s: %s", source, exc)
+            LOGGER.warning("COG driver failed for %s: %s — trying tiled GeoTIFF fallback", source, exc)
+
+        # Fallback: write a tiled GeoTIFF with internal overviews.
+        # Not a strict COG but TiTiler tiles it reliably on all platforms.
+        try:
+            with rasterio.open(source) as src:
+                profile = src.profile.copy()
+                profile.update(
+                    driver="GTiff",
+                    tiled=True,
+                    blockxsize=512,
+                    blockysize=512,
+                    compress="deflate",
+                    bigtiff="IF_SAFER",
+                    interleave="pixel",
+                )
+                with rasterio.open(cog_path, "w", **profile) as dst:
+                    for i in range(1, src.count + 1):
+                        dst.write(src.read(i), i)
+                    dst.build_overviews([2, 4, 8, 16], rasterio.enums.Resampling.nearest)
+                    dst.update_tags(ns="rio_overview", resampling="nearest")
+            LOGGER.info(
+                "Tiled GeoTIFF fallback succeeded source=%s target=%s", source, cog_path
+            )
+            return CogPreparationResult(
+                source_path=source, working_path=cog_path, converted=True
+            )
+        except Exception as exc2:  # noqa: BLE001
+            LOGGER.warning("Tiled GeoTIFF fallback also failed for %s: %s", source, exc2)
+            try:
+                if cog_path.exists():
+                    cog_path.unlink()
+            except Exception:
+                pass
             return CogPreparationResult(
                 source_path=source, working_path=source, converted=False
             )
