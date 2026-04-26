@@ -1621,14 +1621,37 @@
         _debugPaneSizes("immediate");
         setTimeout(function() { _debugPaneSizes("50ms"); }, 50);
         setTimeout(function() { _debugPaneSizes("300ms"); }, 300);
-        
-        // Final resize to fix ANGLE black screen issues
-        setTimeout(function() {
-          if (typeof comparatorViewers !== "undefined" && Array.isArray(comparatorViewers)) {
-            comparatorViewers.forEach(function(v) { if(v) v.resize(); });
+
+        // Force canvas to fill pane — Cesium initialises at 300x150 default if
+        // it measures the container before the flex layout fully settles.
+        function _forceCanvasFill(v, paneEl) {
+          if (!v || !paneEl) return;
+          var w = paneEl.offsetWidth;
+          var h = paneEl.offsetHeight;
+          if (w > 10 && h > 10 && v.canvas) {
+            v.canvas.style.width  = w + "px";
+            v.canvas.style.height = h + "px";
+            v.canvas.width  = w;
+            v.canvas.height = h;
           }
-          _debugPaneSizes("100ms-post-resize");
-        }, 100);
+          try { v.resize(); } catch(_) {}
+          if (v.scene) v.scene.requestRender();
+        }
+
+        function _resizeAllPanes() {
+          for (var _ri = 0; _ri < _numPanes; _ri++) {
+            var _rpane = document.getElementById("comparatorPane" + _ri);
+            _forceCanvasFill(comparatorViewers[_ri], _rpane);
+          }
+        }
+
+        // Multiple passes — Windows ANGLE needs several frames to settle
+        setTimeout(_resizeAllPanes, 0);
+        setTimeout(_resizeAllPanes, 80);
+        setTimeout(function() { _resizeAllPanes(); _debugPaneSizes("100ms-post-resize"); }, 100);
+        setTimeout(_resizeAllPanes, 250);
+        setTimeout(_resizeAllPanes, 600);
+        setTimeout(_resizeAllPanes, 1200);
 
         const bounds = activeTileBounds || lastLoadedBounds;
         if (bounds && typeof comparatorViewers !== "undefined") {
