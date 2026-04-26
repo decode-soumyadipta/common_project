@@ -1599,12 +1599,35 @@
 
         ensureComparatorViewers(_numPanes);
         refreshComparatorLayers();
+
+        // DEBUG: log pane and canvas sizes immediately after creation
+        function _debugPaneSizes(label) {
+          for (var _di = 0; _di < _numPanes; _di++) {
+            var _pane = document.getElementById("comparatorPane" + _di);
+            var _vdiv = document.getElementById("comparatorViewer" + _di);
+            var _cv = comparatorViewers[_di] && comparatorViewers[_di].canvas;
+            log("info", "COMP_DEBUG[" + label + "] pane" + _di +
+              " pane=" + (_pane ? _pane.offsetWidth + "x" + _pane.offsetHeight : "null") +
+              " active=" + (_pane ? _pane.classList.contains("active") : "?") +
+              " vdiv=" + (_vdiv ? _vdiv.offsetWidth + "x" + _vdiv.offsetHeight : "null") +
+              " canvas=" + (_cv ? _cv.width + "x" + _cv.height : "null") +
+              " clientCanvas=" + (_cv ? _cv.clientWidth + "x" + _cv.clientHeight : "null"));
+          }
+          var _cw2 = document.getElementById("comparatorWindows");
+          log("info", "COMP_DEBUG[" + label + "] cwRoot=" +
+            (_cw2 ? _cw2.offsetWidth + "x" + _cw2.offsetHeight + " display=" + getComputedStyle(_cw2).display : "null"));
+        }
+
+        _debugPaneSizes("immediate");
+        setTimeout(function() { _debugPaneSizes("50ms"); }, 50);
+        setTimeout(function() { _debugPaneSizes("300ms"); }, 300);
         
         // Final resize to fix ANGLE black screen issues
         setTimeout(function() {
           if (typeof comparatorViewers !== "undefined" && Array.isArray(comparatorViewers)) {
             comparatorViewers.forEach(function(v) { if(v) v.resize(); });
           }
+          _debugPaneSizes("100ms-post-resize");
         }, 100);
 
         const bounds = activeTileBounds || lastLoadedBounds;
