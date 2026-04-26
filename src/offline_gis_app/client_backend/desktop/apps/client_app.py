@@ -64,11 +64,20 @@ def main() -> int:
             _write_startup_trace("api_only_mode_selected")
             return _run_api_only()
 
-        # Safer defaults for offline systems where GPU sandbox or
-        # graphics backend issues can prevent WebEngine windows from appearing.
+        # On Windows with NVIDIA, use hardware OpenGL (ANGLE/D3D11) for full GPU acceleration.
+        # Only fall back to software if explicitly requested or if no GPU is detected.
+        import platform
+        _system = platform.system()
+        if _system == "Windows":
+            # Let Qt pick the best backend — ANGLE (D3D11) on Windows gives full GPU.
+            # Do NOT set QT_OPENGL=software here; that kills WebGL/Cesium performance.
+            os.environ.setdefault("QT_OPENGL", "angle")
+            os.environ.setdefault("QT_ANGLE_PLATFORM", "d3d11")
+        else:
+            # macOS/Linux: desktop OpenGL
+            os.environ.setdefault("QT_OPENGL", "desktop")
+        # Disable sandbox only — needed for offline/restricted environments
         os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
-        os.environ.setdefault("QT_OPENGL", "software")
-        os.environ.setdefault("QT_QUICK_BACKEND", "software")
         _write_startup_trace("qt_env_configured")
 
         configure_standalone_runtime(mode="client")

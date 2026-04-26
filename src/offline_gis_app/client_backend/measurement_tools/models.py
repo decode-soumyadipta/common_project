@@ -93,6 +93,50 @@ class VolumeMeasurement:
 
 
 @dataclass
+class DepressionRegion:
+    """A single connected depression detected within the analysis polygon.
+
+    Attributes:
+        region_id: Integer label (1-based).
+        fill_volume_m3: Volume of fill needed to reach reference surface [m³].
+        area_m2: Planimetric area of the depression [m²].
+        max_depth_m: Maximum depth below reference surface [m].
+        mean_depth_m: Mean depth below reference surface [m].
+        reference_elevation_m: Reference (spill-point) elevation [m].
+        rim_elevation_m: Mean elevation of surrounding terrain rim [m].
+        centroid_lon: Centroid longitude [°].
+        centroid_lat: Centroid latitude [°].
+        outline_lonlat: Convex-hull outline as list of (lon, lat) tuples.
+    """
+
+    region_id: int
+    fill_volume_m3: float
+    area_m2: float
+    max_depth_m: float
+    mean_depth_m: float
+    reference_elevation_m: float
+    rim_elevation_m: float
+    centroid_lon: float
+    centroid_lat: float
+    outline_lonlat: list[tuple[float, float]]
+
+
+@dataclass
+class FillVolumeResult:
+    """Aggregated result of fill-volume analysis.
+
+    Attributes:
+        regions: List of detected depression regions, sorted by volume descending.
+        reference_elevation_m: Mean rim elevation used as reference surface [m].
+        void_fraction: Fraction of polygon area with no DEM data.
+    """
+
+    regions: list[DepressionRegion]
+    reference_elevation_m: float
+    void_fraction: float
+
+
+@dataclass
 class ViewshedMeasurement:
     """Result of viewshed analysis.
     

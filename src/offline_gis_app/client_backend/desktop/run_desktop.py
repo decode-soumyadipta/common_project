@@ -75,16 +75,19 @@ def run(
     system = platform.system()
 
     if system == "Windows":
-        # Windows: force NVIDIA discrete GPU via Optimus override
+        # Windows: force NVIDIA discrete GPU via Optimus override.
+        # Use ANGLE D3D11 backend — best GPU path for Qt5 WebEngine on Windows.
         required_flags.extend([
-            "--use-gl=desktop",
+            "--use-gl=angle",
+            "--use-angle=d3d11",
             "--disable-gpu-vsync",
+            "--enable-zero-copy",
             "--disable-features=RendererCodeIntegrity",
+            "--enable-features=VaapiVideoDecoder",
         ])
-        os.environ.setdefault("SHIM_MCCOMPAT", "0x800000001")       # NVIDIA Optimus
-        os.environ.setdefault("NvOptimusEnablement", "0x00000001")   # Force NVIDIA dGPU
-        os.environ.setdefault("AmdPowerXpressRequestHighPerformance", "1")  # Force AMD dGPU
-        os.environ.setdefault("__NV_PRIME_RENDER_OFFLOAD", "1")      # Linux PRIME (no-op on Win)
+        os.environ.setdefault("SHIM_MCCOMPAT", "0x800000001")
+        os.environ.setdefault("NvOptimusEnablement", "0x00000001")
+        os.environ.setdefault("AmdPowerXpressRequestHighPerformance", "1")
 
     elif system == "Linux":
         # Linux: NVIDIA PRIME offload for discrete GPU

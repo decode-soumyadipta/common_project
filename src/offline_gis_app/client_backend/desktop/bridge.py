@@ -27,6 +27,12 @@ class WebBridge(QObject):
     # Emitted with loading progress (0-100) and status message
     loadingProgress = Signal(int, str)
 
+    # Emitted when measurement cursor should be shown/hidden (Qt handles the cursor)
+    measureCursorChanged = Signal(bool)
+
+    # Emitted with cursor fraction (0–1) along the completed profile line
+    profileCursorMoved = Signal(float)
+
     # ------------------------------------------------------------------
     # Slots (called from JavaScript via QWebChannel)
     # ------------------------------------------------------------------
@@ -80,3 +86,13 @@ class WebBridge(QObject):
     @Slot(bool)
     def on_render_busy(self, busy: bool) -> None:
         self.renderBusy.emit(busy)
+
+    @Slot(bool)
+    def on_measure_cursor(self, enabled: bool) -> None:
+        import logging
+        logging.getLogger("desktop.bridge").info("[CURSOR_DEBUG] on_measure_cursor slot called enabled=%s", enabled)
+        self.measureCursorChanged.emit(enabled)
+
+    @Slot(float)
+    def on_profile_cursor(self, frac: float) -> None:
+        self.profileCursorMoved.emit(float(frac))

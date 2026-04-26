@@ -67,26 +67,27 @@ def _coord_box(text: str = "—", tooltip: str = "", min_width: int = 120) -> QF
             background: #ffffff;
             border: 1px solid #b0bac5;
             border-radius: 3px;
-            padding: 0px;
+            padding: 2px 4px;
         }
         QLabel {
             color: #0a1929;
             font-size: 11px;
             font-family: 'Menlo', 'Consolas', 'Monaco', monospace;
             font-weight: 600;
-            padding: 0px;
+            padding: 1px 3px;
             margin: 0px;
+            background: transparent;
         }
     """)
     box.setMinimumWidth(min_width)
-    box.setMaximumWidth(min_width)
     
     layout = QHBoxLayout(box)
-    layout.setContentsMargins(2, 2, 2, 2)
+    layout.setContentsMargins(4, 2, 4, 2)
     layout.setSpacing(0)
     
     label = QLabel(text)
-    label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    label.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+    label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
     if tooltip:
         label.setToolTip(tooltip)
     
@@ -158,7 +159,7 @@ class GISStatusBar(QStatusBar):
         super().__init__(parent)
         self.setStyleSheet(_STATUSBAR_STYLE)
         self.setSizeGripEnabled(False)
-        self.setFixedHeight(32)
+        self.setFixedHeight(36)
 
         # ── Progress bar (no text, just blue fill) ───────────────────────
         self._progress_bar = QProgressBar(self)
@@ -166,6 +167,14 @@ class GISStatusBar(QStatusBar):
         self._progress_bar.setFixedWidth(100)  # Half the previous width
         self._progress_bar.setRange(0, 100)
         self._progress_bar.setValue(0)
+
+        # ── Progress label (2-3 word status beside the bar) ───────────────
+        self._progress_label = QLabel("", self)
+        self._progress_label.setFixedWidth(110)
+        self._progress_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self._progress_label.setStyleSheet(
+            "QLabel { color: #90caf9; font-size: 11px; font-family: 'Menlo','Consolas','Monaco',monospace; }"
+        )
 
         # ── Coordinate boxes ──────────────────────────────────────────────
         self._utm_transformers: dict[int, Transformer] = {}
@@ -180,15 +189,16 @@ class GISStatusBar(QStatusBar):
                 background: #e3f2fd;
                 border: 1px solid #90caf9;
                 border-radius: 3px;
-                padding: 0px;
+                padding: 2px 4px;
             }
             QLabel {
                 color: #0d47a1;
                 font-size: 11px;
                 font-family: 'Menlo', 'Consolas', 'Monaco', monospace;
                 font-weight: 700;
-                padding: 0px;
+                padding: 1px 3px;
                 margin: 0px;
+                background: transparent;
             }
         """)
 
@@ -201,6 +211,7 @@ class GISStatusBar(QStatusBar):
 
         # Add stretch first to push everything to the right
         row.addStretch(1)
+        row.addWidget(self._progress_label)
         row.addWidget(self._progress_bar)
         row.addWidget(_make_separator())
         row.addWidget(self._lon_box)
@@ -217,6 +228,11 @@ class GISStatusBar(QStatusBar):
         # ── Coordinate precision ──────────────────────────────────────────
         self._coord_decimal_places = 6
         self._elev_decimal_places = 2
+
+        # ── Progress priority tracking ────────────────────────────────────
+        # Computation progress (fill volume, slope, etc.) takes priority over
+        # tile-loading progress so the two don't fight each other.
+        self._computation_active = False
 
     # ------------------------------------------------------------------
     # Slots wired to WebBridge signals
@@ -273,18 +289,84 @@ class GISStatusBar(QStatusBar):
         """Update the progress bar with loading status.
         
         Args:
-            percent: Progress percentage (0-100).
+            percent: Progress percentage (0-100), or -1 for indeterminate spinner.
             message: Status message describing what's loading.
         """
+        is_computation = "fill volume" in (message or "").lower()
+
+        if percent < 0:
+            # -1 → indeterminate spinner (e.g. long-running computation)
+            self._computation_active = True
+            self._progress_bar.setRange(0, 0)
+            self._progress_bar.setToolTip(str(message or "Processing…"))
+            self._progress_label.setText(self._short_label(message))
+            return
+
         percent = max(0, min(100, percent))  # Clamp to 0-100
-        
+
+        # Tile-loading events (percent < 100, message="Loading tiles" / "Complete")
+        # must not overwrite an active computation progress update.
+        if not is_computation and self._computation_active:
+            return
+
+        if is_computation:
+            # Track computation lifecycle: 0 = start, 100 = done
+            if percent == 0:
+                self._computation_active = True
+            elif percent == 100:
+                self._computation_active = False
+
         if percent > 0 and percent < 100:
             self._progress_bar.setRange(0, 100)
             self._progress_bar.setValue(percent)
-        elif percent >= 100:
-            self._progress_bar.setRange(0, 100)
-            self._progress_bar.setValue(0)
-        else:  # percent == 0
+            self._progress_label.setText(self._short_label(message))
+        else:
+            # 0 (start) → show indeterminate so the bar is visible immediately
+            # 100 (done) → reset
+            if percent == 0 and is_computation:
+                self._progress_bar.setRange(0, 0)  # indeterminate until first real %
+                self._progress_label.setText(self._short_label(message))
+            else:
+                self._progress_bar.setRange(0, 100)
+                self._progress_bar.setValue(0)
+                self._progress_label.setText("")
+        self._progress_bar.setToolTip("")
+
+    @staticmethod
+    def _short_label(message: str) -> str:
+        """Return a crisp 2-3 word label from a longer message string."""
+        _MAP = {
+            "fill volume":   "Fill Volume…",
+            "analysing":     "Analysing…",
+            "computing":     "Computing…",
+            "loading":       "Loading…",
+            "rendering":     "Rendering…",
+            "searching":     "Searching…",
+            "done":          "",
+            "complete":      "",
+        }
+        lower = (message or "").lower()
+        for key, label in _MAP.items():
+            if key in lower:
+                return label
+        # Fallback: first two words, max 18 chars
+        words = (message or "").split()
+        short = " ".join(words[:2])
+        return short[:18] + ("…" if len(short) > 18 else "")
+
+    @Slot(bool)
+    def on_render_busy(self, busy: bool) -> None:
+        """Show indeterminate progress while the renderer is active.
+        
+        Args:
+            busy: True when the renderer is processing frames.
+        """
+        # Never let render-busy state overwrite an active computation progress.
+        if self._computation_active:
+            return
+        if busy:
+            self._progress_bar.setRange(0, 0)  # indeterminate spinner
+        else:
             self._progress_bar.setRange(0, 100)
             self._progress_bar.setValue(0)
 

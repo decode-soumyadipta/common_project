@@ -43,8 +43,26 @@ def read_dem_window(
     """
     if rasterio is None:
         raise RuntimeError("rasterio is not available")
+    
     with rasterio.open(dem_path) as src:
-        win = from_bounds(*bounds, transform=src.transform)
+        # Clip requested bounds to DEM bounds to avoid reading outside the raster
+        dem_bounds = src.bounds
+        clipped_bounds = (
+            max(bounds[0], dem_bounds.left),
+            max(bounds[1], dem_bounds.bottom),
+            min(bounds[2], dem_bounds.right),
+            min(bounds[3], dem_bounds.top),
+        )
+        
+        # Check if there's any overlap
+        if (clipped_bounds[0] >= clipped_bounds[2] or 
+            clipped_bounds[1] >= clipped_bounds[3]):
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Requested bounds {bounds} do not overlap with DEM bounds {dem_bounds}")
+            return np.empty((0, 0), dtype=np.float64), src.transform, float(src.res[0])
+        
+        win = from_bounds(*clipped_bounds, transform=src.transform)
 
         # Prevent OOM bus errors on massive windows
         max_dim = 4000

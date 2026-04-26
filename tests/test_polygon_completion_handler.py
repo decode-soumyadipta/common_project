@@ -41,6 +41,10 @@ def mock_panel():
     panel.search_draw_polygon_btn.isChecked.return_value = False
     panel.search_draw_polygon_btn.blockSignals = Mock()
     panel.search_draw_polygon_btn.setChecked = Mock()
+    # QComboBox used by _toolbar_measure_slope_aspect to read/set DEM colour mode
+    panel.dem_color_mode_combo = Mock()
+    panel.dem_color_mode_combo.currentData.return_value = "gray"
+    panel.dem_color_mode_combo.findData.return_value = -1
     return panel
 
 
@@ -143,3 +147,40 @@ def test_finish_polygon_does_not_trigger_measurement_for_search_context(controll
     controller._toolbar_measure_polygon_area.assert_not_called()
     # Context should remain "search" (not reset to "none")
     assert controller._polygon_drawing_context == "search"
+
+
+def test_handle_toolbar_action_routes_slope_aspect_toggle_state(controller):
+    """Ensure toolbar checked state is forwarded to slope/aspect handler."""
+    controller._toolbar_measure_slope_aspect = Mock(return_value=True)
+
+    result = controller.handle_toolbar_action("Slope & Aspect", checked=True)
+
+    controller._toolbar_measure_slope_aspect.assert_called_once_with(enabled=True)
+    assert result is True
+
+
+def test_toolbar_measure_slope_aspect_disable_clears_active_state(controller):
+    """Disabling slope/aspect should clear interaction state and return unchecked."""
+    controller._slope_aspect_mode_enabled = True
+    controller._slope_aspect_computing = True
+    controller._polygon_drawing_context = "measurement"
+
+    result = controller._toolbar_measure_slope_aspect(enabled=False)
+
+    assert result is False
+    assert controller._slope_aspect_mode_enabled is False
+    assert controller._slope_aspect_computing is False
+    assert controller._polygon_drawing_context == "none"
+    controller._run_js_call.assert_called_with("setSearchDrawMode", "none")
+
+
+def test_toolbar_measure_slope_aspect_false_checked_activates_when_idle(controller):
+    """A false checked signal should still activate slope/aspect when currently idle."""
+    controller._slope_aspect_mode_enabled = False
+    controller._slope_aspect_computing = False
+    controller._current_polygon_lonlat = Mock(return_value=None)
+
+    result = controller._toolbar_measure_slope_aspect(enabled=False)
+
+    assert result is True
+    assert controller._slope_aspect_mode_enabled is True

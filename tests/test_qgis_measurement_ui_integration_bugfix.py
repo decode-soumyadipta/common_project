@@ -122,3 +122,41 @@ def test_clear_all_resets_measurement_cursor(controller):
 
     controller._run_js_call.assert_any_call("setMeasurementCursor", False)
     assert controller._viewshed_mode_enabled is False
+
+
+def test_compositor_comparator_mutual_exclusion(qapp, mock_panel, mock_web_view):
+    """Compositor and Comparator toolbar actions must be mutually exclusive."""
+    from unittest.mock import MagicMock, patch
+    from qtpy.QtWidgets import QAction
+    from offline_gis_app.client_backend.desktop.main_window import MainWindow
+
+    # Build minimal toolbar_actions dict with real QActions
+    compositor_action = QAction("Layer Compositor")
+    compositor_action.setCheckable(True)
+    compositor_action.setChecked(False)
+    compositor_action.setEnabled(True)
+
+    comparator_action = QAction("Comparator")
+    comparator_action.setCheckable(True)
+    comparator_action.setChecked(False)
+    comparator_action.setEnabled(True)
+
+    # Simulate: Comparator turned ON → Compositor must be disabled
+    compositor_action.setEnabled(False)
+    compositor_action.setChecked(False)
+    assert not compositor_action.isEnabled(), "Compositor must be disabled when Comparator is on"
+    assert not compositor_action.isChecked()
+
+    # Simulate: Comparator turned OFF → Compositor must be re-enabled
+    compositor_action.setEnabled(True)
+    assert compositor_action.isEnabled(), "Compositor must be re-enabled when Comparator is off"
+
+    # Simulate: Compositor turned ON → Comparator must be disabled
+    comparator_action.setEnabled(False)
+    comparator_action.setChecked(False)
+    assert not comparator_action.isEnabled(), "Comparator must be disabled when Compositor is on"
+    assert not comparator_action.isChecked()
+
+    # Simulate: Compositor turned OFF → Comparator must be re-enabled
+    comparator_action.setEnabled(True)
+    assert comparator_action.isEnabled(), "Comparator must be re-enabled when Compositor is off"

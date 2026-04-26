@@ -11,7 +11,7 @@ from pathlib import Path
 import time
 
 from qtpy.QtCore import QSize, Qt, QUrl
-from qtpy.QtGui import QAction, QGuiApplication, QIcon
+from qtpy.QtGui import QAction, QColor, QCursor, QGuiApplication, QIcon, QPainter, QPen, QPixmap
 from qtpy.QtWebChannel import QWebChannel
 from qtpy.QtWebEngineWidgets import QWebEngineSettings, QWebEngineView
 from qtpy.QtWidgets import (
@@ -317,18 +317,19 @@ class MainWindow(QMainWindow):
     IMAGERY_ONLY_ACTIONS: set[str] = set()
     DEM_ONLY_ACTIONS: set[str] = {
         "Elevation Profile",
-        "Volume Cut/Fill",
-        "Viewshed / LOS",
+        "Fill Volume",
         "Slope & Aspect",
     }
     TOGGLE_ACTIONS: set[str] = {
         "Layer Compositor",
         "Comparator",
         "Distance / Azimuth",
+        "Elevation Profile",
+        "Fill Volume",
+        "Slope & Aspect",
         "Pan",
         "Add Point",
         "Add Polygon",
-        "Shadow Height",
     }
     TOOLBAR_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         (
@@ -343,10 +344,8 @@ class MainWindow(QMainWindow):
             (
                 ("Distance / Azimuth", "measure_distance"),
                 ("Elevation Profile", "elevation_profile"),
-                ("Volume Cut/Fill", "volume"),
-                ("Viewshed / LOS", "viewshed"),
+                ("Fill Volume", "volume"),
                 ("Slope & Aspect", "slope_aspect"),
-                ("Shadow Height", "shadow_height"),
                 ("Clear Last", "clear_last"),
                 ("Clear All", "clear_all"),
             ),
@@ -356,7 +355,6 @@ class MainWindow(QMainWindow):
             (
                 ("Add Point", "annotate_point"),
                 ("Add Polygon", "annotate_polygon"),
-                ("Shadow Height", "shadow_height"),
                 ("Save Annotations", "save_annotations"),
             ),
         ),
@@ -367,17 +365,15 @@ class MainWindow(QMainWindow):
                 ("Zoom In", "zoom_in"),
                 ("Zoom Out", "zoom_out"),
                 ("Zoom to Extent", "zoom_extent"),
-                ("North Arrow", "north_arrow"),
             ),
         ),
         (
             "file",
             (
-                ("Open Raster", "open_raster"),
-                ("Open DEM", "open_dem"),
+                ("Add Vector", "open_vector"),
+                ("Add Raster Layer", "open_raster"),
                 ("Save Project", "save_project"),
-                ("Export GeoPackage", "export_gpkg"),
-                ("Export Profile CSV", "export_profile_csv"),
+                ("Export", "export_gpkg"),
             ),
         ),
     )
@@ -438,14 +434,36 @@ class MainWindow(QMainWindow):
         web_settings.setAttribute(
             QWebEngineSettings.LocalContentCanAccessFileUrls, True
         )
-        splitter = QSplitter(self)
-        splitter.addWidget(self.panel_scroll)
-        splitter.addWidget(self.web_view)
+
+        # ── Elevation profile panel (hidden until first profile) ──────────
+        # It sits ONLY under the map column (web_view), not the full window.
+        # We achieve this by putting the web_view in its own vertical splitter.
+        from offline_gis_app.client_backend.desktop.elevation_profile_panel import (
+            ElevationProfilePanel,
+        )
+        self.elevation_profile_panel = ElevationProfilePanel(self)
+        self.elevation_profile_panel.hide()
+        self.elevation_profile_panel.close_requested.connect(
+            self._on_elevation_profile_close
+        )
+
+        # ── Map column: web_view (top) | profile panel (bottom) ───────────
+        self._map_v_splitter = QSplitter(Qt.Orientation.Vertical, self)
+        self._map_v_splitter.addWidget(self.web_view)
+        self._map_v_splitter.addWidget(self.elevation_profile_panel)
+        self._map_v_splitter.setCollapsible(0, False)
+        self._map_v_splitter.setCollapsible(1, True)
+
+        # ── Horizontal splitter: control panel | map column ───────────────
+        self._h_splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self._h_splitter.addWidget(self.panel_scroll)
+        self._h_splitter.addWidget(self._map_v_splitter)
         if app_mode == DesktopAppMode.CLIENT:
-            splitter.setSizes([500, 1100])
+            self._h_splitter.setSizes([500, 1100])
         else:
-            splitter.setSizes([420, 1180])
-        self.setCentralWidget(splitter)
+            self._h_splitter.setSizes([420, 1180])
+
+        self.setCentralWidget(self._h_splitter)
 
         self.bridge = WebBridge()
         self.titiler_manager = TiTilerManager()
@@ -474,13 +492,38 @@ class MainWindow(QMainWindow):
         self.bridge.mouseCoordinates.connect(self.gis_status_bar.on_mouse_coordinates)
         self.bridge.cameraChanged.connect(self.gis_status_bar.on_camera_changed)
         self.bridge.loadingProgress.connect(self.gis_status_bar.on_loading_progress)
+        self.bridge.renderBusy.connect(self.gis_status_bar.on_render_busy)
+        self.bridge.measureCursorChanged.connect(self._on_measure_cursor_changed)
+        self.bridge.profileCursorMoved.connect(self._on_profile_cursor_moved)
+        self._measure_crosshair_cursor = self._build_crosshair_cursor()
+        self._measure_cursor_active = False
+        # Event filter to re-apply cursor on every mouse move (QWebEngineView resets it)
+        self.web_view.installEventFilter(self)
+        vp = self.web_view.focusProxy()
+        if vp:
+            vp.installEventFilter(self)
+        # Wire elevation profile completion → uncheck toolbar button
+        self.controller._elevation_profile.on_complete = self._on_elevation_profile_complete
+        # Wire coordinator to use the embedded panel
+        self.controller._elevation_profile.set_panel(self.elevation_profile_panel)
+        # Wire fill volume job completion → uncheck toolbar button
+        self.controller._on_fill_volume_done = self._on_fill_volume_done
+        # Wire slope/aspect completion → uncheck toolbar button
+        self.controller._on_slope_aspect_done = self._on_slope_aspect_done
 
         for label, action in self.toolbar_actions.items():
-            action.triggered.connect(
-                lambda checked=False, action_label=label: (
-                    self._on_toolbar_action_triggered(action_label, checked)
+            if action.isCheckable():
+                action.toggled.connect(
+                    lambda checked, action_label=label: (
+                        self._on_toolbar_action_triggered(action_label, checked)
+                    )
                 )
-            )
+            else:
+                action.triggered.connect(
+                    lambda _checked=False, action_label=label: (
+                        self._on_toolbar_action_triggered(action_label, False)
+                    )
+                )
 
         if (
             self.visualization_tools_switch is not None
@@ -642,7 +685,7 @@ class MainWindow(QMainWindow):
                 return
             if checked:
                 self._show_comparator_dropdown()
-                # Gray out Layer Compositor while Comparator is active
+                # Disable Layer Compositor while Comparator is active
                 compositor_action = self.toolbar_actions.get("Layer Compositor")
                 if compositor_action is not None:
                     compositor_action.setEnabled(False)
@@ -653,12 +696,13 @@ class MainWindow(QMainWindow):
                 if hasattr(self, "map_overlay_controls"):
                     self.map_overlay_controls.set_special_mode(True)
                 return
+            # Comparator toggled OFF — disable it and re-enable compositor
             final_state = self.controller.handle_toolbar_action(
                 action_label, checked=checked
             )
             if isinstance(final_state, bool):
                 action.setChecked(final_state)
-            # Re-enable Layer Compositor when Comparator is off
+            # Always re-enable Layer Compositor when Comparator is off
             compositor_action = self.toolbar_actions.get("Layer Compositor")
             if compositor_action is not None:
                 compositor_action.setEnabled(True)
@@ -673,26 +717,37 @@ class MainWindow(QMainWindow):
                 return
             if checked:
                 self._show_layer_compositor_overlay()
-                # Gray out Comparator while Layer Compositor is active
+                # Disable Comparator while Layer Compositor is active
                 comparator_action = self.toolbar_actions.get("Comparator")
                 if comparator_action is not None:
                     comparator_action.setEnabled(False)
                     comparator_action.setChecked(False)
+                    # Also tell controller to disable comparator if it was on
+                    self.controller.handle_toolbar_action("Comparator", checked=False)
                 # Hide AOI checkbox in compositor mode
                 if hasattr(self, "map_overlay_controls"):
                     self.map_overlay_controls.set_special_mode(True)
                 return
+            # Layer Compositor toggled OFF — re-enable comparator
             self.controller.disable_layer_compositor()
             if hasattr(self, "compositor_overlay"):
                 self.compositor_overlay.hide()
             action.setChecked(False)
-            # Re-enable Comparator when Layer Compositor is off
+            # Always re-enable Comparator when Layer Compositor is off
             comparator_action = self.toolbar_actions.get("Comparator")
             if comparator_action is not None:
                 comparator_action.setEnabled(True)
             # Restore AOI checkbox visibility
             if hasattr(self, "map_overlay_controls"):
                 self.map_overlay_controls.set_special_mode(False)
+            return
+
+        if action_label == "Export":
+            self._show_export_dropdown()
+            return
+
+        if action_label in ("Add Vector", "Add Raster Layer"):
+            self.controller.browse_path()
             return
 
         final_state = self.controller.handle_toolbar_action(
@@ -702,14 +757,18 @@ class MainWindow(QMainWindow):
         if action is None or not action.isCheckable():
             return
         if isinstance(final_state, bool):
+            action.blockSignals(True)
             action.setChecked(final_state)
+            action.blockSignals(False)
 
         interaction_toggles = {
             "Pan",
             "Distance / Azimuth",
+            "Elevation Profile",
+            "Fill Volume",
+            "Slope & Aspect",
             "Add Point",
             "Add Polygon",
-            "Shadow Height",
         }
         if action_label in interaction_toggles and bool(final_state):
             for other_label in interaction_toggles:
@@ -972,6 +1031,50 @@ class MainWindow(QMainWindow):
         if not applied["done"]:
             action.setChecked(False)
 
+    def _show_export_dropdown(self) -> None:
+        """Show export options dropdown under the Export toolbar button."""
+        from qtpy.QtWidgets import QMenu
+        action = self.toolbar_actions.get("Export")
+        anchor = self.main_toolbar.widgetForAction(action) if action else None
+
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background: #f8fafc;
+                border: 1px solid #c9d3df;
+                border-radius: 6px;
+                padding: 4px 0px;
+            }
+            QMenu::item {
+                padding: 7px 20px;
+                font-size: 12px;
+                color: #1a2a3a;
+            }
+            QMenu::item:selected {
+                background: #e3edf8;
+                color: #1f6fd2;
+            }
+        """)
+        gpkg_act = menu.addAction(
+            IconRegistry.get("export_gpkg", size=16), "Export GeoPackage"
+        )
+        pdf_act = menu.addAction(
+            IconRegistry.get("print_layout", size=16), "Export PDF"
+        )
+        tiff_act = menu.addAction(
+            IconRegistry.get("export_geotiff", size=16), "Export as GeoTIFF"
+        )
+
+        pos = anchor.mapToGlobal(anchor.rect().bottomLeft()) if anchor else self.cursor().pos()
+        chosen = menu.exec(pos)
+
+        if chosen == gpkg_act:
+            self.controller.handle_toolbar_action("Export GeoPackage")
+        elif chosen == pdf_act:
+            self.panel.log("Export PDF: not yet implemented.")
+        elif chosen == tiff_act:
+            self.panel.log("Export GeoTIFF: not yet implemented.")
+
     def set_toolbar_layer_context(self, context: str) -> None:
         """Set the current layer context for toolbar action filtering.
         
@@ -1036,6 +1139,124 @@ class MainWindow(QMainWindow):
                     action.setEnabled(False)
                     if action.isCheckable():
                         action.setChecked(False)
+
+    def _on_elevation_profile_close(self) -> None:
+        """Hide the profile panel, clear globe markers, uncheck toolbar button."""
+        self.elevation_profile_panel.hide()
+        # Restore splitter to full map view
+        total = self._map_v_splitter.height()
+        self._map_v_splitter.setSizes([total, 0])
+        # Clear all profile markers from the globe
+        self.controller._run_js_call("clearProfileLine")
+        action = self.toolbar_actions.get("Elevation Profile")
+        if action is not None:
+            action.setChecked(False)
+        # Also cancel active mode if still running
+        if self.controller._elevation_profile.active:
+            self.controller._elevation_profile.deactivate()
+
+    def _on_elevation_profile_complete(self) -> None:
+        """Uncheck the Elevation Profile toolbar button when profile finishes."""
+        action = self.toolbar_actions.get("Elevation Profile")
+        if action is not None:
+            action.setChecked(False)
+
+    def _on_fill_volume_done(self) -> None:
+        """Uncheck the Fill Volume toolbar button when the analysis job finishes."""
+        action = self.toolbar_actions.get("Fill Volume")
+        if action is not None:
+            action.blockSignals(True)
+            action.setChecked(False)
+            action.blockSignals(False)
+
+    def _on_slope_aspect_done(self) -> None:
+        """Uncheck the Slope & Aspect toolbar button when the analysis job finishes."""
+        action = self.toolbar_actions.get("Slope & Aspect")
+        if action is not None:
+            action.blockSignals(True)
+            action.setChecked(False)
+            action.blockSignals(False)
+
+    def _on_profile_cursor_moved(self, frac: float) -> None:
+        """Forward cursor fraction to the profile panel for live crosshair update."""
+        if self.elevation_profile_panel.isVisible():
+            self.elevation_profile_panel.set_cursor_fraction(frac)
+
+    def _build_crosshair_cursor(self) -> QCursor:
+        """Build a precise black crosshair QCursor using QPainter."""
+        from qtpy.QtGui import QPen
+        size = 20          # smaller = more precise feel
+        hot = size // 2    # hotspot at centre
+        px = QPixmap(size, size)
+        px.fill(QColor(0, 0, 0, 0))  # transparent background
+
+        p = QPainter(px)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # White halo for visibility on dark backgrounds
+        halo_pen = QPen(QColor(255, 255, 255, 200), 2.5)
+        p.setPen(halo_pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        radius = 4
+        p.drawEllipse(hot - radius, hot - radius, radius * 2, radius * 2)
+        gap = radius + 1
+        arm = 5
+        p.drawLine(hot, hot - gap - arm, hot, hot - gap)
+        p.drawLine(hot, hot + gap,       hot, hot + gap + arm)
+        p.drawLine(hot - gap - arm, hot, hot - gap, hot)
+        p.drawLine(hot + gap,       hot, hot + gap + arm, hot)
+
+        # Black foreground on top
+        black_pen = QPen(QColor(0, 0, 0, 255), 1.2)
+        p.setPen(black_pen)
+        p.drawEllipse(hot - radius, hot - radius, radius * 2, radius * 2)
+        p.drawLine(hot, hot - gap - arm, hot, hot - gap)
+        p.drawLine(hot, hot + gap,       hot, hot + gap + arm)
+        p.drawLine(hot - gap - arm, hot, hot - gap, hot)
+        p.drawLine(hot + gap,       hot, hot + gap + arm, hot)
+
+        p.end()
+        return QCursor(px, hot, hot)
+
+    def _on_measure_cursor_changed(self, enabled: bool) -> None:
+        """Set or restore the crosshair cursor on the map web view only."""
+        from qtpy.QtWidgets import QApplication
+        self._measure_cursor_active = bool(enabled)
+        # Always clear any application-level override so toolbar/panel stay normal
+        while QApplication.overrideCursor():
+            QApplication.restoreOverrideCursor()
+        if enabled:
+            self._apply_crosshair_to_webview()
+        else:
+            self.web_view.unsetCursor()
+            vp = self.web_view.focusProxy() or self.web_view.childAt(1, 1)
+            if vp:
+                vp.unsetCursor()
+
+    def _apply_crosshair_to_webview(self) -> None:
+        """Set crosshair cursor on the web view widget and its viewport child."""
+        if getattr(self, "_applying_cursor", False):
+            return
+        self._applying_cursor = True
+        try:
+            self.web_view.setCursor(self._measure_crosshair_cursor)
+            vp = self.web_view.focusProxy() or self.web_view.childAt(1, 1)
+            if vp:
+                vp.setCursor(self._measure_crosshair_cursor)
+        finally:
+            self._applying_cursor = False
+
+    def eventFilter(self, obj: object, event: object) -> bool:
+        """Re-apply crosshair when mouse enters or moves over the web view."""
+        from qtpy.QtCore import QEvent
+        if self._measure_cursor_active and not getattr(self, "_applying_cursor", False):
+            if hasattr(event, "type"):
+                et = event.type()
+                if et in (QEvent.Type.MouseMove, QEvent.Type.Enter):
+                    # Only re-apply if the event is from the web view or its viewport
+                    if obj is self.web_view or obj is self.web_view.focusProxy():
+                        self._apply_crosshair_to_webview()
+        return super().eventFilter(obj, event)
 
     def _toolbar_icon(self, tool_name: str, fallback: QStyle.StandardPixmap) -> QIcon:
         """Get icon for toolbar action.

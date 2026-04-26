@@ -187,6 +187,10 @@
   let distanceScaleOverlay = null;
   const searchVertexEntities = [];
   const drawnPolygons = [];
+  // Fill-volume visualisation — all tracked as entities (no GroundPrimitive)
+  window._fillVolumeEntities = window._fillVolumeEntities || [];
+  // _fillVolumePrimitives kept as empty stub for legacy clear calls
+  window._fillVolumePrimitives = window._fillVolumePrimitives || [];
   let drawnPolygonCounter = 0;
   let aoiPanelMinimized = false;
   let annotationVisibilityEnabled = true;
@@ -223,6 +227,7 @@
   let _tilesLoaded = 0;
   let _tileLoadStartTime = 0;
   let _tileProgressCheckInterval = null;
+  let _tileDrainTimer = null;
   const _TILE_PROGRESS_CHECK_MS = 100; // Check every 100ms
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1689,21 +1694,42 @@
     setSearchCursorOverlayVisible(Boolean(enabled));
   }
 
+  // ── Measurement cursor — delegated to Qt/Python for smooth native rendering ──
+  // Instead of a floating HTML div, we call bridge.on_measure_cursor(bool) which
+  // lets Python set a QPainter-drawn QCursor directly on the QWebEngineView.
+  // The <style> tag still hides the native browser cursor while active.
+  let _measureCursorStyleEl = null;
+  // Stubs kept so existing call sites (mouseenter/mouseleave) don't error
+  let _measureCursorOverlay = null;
+
+  function ensureMeasureCursorOverlay() { /* no-op — cursor handled by Qt */ }
+  function updateMeasureCursorOverlay() { /* no-op */ }
+  function setMeasureCursorOverlayVisible() { /* no-op */ }
+
   function setMeasurementCursorEnabled(enabled) {
-    if (!viewer || !viewer.canvas) {
-      return;
+    log("info", "[CURSOR_DEBUG] setMeasurementCursorEnabled called enabled=" + String(enabled) + " bridge=" + (bridge ? "ok" : "null") + " on_measure_cursor=" + (bridge && bridge.on_measure_cursor ? "ok" : "missing"));
+    // Tell Python to set/unset the native Qt crosshair cursor
+    if (bridge && bridge.on_measure_cursor) {
+      log("info", "[CURSOR_DEBUG] calling bridge.on_measure_cursor(" + String(Boolean(enabled)) + ")");
+      bridge.on_measure_cursor(Boolean(enabled));
+    } else {
+      log("warn", "[CURSOR_DEBUG] bridge.on_measure_cursor not available — falling back to CSS crosshair");
     }
-    const cursorValue = enabled ? "crosshair" : "";
-    applyCursorStyle(viewer.canvas, cursorValue);
-    const mapElement = document.getElementById("cesiumContainer");
-    if (mapElement) {
-      applyCursorStyle(mapElement, cursorValue);
-      mapElement.classList.toggle("measurement-cursor-active", Boolean(enabled));
+    // No CSS cursor manipulation — Qt handles the cursor natively via setCursor()
+    if (!_measureCursorStyleEl) {
+      _measureCursorStyleEl = document.createElement("style");
+      _measureCursorStyleEl.id = "measureCursorOverride";
+      document.head.appendChild(_measureCursorStyleEl);
     }
-    if (viewer.container) {
-      applyCursorStyle(viewer.container, cursorValue);
-    }
+    _measureCursorStyleEl.textContent = "";
   }
+
+  // Legacy alias — kept for backward compatibility with existing call sites
+  function _enforceMeasureCursor(active) {
+    setMeasurementCursorEnabled(active);
+  }
+  let _measureCursorObserver = null;  // no longer used, kept to avoid reference errors
+  let _measureCursorApplying = false; // no longer used, kept to avoid reference errors
 
   function sceneDebug(message) {
     log("info", "[SCENE_DEBUG] " + message);
@@ -2215,6 +2241,10 @@
         "to bottom, #fde725 0%, #90d743 24%, #35b779 45%, #21918c 64%, #31688e 82%, #443a83 100%",
       turbo:
         "to bottom, #7a0403 0%, #d84f2a 18%, #f6b44f 36%, #f7f756 50%, #7bd651 66%, #2c8fe3 84%, #23135a 100%",
+      slope:
+        "to bottom, #fde725 0%, #90d743 24%, #35b779 45%, #21918c 64%, #31688e 82%, #443a83 100%",
+      aspect:
+        "to bottom, #ff0000 0%, #ffff00 16%, #00ff00 33%, #00ffff 50%, #0000ff 66%, #ff00ff 83%, #ff0000 100%",
       gray:
         "to bottom, #ffffff 0%, #cccccc 45%, #808080 72%, #202020 100%",
       greys:
@@ -2232,8 +2262,25 @@
     if (!gradient || !labelHigh || !labelMid || !labelLow || !container) return;
 
     const query = options && options.query ? options.query : {};
+    const algorithmName = typeof query.algorithm === "string" ? String(query.algorithm).toLowerCase() : "";
     const colormapName = typeof query.colormap_name === "string" ? query.colormap_name : "terrain";
     gradient.style.background = `linear-gradient(${resolveDemColorbarGradient(colormapName)})`;
+
+    if (algorithmName === "slope") {
+      labelHigh.textContent = "90°";
+      labelMid.textContent = "45°";
+      labelLow.textContent = "0°";
+      container.classList.add("visible");
+      return;
+    }
+
+    if (algorithmName === "aspect") {
+      labelHigh.textContent = "360°";
+      labelMid.textContent = "180°";
+      labelLow.textContent = "0°";
+      container.classList.add("visible");
+      return;
+    }
 
     const midHeight = (minHeight + maxHeight) / 2;
     labelHigh.textContent = Math.round(maxHeight).toLocaleString() + " m";
@@ -3098,8 +3145,21 @@
     if (!activeDemContext.options) activeDemContext.options = {};
     if (!activeDemContext.options.query) activeDemContext.options.query = {};
 
-    const normalized = String(colormapName || "gray");
-    activeDemContext.options.query.colormap_name = normalized;
+    const normalized = String(colormapName || "gray").toLowerCase();
+    const query = activeDemContext.options.query;
+
+    if (normalized === "slope") {
+      query.algorithm = "slope";
+      query.colormap_name = "viridis";
+      query.rescale = "0,90";
+    } else if (normalized === "aspect") {
+      query.algorithm = "aspect";
+      query.colormap_name = "turbo";
+      query.rescale = "0,360";
+    } else {
+      delete query.algorithm;
+      query.colormap_name = normalized;
+    }
 
     // In-place URL swap — no terrain rebuild, no camera jump.
     if (activeDemDrapeLayer && activeDemContext) {
@@ -3230,8 +3290,24 @@
     applyDefaultSceneSettings();
     tuneCameraController();
     applyDefaultStartupFocus();
+    let lastErrorMessage = "";
+    let lastErrorTime = 0;
     window.addEventListener("error", function (event) {
-      log("error", "Window error: " + (event && event.message ? event.message : "unknown"));
+      // Ignore errors from Cesium.js itself
+      if (event && event.filename && event.filename.includes("Cesium.js")) {
+        return;
+      }
+      const msg = event && event.message ? event.message : "unknown";
+      const now = Date.now();
+      // Suppress duplicate errors within 1 second
+      if (msg === lastErrorMessage && now - lastErrorTime < 1000) {
+        return;
+      }
+      lastErrorMessage = msg;
+      lastErrorTime = now;
+      const err = event && event.error ? event.error : null;
+      const stack = err && err.stack ? err.stack : "";
+      log("error", "Window error: " + msg + (stack ? " | " + stack : ""));
     });
     window.addEventListener("unhandledrejection", function (event) {
       const reason = event && event.reason ? String(event.reason) : "unknown";
@@ -3743,11 +3819,23 @@
         const percent = _tileQueuePeak > 0 ? Math.min(95, Math.round((loaded / _tileQueuePeak) * 100)) : 10;
         emitLoadingProgress(percent, "Loading tiles");
         _tileLoadingActive = true;
+        // Cancel any pending drain timer — queue is still active
+        if (_tileQueuePeak > 0 && typeof _tileDrainTimer !== 'undefined' && _tileDrainTimer) {
+          clearTimeout(_tileDrainTimer);
+          _tileDrainTimer = null;
+        }
       } else if (_tileLoadingActive) {
-        // Queue drained — complete
-        emitLoadingProgress(100, "Complete");
-        _tileLoadingActive = false;
-        _tileQueuePeak = 0;
+        // Queue drained — debounce the completion signal by 200 ms so a
+        // rapid new-layer load doesn't cause a 100 → 0 flash on the bar.
+        if (typeof _tileDrainTimer === 'undefined' || !_tileDrainTimer) {
+          _tileDrainTimer = setTimeout(function () {
+            _tileDrainTimer = null;
+            if (!_tileLoadingActive) return;
+            emitLoadingProgress(100, "Complete");
+            _tileLoadingActive = false;
+            _tileQueuePeak = 0;
+          }, 200);
+        }
       }
     });
     const compassEl = document.getElementById("compassWidget");
@@ -3807,24 +3895,52 @@
           return;
         }
       }
-      const clickCartesian = getCartesianFromViewer(viewer, movement.position);
-      if (clickCartesian) {
-        lastMapClickCartesian = Cesium.Cartesian3.clone(clickCartesian);
-      }
 
-      // For distance mode: always get a coordinate even over terrain/DEM.
-      // Use pickEllipsoid as guaranteed fallback so clicks are never dropped.
-      let lonLat = clickCartesian ? cartesianToLonLat(clickCartesian) : null;
-      if (!lonLat && distanceMeasureModeEnabled && movement.position) {
-        const ellipsoidCart = viewer.camera.pickEllipsoid(movement.position, viewer.scene.globe.ellipsoid);
-        if (ellipsoidCart) {
-          lonLat = cartesianToLonLat(ellipsoidCart);
+      // Try multiple picking strategies to guarantee a coordinate.
+      // Strategy 1: globe.pick (works on terrain surface)
+      // Strategy 2: scene.pickPosition (works on 3D tiles and terrain)
+      // Strategy 3: pickEllipsoid (always works, ignores terrain height)
+      let lonLat = null;
+      let clickCartesian = null;
+
+      if (movement && movement.position) {
+        // Strategy 1: scene.pickPosition — uses depth buffer, most accurate at any zoom
+        // This correctly handles high-resolution imagery where terrain mesh may lag
+        if (viewer.scene.pickPositionSupported) {
+          try {
+            const depthCart = viewer.scene.pickPosition(movement.position);
+            if (depthCart && Cesium.Cartesian3.magnitude(depthCart) > 1.0) {
+              clickCartesian = depthCart;
+            }
+          } catch (_) {}
+        }
+
+        // Strategy 2: globe.pick via ray (works on terrain surface when depth unavailable)
+        if (!clickCartesian) {
+          const ray = viewer.camera.getPickRay(movement.position);
+          if (ray) {
+            clickCartesian = viewer.scene.globe.pick(ray, viewer.scene);
+          }
+        }
+
+        // Strategy 3: ellipsoid fallback (always succeeds, ignores terrain height)
+        if (!clickCartesian) {
+          clickCartesian = viewer.camera.pickEllipsoid(
+            movement.position,
+            viewer.scene.globe.ellipsoid
+          );
+        }
+
+        if (clickCartesian) {
+          lonLat = cartesianToLonLat(clickCartesian);
+          lastMapClickCartesian = Cesium.Cartesian3.clone(clickCartesian);
         }
       }
+
       if (!lonLat) {
-        lonLat = getLonLatFromScreen(movement.position);
+        log("warn", "Click: could not resolve lon/lat from any picking strategy");
+        return;
       }
-      if (!lonLat) return;
       const lon = lonLat.lon;
       const lat = lonLat.lat;
 
@@ -3841,42 +3957,68 @@
       }
 
       if (distanceMeasureModeEnabled) {
-        emitMapClick(lon, lat);
-        log("info", "Distance mode click lon=" + lon.toFixed(6) + " lat=" + lat.toFixed(6));
-        if (!distanceMeasureAnchor) {
-          distanceMeasureAnchor = { lon: lon, lat: lat };
-          clickedPoints.length = 0;
-          clickedPoints.push([lon, lat]);
-          clearMeasurementEntities();
-          clearMeasurementPreviewEntities();
-          setStatus("Distance tool: move cursor and click second point to finalize.");
-          return;
-        }
+        try {
+          emitMapClick(lon, lat);
+          log("info", "Distance mode click lon=" + lon.toFixed(6) + " lat=" + lat.toFixed(6));
+          if (!distanceMeasureAnchor) {
+            // First click: set anchor
+            distanceMeasureAnchor = { lon: lon, lat: lat };
+            clickedPoints.length = 0;
+            clickedPoints.push([lon, lat]);
+            clearMeasurementEntities();
+            clearMeasurementPreviewEntities();
+            setStatus("Distance tool: move cursor and click second point to finalize.");
+            return;
+          }
 
-        const geodesic = new Cesium.EllipsoidGeodesic(
-          Cesium.Cartographic.fromDegrees(distanceMeasureAnchor.lon, distanceMeasureAnchor.lat),
-          Cesium.Cartographic.fromDegrees(lon, lat)
-        );
-        let azDegrees = Cesium.Math.toDegrees(geodesic.startHeading);
-        if (azDegrees < 0) azDegrees += 360.0;
-        clearMeasurementPreviewEntities();
-        updateMeasurementEntities(
-          distanceMeasureAnchor.lon,
-          distanceMeasureAnchor.lat,
-          lon,
-          lat,
-          geodesic.surfaceDistance,
-          azDegrees
-        );
-        distanceMeasureAnchor = { lon: lon, lat: lat };
-        emitMeasurementUpdated(geodesic.surfaceDistance);
-        setStatus("Distance measured. Click next point for chained measure, or right-click to stop.");
-        log("info", "Distance measured (m): " + geodesic.surfaceDistance.toFixed(2));
+          // Second click: finalize measurement, clear anchor (stop chaining)
+          const geodesic = new Cesium.EllipsoidGeodesic(
+            Cesium.Cartographic.fromDegrees(distanceMeasureAnchor.lon, distanceMeasureAnchor.lat),
+            Cesium.Cartographic.fromDegrees(lon, lat)
+          );
+          let azDegrees = Cesium.Math.toDegrees(geodesic.startHeading);
+          if (azDegrees < 0) azDegrees += 360.0;
+          clearMeasurementPreviewEntities();
+          updateMeasurementEntities(
+            distanceMeasureAnchor.lon,
+            distanceMeasureAnchor.lat,
+            lon,
+            lat,
+            geodesic.surfaceDistance,
+            azDegrees
+          );
+          distanceMeasureAnchor = null;  // reset so next click starts fresh
+          const _dist = geodesic.surfaceDistance;
+          setTimeout(function() { emitMeasurementUpdated(_dist); }, 0);
+          setStatus("Distance measured. Click to start a new measurement, or right-click to stop.");
+          log("info", "Distance measured (m): " + geodesic.surfaceDistance.toFixed(2));
+        } catch (e) {
+          log("error", "Distance measurement error: " + (e.message || String(e)));
+        }
         return;
       }
 
       clickedPoints.push([lon, lat]);
       if (clickedPoints.length > 2) clickedPoints.shift();
+
+      // Fill-volume label expand/collapse — handled here in the persistent handler
+      // to avoid creating/destroying ScreenSpaceEventHandler per analysis (macOS crash).
+      if (window._fillVolumeEntities && window._fillVolumeEntities.length > 0) {
+        var picked2 = viewer.scene.pick(movement.position);
+        if (Cesium.defined(picked2) && Cesium.defined(picked2.id)) {
+          var ent2 = picked2.id;
+          if (ent2.isRegionLabel === true && ent2.detailsEntity) {
+            var det = ent2.detailsEntity;
+            var wasExpanded = ent2.expanded;
+            det.label.show = !wasExpanded;
+            ent2.expanded = !wasExpanded;
+            ent2.label.text = (wasExpanded ? '\u25bc' : '\u25b2') + ' Region ' + ent2.regionId;
+            requestSceneRender();
+            return;
+          }
+        }
+      }
+
       emitMapClick(lon, lat);
       log("debug", "Map click lon=" + lon.toFixed(6) + " lat=" + lat.toFixed(6));
     }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
@@ -3887,27 +4029,31 @@
         updateAnnotationHover(movement.endPosition);
       }
       if (distanceMeasureModeEnabled && distanceMeasureAnchor && searchDrawMode !== "polygon") {
-        // Use pickEllipsoid as guaranteed fallback for preview over terrain
-        let lonLat = getLonLatFromScreen(movement.endPosition);
-        if (!lonLat && movement.endPosition) {
-          const ellipsoidCart = viewer.camera.pickEllipsoid(movement.endPosition, viewer.scene.globe.ellipsoid);
-          if (ellipsoidCart) lonLat = cartesianToLonLat(ellipsoidCart);
-        }
-        if (lonLat) {
-          const geodesic = new Cesium.EllipsoidGeodesic(
-            Cesium.Cartographic.fromDegrees(distanceMeasureAnchor.lon, distanceMeasureAnchor.lat),
-            Cesium.Cartographic.fromDegrees(lonLat.lon, lonLat.lat)
-          );
-          let azDegrees = Cesium.Math.toDegrees(geodesic.startHeading);
-          if (azDegrees < 0) azDegrees += 360.0;
-          updateMeasurementPreview(
-            distanceMeasureAnchor.lon,
-            distanceMeasureAnchor.lat,
-            lonLat.lon,
-            lonLat.lat,
-            geodesic.surfaceDistance,
-            azDegrees
-          );
+        try {
+          // Use pickEllipsoid as guaranteed fallback for preview over terrain
+          let lonLat = getLonLatFromScreen(movement.endPosition);
+          if (!lonLat && movement.endPosition) {
+            const ellipsoidCart = viewer.camera.pickEllipsoid(movement.endPosition, viewer.scene.globe.ellipsoid);
+            if (ellipsoidCart) lonLat = cartesianToLonLat(ellipsoidCart);
+          }
+          if (lonLat) {
+            const geodesic = new Cesium.EllipsoidGeodesic(
+              Cesium.Cartographic.fromDegrees(distanceMeasureAnchor.lon, distanceMeasureAnchor.lat),
+              Cesium.Cartographic.fromDegrees(lonLat.lon, lonLat.lat)
+            );
+            let azDegrees = Cesium.Math.toDegrees(geodesic.startHeading);
+            if (azDegrees < 0) azDegrees += 360.0;
+            updateMeasurementPreview(
+              distanceMeasureAnchor.lon,
+              distanceMeasureAnchor.lat,
+              lonLat.lon,
+              lonLat.lat,
+              geodesic.surfaceDistance,
+              azDegrees
+            );
+          }
+        } catch (e) {
+          // Silently ignore preview errors to avoid spam
         }
       }
       
@@ -3916,9 +4062,66 @@
       if (lonLat) {
         emitMouseCoordinates(lonLat.lon, lonLat.lat, movement.endPosition);
       }
+
+      // Live rubber-band line for elevation profile mode — mirrors distance tool approach
+      if (window._profileModeActive && window._profileStartLon !== undefined) {
+        try {
+          let profileLonLat = getLonLatFromScreen(movement.endPosition);
+          if (!profileLonLat && movement.endPosition) {
+            const ellipsoidCart = viewer.camera.pickEllipsoid(movement.endPosition, viewer.scene.globe.ellipsoid);
+            if (ellipsoidCart) profileLonLat = cartesianToLonLat(ellipsoidCart);
+          }
+          if (profileLonLat) {
+            _updateProfilePreviewLine(
+              window._profileStartLon, window._profileStartLat,
+              profileLonLat.lon, profileLonLat.lat
+            );
+          }
+        } catch (e) {
+          // Silently ignore preview errors
+        }
+      }
+
+      // Georeferenced cursor: project mouse onto completed profile line → emit fraction
+      if (window._profileLineActive &&
+          window._profileLineLon1 !== undefined && window._profileLineLon2 !== undefined) {
+        try {
+          let cursorLonLat = getLonLatFromScreen(movement.endPosition);
+          if (!cursorLonLat && movement.endPosition) {
+            const ec = viewer.camera.pickEllipsoid(movement.endPosition, viewer.scene.globe.ellipsoid);
+            if (ec) cursorLonLat = cartesianToLonLat(ec);
+          }
+          if (cursorLonLat) {
+            // Project cursor onto the geodesic line using Cartesian dot product
+            // (accurate for any line length, including ultra-high-res cm-scale data)
+            const p1 = Cesium.Cartesian3.fromDegrees(window._profileLineLon1, window._profileLineLat1);
+            const p2 = Cesium.Cartesian3.fromDegrees(window._profileLineLon2, window._profileLineLat2);
+            const pc = Cesium.Cartesian3.fromDegrees(cursorLonLat.lon, cursorLonLat.lat);
+            const v  = Cesium.Cartesian3.subtract(p2, p1, new Cesium.Cartesian3());
+            const w  = Cesium.Cartesian3.subtract(pc, p1, new Cesium.Cartesian3());
+            const lenSq = Cesium.Cartesian3.dot(v, v);
+            let frac = 0.5;
+            if (lenSq > 1e-6) {
+              frac = Cesium.Cartesian3.dot(w, v) / lenSq;
+              frac = Math.max(0.0, Math.min(1.0, frac));
+            }
+            window._profileCursorFrac = frac;
+            // Emit to Python so the Qt panel can draw the cursor crosshair
+            if (bridge && bridge.on_profile_cursor) {
+              bridge.on_profile_cursor(frac);
+            }
+            requestSceneRender();
+          }
+        } catch (e) {
+          // Silently ignore
+        }
+      }
       
       if (searchDrawMode === "polygon") {
         updateSearchCursorOverlay(lastSearchCursorScreenPosition);
+      }
+      if (movement && movement.endPosition && _measureCursorOverlay && _measureCursorOverlay.style.display !== "none") {
+        updateMeasureCursorOverlay(movement.endPosition);
       }
       if (searchDrawMode !== "polygon" || searchPolygonPoints.length === 0) {
         return;
@@ -3945,10 +4148,14 @@
       if (searchDrawMode === "polygon") {
         setSearchCursorOverlayVisible(true);
       }
+      if (_measureCursorOverlay && _measureCursorStyleEl && _measureCursorStyleEl.textContent) {
+        setMeasureCursorOverlayVisible(true);
+      }
     });
 
     viewer.canvas.addEventListener("mouseleave", function () {
       setSearchCursorOverlayVisible(false);
+      setMeasureCursorOverlayVisible(false);
       if (hoveredAnnotationEditEntity) {
         setAnnotationEditIconHoverState(hoveredAnnotationEditEntity, false);
         hoveredAnnotationEditEntity = null;
@@ -4037,14 +4244,18 @@
     if (!viewer) {
       return;
     }
-    if (measurementLineEntity) {
-      viewer.entities.remove(measurementLineEntity);
-      measurementLineEntity = null;
-    }
-    if (measurementLabelEntity) {
-      viewer.entities.remove(measurementLabelEntity);
-      measurementLabelEntity = null;
-    }
+    try {
+      if (measurementLineEntity) {
+        viewer.entities.remove(measurementLineEntity);
+        measurementLineEntity = null;
+      }
+    } catch (e) {}
+    try {
+      if (measurementLabelEntity) {
+        viewer.entities.remove(measurementLabelEntity);
+        measurementLabelEntity = null;
+      }
+    } catch (e) {}
     clearMeasurementPreviewEntities();
     clearDistanceScaleOverlay();
     requestSceneRender();
@@ -4054,14 +4265,18 @@
     if (!viewer) {
       return;
     }
-    if (measurementPreviewLineEntity) {
-      viewer.entities.remove(measurementPreviewLineEntity);
-      measurementPreviewLineEntity = null;
-    }
-    if (measurementPreviewLabelEntity) {
-      viewer.entities.remove(measurementPreviewLabelEntity);
-      measurementPreviewLabelEntity = null;
-    }
+    try {
+      if (measurementPreviewLineEntity) {
+        viewer.entities.remove(measurementPreviewLineEntity);
+        measurementPreviewLineEntity = null;
+      }
+    } catch (e) {}
+    try {
+      if (measurementPreviewLabelEntity) {
+        viewer.entities.remove(measurementPreviewLabelEntity);
+        measurementPreviewLabelEntity = null;
+      }
+    } catch (e) {}
     requestSceneRender();
   }
 
@@ -4073,95 +4288,98 @@
     const el = document.createElement("div");
     el.id = "distanceScaleOverlay";
     el.setAttribute("aria-hidden", "true");
+    // Container is just a positioning anchor — no overflow clipping
     el.style.cssText = [
       "position:fixed",
       "pointer-events:none",
       "z-index:99999",
       "display:none",
-      "transform-origin:0% 50%",
+      "overflow:visible",
     ].join(";");
 
-    // The bar itself
+    // The bar — positioned absolutely, rotated via transform on the container
+    const barWrap = document.createElement("div");
+    barWrap.className = "distScaleBarWrap";
+    barWrap.style.cssText = [
+      "position:absolute",
+      "top:0",
+      "left:0",
+      "transform-origin:0% 50%",
+      "overflow:visible",
+    ].join(";");
+
     const bar = document.createElement("div");
     bar.className = "distScaleBar";
     bar.style.cssText = [
-      "height:6px",
-      "background:linear-gradient(90deg,rgba(255,255,255,0.92),rgba(220,230,255,0.88))",
-      "border:1px solid rgba(0,0,0,0.45)",
-      "border-radius:3px",
+      "height:4px",
+      "background:rgba(0,229,255,0.85)",
+      "border:1px solid rgba(0,0,0,0.4)",
+      "border-radius:2px",
       "box-shadow:0 1px 4px rgba(0,0,0,0.5)",
       "position:relative",
       "min-width:8px",
     ].join(";");
-    el.appendChild(bar);
+    barWrap.appendChild(bar);
 
-    // Distance text
+    // Start/end ticks on the bar
+    const tickStart = document.createElement("div");
+    tickStart.style.cssText = "position:absolute;left:-1px;top:-4px;width:2px;height:12px;background:rgba(0,229,255,0.9);border-radius:1px;";
+    bar.appendChild(tickStart);
+    const tickEnd = document.createElement("div");
+    tickEnd.className = "distScaleTickEnd";
+    tickEnd.style.cssText = "position:absolute;right:-1px;top:-4px;width:2px;height:12px;background:rgba(0,229,255,0.9);border-radius:1px;";
+    bar.appendChild(tickEnd);
+
+    el.appendChild(barWrap);
+
+    // Distance label — separate from bar, always horizontal, positioned at midpoint
     const distLabel = document.createElement("div");
     distLabel.className = "distScaleText";
     distLabel.style.cssText = [
-      "position:absolute",
-      "top:-22px",
-      "left:50%",
-      "transform:translateX(-50%)",
+      "position:fixed",
+      "pointer-events:none",
+      "z-index:100000",
+      "display:none",
       "color:#fff",
       "font-size:12px",
       "font-weight:700",
       "font-family:'SF Mono','Menlo','Consolas',monospace",
-      "text-shadow:0 1px 3px rgba(0,0,0,0.85),0 0 6px rgba(0,0,0,0.5)",
+      "text-shadow:0 1px 3px rgba(0,0,0,0.9),0 0 6px rgba(0,0,0,0.6)",
       "white-space:nowrap",
-      "letter-spacing:0.03em",
+      "background:rgba(10,25,41,0.78)",
+      "padding:2px 7px",
+      "border-radius:4px",
+      "transform:translate(-50%,-100%)",
     ].join(";");
-    bar.appendChild(distLabel);
+    document.body.appendChild(distLabel);
 
-    // Azimuth text
+    // Azimuth label — below midpoint, always horizontal
     const azLabel = document.createElement("div");
     azLabel.className = "distScaleAz";
     azLabel.style.cssText = [
-      "position:absolute",
-      "bottom:-20px",
-      "left:50%",
-      "transform:translateX(-50%)",
-      "color:rgba(255,255,255,0.85)",
-      "font-size:10px",
+      "position:fixed",
+      "pointer-events:none",
+      "z-index:100000",
+      "display:none",
+      "color:rgba(0,229,255,0.95)",
+      "font-size:11px",
       "font-weight:600",
       "font-family:'SF Mono','Menlo','Consolas',monospace",
-      "text-shadow:0 1px 2px rgba(0,0,0,0.8)",
+      "text-shadow:0 1px 2px rgba(0,0,0,0.9)",
       "white-space:nowrap",
+      "transform:translate(-50%,6px)",
     ].join(";");
-    bar.appendChild(azLabel);
-
-    // Start endpoint tick
-    const tickStart = document.createElement("div");
-    tickStart.style.cssText = [
-      "position:absolute",
-      "left:-1px",
-      "top:-4px",
-      "width:2px",
-      "height:14px",
-      "background:rgba(255,255,255,0.9)",
-      "border-radius:1px",
-    ].join(";");
-    bar.appendChild(tickStart);
-
-    // End endpoint tick
-    const tickEnd = document.createElement("div");
-    tickEnd.className = "distScaleTickEnd";
-    tickEnd.style.cssText = [
-      "position:absolute",
-      "right:-1px",
-      "top:-4px",
-      "width:2px",
-      "height:14px",
-      "background:rgba(255,255,255,0.9)",
-      "border-radius:1px",
-    ].join(";");
-    bar.appendChild(tickEnd);
+    document.body.appendChild(azLabel);
 
     document.body.appendChild(el);
     distanceScaleOverlay = el;
   }
 
+  let _scaleOverlayLastMs = 0;
   function updateDistanceScaleOverlay(startLon, startLat, endLon, endLat, meters, azimuth) {
+    const now = Date.now();
+    if (now - _scaleOverlayLastMs < 33) return;  // max 30fps
+    _scaleOverlayLastMs = now;
     ensureDistanceScaleOverlay();
     if (!distanceScaleOverlay || !viewer || !viewer.canvas) {
       return;
@@ -4172,6 +4390,7 @@
     const endScreen = sceneToWindowCoordinates(viewer.scene, endCart);
     if (!startScreen || !endScreen || !Number.isFinite(startScreen.x) || !Number.isFinite(endScreen.x)) {
       distanceScaleOverlay.style.display = "none";
+      _hideScaleLabels();
       return;
     }
     const canvasRect = viewer.canvas.getBoundingClientRect();
@@ -4186,68 +4405,149 @@
 
     if (pixelLen < 4.0) {
       distanceScaleOverlay.style.display = "none";
+      _hideScaleLabels();
       return;
     }
 
+    // Position the container at start point; rotate the bar wrap
     distanceScaleOverlay.style.display = "block";
     distanceScaleOverlay.style.left = sx.toFixed(1) + "px";
     distanceScaleOverlay.style.top = sy.toFixed(1) + "px";
-    distanceScaleOverlay.style.transform = "rotate(" + angleDeg.toFixed(2) + "deg)";
 
+    const barWrap = distanceScaleOverlay.querySelector(".distScaleBarWrap");
+    if (barWrap) {
+      barWrap.style.transform = "rotate(" + angleDeg.toFixed(2) + "deg)";
+    }
     const bar = distanceScaleOverlay.querySelector(".distScaleBar");
     if (bar) {
       bar.style.width = Math.max(8, pixelLen).toFixed(1) + "px";
     }
-    const distLabel = distanceScaleOverlay.querySelector(".distScaleText");
+
+    // Labels: always horizontal, positioned at screen midpoint
+    const midX = ((sx + ex) / 2).toFixed(1);
+    const midY = ((sy + ey) / 2).toFixed(1);
+
+    const distLabel = document.querySelector(".distScaleText");
     if (distLabel) {
       const distText = meters > 1000 ? (meters / 1000.0).toFixed(2) + " km" : meters.toFixed(1) + " m";
-      distLabel.textContent = distText;
-      // Counter-rotate text so it stays horizontal
-      distLabel.style.transform = "translateX(-50%) rotate(" + (-angleDeg).toFixed(2) + "deg)";
+      distLabel.textContent = "Dist: " + distText;
+      distLabel.style.left = midX + "px";
+      distLabel.style.top = midY + "px";
+      distLabel.style.display = "block";
     }
-    const azLabel = distanceScaleOverlay.querySelector(".distScaleAz");
+    const azLabel = document.querySelector(".distScaleAz");
     if (azLabel) {
-      const azText = azimuth !== undefined ? "Az " + azimuth.toFixed(1) + "°" : "";
+      const azText = azimuth !== undefined ? "Az: " + azimuth.toFixed(1) + "°" : "";
       azLabel.textContent = azText;
-      azLabel.style.transform = "translateX(-50%) rotate(" + (-angleDeg).toFixed(2) + "deg)";
+      azLabel.style.left = midX + "px";
+      azLabel.style.top = midY + "px";
+      azLabel.style.display = azText ? "block" : "none";
     }
   }
 
+  function _hideScaleLabels() {
+    const distLabel = document.querySelector(".distScaleText");
+    if (distLabel) distLabel.style.display = "none";
+    const azLabel = document.querySelector(".distScaleAz");
+    if (azLabel) azLabel.style.display = "none";
+  }
+
   function clearDistanceScaleOverlay() {
+    // Hide immediately
     if (distanceScaleOverlay) {
       distanceScaleOverlay.style.display = "none";
     }
+    _hideScaleLabels();
+    // Fully remove all DOM elements — use querySelectorAll to catch duplicates
+    const existing = document.getElementById("distanceScaleOverlay");
+    if (existing) existing.remove();
+    document.querySelectorAll(".distScaleText").forEach(function(el) { el.remove(); });
+    document.querySelectorAll(".distScaleAz").forEach(function(el) { el.remove(); });
+    distanceScaleOverlay = null;
+    // NOTE: do NOT call clearMeasurementEntities here — that would cause infinite recursion.
+    // clearMeasurementEntities already calls clearDistanceScaleOverlay, not the other way.
+  }
+
+  function _clearFillVolumeEntities() {
+    if (!viewer) return;
+    var ents = window._fillVolumeEntities || [];
+    for (var i = 0; i < ents.length; i++) {
+      var ent = ents[i];
+      try {
+        if (!ent) continue;
+        if (viewer.entities.contains(ent)) {
+          viewer.entities.remove(ent);
+        }
+      } catch (_) {}
+    }
+    window._fillVolumeEntities = [];
+    window._fillVolumePrimitives = [];
+  }
+
+  // Profile rubber-band preview — recreates entity on every mouse move (same as distance tool)
+  function _updateProfilePreviewLine(startLon, startLat, endLon, endLat) {
+    if (!viewer) return;
+    if (window._profilePreviewEntity) {
+      try { viewer.entities.remove(window._profilePreviewEntity); } catch (_) {}
+      window._profilePreviewEntity = null;
+    }
+    try {
+      window._profilePreviewEntity = viewer.entities.add({
+        polyline: {
+          positions: [
+            Cesium.Cartesian3.fromDegrees(startLon, startLat),
+            Cesium.Cartesian3.fromDegrees(endLon, endLat),
+          ],
+          width: 1.5,
+          arcType: Cesium.ArcType.GEODESIC,
+          material: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.7),
+          depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.3),
+        },
+      });
+      requestSceneRender();
+    } catch (_) {}
   }
 
   function updateMeasurementPreview(startLon, startLat, endLon, endLat, meters, azimuth) {
     if (!viewer) {
       return;
     }
-    clearMeasurementPreviewEntities();
-    const start = Cesium.Cartesian3.fromDegrees(startLon, startLat);
-    const end = Cesium.Cartesian3.fromDegrees(endLon, endLat);
+    try {
+      clearMeasurementPreviewEntities();
+      const start = Cesium.Cartesian3.fromDegrees(startLon, startLat);
+      const end = Cesium.Cartesian3.fromDegrees(endLon, endLat);
 
-    measurementPreviewLineEntity = viewer.entities.add({
-      polyline: {
-        positions: [start, end],
-        width: 5.0,
-        material: new Cesium.PolylineOutlineMaterialProperty({
-          color: Cesium.Color.WHITE.withAlpha(0.8),
-          outlineWidth: 2.0,
-          outlineColor: Cesium.Color.BLACK.withAlpha(0.8)
-        }),
-        clampToGround: true,
-      },
-    });
+      measurementPreviewLineEntity = viewer.entities.add({
+        polyline: {
+          positions: [start, end],
+          width: 1.5,
+          arcType: Cesium.ArcType.GEODESIC,
+          material: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.7),
+          depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.3),
+        },
+      });
 
-    // Update the screen-space scale bar overlay
-    updateDistanceScaleOverlay(startLon, startLat, endLon, endLat, meters, azimuth);
-    requestSceneRender();
+      // Update the screen-space scale bar overlay
+      updateDistanceScaleOverlay(startLon, startLat, endLon, endLat, meters, azimuth);
+      requestSceneRender();
+    } catch (e) {
+      // Silently ignore preview errors
+    }
   }
 
   function setDistanceMeasureMode(enabled) {
     distanceMeasureModeEnabled = Boolean(enabled);
     distanceMeasureAnchor = null;
+    
+    const container = document.getElementById("cesiumContainer");
+    if (distanceMeasureModeEnabled) {
+      if (container) container.classList.add("measure-distance-cursor-active");
+      _enforceMeasureCursor(true);
+    } else {
+      if (container) container.classList.remove("measure-distance-cursor-active");
+      _enforceMeasureCursor(false);
+    }
+    
     if (distanceMeasureModeEnabled && searchDrawMode === "polygon") {
       searchDrawMode = "none";
       searchOverlayVisible = false;
@@ -4257,59 +4557,15 @@
     clearMeasurementPreviewEntities();
     clearDistanceScaleOverlay();
     if (distanceMeasureModeEnabled) {
-      _enforceMeasureCursor(true);
+      setMeasurementCursorEnabled(true);
       clickedPoints.length = 0;
       setStatus("Distance tool: click first point, move to preview, click second point to measure. Right-click to stop.");
       return;
     }
-    _enforceMeasureCursor(false);
+    // Turning off — clear ALL measurement marks (line, label, preview, overlay)
+    clearMeasurementEntities();
+    setMeasurementCursorEnabled(false);
     setStatus("Distance tool disabled.");
-  }
-
-  // Enforce crosshair cursor while measurement mode is active.
-  // Cesium's ScreenSpaceEventHandler resets cursor on every mouse move — we use
-  // a MutationObserver on the canvas style to immediately re-apply it.
-  let _measureCursorObserver = null;
-  let _measureCursorApplying = false;  // guard against infinite loop
-  function _enforceMeasureCursor(active) {
-    if (!viewer || !viewer.canvas) return;
-    const canvas = viewer.canvas;
-    const container = document.getElementById("cesiumContainer");
-
-    if (_measureCursorObserver) {
-      _measureCursorObserver.disconnect();
-      _measureCursorObserver = null;
-    }
-
-    if (active) {
-      // Set immediately
-      _measureCursorApplying = true;
-      applyCursorStyle(canvas, "crosshair");
-      if (container) applyCursorStyle(container, "crosshair");
-      _measureCursorApplying = false;
-
-      // Watch for Cesium resetting the cursor and immediately re-apply.
-      // Guard flag prevents the observer from triggering itself.
-      _measureCursorObserver = new MutationObserver(function () {
-        if (_measureCursorApplying) return;  // prevent infinite loop
-        if (!distanceMeasureModeEnabled) return;
-        const current = canvas.style.getPropertyValue("cursor");
-        if (current !== "crosshair") {
-          _measureCursorApplying = true;
-          applyCursorStyle(canvas, "crosshair");
-          _measureCursorApplying = false;
-        }
-      });
-      _measureCursorObserver.observe(canvas, {
-        attributes: true,
-        attributeFilter: ["style"],
-      });
-    } else {
-      _measureCursorApplying = true;
-      applyCursorStyle(canvas, "");
-      if (container) applyCursorStyle(container, "");
-      _measureCursorApplying = false;
-    }
   }
 
   function setPanMode(enabled) {
@@ -4342,41 +4598,55 @@
     if (!viewer) {
       return;
     }
-    clearMeasurementEntities();
-    const start = Cesium.Cartesian3.fromDegrees(startLon, startLat);
-    const end = Cesium.Cartesian3.fromDegrees(endLon, endLat);
-    const labelLon = (startLon + endLon) / 2.0;
-    const labelLat = (startLat + endLat) / 2.0;
+    try {
+      clearMeasurementEntities();
+    } catch (e) {
+      log("error", "clearMeasurementEntities failed: " + e.message);
+    }
+    
+    try {
+      const start = Cesium.Cartesian3.fromDegrees(startLon, startLat);
+      const end = Cesium.Cartesian3.fromDegrees(endLon, endLat);
+      const labelLon = (startLon + endLon) / 2.0;
+      const labelLat = (startLat + endLat) / 2.0;
 
-    let distText = meters > 1000 ? (meters / 1000.0).toFixed(2) + " km" : meters.toFixed(2) + " m";
-    let azText = azimuth !== undefined ? azimuth.toFixed(1) + "°" : "N/A";
+      let distText = meters > 1000 ? (meters / 1000.0).toFixed(2) + " km" : meters.toFixed(1) + " m";
+      let azText = azimuth !== undefined ? azimuth.toFixed(1) + "°" : "";
+      const labelText = "Dist: " + distText + (azText ? "   Az: " + azText : "");
 
-    measurementLineEntity = viewer.entities.add({
-      polyline: {
-        positions: [start, end],
-        width: 6.0,
-        material: new Cesium.PolylineOutlineMaterialProperty({
-          color: Cesium.Color.WHITE,
-          outlineWidth: 2.5,
-          outlineColor: Cesium.Color.BLACK
-        }),
-        clampToGround: true,
-      },
-    });
+      measurementLineEntity = viewer.entities.add({
+        polyline: {
+          positions: [start, end],
+          width: 1.5,
+          arcType: Cesium.ArcType.GEODESIC,
+          material: Cesium.Color.fromCssColorString("#00e5ff"),
+          depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.5),
+        },
+      });
 
-    measurementLabelEntity = viewer.entities.add({
-      position: Cesium.Cartesian3.fromDegrees(labelLon, labelLat),
-      label: {
-        text: "Distance: " + distText + "\nAzimuth: " + azText,
-        fillColor: Cesium.Color.WHITE,
-        showBackground: true,
-        backgroundColor: Cesium.Color.BLACK.withAlpha(0.9),
-        pixelOffset: new Cesium.Cartesian2(0, -28),
-        font: 'bold 15px sans-serif',
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-      },
-    });
-    requestSceneRender();
+      measurementLabelEntity = viewer.entities.add({
+        position: Cesium.Cartesian3.fromDegrees(labelLon, labelLat),
+        label: {
+          text: labelText,
+          font: "bold 13px 'Segoe UI', 'Arial', sans-serif",
+          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+          fillColor: Cesium.Color.WHITE,
+          outlineColor: Cesium.Color.BLACK,
+          outlineWidth: 2,
+          showBackground: true,
+          backgroundColor: Cesium.Color.fromCssColorString("#0a1929").withAlpha(0.82),
+          backgroundPadding: new Cesium.Cartesian2(8, 5),
+          horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+          verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+          pixelOffset: new Cesium.Cartesian2(0, -14),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          scale: 1.0,
+        },
+      });
+      requestSceneRender();
+    } catch (e) {
+      log("error", "updateMeasurementEntities failed: " + e.message);
+    }
   }
 
   function clearAnnotationEntities() {
@@ -5571,13 +5841,26 @@
       setDistanceMeasureMode(false);
       clickedPoints.length = 0;
       clearMeasurementEntities();
+      clearMeasurementPreviewEntities();
+      clearDistanceScaleOverlay();
+      _clearFillVolumeEntities();
+      window._fillVolumePrimitives = [];
       log("info", "Measurement overlays cleared");
+    },
+    clearMeasurementEntities: function () {
+      clearMeasurementEntities();
+      log("debug", "Measurement entities cleared");
     },
     clearOverlays: function () {
       clickedPoints.length = 0;
+      setDistanceMeasureMode(false);
       clearMeasurementEntities();
+      clearMeasurementPreviewEntities();
+      clearDistanceScaleOverlay();
       clearAnnotationEntities();
       clearSearchEntities();
+      _clearFillVolumeEntities();
+      window._fillVolumePrimitives = [];
       searchPolygonPoints.length = 0;
       searchPolygonLocked = false;
       searchCursorPoint = null;
@@ -5605,7 +5888,7 @@
     },
     setSwipeComparator: function (enabled) {
       setSwipeComparatorEnabled(Boolean(enabled));
-      log("info", "Comparator=" + String(Boolean(enabled)));
+      log("debug", "Comparator=" + String(Boolean(enabled)));
     },
     setLayerAlpha: function (layerKey, alpha) {
       if (!viewer || !viewer.imageryLayers) return;
@@ -5623,7 +5906,7 @@
     },
     setComparator: function (enabled) {
       setSwipeComparatorEnabled(Boolean(enabled));
-      log("info", "Comparator=" + String(Boolean(enabled)));
+      log("debug", "Comparator=" + String(Boolean(enabled)));
     },
     requestComparatorPaneState: function () {
       notifyComparatorPaneState(comparatorSelectedPane);
@@ -5641,14 +5924,171 @@
       log("info", "Distance measure mode=" + String(Boolean(enabled)));
     },
     setMeasurementCursor: function (enabled) {
+      log("info", "[CURSOR_DEBUG] setMeasurementCursor API called enabled=" + String(Boolean(enabled)));
       setMeasurementCursorEnabled(Boolean(enabled));
-      log("debug", "Measurement cursor=" + String(Boolean(enabled)));
+    },
+    drawProfileLine: function (lon1, lat1, lon2, lat2) {
+      if (!viewer) return;
+      // Clear profile mode flag and preview line
+      window._profileModeActive = false;
+      if (window._profilePreviewEntity) {
+        try { viewer.entities.remove(window._profilePreviewEntity); } catch (_) {}
+        window._profilePreviewEntity = null;
+      }
+      // Remove any previous profile line and markers
+      if (window._profileLineEntity) {
+        try { viewer.entities.remove(window._profileLineEntity); } catch (_) {}
+        window._profileLineEntity = null;
+      }
+      if (window._profileStartEntity) {
+        try { viewer.entities.remove(window._profileStartEntity); } catch (_) {}
+        window._profileStartEntity = null;
+      }
+      if (window._profileEndEntity) {
+        try { viewer.entities.remove(window._profileEndEntity); } catch (_) {}
+        window._profileEndEntity = null;
+      }
+      const cyan = Cesium.Color.fromCssColorString("#00e5ff");
+      window._profileLineEntity = viewer.entities.add({
+        polyline: {
+          positions: [
+            Cesium.Cartesian3.fromDegrees(Number(lon1), Number(lat1)),
+            Cesium.Cartesian3.fromDegrees(Number(lon2), Number(lat2)),
+          ],
+          width: 2.5,
+          arcType: Cesium.ArcType.GEODESIC,
+          material: cyan,
+          depthFailMaterial: cyan.withAlpha(0.5),
+        },
+      });
+      // Start/end point markers
+      window._profileStartEntity = viewer.entities.add({
+        position: Cesium.Cartesian3.fromDegrees(Number(lon1), Number(lat1)),
+        point: { pixelSize: 8, color: cyan, outlineColor: Cesium.Color.BLACK, outlineWidth: 1, disableDepthTestDistance: Number.POSITIVE_INFINITY },
+      });
+      window._profileEndEntity = viewer.entities.add({
+        position: Cesium.Cartesian3.fromDegrees(Number(lon2), Number(lat2)),
+        point: { pixelSize: 8, color: cyan, outlineColor: Cesium.Color.BLACK, outlineWidth: 1, disableDepthTestDistance: Number.POSITIVE_INFINITY },
+      });
+      requestSceneRender();
+      log("debug", "Profile line drawn lon1=" + lon1 + " lat1=" + lat1 + " lon2=" + lon2 + " lat2=" + lat2);
+      // Store endpoints for georeferenced cursor projection
+      window._profileLineLon1 = Number(lon1);
+      window._profileLineLat1 = Number(lat1);
+      window._profileLineLon2 = Number(lon2);
+      window._profileLineLat2 = Number(lat2);
+      window._profileLineActive = true;
+      // Create the moving cursor point on the globe (dull yellow, starts at midpoint)
+      if (window._profileCursorGlobeEntity) {
+        try { viewer.entities.remove(window._profileCursorGlobeEntity); } catch (_) {}
+        window._profileCursorGlobeEntity = null;
+      }
+      const yellow = Cesium.Color.fromCssColorString("#c8a800").withAlpha(0.88);
+      // Pre-compute the geodesic for accurate interpolation along the great-circle arc
+      const _geodesicForCursor = new Cesium.EllipsoidGeodesic(
+        Cesium.Cartographic.fromDegrees(Number(lon1), Number(lat1)),
+        Cesium.Cartographic.fromDegrees(Number(lon2), Number(lat2))
+      );
+      window._profileCursorGlobeEntity = viewer.entities.add({
+        position: new Cesium.CallbackProperty(function () {
+          if (!window._profileLineActive) {
+            return Cesium.Cartesian3.fromDegrees(Number(lon1), Number(lat1));
+          }
+          const f = (typeof window._profileCursorFrac === "number")
+            ? Math.max(0.0, Math.min(1.0, window._profileCursorFrac))
+            : 0.5;
+          // Interpolate along the true geodesic arc — pixel-accurate for any resolution
+          const interp = _geodesicForCursor.interpolateUsingFraction(f);
+          return Cesium.Cartesian3.fromRadians(interp.longitude, interp.latitude);
+        }, false),
+        point: {
+          pixelSize: 10,
+          color: yellow,
+          outlineColor: Cesium.Color.fromCssColorString("#3a2800"),
+          outlineWidth: 1.5,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      });
+      window._profileCursorFrac = 0.5;
+    },
+    drawProfileStartMarker: function (lon, lat) {
+      if (!viewer) return;
+      // Remove previous start marker if any
+      if (window._profileStartEntity) {
+        try { viewer.entities.remove(window._profileStartEntity); } catch (_) {}
+        window._profileStartEntity = null;
+      }
+      // Clear any stale preview line
+      if (window._profilePreviewEntity) {
+        try { viewer.entities.remove(window._profilePreviewEntity); } catch (_) {}
+        window._profilePreviewEntity = null;
+      }
+      // Clear the previous completed profile line and end marker
+      if (window._profileLineEntity) {
+        try { viewer.entities.remove(window._profileLineEntity); } catch (_) {}
+        window._profileLineEntity = null;
+      }
+      if (window._profileEndEntity) {
+        try { viewer.entities.remove(window._profileEndEntity); } catch (_) {}
+        window._profileEndEntity = null;
+      }
+      const cyan = Cesium.Color.fromCssColorString("#00e5ff");
+      window._profileStartEntity = viewer.entities.add({
+        position: Cesium.Cartesian3.fromDegrees(Number(lon), Number(lat)),
+        point: { pixelSize: 9, color: cyan, outlineColor: Cesium.Color.BLACK, outlineWidth: 1.5, disableDepthTestDistance: Number.POSITIVE_INFINITY },
+        label: {
+          text: "A",
+          font: "bold 11px sans-serif",
+          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+          fillColor: Cesium.Color.WHITE,
+          outlineColor: Cesium.Color.BLACK,
+          outlineWidth: 2,
+          pixelOffset: new Cesium.Cartesian2(10, -10),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      });
+      // Store start coords — preview line is recreated on every mouse move
+      window._profileStartLon = Number(lon);
+      window._profileStartLat = Number(lat);
+      window._profileModeActive = true;
+      requestSceneRender();
+      log("debug", "Profile start marker placed lon=" + lon + " lat=" + lat);
+    },
+    clearProfilePreview: function () {
+      window._profileModeActive = false;
+      window._profileStartLon = undefined;
+      window._profileStartLat = undefined;
+      if (window._profilePreviewEntity) {
+        try { viewer.entities.remove(window._profilePreviewEntity); } catch (_) {}
+        window._profilePreviewEntity = null;
+      }
+      if (window._profileStartEntity) {
+        try { viewer.entities.remove(window._profileStartEntity); } catch (_) {}
+        window._profileStartEntity = null;
+      }
+      requestSceneRender();
+    },
+    clearProfileLine: function () {
+      window._profileModeActive = false;
+      window._profileLineActive = false;
+      window._profileLineLon1 = undefined;
+      window._profileLineLat1 = undefined;
+      window._profileLineLon2 = undefined;
+      window._profileLineLat2 = undefined;
+      window._profileCursorFrac = undefined;
+      for (const key of ["_profilePreviewEntity", "_profileStartEntity", "_profileEndEntity", "_profileLineEntity", "_profileCursorGlobeEntity"]) {
+        if (window[key]) {
+          try { viewer.entities.remove(window[key]); } catch (_) {}
+          window[key] = null;
+        }
+      }
+      requestSceneRender();
+      log("debug", "Profile line cleared from globe");
     },
     setPanMode: function (enabled) {
       setPanMode(Boolean(enabled));
       log("info", "Pan mode=" + String(Boolean(enabled)));
-    },
-    setSearchDrawMode: function (mode) {
+    },    setSearchDrawMode: function (mode) {
       if (mode !== "polygon") {
         searchDrawMode = "none";
         searchOverlayVisible = false;
@@ -5693,6 +6133,163 @@
     },
     setPolygonPreviewVisible: function (visible) {
       setPolygonPreviewVisible(Boolean(visible));
+    },
+    clearFillVolumes: function () {
+      _clearFillVolumeEntities();
+      window._fillVolumePrimitives = [];
+      requestSceneRender();
+      log("debug", "Fill volume overlays cleared");
+    },
+    drawFillVolumes: function (regionsJson) {
+      _clearFillVolumeEntities();
+      var regions;
+      try { regions = JSON.parse(regionsJson); } catch (e) { log("error", "drawFillVolumes: bad JSON"); return; }
+      if (!Array.isArray(regions) || regions.length === 0) {
+        log("debug", "drawFillVolumes: no regions to draw");
+        return;
+      }
+
+      log("info", "Starting to draw " + regions.length + " fill volume regions");
+
+      var distinctColors = [
+        [255,  80,  40, 200],
+        [ 40, 120, 255, 200],
+        [ 40, 220, 100, 200],
+        [255, 200,  40, 200],
+        [180,  40, 255, 200],
+        [255, 100, 180, 200],
+        [ 40, 220, 220, 200],
+        [255, 140,  40, 200],
+      ];
+
+      function getRegionColor(index) {
+        var rgba = distinctColors[index % distinctColors.length];
+        return new Cesium.Color(rgba[0]/255, rgba[1]/255, rgba[2]/255, rgba[3]/255);
+      }
+
+      var labelEntities = [];
+
+      for (var ri = 0; ri < regions.length; ri++) {
+        var r = regions[ri];
+        var regionId = r.id || r.region_id || (ri + 1);
+
+        if (!r.outline || r.outline.length < 3) {
+          log("warn", "Region " + regionId + " has invalid outline, skipping");
+          continue;
+        }
+
+        var fillColour = getRegionColor(ri);
+
+        // Pure entity polygon — no GroundPrimitive, no GPU lifecycle, safe on macOS Metal + Windows NVIDIA.
+        // No height — Cesium drapes on globe surface. arcType RHUMB gives pixel-accurate
+        // edges for small sub-km polygons (avoids geodesic subdivision artifacts).
+        var positions = r.outline.map(function(p) {
+          return Cesium.Cartesian3.fromDegrees(p.lon, p.lat);
+        });
+
+        // Use the region's rim elevation + small offset so the flat polygon
+        // sits just above the terrain surface and is never occluded at any zoom level.
+        var polyHeight = (typeof r.rim_elevation_m === 'number' && isFinite(r.rim_elevation_m))
+          ? r.rim_elevation_m + 2.0
+          : 2.0;
+
+        var regionEnt = viewer.entities.add({
+          id: 'fill-region-ent-' + regionId,
+          polygon: {
+            hierarchy: new Cesium.PolygonHierarchy(positions),
+            material: fillColour,
+            height: polyHeight,
+            arcType: Cesium.ArcType.RHUMB,
+            outline: false,
+            fill: true,
+          },
+        });
+        window._fillVolumeEntities.push(regionEnt);
+
+        var volStr = r.fill_volume_m3 >= 1000000000
+          ? (r.fill_volume_m3 / 1000000000).toFixed(3) + " km\u00b3"
+          : r.fill_volume_m3 >= 1000000
+          ? (r.fill_volume_m3 / 1000000).toFixed(3) + " Mm\u00b3"
+          : r.fill_volume_m3.toFixed(3) + " m\u00b3";
+        var areaStr = r.area_m2 >= 10000
+          ? (r.area_m2 / 10000).toFixed(2) + " ha"
+          : r.area_m2.toFixed(0) + " m\u00b2";
+
+        labelEntities.push({
+          position: Cesium.Cartesian3.fromDegrees(r.centroid_lon, r.centroid_lat, polyHeight + 5.0),
+          regionId: regionId,
+          volStr: volStr,
+          areaStr: areaStr,
+          maxDepth: r.max_depth_m,
+          meanDepth: r.mean_depth_m,
+        });
+      }
+
+      for (var li = 0; li < labelEntities.length; li++) {
+        var labelData = labelEntities[li];
+
+        var labelEnt = viewer.entities.add({
+          id: 'fill-label-' + labelData.regionId,
+          position: labelData.position,
+          label: {
+            text: "\u25bc Region " + labelData.regionId,
+            font: "bold 13px 'Segoe UI', Arial, sans-serif",
+            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+            fillColor: Cesium.Color.WHITE,
+            outlineColor: Cesium.Color.BLACK,
+            outlineWidth: 2.5,
+            showBackground: true,
+            backgroundColor: Cesium.Color.BLACK.withAlpha(0.85),
+            backgroundPadding: new Cesium.Cartesian2(8, 5),
+            horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+            verticalOrigin: Cesium.VerticalOrigin.TOP,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            pixelOffset: new Cesium.Cartesian2(0, -15),
+            scale: 1.0,
+          },
+        });
+        labelEnt.regionId = labelData.regionId;
+        labelEnt.volume = labelData.volStr;
+        labelEnt.area = labelData.areaStr;
+        labelEnt.maxDepth = labelData.maxDepth.toFixed(2) + ' m';
+        labelEnt.meanDepth = labelData.meanDepth.toFixed(2) + ' m';
+        labelEnt.expanded = false;
+        labelEnt.isRegionLabel = true;
+        window._fillVolumeEntities.push(labelEnt);
+
+        var detailsEnt = viewer.entities.add({
+          id: 'fill-details-' + labelData.regionId,
+          position: labelData.position,
+          label: {
+            text:
+              'Volume: ' + labelData.volStr + '\n' +
+              'Area: ' + labelData.areaStr + '\n' +
+              'Max Depth: ' + labelData.maxDepth.toFixed(2) + ' m\n' +
+              'Mean Depth: ' + labelData.meanDepth.toFixed(2) + ' m',
+            font: "12px 'Segoe UI', Arial, sans-serif",
+            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+            fillColor: Cesium.Color.WHITE,
+            outlineColor: Cesium.Color.BLACK,
+            outlineWidth: 2,
+            showBackground: true,
+            backgroundColor: Cesium.Color.fromCssColorString('#1a1a1a').withAlpha(0.92),
+            backgroundPadding: new Cesium.Cartesian2(10, 6),
+            horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+            verticalOrigin: Cesium.VerticalOrigin.TOP,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            pixelOffset: new Cesium.Cartesian2(0, 15),
+            scale: 0.95,
+            show: false,
+          },
+        });
+        detailsEnt.parentRegionId = labelData.regionId;
+        detailsEnt.isDetails = true;
+        window._fillVolumeEntities.push(detailsEnt);
+        labelEnt.detailsEntity = detailsEnt;
+      }
+
+      requestSceneRender();
+      log("info", "Fill volumes drawn: " + regions.length + " regions");
     },
   };
 

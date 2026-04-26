@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import datetime as dt
 
+from qtpy.QtCore import Qt
+
 from offline_gis_app.client_backend.desktop.measurement_worker import MeasurementWorker
 from offline_gis_app.client_backend.measurement_tools import measure_distance
 
@@ -18,47 +20,45 @@ class MeasurementCoordinator:
         c = self._controller
         dem_path = self.selected_dem_path()
 
-        distance_info = measure_distance(lon1, lat1, lon2, lat2, dem_path=None)
+        # Distance measurement is pure math — run synchronously, no thread needed
+        result = measure_distance(lon1, lat1, lon2, lat2, dem_path=dem_path)
         c._annotation_line_records.append(
             {
                 "coords": [(lon1, lat1), (lon2, lat2)],
                 "feature_type": "road",
-                "length_m": float(distance_info.distance_m),
+                "length_m": float(result.distance_m),
                 "width_m": 0.0,
                 "condition": "intact",
                 "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
             }
         )
-
-        def task() -> object:
-            return measure_distance(lon1, lat1, lon2, lat2, dem_path=dem_path)
-
-        def formatter(result: object) -> str:
-            d = result
-            return (
-                "Distance/Azimuth: "
-                f"2D={d.distance_m:.3f} m, az_fwd={d.azimuth_fwd_deg:.2f} deg, az_back={d.azimuth_back_deg:.2f} deg"
-                + (
-                    f", dz={d.dz_m:+.3f} m, 3D={d.distance_3d_m:.3f} m"
-                    if d.distance_3d_m is not None
-                    else ""
-                )
-            )
-
-        self.submit_measurement_job("Distance/Azimuth", task, formatter)
+        d = result
+        message = (
+            "Distance/Azimuth: "
+            f"2D={d.distance_m:.1f} m, az={d.azimuth_fwd_deg:.1f}°"
+            + (f", 3D={d.distance_3d_m:.1f} m" if d.distance_3d_m is not None else "")
+        )
+        c.panel.log(message)
+        self.record_measurement_result("Distance/Azimuth", message)
 
     def submit_measurement_job(self, name: str, task, formatter) -> None:
         c = self._controller
         
-        # Emit progress start
-        if hasattr(c, 'bridge') and hasattr(c.bridge, 'on_loading_progress'):
-            c.bridge.on_loading_progress(0, f"Computing {name}")
+        # Emit progress start via signal (not @Slot method directly)
+        if hasattr(c, 'bridge') and hasattr(c.bridge, 'loadingProgress'):
+            c.bridge.loadingProgress.emit(0, f"Computing {name}")
         
         worker = MeasurementWorker(name=name, task=task)
+        # Keep a strong Python reference so the worker and its signals QObject
+        # stay alive until on_measurement_job_finished clears it.
+        # Without this, Qt's autoDelete destroys the C++ side after run(),
+        # leaving a dangling pointer that segfaults on the next pool.start().
+        self._active_worker = worker
         worker.signals.finished.connect(
             lambda job_name, result, error, fmt=formatter: (
                 self.on_measurement_job_finished(job_name, result, error, fmt)
-            )
+            ),
+            Qt.QueuedConnection,
         )
         c._measurement_pool.start(worker)
         c.panel.log(f"{name} started...")
@@ -67,10 +67,11 @@ class MeasurementCoordinator:
         self, name: str, result: object, error: str, formatter
     ) -> None:
         c = self._controller
+        self._active_worker = None  # release worker reference
         
-        # Emit progress complete
-        if hasattr(c, 'bridge') and hasattr(c.bridge, 'on_loading_progress'):
-            c.bridge.on_loading_progress(100, "Complete")
+        # Emit progress complete via signal (not @Slot method directly)
+        if hasattr(c, 'bridge') and hasattr(c.bridge, 'loadingProgress'):
+            c.bridge.loadingProgress.emit(100, "Complete")
         
         if error:
             c.panel.log(f"{name} failed: {error}")

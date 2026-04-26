@@ -29,9 +29,7 @@ ICON_MANIFEST: dict[str, str] = {
     "measure_area": "mActionMeasureArea.svg",
     "elevation_profile": "mActionNewElevationProfile.svg",
     "volume": "mActionCalculateField.svg",
-    "viewshed": "mActionIdentify.svg",          # Viewshed/LOS — identify icon
     "slope_aspect": "mActionMeasureAngle.svg",
-    "shadow_height": "mActionMeasureAngle.svg",  # Shadow height — angle icon
     "clear_last": "mActionUndo.svg",
     "clear_all": "mActionDeleteSelected.svg",
     # Annotation tools
@@ -50,10 +48,8 @@ ICON_MANIFEST: dict[str, str] = {
     "zoom_layer": "mActionZoomToLayer.svg",
     "zoom_selection": "mActionZoomToSelected.svg",
     "identify": "mActionIdentify.svg",
-    "north_arrow": "mActionRotatePointSymbols.svg",
     # Layers/data
     "open_raster": "mActionAddRasterLayer.svg",
-    "open_dem": "mActionAddRasterLayer.svg",
     "open_vector": "mActionAddOgrLayer.svg",
     "layer_properties": "mActionOptions.svg",
     "layer_order": "mActionShowAllLayers.svg",
@@ -64,9 +60,8 @@ ICON_MANIFEST: dict[str, str] = {
     "open_project": "mActionFileOpen.svg",
     "save_project": "mActionFileSave.svg",
     "save_project_as": "mActionFileSaveAs.svg",
-    "export_gpkg": "mActionFileSaveAs.svg",
+    "export_gpkg": "mActionSharingExport.svg",
     "export_csv": "mActionOpenTable.svg",
-    "export_profile_csv": "mActionSaveMapAsImage.svg",
     "export_geotiff": "mActionSaveMapAsImage.svg",
     "print_layout": "mActionSaveMapAsImage.svg",
     # App/ui

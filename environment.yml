@@ -8,6 +8,7 @@ dependencies:
   - rasterio=1.4.3
   - pyproj
   - shapely=2.0.7
+  - scipy
   - pip:
       # Pull app + desktop + dev dependencies from pyproject.toml.
       - -e .[desktop,dev]

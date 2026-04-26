@@ -130,3 +130,11 @@ def test_add_polygon_toolbar_action_is_toggleable() -> None:
     toggle_actions = _class_constant(main_window, "TOGGLE_ACTIONS")
 
     assert "Add Polygon" in set(toggle_actions)
+
+
+def test_slope_aspect_toolbar_action_is_toggleable() -> None:
+    module = _module_ast(MAIN_WINDOW_PATH)
+    main_window = _class_node(module, "MainWindow")
+    toggle_actions = _class_constant(main_window, "TOGGLE_ACTIONS")
+
+    assert "Slope & Aspect" in set(toggle_actions)

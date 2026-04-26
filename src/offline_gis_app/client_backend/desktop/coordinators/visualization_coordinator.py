@@ -72,7 +72,12 @@ class VisualizationCoordinator:
         color_mode = str(c.panel.dem_color_mode_combo.currentData() or "gray")
         c._run_js_call("setDemColorMode", color_mode)
         if log_to_panel:
-            label = "White relief" if color_mode == "gray" else "Color relief"
+            label = {
+                "gray": "White relief",
+                "terrain": "Color relief",
+                "slope": "Slope map (deg)",
+                "aspect": "Aspect map (deg)",
+            }.get(color_mode, color_mode)
             c.panel.log(f"Applied DEM style: {label}")
             c._logger.info("Applied DEM style=%s", color_mode)
             return

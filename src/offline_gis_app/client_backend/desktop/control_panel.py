@@ -511,6 +511,8 @@ class ControlPanel(QWidget):
         self.dem_color_mode_combo = QComboBox()
         self.dem_color_mode_combo.addItem("White relief", "gray")
         self.dem_color_mode_combo.addItem("Color relief", "terrain")
+        self.dem_color_mode_combo.addItem("Slope map (deg)", "slope")
+        self.dem_color_mode_combo.addItem("Aspect map (deg)", "aspect")
         self.dem_color_mode_combo.setCurrentIndex(0)
         self.rgb_view_mode_combo = QComboBox()
         self.rgb_view_mode_combo.addItem("3D Terrain Scene", "3d")

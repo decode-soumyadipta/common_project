@@ -25,6 +25,9 @@ from offline_gis_app.client_backend.desktop.coordinators import (
     SearchCoordinator,
     VisualizationCoordinator,
 )
+from offline_gis_app.client_backend.desktop.coordinators.elevation_profile_coordinator import (
+    ElevationProfileCoordinator,
+)
 from offline_gis_app.client_backend.desktop.control_panel import ControlPanel
 from offline_gis_app.client_backend.desktop.performance_service import (
     DesktopPerformanceService,
@@ -32,6 +35,7 @@ from offline_gis_app.client_backend.desktop.performance_service import (
 from offline_gis_app.client_backend.desktop.state import DesktopState
 from offline_gis_app.client_backend.desktop.titiler_manager import TiTilerManager
 from offline_gis_app.client_backend.measurement_tools import (
+    compute_fill_volume,
     compute_slope_aspect,
     compute_viewshed,
     compute_volume,
@@ -43,6 +47,22 @@ from offline_gis_app.server_ingestion.services.metadata_extractor import (
     extract_metadata,
 )
 from offline_gis_app.server_ingestion.services.tile_url_builder import build_xyz_url
+
+
+def _fmt_vol(m3: float) -> str:
+    """Format a volume in m³ with appropriate units.
+
+    Thresholds (correct SI):
+      >= 1e9  → km³  (1 km³ = 1,000,000,000 m³)
+      >= 1e6  → Mm³  (mega-cubic-metres, useful for large earthworks)
+      else    → m³
+    For sub-metre DEM / cm-resolution imagery the volumes are always m³.
+    """
+    if m3 >= 1_000_000_000:
+        return f"{m3/1_000_000_000:.3f} km³"
+    if m3 >= 1_000_000:
+        return f"{m3/1_000_000:.3f} Mm³"
+    return f"{m3:.3f} m³"
 
 
 class DesktopController:
@@ -102,6 +122,7 @@ class DesktopController:
         self._polygon_area_mode_enabled = False
         self._volume_mode_enabled = False
         self._slope_aspect_mode_enabled = False
+        self._slope_aspect_computing = False
         self._viewshed_mode_enabled = False
         self._polygon_drawing_context = "none"  # "none", "search", "measurement"
         self._explicit_imagery_layer_visible = False
@@ -111,6 +132,8 @@ class DesktopController:
         ) = None
         self._default_profile_samples = 200
         self._default_annotation_text = "Point"
+        self._measurement_done_hooks: dict[str, Callable[[], None]] = {}
+        self._on_slope_aspect_done: Callable[[], None] | None = None
         self._last_profile_values: list[float] = []
         self._measurement_history: list[str] = []
         self._annotation_records: list[dict[str, object]] = []
@@ -124,6 +147,7 @@ class DesktopController:
         self._search = SearchCoordinator(self)
         self._viz = VisualizationCoordinator(self)
         self._measure = MeasurementCoordinator(self)
+        self._elevation_profile = ElevationProfileCoordinator(self)
         self._logger.info("Controller initialized mode=%s", self.app_mode.value)
         self._connect_signals()
         self._apply_display_control_mode()
@@ -1181,6 +1205,11 @@ class DesktopController:
         self.state.clicked_points = self.state.clicked_points[-2:]
         self.panel.click_label.setText(f"Last click: lon={lon:.6f}, lat={lat:.6f}")
 
+        # Route to elevation profile coordinator first (it manages its own click state)
+        if self._elevation_profile.active:
+            self._elevation_profile.on_map_click(lon, lat)
+            return
+
         if self._add_point_mode_enabled:
             self._add_annotation_at(lon, lat)
             return
@@ -1248,6 +1277,16 @@ class DesktopController:
         self.panel.log(f"Annotation added at {lon:.5f}, {lat:.5f}")
         self._logger.info("Annotation added lon=%.5f lat=%.5f text=%s", lon, lat, text)
 
+    def _toolbar_elevation_profile(self) -> bool:
+        """Activate elevation profile two-click mode via the coordinator."""
+        if self._elevation_profile.active:
+            # Second click on button cancels the mode and clears all map overlays
+            self._elevation_profile.deactivate()
+            self.panel.log("Elevation Profile stopped.")
+            return False
+        activated = self._elevation_profile.activate()
+        return activated
+
     def extract_dem_profile(self) -> None:
         asset = self._selected_asset()
         if not asset:
@@ -1314,26 +1353,22 @@ class DesktopController:
             "Comparator": self._toolbar_toggle_comparator,
             "Distance / Azimuth": self._toolbar_measure_distance,
             "Polygon Area": self._toolbar_measure_polygon_area,
-            "Elevation Profile": self.extract_dem_profile,
-            "Volume Cut/Fill": self._toolbar_measure_volume,
-            "Viewshed / LOS": self._toolbar_measure_viewshed,
+            "Elevation Profile": self._toolbar_elevation_profile,
+            "Fill Volume": self._toolbar_measure_volume,
             "Slope & Aspect": self._toolbar_measure_slope_aspect,
             "Clear Last": self._toolbar_clear_last,
             "Clear All": self._toolbar_clear_all,
             "Add Point": self._toolbar_toggle_add_point_mode,
             "Add Polygon": self._toolbar_add_polygon_annotation,
-            "Shadow Height": self._toolbar_toggle_shadow_height_mode,
             "Save Annotations": self._toolbar_export_geopackage,
             "Pan": self._toolbar_set_pan_mode,
             "Zoom In": lambda: self._run_js_call("zoomIn"),
             "Zoom Out": lambda: self._run_js_call("zoomOut"),
             "Zoom to Extent": lambda: self._run_js_call("zoomToExtent"),
-            "North Arrow": lambda: self._run_js_call("resetNorthUp"),
-            "Open Raster": self.browse_path,
-            "Open DEM": self.browse_path,
+            "Add Vector": self.browse_path,
+            "Add Raster Layer": self.browse_path,
             "Save Project": self._toolbar_save_project,
             "Export GeoPackage": self._toolbar_export_geopackage,
-            "Export Profile CSV": self._toolbar_export_profile_csv,
         }
         handler = handlers.get(action_label)
         if handler is None:
@@ -1353,8 +1388,8 @@ class DesktopController:
                 return self._toolbar_toggle_add_point_mode(enabled=checked)
             if action_label == "Add Polygon":
                 return self._toolbar_add_polygon_annotation(enabled=checked)
-            if action_label == "Shadow Height":
-                return self._toolbar_toggle_shadow_height_mode(enabled=checked)
+            if action_label == "Slope & Aspect":
+                return self._toolbar_measure_slope_aspect(enabled=checked)
             handler()
         except Exception:  # pragma: no cover - runtime defensive branch
             self.panel.log(f"Toolbar action failed: {action_label}")
@@ -1528,6 +1563,19 @@ class DesktopController:
     ) -> None:
         self._measure.submit_measurement_job(name, task, formatter)
 
+    def _set_measurement_done_hook(
+        self, name: str, hook: Callable[[], None] | None
+    ) -> None:
+        if hook is None:
+            self._measurement_done_hooks.pop(name, None)
+            return
+        self._measurement_done_hooks[name] = hook
+
+    def _on_measurement_named_job_done(self, name: str) -> None:
+        hook = self._measurement_done_hooks.pop(name, None)
+        if callable(hook):
+            hook()
+
     def _on_measurement_job_finished(
         self,
         name: str,
@@ -1536,6 +1584,7 @@ class DesktopController:
         formatter: Callable[[object], str],
     ) -> None:
         self._measure.on_measurement_job_finished(name, result, error, formatter)
+        self._on_measurement_named_job_done(name)
 
     def _record_measurement_result(self, name: str, details: str) -> None:
         self._measure.record_measurement_result(name, details)
@@ -1655,13 +1704,12 @@ class DesktopController:
             self._run_js_call("setPanMode", False)
             self._run_js_call("setSearchDrawMode", "none")
         self._run_js_call("setDistanceMeasureMode", self._distance_measure_mode_enabled)
-        self._set_measurement_cursor_enabled(self._distance_measure_mode_enabled)
         if not self._distance_measure_mode_enabled:
             self.panel.log("Distance tool disabled.")
             self._logger.info("Distance measure mode disabled")
             return False
         self.state.clicked_points.clear()
-        self._run_js_call("clearMeasurements")
+        self._run_js_call("clearMeasurementEntities")
         self.panel.log(
             "Distance tool enabled. Click first point, move cursor to preview, click second point to measure. "
             "Right-click to stop drawing."
@@ -1733,16 +1781,45 @@ class DesktopController:
         self._polygon_drawing_context = "none"
         self._set_measurement_cursor_enabled(False)
 
-    def _toolbar_measure_volume(self) -> None:
-        # Check for DEM layer first before enabling mode
+    def _toolbar_measure_volume(self) -> bool | None:
+        self._logger.info("FillVolume: enter computing=%s active=%s",
+                          getattr(self, '_fill_volume_computing', False),
+                          getattr(self, '_fill_volume_active', False))
+        # Guard: ignore clicks while analysis is already running
+        if getattr(self, '_fill_volume_computing', False):
+            self.panel.log("Fill Volume: analysis in progress, please wait")
+            return True  # keep button highlighted
+
+        # Toggle off: clear overlays, keep polygon for re-use on next tap
+        if getattr(self, '_fill_volume_active', False):
+            self._logger.info("FillVolume: toggling off")
+            self._fill_volume_active = False
+            self._fill_volume_computing = False
+            self._volume_mode_enabled = False
+            self._set_measurement_cursor_enabled(False)
+            self._polygon_drawing_context = "none"
+            self._run_js_call("clearFillVolumes")
+            self.panel.log("Fill Volume: off (polygon kept — tap again to re-analyse)")
+            return False
+
+        self._logger.info("FillVolume: checking DEM path")
+        # Need a DEM
         dem_path = self._selected_dem_path()
         if not dem_path:
             self.panel.log("Select or show a DEM layer first.")
-            return
+            return False
 
+        self._logger.info("FillVolume: getting polygon dem_path=%s", dem_path)
+        # Get polygon — use existing drawn polygon, or auto-derive from DEM bounds
         polygon = self._current_polygon_lonlat()
         if not polygon:
-            # Disable conflicting modes
+            polygon = self._dem_bounds_polygon(dem_path)
+
+        self._logger.info("FillVolume: polygon=%s", "found" if polygon else "none")
+
+        if not polygon:
+            # No DEM bounds available — fall back to draw mode
+            self._logger.info("FillVolume: no polygon, entering draw mode")
             self._distance_measure_mode_enabled = False
             self._run_js_call("setDistanceMeasureMode", False)
             self._add_point_mode_enabled = False
@@ -1752,83 +1829,272 @@ class DesktopController:
             self._polygon_area_mode_enabled = False
             self._slope_aspect_mode_enabled = False
             self._pan_mode_enabled = False
-            
-            # Enable polygon drawing mode for measurement
             self._polygon_drawing_context = "measurement"
             self._volume_mode_enabled = True
+            self._fill_volume_active = False
             self.set_search_draw_mode(enabled=True)
-            self._set_measurement_cursor_enabled(True)
-            self.panel.log(
-                "Draw a polygon on the map, then click Finish to calculate volume."
-            )
-            return
+            self.panel.log("Fill Volume: draw a polygon on the DEM, then click Finish")
+            return True
 
-        def task() -> object:
-            return compute_volume(polygon, dem_path)
+        # Polygon ready — submit analysis
+        self._logger.info("FillVolume: submitting analysis polygon_pts=%d", len(polygon))
+        self._fill_volume_computing = True
+
+        # Wire a one-shot relay so the worker thread can safely post progress
+        # to the main thread without calling emit() directly across threads
+        # (direct cross-thread emit is undefined behaviour in Qt and causes
+        # segfaults on repeated invocations).
+        # We use a small QObject relay whose signal is connected with
+        # Qt.QueuedConnection — Qt then marshals the call onto the main thread.
+        from qtpy.QtCore import QObject, Signal as _Signal, Qt as _Qt
+
+        class _ProgressRelay(QObject):
+            progress = _Signal(int, str)
+
+        relay = _ProgressRelay()
+        relay.progress.connect(
+            self.bridge.on_loading_progress,
+            _Qt.ConnectionType.QueuedConnection,
+        )
+
+        def task(_relay=relay) -> object:
+            # _relay kept alive via default-arg capture for the worker's lifetime
+            def progress_cb(pct: float, msg: str) -> None:
+                _relay.progress.emit(int(pct), f"Fill Volume: {msg}")
+            return compute_fill_volume(polygon, dem_path, progress_callback=progress_cb)
 
         def formatter(result: object) -> str:
-            m = result
-            return (
-                "Volume Cut/Fill: "
-                f"cut={m.cut_volume_m3:.3f} m3, fill={m.fill_volume_m3:.3f} m3, net={m.net_volume_m3:+.3f} m3, "
-                f"ref={m.reference_elevation_m:.3f} m, void={100.0 * m.void_fraction:.1f}%"
-            )
+            from offline_gis_app.client_backend.measurement_tools.models import FillVolumeResult
+            if not isinstance(result, FillVolumeResult):
+                return "Fill Volume: no result"
+            n = len(result.regions)
+            total = sum(r.fill_volume_m3 for r in result.regions)
+            if n == 0:
+                return (
+                    f"Fill Volume: no depressions found "
+                    f"(ref={result.reference_elevation_m:.1f} m, "
+                    f"void={100*result.void_fraction:.1f}%)"
+                )
+            lines = [
+                f"Fill Volume: {n} depression(s) found, "
+                f"total fill={_fmt_vol(total)}, "
+                f"ref={result.reference_elevation_m:.1f} m"
+            ]
+            for r in result.regions[:5]:
+                lines.append(
+                    f"  Region {r.region_id}: fill={_fmt_vol(r.fill_volume_m3)}, "
+                    f"area={r.area_m2:.0f} m², depth max={r.max_depth_m:.2f} m"
+                )
+            return "\n".join(lines)
 
-        self._submit_measurement_job("Volume Cut/Fill", task, formatter)
-        # Clear the measurement mode flag after calculation
+        def on_done(name: str, result: object, error: str, fmt) -> None:
+            self._logger.info("FillVolume: on_done called error=%s result_type=%s",
+                              error or "none", type(result).__name__)
+            self._fill_volume_computing = False
+            self._active_fill_volume_worker = None  # release worker reference
+            self._active_fill_volume_pool = None    # release pool reference
+            self.bridge.loadingProgress.emit(100, "Fill Volume: Complete")
+            self._measure.on_measurement_job_finished(name, result, error, fmt)
+            if error or result is None:
+                self._fill_volume_active = False
+                return
+            from offline_gis_app.client_backend.measurement_tools.models import FillVolumeResult
+            if not isinstance(result, FillVolumeResult) or not result.regions:
+                self._run_js_call("clearFillVolumes")
+                self._fill_volume_active = False
+                return
+            regions_payload = [
+                {
+                    "id": r.region_id,
+                    "fill_volume_m3": r.fill_volume_m3,
+                    "area_m2": r.area_m2,
+                    "max_depth_m": r.max_depth_m,
+                    "mean_depth_m": r.mean_depth_m,
+                    "reference_elevation_m": r.reference_elevation_m,
+                    "rim_elevation_m": r.rim_elevation_m,
+                    "centroid_lon": r.centroid_lon,
+                    "centroid_lat": r.centroid_lat,
+                    "outline": [{"lon": lon, "lat": lat} for lon, lat in r.outline_lonlat],
+                }
+                for r in result.regions
+            ]
+            self._run_js_call("drawFillVolumes", json.dumps(regions_payload))
+            self._fill_volume_active = True
+
+        from qtpy.QtCore import Qt, QThreadPool
+        from offline_gis_app.client_backend.desktop.measurement_worker import MeasurementWorker
+        worker = MeasurementWorker(name="Fill Volume", task=task)
+        # Keep a strong Python reference so the worker (and its signals QObject)
+        # stays alive until on_done fires and clears it.
+        self._active_fill_volume_worker = worker
+        # Use a dedicated parentless pool per analysis — avoids bus error on macOS
+        # caused by QThreadPool(parent=QWidget) thread state corruption across runs.
+        pool = QThreadPool()
+        pool.setMaxThreadCount(1)
+        self._active_fill_volume_pool = pool
+        self._logger.info("FillVolume: worker created id=%s pool_active=%s",
+                          id(worker), pool.activeThreadCount())
+        worker.signals.finished.connect(
+            lambda job_name, res, err, fmt=formatter: on_done(job_name, res, err, fmt),
+            Qt.QueuedConnection,
+        )
+        self.bridge.loadingProgress.emit(0, "Fill Volume: Starting analysis")
+        self._logger.info("FillVolume: calling pool.start")
+        pool.start(worker)
+        self._logger.info("FillVolume: pool.start returned")
+        self.panel.log("Fill Volume: Starting analysis")
         self._volume_mode_enabled = False
         self._polygon_drawing_context = "none"
         self._set_measurement_cursor_enabled(False)
+        return True  # keep button highlighted while computing
 
-    def _toolbar_measure_slope_aspect(self) -> None:
-        # Check for DEM layer first before enabling mode
+    def _dem_bounds_polygon(self, dem_path: str) -> list[tuple[float, float]] | None:
+        """Return a bounding-box polygon for the active DEM asset, or None."""
+        # Try to get bounds from the asset cache
+        for path, asset in self._asset_cache.items():
+            if str(asset.get("file_path") or "") == dem_path and self._is_dem_asset(asset):
+                bounds = self._asset_bounds(asset)
+                if bounds:
+                    w, s, e, n = bounds["west"], bounds["south"], bounds["east"], bounds["north"]
+                    return [(w, s), (e, s), (e, n), (w, n), (w, s)]
+        for path, asset in self._search_result_assets_by_path.items():
+            if str(asset.get("file_path") or "") == dem_path and self._is_dem_asset(asset):
+                bounds = self._asset_bounds(asset)
+                if bounds:
+                    w, s, e, n = bounds["west"], bounds["south"], bounds["east"], bounds["north"]
+                    return [(w, s), (e, s), (e, n), (w, n), (w, s)]
+        # Fallback: read bounds directly from the raster file
+        try:
+            import rasterio
+            from pyproj import Transformer as _T
+            with rasterio.open(dem_path) as src:
+                b = src.bounds
+                crs = src.crs
+                if crs and not crs.is_geographic:
+                    t = _T.from_crs(crs, "EPSG:4326", always_xy=True)
+                    w, s = t.transform(b.left, b.bottom)
+                    e, n = t.transform(b.right, b.top)
+                else:
+                    w, s, e, n = b.left, b.bottom, b.right, b.top
+            return [(w, s), (e, s), (e, n), (w, n), (w, s)]
+        except Exception:
+            return None
+
+    def _toolbar_measure_slope_aspect(self, enabled: bool | None = None) -> bool:
+        if (
+            enabled is False
+            and not self._slope_aspect_mode_enabled
+            and not getattr(self, '_slope_aspect_computing', False)
+        ):
+            # Defensive: treat unchecked-while-idle as an activation request.
+            enabled = True
+
+        # Toggle off
+        if enabled is False:
+            self._slope_aspect_mode_enabled = False
+            self._slope_aspect_computing = False
+            self._polygon_drawing_context = "none"
+            self._set_measurement_cursor_enabled(False)
+            self._run_js_call("setSearchDrawMode", "none")
+            self.panel.log("Slope & Aspect: off")
+            return False
+
+        # Guard while computing
+        if getattr(self, '_slope_aspect_computing', False):
+            self.panel.log("Slope & Aspect: analysis in progress, please wait")
+            return True
+
+        # Need a DEM
         dem_path = self._selected_dem_path()
         if not dem_path:
             self.panel.log("Select or show a DEM layer first.")
-            return
+            self._slope_aspect_mode_enabled = False
+            return False
 
+        # Switch DEM colour mode to slope if not already slope/aspect
+        mode = str(self.panel.dem_color_mode_combo.currentData() or "gray")
+        if mode not in {"slope", "aspect"}:
+            idx = self.panel.dem_color_mode_combo.findData("slope")
+            if idx >= 0:
+                self.panel.dem_color_mode_combo.setCurrentIndex(idx)
+                self._viz.apply_dem_color_mode(log_to_panel=False)
+
+        # No polygon yet — enter draw mode
         polygon = self._current_polygon_lonlat()
         if not polygon:
-            # Disable conflicting modes
             self._distance_measure_mode_enabled = False
             self._run_js_call("setDistanceMeasureMode", False)
             self._add_point_mode_enabled = False
             self._set_annotation_overlay_visible(False)
-            self._shadow_height_mode_enabled = False
-            self._viewshed_mode_enabled = False
-            self._polygon_area_mode_enabled = False
             self._volume_mode_enabled = False
+            self._polygon_area_mode_enabled = False
             self._pan_mode_enabled = False
-            
-            # Enable polygon drawing mode for measurement
             self._polygon_drawing_context = "measurement"
             self._slope_aspect_mode_enabled = True
             self.set_search_draw_mode(enabled=True)
             self._set_measurement_cursor_enabled(True)
-            self.panel.log(
-                "Draw a polygon on the map, then click Finish to calculate slope & aspect."
-            )
-            return
+            self.panel.log("Draw a polygon on the map, then click Finish to calculate slope & aspect.")
+            return True
 
-        def task() -> object:
-            return compute_slope_aspect(polygon, dem_path)
-
-        def formatter(result: object) -> str:
-            m = result
-            area_txt = ", ".join(
-                f"{k}:{v:.1f}m2" for k, v in m.area_by_class_m2.items()
-            )
-            return (
-                "Slope & Aspect: "
-                f"mean={m.mean_slope_deg:.2f} deg, std={m.std_slope_deg:.2f} deg, max={m.max_slope_deg:.2f} deg; "
-                f"classes[{area_txt}]"
-            )
-
-        self._submit_measurement_job("Slope & Aspect", task, formatter)
-        # Clear the measurement mode flag after calculation
+        # Polygon ready — run async
+        self._slope_aspect_computing = True
         self._slope_aspect_mode_enabled = False
         self._polygon_drawing_context = "none"
         self._set_measurement_cursor_enabled(False)
+
+        from qtpy.QtCore import QObject, Signal as _Signal, Qt as _Qt
+
+        class _Relay(QObject):
+            progress = _Signal(int, str)
+
+        relay = _Relay()
+        relay.progress.connect(
+            self.bridge.on_loading_progress,
+            _Qt.ConnectionType.QueuedConnection,
+        )
+
+        def task(_relay=relay) -> object:
+            def _cb(pct: float, msg: str) -> None:
+                _relay.progress.emit(int(pct), f"Slope & Aspect: {msg}")
+            _cb(5, "Starting")
+            result = compute_slope_aspect(polygon, dem_path)
+            _cb(95, "Finalising")
+            return result
+
+        def formatter(result: object) -> str:
+            m = result
+            area_txt = ", ".join(f"{k}:{v:.1f}m²" for k, v in m.area_by_class_m2.items())
+            return (
+                f"Slope & Aspect: mean={m.mean_slope_deg:.2f}°, "
+                f"std={m.std_slope_deg:.2f}°, max={m.max_slope_deg:.2f}°; "
+                f"classes[{area_txt}]"
+            )
+
+        def on_done(name: str, result: object, error: str, fmt) -> None:
+            self._slope_aspect_computing = False
+            self._active_slope_aspect_worker = None
+            self._active_slope_aspect_pool = None
+            self.bridge.loadingProgress.emit(100, "Slope & Aspect: Complete")
+            self._measure.on_measurement_job_finished(name, result, error, fmt)
+            callback = getattr(self, '_on_slope_aspect_done', None)
+            if callable(callback):
+                callback()
+
+        from qtpy.QtCore import Qt, QThreadPool
+        from offline_gis_app.client_backend.desktop.measurement_worker import MeasurementWorker
+        worker = MeasurementWorker(name="Slope & Aspect", task=task)
+        self._active_slope_aspect_worker = worker
+        pool = QThreadPool()
+        pool.setMaxThreadCount(1)
+        self._active_slope_aspect_pool = pool
+        worker.signals.finished.connect(
+            lambda job_name, res, err, fmt=formatter: on_done(job_name, res, err, fmt),
+            Qt.QueuedConnection,
+        )
+        self.bridge.loadingProgress.emit(0, "Slope & Aspect: Starting")
+        pool.start(worker)
+        self.panel.log("Slope & Aspect: Starting analysis")
+        return True  # keep button highlighted
 
     def _toolbar_measure_viewshed(self) -> None:
         dem_path = self._selected_dem_path()
@@ -2624,6 +2890,17 @@ class DesktopController:
 
         if is_dem:
             color_mode = str(self.panel.dem_color_mode_combo.currentData() or "gray")
+            if color_mode == "slope":
+                query["algorithm"] = "slope"
+                query["colormap_name"] = "viridis"
+                query["rescale"] = "0,90"
+                return query
+            if color_mode == "aspect":
+                query["algorithm"] = "aspect"
+                query["colormap_name"] = "turbo"
+                query["rescale"] = "0,360"
+                return query
+
             query["colormap_name"] = color_mode
 
             # FIX: Provide default elevation rescale if TiTiler stats fail, preventing blank maps.
