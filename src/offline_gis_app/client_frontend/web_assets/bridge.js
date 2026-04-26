@@ -510,6 +510,9 @@
       return;
     }
     targetViewer.camera.setView({ destination: focusRect });
+    if (targetViewer.scene) {
+      targetViewer.scene.requestRender();
+    }
   }
 
   function getComparatorLayerTypeForViewer(targetViewer) {
@@ -1119,6 +1122,9 @@
         enablePickFeatures: false,
         rectangle: rectangle,
       });
+      if (targetViewer.scene) {
+        targetViewer.scene.requestRender();
+      }
       const demLayer = targetViewer.imageryLayers.addImageryProvider(demProvider);
       demLayer.alpha = 1.0;
       targetViewer.__comparatorPrimaryLayer = demLayer;
@@ -5347,11 +5353,26 @@
       const paddedNorth = Math.min(  90, north + padLat);
       setActiveTileBounds({ west: west, south: south, east: east, north: north });
       const rect = Cesium.Rectangle.fromDegrees(paddedWest, paddedSouth, paddedEast, paddedNorth);
-      viewer.camera.cancelFlight();
+      // On Windows/QtWebEngine, continuous rendering during flight is more reliable
+      const wasRequestRenderMode = viewer.scene.requestRenderMode;
+      viewer.scene.requestRenderMode = false;
+      
       viewer.camera.flyTo({
         destination: rect,
         orientation: { heading: 0.0, pitch: Cesium.Math.toRadians(-90), roll: 0.0 },
         duration: 1.2,
+        complete: function() {
+          if (viewer && viewer.scene) {
+            viewer.scene.requestRenderMode = wasRequestRenderMode;
+            viewer.scene.requestRender();
+          }
+        },
+        cancel: function() {
+          if (viewer && viewer.scene) {
+            viewer.scene.requestRenderMode = wasRequestRenderMode;
+            viewer.scene.requestRender();
+          }
+        }
       });
       requestSceneRender();
       log("debug", "Focus bounds (fit) west=" + west + " south=" + south + " east=" + east + " north=" + north);
@@ -5373,10 +5394,11 @@
           " options=" +
           JSON.stringify(options || {})
       );
-      const layerKey =
+      let layerKey =
         options && typeof options.layer_key === "string" && options.layer_key
           ? options.layer_key
           : "imagery:" + String(name || "layer");
+      layerKey = String(layerKey).replace(/\\/g, "/");
       const replaceExisting = !(options && options.replace_existing === false);
       const isDem =
         (options && options.is_dem === true) ||

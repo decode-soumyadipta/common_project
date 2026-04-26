@@ -13,10 +13,10 @@ import numpy as np
 from pyproj import Geod
 
 try:
+    from shapely.geometry import Polygon
+    from pyproj import Transformer
     import rasterio
     from rasterio.features import rasterize
-    from pyproj import Transformer
-    from shapely.geometry import Polygon
 except ImportError:
     rasterio = None
     rasterize = None

@@ -23,10 +23,10 @@ from __future__ import annotations
 import numpy as np
 
 try:
+    from shapely.geometry import Polygon, mapping
+    from pyproj import Transformer
     import rasterio
     from rasterio.features import rasterize, shapes
-    from pyproj import Transformer
-    from shapely.geometry import Polygon, mapping
     from scipy.ndimage import label as ndlabel
 except ImportError:
     rasterio = None

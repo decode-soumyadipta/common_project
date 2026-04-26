@@ -558,7 +558,7 @@ class DesktopController:
         for asset in assets:
             if not self._asset_path_accessible_locally(asset):
                 local_missing_count += 1
-            file_path = str(asset.get("file_path") or "")
+            file_path = str(asset.get("file_path") or "").replace("\\", "/")
             if not file_path:
                 continue
             self._asset_cache[file_path] = asset
@@ -594,7 +594,7 @@ class DesktopController:
             )
 
     def toggle_search_result_visibility(self, file_path: str, visible: bool) -> None:
-        normalized_path = str(file_path or "").strip()
+        normalized_path = str(file_path or "").strip().replace("\\", "/")
         if not normalized_path:
             self.panel.log("Visibility toggle ignored: missing asset path.")
             return
@@ -1112,7 +1112,7 @@ class DesktopController:
         options = self._layer_options(asset, bounds)
         options["replace_existing"] = bool(replace_existing)
         if layer_key:
-            options["layer_key"] = layer_key
+            options["layer_key"] = str(layer_key).replace("\\", "/")
         options["apply_scene_mode"] = bool(apply_scene_mode)
         if self._add_layer(asset, options):
             if auto_fly_to:
