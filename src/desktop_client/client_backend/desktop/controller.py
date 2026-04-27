@@ -21,7 +21,10 @@ from desktop_client.client_backend.desktop.api_server_manager import ApiServerMa
 from desktop_client.client_backend.desktop.app_mode import DesktopAppMode
 from desktop_client.client_backend.desktop.bridge import WebBridge
 from desktop_client.client_backend.desktop.coordinators import (
+    ComparatorCoordinator,
     MeasurementCoordinator,
+    ProjectIoCoordinator,
+    ToolbarActionCoordinator,
     SearchCoordinator,
     VisualizationCoordinator,
 )
@@ -145,6 +148,9 @@ class DesktopController:
         self._last_ingest_step: str | None = None
         self._last_ingest_status: str | None = None
         self._search = SearchCoordinator(self)
+        self._comparator = ComparatorCoordinator(self)
+        self._project_io = ProjectIoCoordinator(self)
+        self._toolbar_actions = ToolbarActionCoordinator(self)
         self._viz = VisualizationCoordinator(self)
         self._measure = MeasurementCoordinator(self)
         self._elevation_profile = ElevationProfileCoordinator(self)
@@ -1401,213 +1407,52 @@ class DesktopController:
     def handle_toolbar_action(
         self, action_label: str, checked: bool | None = None
     ) -> bool | None:
-        handlers: dict[str, Callable[[], None]] = {
-            # Layer Compositor is orchestrated by MainWindow, but keep a mapped
-            # handler label here to preserve toolbar contract coverage.
-            "Layer Compositor": lambda: None,
-            "Comparator": self._toolbar_toggle_comparator,
-            "Distance / Azimuth": self._toolbar_measure_distance,
-            "Polygon Area": self._toolbar_measure_polygon_area,
-            "Elevation Profile": self._toolbar_elevation_profile,
-            "Fill Volume": self._toolbar_measure_volume,
-            "Slope & Aspect": self._toolbar_measure_slope_aspect,
-            "Clear Last": self._toolbar_clear_last,
-            "Clear All": self._toolbar_clear_all,
-            "Add Point": self._toolbar_toggle_add_point_mode,
-            "Add Polygon": self._toolbar_add_polygon_annotation,
-            "Save Annotations": self._toolbar_export_geopackage,
-            "Pan": self._toolbar_set_pan_mode,
-            "Zoom In": lambda: self._run_js_call("zoomIn"),
-            "Zoom Out": lambda: self._run_js_call("zoomOut"),
-            "Zoom to Extent": lambda: self._run_js_call("zoomToExtent"),
-            "Add Vector": self.browse_path,
-            "Add Raster Layer": self.browse_path,
-            "Save Project": self._toolbar_save_project,
-            "Export": self._toolbar_export_geopackage,
-            "Export GeoPackage": self._toolbar_export_geopackage,
-        }
-        handler = handlers.get(action_label)
-        if handler is None:
-            self.panel.log(f"Toolbar action not mapped: {action_label}")
-            self._logger.warning("Toolbar action not mapped: %s", action_label)
-            return None
-        self.panel.log(f"Toolbar action: {action_label}")
-        self._logger.info("Toolbar action triggered: %s", action_label)
-        try:
-            if action_label == "Comparator":
-                return self._toolbar_toggle_comparator(enabled=checked)
-            if action_label == "Distance / Azimuth":
-                return self._toolbar_measure_distance(enabled=checked)
-            if action_label == "Pan":
-                return self._toolbar_set_pan_mode(enabled=checked)
-            if action_label == "Add Point":
-                return self._toolbar_toggle_add_point_mode(enabled=checked)
-            if action_label == "Add Polygon":
-                return self._toolbar_add_polygon_annotation(enabled=checked)
-            if action_label == "Slope & Aspect":
-                return self._toolbar_measure_slope_aspect(enabled=checked)
-            handler()
-        except Exception:  # pragma: no cover - runtime defensive branch
-            self.panel.log(f"Toolbar action failed: {action_label}")
-            self._logger.exception("Toolbar action failed: %s", action_label)
-        return None
+        return self._toolbar_actions.handle_toolbar_action(action_label, checked)
 
     def available_comparator_layer_options(self) -> list[dict[str, object]]:
-        options: list[dict[str, object]] = []
-        for path, asset in self._search_result_assets_by_path.items():
-            label = str(asset.get("file_name") or Path(path).name or "Layer")
-            kind = str(asset.get("kind") or "")
-            if kind:
-                label = f"{label} [{kind}]"
-            options.append(
-                {
-                    "path": path,
-                    "label": label,
-                    "visible": bool(self._search_layer_visibility.get(path, False)),
-                }
-            )
-        return options
+        return self._comparator.available_comparator_layer_options()
 
     def available_swipe_layer_options(self) -> list[dict[str, object]]:
-        return self.available_comparator_layer_options()
+        return self._comparator.available_swipe_layer_options()
 
     def apply_comparator_selection(self, selected_paths: list[str]) -> bool:
-        selected = [
-            path
-            for path in selected_paths
-            if path in self._search_result_assets_by_path
-        ]
-        if len(selected) < 2:
-            self._swipe_comparator_enabled = False
-            self._run_js_call("setComparator", False)
-            self.panel.log("Comparator disabled. Select at least two layers.")
-            return False
-
-        left_path = selected[0]
-        right_path = selected[1]
-        left_asset = self._search_result_assets_by_path.get(left_path) or {}
-        right_asset = self._search_result_assets_by_path.get(right_path) or {}
-        left_label = str(
-            left_asset.get("file_name") or Path(left_path).name or "Layer A"
-        )
-        right_label = str(
-            right_asset.get("file_name") or Path(right_path).name or "Layer B"
-        )
-        self._run_js_call(
-            "setComparatorLayers", left_path, right_path, left_label, right_label
-        )
-
-        selected_set = set(selected)
-        for path in self._search_result_assets_by_path:
-            self._search_layer_visibility[path] = path in selected_set
-
-        self._sync_search_visibility_layers()
-        self.panel.update_search_results(
-            list(self._search_result_assets_by_path.values()),
-            self._search_layer_visibility,
-        )
-        return self._toolbar_toggle_comparator(enabled=True)
+        return self._comparator.apply_comparator_selection(selected_paths)
 
     def apply_swipe_comparator_selection(self, selected_paths: list[str]) -> bool:
-        return self.apply_comparator_selection(selected_paths)
+        return self._comparator.apply_swipe_comparator_selection(selected_paths)
 
     def _visible_imagery_layer_paths(self) -> list[str]:
-        visible_layers: list[str] = []
-        for path, asset in self._search_result_assets_by_path.items():
-            if not self._search_layer_visibility.get(path, False):
-                continue
-            if self._is_dem_asset(asset):
-                continue
-            visible_layers.append(path)
-        if self._explicit_imagery_layer_visible:
-            selected = self._selected_asset()
-            if isinstance(selected, dict) and not self._is_dem_asset(selected):
-                selected_path = str(selected.get("file_path") or "")
-                if selected_path and selected_path not in visible_layers:
-                    visible_layers.append(selected_path)
-        return visible_layers
+        return self._comparator._visible_imagery_layer_paths()
 
     def _available_imagery_layer_paths(self) -> list[str]:
-        available_paths: list[str] = []
-        for path, asset in self._search_result_assets_by_path.items():
-            if self._is_dem_asset(asset):
-                continue
-            available_paths.append(path)
-        if self._explicit_imagery_layer_visible:
-            selected = self._selected_asset()
-            if isinstance(selected, dict) and not self._is_dem_asset(selected):
-                selected_path = str(selected.get("file_path") or "")
-                if selected_path and selected_path not in available_paths:
-                    available_paths.append(selected_path)
-        return available_paths
+        return self._comparator._available_imagery_layer_paths()
 
     def _visible_dem_layer_count(self) -> int:
-        has_visible_search_dem = any(
-            self._search_layer_visibility.get(path, False) and self._is_dem_asset(asset)
-            for path, asset in self._search_result_assets_by_path.items()
-        )
-        if has_visible_search_dem or self._explicit_dem_layer_visible:
-            return 1
-        return 0
+        return self._comparator._visible_dem_layer_count()
 
     def comparator_candidate_count(self) -> int:
-        return (
-            len(self._visible_imagery_layer_paths()) + self._visible_dem_layer_count()
-        )
+        return self._comparator.comparator_candidate_count()
 
     def swipe_comparator_candidate_count(self) -> int:
-        return self.comparator_candidate_count()
+        return self._comparator.swipe_comparator_candidate_count()
 
     def can_enable_comparator(self) -> bool:
-        return self.comparator_candidate_count() >= 2
+        return self._comparator.can_enable_comparator()
 
     def can_enable_swipe_comparator(self) -> bool:
-        return self.can_enable_comparator()
+        return self._comparator.can_enable_swipe_comparator()
 
     def can_attempt_enable_comparator(self) -> bool:
-        if self.can_enable_comparator():
-            return True
-        return len(self._available_imagery_layer_paths()) >= 2
+        return self._comparator.can_attempt_enable_comparator()
 
     def can_attempt_enable_swipe_comparator(self) -> bool:
-        return self.can_attempt_enable_comparator()
+        return self._comparator.can_attempt_enable_swipe_comparator()
 
     def _auto_enable_second_comparator_imagery_layer(self) -> bool:
-        visible_imagery = self._visible_imagery_layer_paths()
-        if len(visible_imagery) >= 2:
-            return True
-
-        available_imagery = self._available_imagery_layer_paths()
-        if len(available_imagery) < 2:
-            return False
-
-        changed = False
-        visible_set = set(visible_imagery)
-        for path in available_imagery:
-            if path in visible_set:
-                continue
-            if path not in self._search_result_assets_by_path:
-                continue
-            self._search_layer_visibility[path] = True
-            visible_set.add(path)
-            changed = True
-            if len(visible_set) >= 2:
-                break
-
-        if changed:
-            self._sync_search_visibility_layers()
-            self.panel.update_search_results(
-                list(self._search_result_assets_by_path.values()),
-                self._search_layer_visibility,
-            )
-            self.panel.log(
-                "Comparator: enabled an additional visible raster layer for comparison."
-            )
-
-        return self.can_enable_comparator()
+        return self._comparator._auto_enable_second_comparator_imagery_layer()
 
     def _auto_enable_second_swipe_imagery_layer(self) -> bool:
-        return self._auto_enable_second_comparator_imagery_layer()
+        return self._comparator._auto_enable_second_swipe_imagery_layer()
 
     def _enqueue_distance_measurement(
         self, lon1: float, lat1: float, lon2: float, lat2: float
@@ -1670,41 +1515,10 @@ class DesktopController:
         return out if len(out) >= 3 else None
 
     def _toolbar_toggle_comparator(self, enabled: bool | None = None) -> bool:
-        candidate_count = self.comparator_candidate_count()
-        next_state = (
-            (not self._swipe_comparator_enabled) if enabled is None else bool(enabled)
-        )
-
-        if next_state and candidate_count < 2:
-            if self._auto_enable_second_comparator_imagery_layer():
-                candidate_count = self.comparator_candidate_count()
-
-        if next_state and candidate_count < 2:
-            self.panel.log("Comparator needs at least two visible raster layers.")
-            self._swipe_comparator_enabled = False
-            return False
-
-        self._swipe_comparator_enabled = next_state
-        self._run_js_call("setComparator", self._swipe_comparator_enabled)
-        if self._swipe_comparator_enabled:
-            self._run_js_call("setComparatorPosition", 0.5)
-            self._run_js_call("requestComparatorPaneState")
-            self.panel.log(
-                "Comparator enabled. Drag divider on map to compare georeferenced layers."
-            )
-            self._logger.info("Comparator enabled candidate_layers=%s", candidate_count)
-            self._apply_display_control_mode()
-            return True
-
-        self._comparator_selected_pane = None
-        self._comparator_selected_layer_type = None
-        self.panel.log("Comparator disabled.")
-        self._logger.info("Comparator disabled")
-        self._apply_display_control_mode()
-        return False
+        return self._comparator._toolbar_toggle_comparator(enabled=enabled)
 
     def _toolbar_toggle_swipe_comparator(self, enabled: bool | None = None) -> bool:
-        return self._toolbar_toggle_comparator(enabled=enabled)
+        return self._comparator._toolbar_toggle_swipe_comparator(enabled=enabled)
 
     def disable_layer_compositor(self) -> None:
         self._run_js_call("setSwipeComparator", False)
@@ -2379,251 +2193,16 @@ class DesktopController:
         return False
 
     def _toolbar_export_profile_csv(self) -> None:
-        if not self._last_profile_values:
-            self.panel.log("No profile values available. Run Elevation Profile first.")
-            return
-        file_path, _ = QFileDialog.getSaveFileName(
-            self.panel,
-            "Export Profile CSV",
-            "profile_export.csv",
-            "CSV Files (*.csv)",
-        )
-        if not file_path:
-            return
-        output_path = Path(file_path)
-        with output_path.open("w", newline="", encoding="utf-8") as handle:
-            writer = csv.writer(handle)
-            writer.writerow(["index", "elevation_m"])
-            for idx, value in enumerate(self._last_profile_values):
-                writer.writerow([idx, f"{value:.6f}"])
-        self.panel.log(f"Profile CSV exported: {output_path}")
+        self._project_io.export_profile_csv()
 
     def _toolbar_export_annotations_geojson(self) -> None:
-        if (
-            not self._annotation_records
-            and not self._annotation_line_records
-            and not self._annotation_polygon_records
-        ):
-            self.panel.log("No annotations captured yet.")
-            return
-        file_path, _ = QFileDialog.getSaveFileName(
-            self.panel,
-            "Export Annotation GeoJSON",
-            "annotations.geojson",
-            "GeoJSON (*.geojson)",
-        )
-        if not file_path:
-            return
-        features = []
-        for item in self._annotation_records:
-            lon = float(item.get("lon") or 0.0)
-            lat = float(item.get("lat") or 0.0)
-            properties = {
-                "type": item.get("type", "point"),
-                "text": item.get("text", ""),
-                "created_at": item.get("created_at", ""),
-            }
-            features.append(
-                {
-                    "type": "Feature",
-                    "geometry": {"type": "Point", "coordinates": [lon, lat]},
-                    "properties": properties,
-                }
-            )
-        for item in self._annotation_line_records:
-            features.append(
-                {
-                    "type": "Feature",
-                    "geometry": {
-                        "type": "LineString",
-                        "coordinates": item.get("coords", []),
-                    },
-                    "properties": {
-                        "feature_type": item.get("feature_type", "road"),
-                        "length_m": item.get("length_m", 0.0),
-                        "width_m": item.get("width_m", 0.0),
-                        "condition": item.get("condition", "intact"),
-                        "created_at": item.get("created_at", ""),
-                    },
-                }
-            )
-        for item in self._annotation_polygon_records:
-            ring = item.get("coords", [])
-            if ring and ring[0] != ring[-1]:
-                ring = list(ring) + [ring[0]]
-            features.append(
-                {
-                    "type": "Feature",
-                    "geometry": {"type": "Polygon", "coordinates": [ring]},
-                    "properties": {
-                        "feature_type": item.get("feature_type", "building"),
-                        "condition": item.get("condition", "intact"),
-                        "area_m2": item.get("area_m2", 0.0),
-                        "perimeter_m": item.get("perimeter_m", 0.0),
-                        "orientation_deg": item.get("orientation_deg", 0.0),
-                        "notes": item.get("notes", ""),
-                        "created_at": item.get("created_at", ""),
-                    },
-                }
-            )
-        payload = {"type": "FeatureCollection", "features": features}
-        Path(file_path).write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        self.panel.log(f"Annotation export complete: {file_path}")
+        self._project_io.export_annotations_geojson()
 
     def _toolbar_export_geopackage(self) -> None:
-        if (
-            not self._annotation_records
-            and not self._annotation_line_records
-            and not self._annotation_polygon_records
-        ):
-            self.panel.log("No annotations captured yet.")
-            return
-        file_path, _ = QFileDialog.getSaveFileName(
-            self.panel,
-            "Export Annotation GeoPackage",
-            "annotations.gpkg",
-            "GeoPackage (*.gpkg)",
-        )
-        if not file_path:
-            return
-
-        try:
-            import fiona
-            from fiona.crs import CRS as FionaCRS
-        except Exception:
-            self.panel.log("Fiona is unavailable. Falling back to GeoJSON export.")
-            self._toolbar_export_annotations_geojson()
-            return
-
-        point_schema = {
-            "geometry": "Point",
-            "properties": {
-                "category": "str",
-                "confidence": "str",
-                "height_m": "float",
-                "created_at": "str",
-                "notes": "str",
-                "class_level": "str",
-            },
-        }
-        with fiona.open(
-            file_path,
-            "w",
-            driver="GPKG",
-            layer="annotations_point",
-            crs=FionaCRS.from_epsg(4326),
-            schema=point_schema,
-        ) as sink:
-            for item in self._annotation_records:
-                lon = float(item.get("lon") or 0.0)
-                lat = float(item.get("lat") or 0.0)
-                sink.write(
-                    {
-                        "geometry": {"type": "Point", "coordinates": (lon, lat)},
-                        "properties": {
-                            "category": "other",
-                            "confidence": "possible",
-                            "height_m": -9999.0,
-                            "created_at": str(item.get("created_at") or ""),
-                            "notes": str(item.get("text") or ""),
-                            "class_level": "UNCLASS",
-                        },
-                    }
-                )
-
-        line_schema = {
-            "geometry": "LineString",
-            "properties": {
-                "feature_type": "str",
-                "length_m": "float",
-                "width_m": "float",
-                "condition": "str",
-            },
-        }
-        with fiona.open(
-            file_path,
-            "a",
-            driver="GPKG",
-            layer="annotations_line",
-            crs=FionaCRS.from_epsg(4326),
-            schema=line_schema,
-        ) as sink:
-            for item in self._annotation_line_records:
-                sink.write(
-                    {
-                        "geometry": {
-                            "type": "LineString",
-                            "coordinates": item.get("coords", []),
-                        },
-                        "properties": {
-                            "feature_type": str(item.get("feature_type") or "road"),
-                            "length_m": float(item.get("length_m") or 0.0),
-                            "width_m": float(item.get("width_m") or 0.0),
-                            "condition": str(item.get("condition") or "intact"),
-                        },
-                    }
-                )
-
-        polygon_schema = {
-            "geometry": "Polygon",
-            "properties": {
-                "feature_type": "str",
-                "condition": "str",
-                "area_m2": "float",
-                "perimeter_m": "float",
-                "orientation_deg": "float",
-                "notes": "str",
-            },
-        }
-        with fiona.open(
-            file_path,
-            "a",
-            driver="GPKG",
-            layer="annotations_polygon",
-            crs=FionaCRS.from_epsg(4326),
-            schema=polygon_schema,
-        ) as sink:
-            for item in self._annotation_polygon_records:
-                ring = item.get("coords", [])
-                if ring and ring[0] != ring[-1]:
-                    ring = list(ring) + [ring[0]]
-                sink.write(
-                    {
-                        "geometry": {"type": "Polygon", "coordinates": [ring]},
-                        "properties": {
-                            "feature_type": str(item.get("feature_type") or "building"),
-                            "condition": str(item.get("condition") or "intact"),
-                            "area_m2": float(item.get("area_m2") or 0.0),
-                            "perimeter_m": float(item.get("perimeter_m") or 0.0),
-                            "orientation_deg": float(
-                                item.get("orientation_deg") or 0.0
-                            ),
-                            "notes": str(item.get("notes") or ""),
-                        },
-                    }
-                )
-
-        self.panel.log(f"GeoPackage export complete: {file_path}")
+        self._project_io.export_annotations_geopackage()
 
     def _toolbar_save_project(self) -> None:
-        file_path, _ = QFileDialog.getSaveFileName(
-            self.panel,
-            "Save Project",
-            "offline_gis_project.json",
-            "JSON Files (*.json)",
-        )
-        if not file_path:
-            return
-        payload = {
-            "selected_asset": self.state.selected_asset,
-            "clicked_points": self.state.clicked_points,
-            "search_geometry_type": self.state.search_geometry_type,
-            "search_geometry_payload": self.state.search_geometry_payload,
-            "search_visibility": self._search_layer_visibility,
-            "saved_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-        }
-        Path(file_path).write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        self.panel.log(f"Project saved: {file_path}")
+        self._project_io.save_project()
 
     def _run_js_call(self, method: str, *args) -> None:
         encoded = ", ".join(json.dumps(arg) for arg in args)

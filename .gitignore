@@ -70,3 +70,6 @@ grep_3dtiles.txt
 GIS_APP_SPEC.md
 src/offline_gis_app/client_frontend/icons/README.md
 src/offline_gis_app/client_frontend/web_assets/basemap
+offline_gis.db-shm
+offline_gis.db-wal
+data_test/dem.cog.tif

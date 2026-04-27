@@ -114,7 +114,7 @@ class IngestQueueService:
                         "has no column",
                     )
                 )
-                db_locked = "database is locked" in message
+                db_locked = "database is locked" in message or "disk i/o error" in message
                 db_readonly = "readonly" in message
                 db_busy = "database is busy" in message
 

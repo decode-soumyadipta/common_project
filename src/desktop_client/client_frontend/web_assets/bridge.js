@@ -52,6 +52,117 @@
   let comparatorActiveInputReleaseTimer = null;
   let comparatorDemRefreshTimer = null;
   const COMPARATOR_DEM_REFRESH_DEBOUNCE_MS = 120;
+  const runtime = (window.OfflineGISRuntime = window.OfflineGISRuntime || {});
+  const bridgeUtils = window.OfflineGISUtils || {};
+  const log = bridgeUtils.log || function (level, message) {
+    const fn = console[level] || console.log;
+    fn("[offlineGIS]", message);
+  };
+  const setStatus = bridgeUtils.setStatus || function (text) {
+    const el = document.getElementById("status");
+    if (el) el.textContent = text;
+  };
+  const emitMapClick = bridgeUtils.emitMapClick || function () {};
+  const emitMeasurementUpdated = bridgeUtils.emitMeasurementUpdated || function () {};
+  const emitLoadingProgress = bridgeUtils.emitLoadingProgress || function () {};
+  const requestSceneRender = bridgeUtils.requestSceneRender || function () {};
+  const setComparatorWindowsVisible = bridgeUtils.setComparatorWindowsVisible || function () {};
+  const normalizeBounds = bridgeUtils.normalizeBounds || function (bounds) {
+    if (!bounds || typeof bounds !== "object") {
+      return null;
+    }
+    const west = Number(bounds.west);
+    const south = Number(bounds.south);
+    const east = Number(bounds.east);
+    const north = Number(bounds.north);
+    if (!Number.isFinite(west) || !Number.isFinite(south) || !Number.isFinite(east) || !Number.isFinite(north)) {
+      return null;
+    }
+    return { west: west, south: south, east: east, north: north };
+  };
+  const cursorControls = window.OfflineGISCursorControls || {};
+  const setSearchCursorEnabled = cursorControls.setSearchCursorEnabled || function () {};
+  const updateSearchCursorOverlay = cursorControls.updateSearchCursorOverlay || function () {};
+  const setSearchCursorOverlayVisible = cursorControls.setSearchCursorOverlayVisible || function () {};
+  const setMeasurementCursorEnabled = cursorControls.setMeasurementCursorEnabled || function () {};
+  const _enforceMeasureCursor = cursorControls._enforceMeasureCursor || setMeasurementCursorEnabled;
+  const ensureMeasureCursorOverlay = cursorControls.ensureMeasureCursorOverlay || function () {};
+  const updateMeasureCursorOverlay = cursorControls.updateMeasureCursorOverlay || function () {};
+  const setMeasureCursorOverlayVisible = cursorControls.setMeasureCursorOverlayVisible || function () {};
+  const emitSearchGeometry =
+    (window.OfflineGISModules &&
+      window.OfflineGISModules.search &&
+      window.OfflineGISModules.search.geometry &&
+      window.OfflineGISModules.search.geometry.emitSearchGeometry) ||
+    function () {};
+  const createRectangle = bridgeUtils.createRectangle || function (bounds) {
+    const normalized = normalizeBounds(bounds);
+    return normalized ? Cesium.Rectangle.fromDegrees(normalized.west, normalized.south, normalized.east, normalized.north) : null;
+  };
+  const rectangleFromBounds = bridgeUtils.rectangleFromBounds || createRectangle;
+  const applyCursorStyle = bridgeUtils.applyCursorStyle || function (element, cursorValue) {
+    if (!element || !element.style) {
+      return;
+    }
+    if (cursorValue) {
+      element.style.setProperty("cursor", cursorValue, "important");
+      return;
+    }
+    element.style.removeProperty("cursor");
+  };
+  const parseDemHeightRange = bridgeUtils.parseDemHeightRange || function (options) {
+    const defaultRange = { min: -500.0, max: 9000.0 };
+    const query = options && options.query ? options.query : null;
+    if (!query || typeof query.rescale !== "string") {
+      return defaultRange;
+    }
+    const parts = query.rescale.split(",").map((value) => Number(value.trim()));
+    if (parts.length !== 2 || !Number.isFinite(parts[0]) || !Number.isFinite(parts[1]) || parts[1] <= parts[0]) {
+      return defaultRange;
+    }
+    return { min: parts[0], max: parts[1] };
+  };
+  const buildUrlWithQuery = bridgeUtils.buildUrlWithQuery || function (url, extraQuery) {
+    const splitIndex = url.indexOf("?");
+    const base = splitIndex >= 0 ? url.slice(0, splitIndex) : url;
+    const queryText = splitIndex >= 0 ? url.slice(splitIndex + 1) : "";
+    const existingParams = {};
+    if (queryText) {
+      queryText.split("&").forEach(function (pair) {
+        const eqIdx = pair.indexOf("=");
+        if (eqIdx > 0) {
+          const key = decodeURIComponent(pair.slice(0, eqIdx));
+          const value = decodeURIComponent(pair.slice(eqIdx + 1));
+          existingParams[key] = value;
+        }
+      });
+    }
+    const finalParams = Object.assign({}, existingParams, extraQuery || {});
+    const encodeValue = function (key, value) {
+      if (key === "url") {
+        return encodeURIComponent(value)
+          .replace(/%3A/gi, ":")
+          .replace(/%2F/gi, "/")
+          .replace(/%40/gi, "@");
+      }
+      return encodeURIComponent(value);
+    };
+    const paramPairs = Object.entries(finalParams)
+      .map(function ([key, value]) {
+        if (value === null || value === undefined) {
+          return null;
+        }
+        if (Array.isArray(value)) {
+          return value.map(function (item) {
+            return encodeURIComponent(key) + "=" + encodeValue(key, String(item));
+          }).join("&");
+        }
+        return encodeURIComponent(key) + "=" + encodeValue(key, String(value));
+      })
+      .filter(Boolean);
+    const merged = paramPairs.join("&");
+    return merged ? base + "?" + merged : base;
+  };
   if (!window.Cesium) {
     const statusEl = document.getElementById("status");
     if (statusEl) {
@@ -179,8 +290,6 @@
   let searchPreviewLineEntity = null;
   let searchPreviewPolygonEntity = null;
   let searchAreaLabelEntity = null;
-  let searchCursorOverlay = null;
-  let lastSearchCursorScreenPosition = null;
   let polygonVisibilityEnabled = true;
   let searchOverlayVisible = true;
   let panModeActive = false;
@@ -193,6 +302,112 @@
   window._fillVolumePrimitives = window._fillVolumePrimitives || [];
   let drawnPolygonCounter = 0;
   let aoiPanelMinimized = false;
+  const searchPolygonControllerFactory =
+    window.OfflineGISSearchPolygonController &&
+    window.OfflineGISSearchPolygonController.createSearchPolygonController;
+  const searchPolygonController = searchPolygonControllerFactory
+    ? searchPolygonControllerFactory({
+        getViewer: function () {
+          return viewer;
+        },
+        getBridge: function () {
+          return bridge;
+        },
+        getCesium: function () {
+          return Cesium;
+        },
+        getSearchPolygonPoints: function () {
+          return searchPolygonPoints;
+        },
+        getSearchCursorPoint: function () {
+          return searchCursorPoint;
+        },
+        getSearchOverlayVisible: function () {
+          return searchOverlayVisible;
+        },
+        getPolygonVisibilityEnabled: function () {
+          return polygonVisibilityEnabled;
+        },
+        getSearchPreviewLineEntity: function () {
+          return searchPreviewLineEntity;
+        },
+        setSearchPreviewLineEntity: function (value) {
+          searchPreviewLineEntity = value;
+        },
+        getSearchPreviewPolygonEntity: function () {
+          return searchPreviewPolygonEntity;
+        },
+        setSearchPreviewPolygonEntity: function (value) {
+          searchPreviewPolygonEntity = value;
+        },
+        getSearchAreaLabelEntity: function () {
+          return searchAreaLabelEntity;
+        },
+        setSearchAreaLabelEntity: function (value) {
+          searchAreaLabelEntity = value;
+        },
+        getSearchCursorEntity: function () {
+          return searchCursorEntity;
+        },
+        setSearchCursorEntity: function (value) {
+          searchCursorEntity = value;
+        },
+        getSearchVertexEntities: function () {
+          return searchVertexEntities;
+        },
+        setSearchVertexEntities: function () {},
+        getDrawnPolygons: function () {
+          return drawnPolygons;
+        },
+        setDrawnPolygons: function () {},
+        getComparatorModeEnabled: function () {
+          return comparatorModeEnabled;
+        },
+        getComparatorLeftViewer: function () {
+          return comparatorLeftViewer;
+        },
+        getComparatorRightViewer: function () {
+          return comparatorRightViewer;
+        },
+        getComparatorPolygonEntities: function () {
+          return comparatorPolygonEntities;
+        },
+        getSearchDrawMode: function () {
+          return searchDrawMode;
+        },
+        setSearchDrawMode: function (value) {
+          searchDrawMode = value;
+        },
+        setSearchCursorPoint: function (value) {
+          searchCursorPoint = value;
+        },
+        setSearchPolygonLocked: function (value) {
+          searchPolygonLocked = value;
+        },
+        setSearchOverlayVisible: function (value) {
+          searchOverlayVisible = value;
+        },
+        getAoiPanelMinimized: function () {
+          return aoiPanelMinimized;
+        },
+        setAoiPanelMinimized: function (value) {
+          aoiPanelMinimized = value;
+        },
+        requestSceneRender: requestSceneRender,
+        setSearchCursorEnabled: setSearchCursorEnabled,
+        updateComparatorPolygons: function (value) {
+          updateComparatorPolygons(value);
+        },
+        incrementDrawnPolygonCounter: function () {
+          drawnPolygonCounter += 1;
+        },
+        getDrawnPolygonCounter: function () {
+          return drawnPolygonCounter;
+        },
+        setStatus: setStatus,
+        log: log,
+      })
+    : null;
   let annotationVisibilityEnabled = true;
   let sceneModeControlEnabled = true;
   let currentSceneMode = "3d";
@@ -210,9 +425,6 @@
   let lastEdgeScaleUpdateMs = 0;
   let has2DWheelZoomFallback = false;
   const EDGE_SCALE_UPDATE_INTERVAL_MS = 120;
-  const SEARCH_PENCIL_CURSOR_IMAGE =
-    "data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2220%22 height=%2220%22 viewBox=%220 0 24 24%22%3E%3Cpath fill=%22%23f4c430%22 stroke=%22%231a1a1a%22 stroke-width=%221.4%22 d=%22M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z%22/%3E%3Cpath fill=%22%231a1a1a%22 d=%22M20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83l3.75 3.75z%22/%3E%3C/svg%3E";
-  const SEARCH_PENCIL_CURSOR = `url("${SEARCH_PENCIL_CURSOR_IMAGE}") 2 18, crosshair`;
   const ANNOTATION_EDIT_ICON_IMAGE =
     "data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2720%27 height=%2720%27 viewBox=%270 0 20 20%27%3E%3Ccircle cx=%2710%27 cy=%2710%27 r=%279%27 fill=%27rgba(255%2C255%2C255%2C0.92)%27 stroke=%27rgba(0%2C0%2C0%2C0.38)%27 stroke-width=%271.1%27/%3E%3Cpath d=%27M6.1 12.9l.5-2.2L11.8 5.5a1.3 1.3 0 011.8 0l.8.8a1.3 1.3 0 010 1.8L9.1 13.3l-2.2.5a.6.6 0 01-.8-.7z%27 fill=%27%23282f39%27/%3E%3Cpath d=%27M10.9 6.4l2.7 2.7%27 stroke=%27%23ffffff%27 stroke-width=%271%27 stroke-linecap=%27round%27/%3E%3C/svg%3E";
   const _SB_COORD_THROTTLE_MS = 33; // ~30 fps
@@ -230,70 +442,6 @@
   let _tileDrainTimer = null;
   const _TILE_PROGRESS_CHECK_MS = 100; // Check every 100ms
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // SECTION: Utility Functions  →  future: modules/utils.js
-  // Functions: log, setStatus, emitMapClick, emitMeasurementUpdated,
-  //   emitLoadingProgress, buildUrlWithQuery, normalizeBounds, createRectangle,
-  //   rectangleFromBounds, applyCursorStyle, requestSceneRender,
-  //   parseDemHeightRange, formatDistance
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  function log(level, message) {
-    const fn = console[level] || console.log;
-    fn("[offlineGIS]", message);
-    if (bridge && bridge.js_log) {
-      bridge.js_log(level, String(message));
-    }
-  }
-
-  function setStatus(text) {
-    const el = document.getElementById("status");
-    if (el) el.textContent = text;
-  }
-
-  function emitMapClick(lon, lat) {
-    if (bridge && bridge.on_map_click) {
-      bridge.on_map_click(lon, lat);
-    }
-  }
-
-  function emitMeasurementUpdated(meters) {
-    if (bridge && bridge.on_measurement) {
-      bridge.on_measurement(meters);
-    }
-  }
-
-  function setRenderBusyState(busy) {
-    if (!bridge || !bridge.on_render_busy) return;
-    if (busy) {
-      if (_sbRenderIdleTimer) {
-        clearTimeout(_sbRenderIdleTimer);
-        _sbRenderIdleTimer = null;
-      }
-      if (!_sbRenderBusy) {
-        _sbRenderBusy = true;
-        bridge.on_render_busy(true);
-      }
-      return;
-    }
-
-    if (_sbRenderIdleTimer) {
-      clearTimeout(_sbRenderIdleTimer);
-    }
-    _sbRenderIdleTimer = setTimeout(function () {
-      _sbRenderIdleTimer = null;
-      if (_sbRenderBusy) {
-        _sbRenderBusy = false;
-        bridge.on_render_busy(false);
-      }
-    }, _SB_RENDER_IDLE_DELAY_MS);
-  }
-  
-  function emitLoadingProgress(percent, message) {
-    if (!bridge || !bridge.on_loading_progress) return;
-    bridge.on_loading_progress(Math.round(percent), String(message || "Loading"));
-  }
-  
   // ── Tile loading progress via native Cesium event (accurate, zero polling) ──
   // Wired in wireStatusBarListeners() after viewer is ready.
   let _tileQueuePeak = 0;
@@ -319,49 +467,6 @@
     overlay.setAttribute("aria-hidden", enabled ? "false" : "true");
     if (textEl && enabled) {
       textEl.textContent = String(message || "Searching tiles...");
-    }
-  }
-
-  function requestSceneRender() {
-    if (viewer && viewer.scene && typeof viewer.scene.requestRender === "function") {
-      viewer.scene.requestRender();
-    }
-    if (Array.isArray(comparatorViewers)) {
-      comparatorViewers.forEach(function (v) {
-        if (v && v.scene) v.scene.requestRender();
-      });
-    }
-  }
-
-  function setComparatorWindowsVisible(visible) {
-    const root = document.getElementById("comparatorWindows");
-    const map = document.getElementById("cesiumContainer");
-    if (!root || !map) {
-      return;
-    }
-    const enabled = Boolean(visible);
-    root.classList.toggle("active", enabled);
-    root.setAttribute("aria-hidden", enabled ? "false" : "true");
-    map.style.display = enabled ? "none" : "block";
-
-    if (enabled) {
-      // On Windows/ANGLE, Cesium viewers initialise with a zero-size canvas when
-      // the parent div is display:none at creation time.  Force a resize + render
-      // after the flex layout has been applied so the canvas fills the pane.
-      // Works for 2, 3, or 4 panes via the comparatorViewers[] array.
-      var _resizeAndRender = function () {
-        if (Array.isArray(comparatorViewers)) {
-          comparatorViewers.forEach(function (v) {
-            if (v && v.scene) {
-              try { v.resize(); } catch (_) {}
-              v.scene.requestRender();
-            }
-          });
-        }
-      };
-      setTimeout(_resizeAndRender, 50);
-      setTimeout(_resizeAndRender, 300);
-      setTimeout(_resizeAndRender, 800);
     }
   }
 
@@ -919,13 +1024,6 @@
     setComparatorPaneSelectionStyles(comparatorSelectedPane);
   }
 
-  function rectangleFromBounds(bounds) {
-    if (!bounds) {
-      return undefined;
-    }
-    return Cesium.Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north);
-  }
-
   function getComparatorPaneViewer(paneKey) {
     // Map "left"→index 0, "right"→index 1
     var idx = (paneKey === "right") ? 1 : 0;
@@ -1431,6 +1529,7 @@
   }
 
   const comparatorViewers = [];
+  runtime.comparatorViewers = comparatorViewers;
   function ensureComparatorViewers(count) {
     // CRITICAL (Windows/ANGLE): The comparatorPane divs must have display:block
     // BEFORE Cesium creates its canvas, otherwise the canvas gets zero size and
@@ -1756,124 +1855,8 @@
 
   // ═══════════════════════════════════════════════════════════════════════════
   // SECTION: Search Cursor & Cursor Utilities  →  future: modules/search.js
-  // Functions: setSearchCursorEnabled, updateSearchCursorOverlay,
-  //   setMeasurementCursorEnabled, applyCursorStyle
+  // Functions are provided by modules/shared/cursor_controls.js
   // ═══════════════════════════════════════════════════════════════════════════
-
-  function applyCursorStyle(element, cursorValue) {
-    if (!element || !element.style) {
-      return;
-    }
-    if (cursorValue) {
-      element.style.setProperty("cursor", cursorValue, "important");
-      return;
-    }
-    element.style.removeProperty("cursor");
-  }
-
-  function ensureSearchCursorOverlay() {
-    if (searchCursorOverlay || !document.body) {
-      return;
-    }
-    const overlay = document.createElement("div");
-    overlay.id = "searchCursorOverlay";
-    overlay.setAttribute("aria-hidden", "true");
-    overlay.style.position = "fixed";
-    overlay.style.left = "0px";
-    overlay.style.top = "0px";
-    overlay.style.width = "20px";
-    overlay.style.height = "20px";
-    overlay.style.pointerEvents = "none";
-    overlay.style.zIndex = "100000";
-    overlay.style.display = "none";
-    overlay.style.backgroundRepeat = "no-repeat";
-    overlay.style.backgroundSize = "20px 20px";
-    overlay.style.backgroundImage = `url("${SEARCH_PENCIL_CURSOR_IMAGE}")`;
-    overlay.style.transform = "translate(-2px, -18px)";
-    document.body.appendChild(overlay);
-    searchCursorOverlay = overlay;
-  }
-
-  function updateSearchCursorOverlay(screenPosition) {
-    if (!viewer || !viewer.canvas || !searchCursorOverlay || !screenPosition) {
-      return;
-    }
-    const x = Number(screenPosition.x);
-    const y = Number(screenPosition.y);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) {
-      return;
-    }
-    const rect = viewer.canvas.getBoundingClientRect();
-    searchCursorOverlay.style.left = `${rect.left + x}px`;
-    searchCursorOverlay.style.top = `${rect.top + y}px`;
-  }
-
-  function setSearchCursorOverlayVisible(visible) {
-    if (!searchCursorOverlay) {
-      return;
-    }
-    if (!visible || !lastSearchCursorScreenPosition) {
-      searchCursorOverlay.style.display = "none";
-      return;
-    }
-    searchCursorOverlay.style.display = "block";
-    updateSearchCursorOverlay(lastSearchCursorScreenPosition);
-  }
-
-  function setSearchCursorEnabled(enabled) {
-    if (!viewer || !viewer.canvas) {
-      return;
-    }
-    ensureSearchCursorOverlay();
-    const nextCursor = enabled ? (searchCursorOverlay ? "none" : SEARCH_PENCIL_CURSOR) : "";
-    applyCursorStyle(viewer.canvas, nextCursor);
-    const mapElement = document.getElementById("cesiumContainer");
-    if (mapElement) {
-      applyCursorStyle(mapElement, nextCursor);
-      mapElement.classList.toggle("search-draw-cursor-active", Boolean(enabled));
-    }
-    if (viewer.container) {
-      applyCursorStyle(viewer.container, nextCursor);
-    }
-    setSearchCursorOverlayVisible(Boolean(enabled));
-  }
-
-  // ── Measurement cursor — delegated to Qt/Python for smooth native rendering ──
-  // Instead of a floating HTML div, we call bridge.on_measure_cursor(bool) which
-  // lets Python set a QPainter-drawn QCursor directly on the QWebEngineView.
-  // The <style> tag still hides the native browser cursor while active.
-  let _measureCursorStyleEl = null;
-  // Stubs kept so existing call sites (mouseenter/mouseleave) don't error
-  let _measureCursorOverlay = null;
-
-  function ensureMeasureCursorOverlay() { /* no-op — cursor handled by Qt */ }
-  function updateMeasureCursorOverlay() { /* no-op */ }
-  function setMeasureCursorOverlayVisible() { /* no-op */ }
-
-  function setMeasurementCursorEnabled(enabled) {
-    log("info", "[CURSOR_DEBUG] setMeasurementCursorEnabled called enabled=" + String(enabled) + " bridge=" + (bridge ? "ok" : "null") + " on_measure_cursor=" + (bridge && bridge.on_measure_cursor ? "ok" : "missing"));
-    // Tell Python to set/unset the native Qt crosshair cursor
-    if (bridge && bridge.on_measure_cursor) {
-      log("info", "[CURSOR_DEBUG] calling bridge.on_measure_cursor(" + String(Boolean(enabled)) + ")");
-      bridge.on_measure_cursor(Boolean(enabled));
-    } else {
-      log("warn", "[CURSOR_DEBUG] bridge.on_measure_cursor not available — falling back to CSS crosshair");
-    }
-    // No CSS cursor manipulation — Qt handles the cursor natively via setCursor()
-    if (!_measureCursorStyleEl) {
-      _measureCursorStyleEl = document.createElement("style");
-      _measureCursorStyleEl.id = "measureCursorOverride";
-      document.head.appendChild(_measureCursorStyleEl);
-    }
-    _measureCursorStyleEl.textContent = "";
-  }
-
-  // Legacy alias — kept for backward compatibility with existing call sites
-  function _enforceMeasureCursor(active) {
-    setMeasurementCursorEnabled(active);
-  }
-  let _measureCursorObserver = null;  // no longer used, kept to avoid reference errors
-  let _measureCursorApplying = false; // no longer used, kept to avoid reference errors
 
   function sceneDebug(message) {
     log("info", "[SCENE_DEBUG] " + message);
@@ -2094,85 +2077,6 @@
   function setSceneModeControlEnabled(enabled) {
     sceneModeControlEnabled = Boolean(enabled);
     // Moved to Python Qt UI
-  }
-
-  function parseDemHeightRange(options) {
-    const defaultRange = { min: -500.0, max: 9000.0 };
-    const query = options && options.query ? options.query : null;
-    if (!query || typeof query.rescale !== "string") {
-      return defaultRange;
-    }
-    const parts = query.rescale.split(",").map((v) => Number(v.trim()));
-    if (parts.length !== 2 || !Number.isFinite(parts[0]) || !Number.isFinite(parts[1]) || parts[1] <= parts[0]) {
-      return defaultRange;
-    }
-    return { min: parts[0], max: parts[1] };
-  }
-
-  function createRectangle(bounds) {
-    if (!bounds) return null;
-    if (
-      !Number.isFinite(bounds.west) ||
-      !Number.isFinite(bounds.south) ||
-      !Number.isFinite(bounds.east) ||
-      !Number.isFinite(bounds.north)
-    ) {
-      return null;
-    }
-    return Cesium.Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north);
-  }
-
-  // Encode a query parameter value.
-  // For the "url" key (file path / file URI passed to TiTiler/GDAL), preserve
-  // ":", "/", and "@" so Windows paths like "file:///C:/Users/..." and plain
-  // "C:/Users/..." survive the decode→encode round-trip in buildUrlWithQuery.
-  // All other values use standard encodeURIComponent.
-  function _encodeParamValue(key, value) {
-    if (key === "url") {
-      return encodeURIComponent(value)
-        .replace(/%3A/gi, ":")
-        .replace(/%2F/gi, "/")
-        .replace(/%40/gi, "@");
-    }
-    return encodeURIComponent(value);
-  }
-
-  function buildUrlWithQuery(url, extraQuery) {
-    const splitIndex = url.indexOf("?");
-    const base = splitIndex >= 0 ? url.slice(0, splitIndex) : url;
-    const queryText = splitIndex >= 0 ? url.slice(splitIndex + 1) : "";
-    
-    // Extract existing parameters as a map to avoid double-encoding
-    const existingParams = {};
-    if (queryText) {
-      queryText.split("&").forEach(function (pair) {
-        const eqIdx = pair.indexOf("=");
-        if (eqIdx > 0) {
-          const key = decodeURIComponent(pair.slice(0, eqIdx));
-          const value = decodeURIComponent(pair.slice(eqIdx + 1));
-          existingParams[key] = value;
-        }
-      });
-    }
-    
-    // Merge new parameters into existing ones
-    const finalParams = Object.assign({}, existingParams, extraQuery || {});
-    
-    // Reconstruct query string without double-encoding
-    const paramPairs = Object.entries(finalParams).map(function ([key, value]) {
-      if (value === null || value === undefined) {
-        return null;
-      }
-      if (Array.isArray(value)) {
-        return value.map(function (item) {
-          return encodeURIComponent(key) + "=" + _encodeParamValue(key, String(item));
-        }).join("&");
-      }
-      return encodeURIComponent(key) + "=" + _encodeParamValue(key, String(value));
-    }).filter(Boolean);
-    
-    const merged = paramPairs.join("&");
-    return merged ? base + "?" + merged : base;
   }
 
   function logLayerStack() {
@@ -2813,20 +2717,6 @@
     });
   }
 
-  function normalizeBounds(bounds) {
-    if (!bounds || typeof bounds !== "object") {
-      return null;
-    }
-    const west = Number(bounds.west);
-    const south = Number(bounds.south);
-    const east = Number(bounds.east);
-    const north = Number(bounds.north);
-    if (!Number.isFinite(west) || !Number.isFinite(south) || !Number.isFinite(east) || !Number.isFinite(north)) {
-      return null;
-    }
-    return { west: west, south: south, east: east, north: north };
-  }
-
   function estimateBoundsSizeMeters(bounds) {
     const normalized = normalizeBounds(bounds);
     if (!normalized) {
@@ -3396,6 +3286,7 @@
     }
     new QWebChannel(qt.webChannelTransport, function (channel) {
       bridge = channel.objects.bridge;
+      runtime.bridge = bridge;
       setStatus("Bridge connected.");
       log("info", "QWebChannel bridge connected");
       initViewer();
@@ -3447,6 +3338,7 @@
         },
       },
     });
+    runtime.viewer = viewer;
     baseTerrainProvider = viewer.terrainProvider;
     fallbackBasemapLayer = viewer.imageryLayers.get(0);
     const devicePixelRatio = window.devicePixelRatio || 1.0;
@@ -4234,7 +4126,9 @@
 
     handler.setInputAction(function (movement) {
       if (movement && movement.endPosition) {
-        lastSearchCursorScreenPosition = movement.endPosition;
+        if (window.OfflineGISCursorControls) {
+          window.OfflineGISCursorControls.lastSearchCursorScreenPosition = movement.endPosition;
+        }
         updateAnnotationHover(movement.endPosition);
       }
       if (distanceMeasureModeEnabled && distanceMeasureAnchor && searchDrawMode !== "polygon") {
@@ -4327,9 +4221,11 @@
       }
       
       if (searchDrawMode === "polygon") {
-        updateSearchCursorOverlay(lastSearchCursorScreenPosition);
+        updateSearchCursorOverlay(
+          window.OfflineGISCursorControls && window.OfflineGISCursorControls.lastSearchCursorScreenPosition
+        );
       }
-      if (movement && movement.endPosition && _measureCursorOverlay && _measureCursorOverlay.style.display !== "none") {
+      if (movement && movement.endPosition) {
         updateMeasureCursorOverlay(movement.endPosition);
       }
       if (searchDrawMode !== "polygon" || searchPolygonPoints.length === 0) {
@@ -4357,9 +4253,7 @@
       if (searchDrawMode === "polygon") {
         setSearchCursorOverlayVisible(true);
       }
-      if (_measureCursorOverlay && _measureCursorStyleEl && _measureCursorStyleEl.textContent) {
-        setMeasureCursorOverlayVisible(true);
-      }
+      setMeasureCursorOverlayVisible(true);
     });
 
     viewer.canvas.addEventListener("mouseleave", function () {
@@ -4922,420 +4816,69 @@
     }
   }
 
-  function getSearchPreviewPoints() {
-    return searchCursorPoint ? searchPolygonPoints.concat([searchCursorPoint]) : searchPolygonPoints.slice();
-  }
-
-  function getSearchPreviewCartesianPoints() {
-    return getSearchPreviewPoints().map((p) => Cesium.Cartesian3.fromDegrees(p.lon, p.lat));
-  }
-
   // ═══════════════════════════════════════════════════════════════════════════
-  // SECTION: Search Polygon & AOI  →  future: modules/search.js
-  // Functions: ensureSearchPreviewEntities, updateSearchPolygonPreview,
-  //   finalizeSearchPolygon, toggleDrawnPolygonVisibility,
-  //   toggleAllDrawnPolygonsVisibility, updatePolygonPreviewVisibility,
-  //   setPolygonPreviewVisible, setSearchCursorEnabled,
-  //   updateSearchCursorOverlay, emitSearchGeometry
+  // SECTION: Search Polygon & AOI  →  moved to modules/search/search_polygon_controller.js
   // ═══════════════════════════════════════════════════════════════════════════
 
   function ensureSearchPreviewEntities() {
-    if (!viewer) {
-      return;
-    }
-
-    if (!searchPreviewLineEntity) {
-      searchPreviewLineEntity = viewer.entities.add({
-        polyline: {
-          positions: new Cesium.CallbackProperty(() => {
-            const points = getSearchPreviewPoints();
-            if (points.length < 2) {
-              return [];
-            }
-            const positions = points.map((p) => Cesium.Cartesian3.fromDegrees(p.lon, p.lat));
-            if (!searchCursorPoint && points.length >= 3) {
-              positions.push(positions[0]);
-            }
-            return positions;
-          }, false),
-          width: 2.5,
-          material: Cesium.Color.CYAN,
-          clampToGround: true,
-          // Always render on top — never occluded by terrain or imagery
-          depthFailMaterial: Cesium.Color.CYAN.withAlpha(0.6),
-          show: new Cesium.CallbackProperty(
-            () => polygonVisibilityEnabled && searchOverlayVisible && getSearchPreviewPoints().length >= 2,
-            false,
-          ),
-        },
-      });
-    }
-
-    if (!searchPreviewPolygonEntity) {
-      searchPreviewPolygonEntity = viewer.entities.add({
-        polygon: {
-          hierarchy: new Cesium.CallbackProperty(() => {
-            const positions = getSearchPreviewCartesianPoints();
-            if (positions.length < 3) {
-              return null;
-            }
-            return new Cesium.PolygonHierarchy(positions);
-          }, false),
-          material: Cesium.Color.CYAN.withAlpha(0.25),
-          fill: true,
-          outline: true,
-          outlineColor: Cesium.Color.CYAN,
-          outlineWidth: 2,
-          perPositionHeight: false,
-          // Use height reference instead of classificationType for Cesium 1.78 compatibility
-          height: 0,
-          extrudedHeight: 0,
-          show: new Cesium.CallbackProperty(
-            () => polygonVisibilityEnabled && searchOverlayVisible && getSearchPreviewPoints().length >= 3,
-            false,
-          ),
-        },
-      });
-    }
-
-    if (!searchCursorEntity) {
-      searchCursorEntity = viewer.entities.add({
-        position: new Cesium.CallbackProperty(() => {
-          if (!searchCursorPoint) {
-            return Cesium.Cartesian3.fromDegrees(0, 0);
-          }
-          return Cesium.Cartesian3.fromDegrees(searchCursorPoint.lon, searchCursorPoint.lat);
-        }, false),
-        point: {
-          pixelSize: 8,
-          color: Cesium.Color.YELLOW,
-          outlineColor: Cesium.Color.BLACK.withAlpha(0.7),
-          outlineWidth: 1,
-          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        },
-        show: new Cesium.CallbackProperty(
-          () => polygonVisibilityEnabled && searchOverlayVisible && Boolean(searchCursorPoint),
-          false,
-        ),
-      });
-    }
-
-    if (!searchAreaLabelEntity) {
-      searchAreaLabelEntity = viewer.entities.add({
-        position: new Cesium.CallbackProperty(() => {
-          const points = getSearchPreviewPoints();
-          const center = polygonLabelPosition(points);
-          if (!center) {
-            return Cesium.Cartesian3.fromDegrees(0, 0);
-          }
-          return Cesium.Cartesian3.fromDegrees(center.lon, center.lat);
-        }, false),
-        label: {
-          text: new Cesium.CallbackProperty(() => {
-            const points = getSearchPreviewPoints();
-            if (points.length < 3) {
-              return "";
-            }
-            const areaSquareMeters = computePolygonAreaSquareMeters(points);
-            if (!Number.isFinite(areaSquareMeters) || areaSquareMeters <= 0) {
-              return "";
-            }
-            return "Area " + formatArea(areaSquareMeters);
-          }, false),
-          font: "13px 'Segoe UI', sans-serif",
-          fillColor: Cesium.Color.WHITE,
-          showBackground: true,
-          backgroundColor: Cesium.Color.BLACK.withAlpha(0.82),
-          backgroundPadding: new Cesium.Cartesian2(8, 4),
-          style: Cesium.LabelStyle.FILL,
-          horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
-          verticalOrigin: Cesium.VerticalOrigin.CENTER,
-          pixelOffset: new Cesium.Cartesian2(0, 0),
-          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
-          scale: 0.8,
-          show: new Cesium.CallbackProperty(
-            () => polygonVisibilityEnabled && searchOverlayVisible && getSearchPreviewPoints().length >= 3,
-            false,
-          ),
-        },
-      });
+    if (searchPolygonController) {
+      searchPolygonController.ensureSearchPreviewEntities();
     }
   }
 
   function syncSearchVertexEntities() {
-    if (!viewer) {
-      return;
-    }
-    // Remove excess vertex entities
-    while (searchVertexEntities.length > searchPolygonPoints.length) {
-      const ve = searchVertexEntities.pop();
-      if (ve) {
-        viewer.entities.remove(ve);
-      }
-    }
-    // Create or update vertex entities for each polygon point
-    for (let i = 0; i < searchPolygonPoints.length; i++) {
-      const pt = searchPolygonPoints[i];
-      if (i < searchVertexEntities.length) {
-        // Update position of existing entity
-        searchVertexEntities[i].position = Cesium.Cartesian3.fromDegrees(pt.lon, pt.lat);
-        searchVertexEntities[i].show = polygonVisibilityEnabled && searchOverlayVisible;
-      } else {
-        // Create new vertex entity
-        const ve = viewer.entities.add({
-          position: Cesium.Cartesian3.fromDegrees(pt.lon, pt.lat),
-          point: {
-            pixelSize: 9,
-            color: Cesium.Color.fromCssColorString("#f4c430"),
-            outlineColor: Cesium.Color.fromCssColorString("#1a1a1a"),
-            outlineWidth: 1.5,
-            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-            disableDepthTestDistance: Number.POSITIVE_INFINITY,
-          },
-          show: polygonVisibilityEnabled && searchOverlayVisible,
-        });
-        searchVertexEntities.push(ve);
-      }
+    if (searchPolygonController) {
+      searchPolygonController.syncSearchVertexEntities();
     }
   }
 
   function updateSearchPolygonPreview() {
-    ensureSearchPreviewEntities();
-    syncSearchVertexEntities();
-    requestSceneRender();
+    if (searchPolygonController) {
+      searchPolygonController.updateSearchPolygonPreview();
+    }
   }
 
   function finalizeSearchPolygon() {
-    if (searchPolygonPoints.length < 3) {
-      log("warn", "Polygon draw requires at least 3 points");
-      return;
+    if (searchPolygonController) {
+      searchPolygonController.finalizeSearchPolygon();
     }
-    searchCursorPoint = null;
-    if (searchPreviewLineEntity && searchPreviewLineEntity.polyline) {
-      searchPreviewLineEntity.polyline.material = Cesium.Color.fromCssColorString("#31d18d");
-      // Detach from searchOverlayVisible — drawn polygon stays visible independently
-      searchPreviewLineEntity.polyline.show = true;
-      searchPreviewLineEntity.polyline.depthFailMaterial = Cesium.Color.fromCssColorString("#31d18d").withAlpha(0.6);
-    }
-    if (searchPreviewPolygonEntity && searchPreviewPolygonEntity.polygon) {
-      searchPreviewPolygonEntity.polygon.material = Cesium.Color.fromCssColorString("#31d18d").withAlpha(0.28);
-      // Detach from searchOverlayVisible — drawn polygon stays visible independently
-      searchPreviewPolygonEntity.polygon.show = true;
-    }
-    if (searchAreaLabelEntity && searchAreaLabelEntity.label) {
-      searchAreaLabelEntity.label.show = true;
-    }
-    for (const ve of searchVertexEntities) {
-      if (ve) ve.show = true;
-    }
-    updateSearchPolygonPreview();
-
-    // Save drawn polygon for multi-polygon management
-    drawnPolygonCounter += 1;
-    const polyRecord = {
-      id: drawnPolygonCounter,
-      label: "Polygon " + drawnPolygonCounter,
-      points: searchPolygonPoints.slice(),
-      lineEntity: searchPreviewLineEntity,
-      polygonEntity: searchPreviewPolygonEntity,
-      areaLabelEntity: searchAreaLabelEntity,
-      vertexEntities: searchVertexEntities.slice(),
-      visible: true,  // always visible until explicitly hidden via checkbox
-    };
-    drawnPolygons.push(polyRecord);
-
-    // Sync to comparator viewers immediately
-    if (comparatorModeEnabled) {
-      updateComparatorPolygons(true);
-    }
-
-    const polygonPayload = { points: searchPolygonPoints.slice() };
-    searchDrawMode = "none";
-    searchPolygonLocked = true;
-    searchOverlayVisible = true;
-    setSearchCursorEnabled(false);
-    // Removed DOM update for polygonToggleControl
-    // Update AOI panel
-    updateAoiPanel(searchPolygonPoints);
-    setStatus("Search polygon ready");
-    window.requestAnimationFrame(function () {
-      emitSearchGeometry("polygon", polygonPayload);
-    });
-    requestSceneRender();
   }
 
-  function computePolygonAreaSquareMeters(points) {
-    if (!Array.isArray(points) || points.length < 3) {
-      return 0.0;
-    }
-    const center = polygonLabelPosition(points);
-    if (!center) {
-      return 0.0;
-    }
-
-    const origin = Cesium.Cartesian3.fromDegrees(center.lon, center.lat, 0.0);
-    const enuTransform = Cesium.Transforms.eastNorthUpToFixedFrame(origin);
-    const worldToLocal = Cesium.Matrix4.inverseTransformation(enuTransform, new Cesium.Matrix4());
-
-    const localPoints = points.map((point) => {
-      const cartesian = Cesium.Cartesian3.fromDegrees(point.lon, point.lat, 0.0);
-      const local = Cesium.Matrix4.multiplyByPoint(worldToLocal, cartesian, new Cesium.Cartesian3());
-      return { x: local.x, y: local.y };
-    });
-
-    let twiceArea = 0.0;
-    for (let i = 0; i < localPoints.length; i += 1) {
-      const current = localPoints[i];
-      const next = localPoints[(i + 1) % localPoints.length];
-      twiceArea += current.x * next.y - next.x * current.y;
-    }
-
-    return Math.abs(twiceArea) * 0.5;
-  }
-
-  function polygonLabelPosition(points) {
-    if (!Array.isArray(points) || points.length === 0) {
-      return null;
-    }
-    const positions = points.map((p) => Cesium.Cartesian3.fromDegrees(p.lon, p.lat));
-    if (!positions.length) {
-      return null;
-    }
-    const sphere = Cesium.BoundingSphere.fromPoints(positions);
-    const cartographic = Cesium.Cartographic.fromCartesian(sphere.center);
-    if (!cartographic) {
-      return { lon: points[0].lon, lat: points[0].lat };
-    }
-    return {
-      lon: Cesium.Math.toDegrees(cartographic.longitude),
-      lat: Cesium.Math.toDegrees(cartographic.latitude),
-    };
-  }
-
-  function formatArea(squareMeters) {
-    if (!Number.isFinite(squareMeters) || squareMeters <= 0) {
-      return "0 m\u00b2";
-    }
-    if (squareMeters >= 1_000_000) {
-      return (squareMeters / 1_000_000).toFixed(2) + " km\u00b2";
-    }
-    return Math.round(squareMeters) + " m\u00b2";
-  }
-
-  // ── AOI Polygon Panel & Dropdown Management ──
   function updateAoiPanel(points) {
-    if (!Array.isArray(points) || points.length < 3) {
-      if (bridge && bridge.on_aoi_stats_updated) {
-        bridge.on_aoi_stats_updated(0, "0 m\u00b2");
-      }
-      return;
-    }
-    const area = computePolygonAreaSquareMeters(points);
-    const areaText = formatArea(area);
-    if (bridge && bridge.on_aoi_stats_updated) {
-      bridge.on_aoi_stats_updated(points.length, areaText);
+    if (searchPolygonController) {
+      searchPolygonController.updateAoiPanel(points);
     }
   }
 
   function toggleAoiPanelMinimize() {
-    aoiPanelMinimized = !aoiPanelMinimized;
+    if (searchPolygonController) {
+      searchPolygonController.toggleAoiPanelMinimize();
+    }
   }
 
   function updatePolygonDropdownUI() {
-    if (bridge && bridge.on_polygon_list_updated) {
-      const payload = drawnPolygons.map(poly => ({
-        id: poly.id,
-        label: poly.label,
-        points_count: poly.points.length,
-        visible: poly.visible
-      }));
-      bridge.on_polygon_list_updated(JSON.stringify(payload));
+    if (searchPolygonController) {
+      searchPolygonController.updatePolygonDropdownUI();
     }
   }
 
   function toggleDrawnPolygonVisibility(polyId, visible) {
-    for (const poly of drawnPolygons) {
-      if (poly.id !== polyId) {
-        continue;
-      }
-      poly.visible = Boolean(visible);
-      if (poly.lineEntity) poly.lineEntity.show = poly.visible;
-      if (poly.polygonEntity) poly.polygonEntity.show = poly.visible;
-      if (poly.areaLabelEntity) poly.areaLabelEntity.show = poly.visible;
-      for (const ve of poly.vertexEntities || []) {
-        if (ve) ve.show = poly.visible;
-      }
+    if (searchPolygonController) {
+      searchPolygonController.toggleDrawnPolygonVisibility(polyId, visible);
     }
-    requestSceneRender();
   }
 
   function toggleAllDrawnPolygonsVisibility(visible) {
-    const isVisible = Boolean(visible);
-    for (const poly of drawnPolygons) {
-      poly.visible = isVisible;
-      if (poly.lineEntity) poly.lineEntity.show = isVisible;
-      if (poly.polygonEntity) poly.polygonEntity.show = isVisible;
-      if (poly.areaLabelEntity) poly.areaLabelEntity.show = isVisible;
-      for (const ve of poly.vertexEntities || []) {
-        if (ve) ve.show = isVisible;
-      }
+    if (searchPolygonController) {
+      searchPolygonController.toggleAllDrawnPolygonsVisibility(visible);
     }
-    requestSceneRender();
   }
 
   const comparatorPolygonEntities = { left: [], right: [] };
 
   function updateComparatorPolygons(visible) {
-    if (!comparatorModeEnabled || !comparatorLeftViewer || !comparatorRightViewer) {
-      return;
-    }
-    for (const ent of comparatorPolygonEntities.left) {
-      comparatorLeftViewer.entities.remove(ent);
-    }
-    for (const ent of comparatorPolygonEntities.right) {
-      comparatorRightViewer.entities.remove(ent);
-    }
-    comparatorPolygonEntities.left = [];
-    comparatorPolygonEntities.right = [];
-
-    if (!visible) {
-      return;
-    }
-
-    const addPolyToViewers = (pts, color, isDrawn) => {
-      if (!pts || pts.length < 3) return;
-      const degreesArray = pts.reduce((acc, p) => { acc.push(p.lon, p.lat); return acc; }, []);
-      const positions = Cesium.Cartesian3.fromDegreesArray(degreesArray);
-      const polylinePositions = Cesium.Cartesian3.fromDegreesArray(degreesArray.concat([pts[0].lon, pts[0].lat]));
-      
-      const polylineDesc = {
-        positions: polylinePositions,
-        width: isDrawn ? 3.0 : 2.0,
-        material: color,
-        clampToGround: true
-      };
-      const polygonDesc = {
-        hierarchy: positions,
-        material: color.withAlpha(0.2),
-        classificationType: Cesium.ClassificationType.TERRAIN
-      };
-      comparatorPolygonEntities.left.push(comparatorLeftViewer.entities.add({ polyline: polylineDesc, polygon: polygonDesc }));
-      comparatorPolygonEntities.right.push(comparatorRightViewer.entities.add({ polyline: polylineDesc, polygon: polygonDesc }));
-    };
-
-    for (const poly of drawnPolygons) {
-      addPolyToViewers(poly.points, Cesium.Color.YELLOW, true);
-    }
-    if (searchPolygonPoints && searchPolygonPoints.length >= 3) {
-      addPolyToViewers(searchPolygonPoints, Cesium.Color.CYAN, false);
-    }
-  }
-
-  function emitSearchGeometry(type, payload) {
-    if (bridge && bridge.on_search_geometry) {
-      bridge.on_search_geometry(type, JSON.stringify(payload));
+    if (searchPolygonController) {
+      searchPolygonController.updateComparatorPolygons(visible);
     }
   }
 

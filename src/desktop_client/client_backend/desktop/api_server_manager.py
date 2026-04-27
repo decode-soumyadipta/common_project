@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import platform
 import signal
 import subprocess
 import sys
@@ -82,7 +83,7 @@ class ApiServerManager:
             sys.executable,
             "-m",
             "uvicorn",
-            "offline_gis_app.server_backend.app:app",
+            "server_vm.server_backend.app:app",
             "--host",
             settings.api_host,
             "--port",
@@ -94,7 +95,14 @@ class ApiServerManager:
 
     def _terminate_local_server_on_port(self) -> None:
         """Best-effort terminate any local process bound to configured API port."""
-        port = str(settings.api_port)
+        port = settings.api_port
+        if platform.system() == "Windows":
+            self._terminate_port_windows(port)
+        else:
+            self._terminate_port_unix(port)
+
+    def _terminate_port_unix(self, port: int) -> None:
+        """Terminate processes on a port using lsof (macOS/Linux)."""
         try:
             result = subprocess.run(
                 ["lsof", "-ti", f"tcp:{port}"],
@@ -120,6 +128,53 @@ class ApiServerManager:
                 )
             except ProcessLookupError:
                 continue
+            except Exception as exc:  # noqa: BLE001
+                self._logger.warning(
+                    "Failed to terminate pid=%s on port=%s: %s", pid, port, exc
+                )
+
+    def _terminate_port_windows(self, port: int) -> None:
+        """Terminate processes on a port using netstat (Windows)."""
+        try:
+            result = subprocess.run(
+                ["netstat", "-ano", "-p", "TCP"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._logger.warning(
+                "Failed to inspect port %s listeners on Windows: %s", port, exc
+            )
+            return
+
+        pids: set[int] = set()
+        for line in (result.stdout or "").splitlines():
+            parts = line.split()
+            # netstat -ano output: Proto  Local  Foreign  State  PID
+            # e.g. TCP  0.0.0.0:8000  0.0.0.0:0  LISTENING  1234
+            if len(parts) < 5:
+                continue
+            local = parts[1]
+            if local.endswith(f":{port}") and parts[-2].upper() in {
+                "LISTENING",
+                "ESTABLISHED",
+            }:
+                try:
+                    pids.add(int(parts[-1]))
+                except ValueError:
+                    pass
+
+        for pid in pids:
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/PID", str(pid)],
+                    capture_output=True,
+                    check=False,
+                )
+                self._logger.warning(
+                    "Terminated stale API process pid=%s on port=%s", pid, port
+                )
             except Exception as exc:  # noqa: BLE001
                 self._logger.warning(
                     "Failed to terminate pid=%s on port=%s: %s", pid, port, exc

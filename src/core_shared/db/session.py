@@ -16,7 +16,17 @@ from core_shared.db.migrations.runner import apply_migrations
 
 LOGGER = logging.getLogger("db.session")
 
-engine = create_engine(settings.database_url, future=True)
+# For SQLite, set a busy timeout so concurrent writers wait instead of
+# immediately raising "disk I/O error" / "database is locked" when another
+# process (e.g. the uvicorn server) holds a WAL write lock.
+_engine_kwargs: dict = {"future": True}
+if "sqlite" in settings.database_url:
+    _engine_kwargs["connect_args"] = {
+        "timeout": 30,  # seconds to wait for a write lock before raising
+        "check_same_thread": False,
+    }
+
+engine = create_engine(settings.database_url, **_engine_kwargs)
 
 # Enable PostGIS extension on PostgreSQL
 if "postgresql" in settings.database_url:
@@ -56,6 +66,10 @@ if "sqlite" in settings.database_url:
             cursor = dbapi_conn.cursor()
             cursor.execute("PRAGMA journal_mode=WAL;")
             cursor.execute("PRAGMA synchronous=NORMAL;")
+            # Wait up to 30 s at the SQLite C level before raising "database
+            # is locked" — keeps multi-process writes (desktop + server) from
+            # immediately colliding when the WAL write lock is held briefly.
+            cursor.execute("PRAGMA busy_timeout=30000;")
             cursor.close()
         except Exception:
             pass
