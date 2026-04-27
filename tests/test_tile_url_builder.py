@@ -1,4 +1,4 @@
-from offline_gis_app.server_ingestion.services.tile_url_builder import build_xyz_url
+from core_shared.ingestion.services.tile_url_builder import build_xyz_url
 
 
 def test_tile_url_uses_tile_matrix_set_path():

@@ -6,10 +6,10 @@ from unittest.mock import Mock, patch
 import pytest
 from qtpy.QtWidgets import QApplication
 
-from offline_gis_app.client_backend.desktop.app_mode import DesktopAppMode
-from offline_gis_app.client_backend.desktop.bridge import WebBridge
-from offline_gis_app.client_backend.desktop.control_panel import ControlPanel
-from offline_gis_app.client_backend.desktop.controller import DesktopController
+from desktop_client.client_backend.desktop.app_mode import DesktopAppMode
+from desktop_client.client_backend.desktop.bridge import WebBridge
+from desktop_client.client_backend.desktop.control_panel import ControlPanel
+from desktop_client.client_backend.desktop.controller import DesktopController
 
 
 @pytest.fixture(scope="module")

@@ -5,11 +5,11 @@ from unittest.mock import Mock, patch
 import pytest
 from qtpy.QtWidgets import QApplication
 
-from offline_gis_app.client_backend.desktop.app_mode import DesktopAppMode
-from offline_gis_app.client_backend.desktop.bridge import WebBridge
-from offline_gis_app.client_backend.desktop.control_panel import ControlPanel
-from offline_gis_app.client_backend.desktop.controller import DesktopController
-from offline_gis_app.client_backend.desktop.status_bar import GISStatusBar
+from desktop_client.client_backend.desktop.app_mode import DesktopAppMode
+from desktop_client.client_backend.desktop.bridge import WebBridge
+from desktop_client.client_backend.desktop.control_panel import ControlPanel
+from desktop_client.client_backend.desktop.controller import DesktopController
+from desktop_client.client_backend.desktop.status_bar import GISStatusBar
 
 
 @pytest.fixture(scope="module")
@@ -128,7 +128,7 @@ def test_compositor_comparator_mutual_exclusion(qapp, mock_panel, mock_web_view)
     """Compositor and Comparator toolbar actions must be mutually exclusive."""
     from unittest.mock import MagicMock, patch
     from qtpy.QtWidgets import QAction
-    from offline_gis_app.client_backend.desktop.main_window import MainWindow
+    from desktop_client.client_backend.desktop.main_window import MainWindow
 
     # Build minimal toolbar_actions dict with real QActions
     compositor_action = QAction("Layer Compositor")

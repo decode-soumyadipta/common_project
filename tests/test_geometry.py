@@ -1,4 +1,4 @@
-from offline_gis_app.utils.geometry import Bounds
+from core_shared.utils.geometry import Bounds
 
 
 def test_bounds_centroid():

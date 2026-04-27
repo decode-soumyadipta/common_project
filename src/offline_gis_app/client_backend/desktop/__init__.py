@@ -1,1 +1,1 @@
-"""Desktop orchestration package under client backend domain."""
+"""Legacy compatibility package for desktop client modules."""

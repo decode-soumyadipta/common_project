@@ -20,8 +20,9 @@ dependencies = [
 
 [project.scripts]
 offline-gis-cli = "offline_gis_app.cli:main"
-offline-gis-server = "offline_gis_app.client_backend.desktop.apps.server_app:main"
-offline-gis-client = "offline_gis_app.client_backend.desktop.apps.client_app:main"
+offline-gis-server = "server_vm.main_server:main"
+offline-gis-client = "desktop_client.main_client:main"
+offline-gis-admin = "desktop_ingestion.main_admin:main"
 
 [project.optional-dependencies]
 desktop = [
@@ -48,9 +49,13 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-offline_gis_app = [
+desktop_client = [
   "client_frontend/web_assets/**/*",
   "client_frontend/icons/*",
+  "desktop_assets/web_assets/**/*",
+  "desktop_assets/icons/*",
+]
+core_shared = [
   "db/migrations/*",
 ]
 

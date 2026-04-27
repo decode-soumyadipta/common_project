@@ -1,7 +1,7 @@
-from offline_gis_app.server_ingestion.services.ingest_queue_service import IngestJobView
+from core_shared.ingestion.services.ingest_queue_service import IngestJobView
 from fastapi.testclient import TestClient
 
-from offline_gis_app.server_backend.app import create_app
+from server_vm.server_backend.app import create_app
 
 
 def test_enqueue_ingest_job(monkeypatch):

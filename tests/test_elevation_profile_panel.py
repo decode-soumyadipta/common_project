@@ -6,7 +6,7 @@ import math
 import pytest
 from qtpy.QtWidgets import QApplication
 
-from offline_gis_app.client_backend.desktop.elevation_profile_panel import (
+from desktop_client.client_backend.desktop.elevation_profile_panel import (
     ElevationProfilePanel,
     _Profile2DWidget,
     _Profile3DWidget,

@@ -1,0 +1,1 @@
+"""Admin GUI boundary package."""

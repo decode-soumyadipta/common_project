@@ -3,11 +3,11 @@ from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from offline_gis_app.db.base import Base
-from offline_gis_app.server_backend.catalog.catalog_repository import CatalogRepository
-from offline_gis_app.db.models import RasterKind
-from offline_gis_app.server_ingestion.services.metadata_models import RasterMetadata
-from offline_gis_app.utils.geometry import Bounds
+from core_shared.db.base import Base
+from server_vm.server_backend.catalog.catalog_repository import CatalogRepository
+from core_shared.db.models import RasterKind
+from core_shared.ingestion.services.metadata_models import RasterMetadata
+from core_shared.utils.geometry import Bounds
 
 
 def test_upsert_and_list_assets():

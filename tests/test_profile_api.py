@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from offline_gis_app.server_backend.app import create_app
+from server_vm.server_backend.app import create_app
 
 
 def test_profile_endpoint(monkeypatch):

@@ -1,4 +1,4 @@
-from offline_gis_app.client_backend.desktop.api_client import DesktopApiClient
+from desktop_client.client_backend.desktop.api_client import DesktopApiClient
 
 
 def test_to_file_url_windows_drive_path():

@@ -1,1 +1,1 @@
-__all__: list[str] = []
+"""Legacy compatibility package for client_backend imports."""

@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from offline_gis_app.server_backend.schemas import (
+from server_vm.server_backend.schemas import (
     BBoxSearchRequest,
     CoordinateSearchRequest,
     ProfileRequest,

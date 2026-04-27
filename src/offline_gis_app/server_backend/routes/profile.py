@@ -1,24 +1,6 @@
-from pathlib import Path
+"""Legacy compatibility module for profile route imports."""
 
-from fastapi import APIRouter, HTTPException
+import sys
+from server_vm.server_backend.routes import profile as _target
 
-from offline_gis_app.server_backend.schemas import ProfileRequest
-from offline_gis_app.server_ingestion.services.metadata_extractor import (
-    MetadataExtractorError,
-)
-from offline_gis_app.server_ingestion.services.profile_service import sample_profile
-
-
-router = APIRouter(prefix="/profile", tags=["profile"])
-
-
-@router.post("/elevation")
-def profile(request: ProfileRequest) -> dict:
-    points = [(p.lon, p.lat) for p in request.line_points]
-    try:
-        values = sample_profile(Path(request.path), points, request.samples)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except (ValueError, MetadataExtractorError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"values": values, "samples": request.samples}
+sys.modules[__name__] = _target

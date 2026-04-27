@@ -4,7 +4,7 @@ import numpy as np
 import rasterio
 from rasterio.transform import from_origin
 
-from offline_gis_app.server_ingestion.services.metadata_extractor import (
+from core_shared.ingestion.services.metadata_extractor import (
     extract_metadata,
 )
 
