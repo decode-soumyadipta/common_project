@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from server_vm.server_backend.catalog.catalog_repository import CatalogRepository
 from core_shared.ingestion.services.cog_service import CogPreparationService
 from core_shared.ingestion.services.file_kind import detect_raster_kind
 from core_shared.ingestion.services.ingestion_service.context import (
@@ -78,6 +77,7 @@ class PersistCatalogStage(IngestionStage):
     def run(self, context: IngestionContext) -> None:
         if context.metadata is None:
             raise ValueError("metadata is required before catalog persistence")
+        from server_vm.server_backend.catalog.catalog_repository import CatalogRepository
         repo = CatalogRepository(context.session)
         context.asset = repo.upsert_asset(context.metadata)
 

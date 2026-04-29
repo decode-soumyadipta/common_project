@@ -24,6 +24,7 @@ class IngestionContext:
     metadata: RasterMetadata | None = None
     asset: RasterAsset | None = None
     tile_url: str | None = None
+    mbtiles_path: Path | None = None
     stages_completed: list[str] = field(default_factory=list)
     last_stage_completed: str | None = None
 

@@ -15,6 +15,10 @@ from core_shared.ingestion.services.ingestion_service import (
     PrepareRasterStage,
     ValidatePathStage,
 )
+from core_shared.ingestion.services.ingestion_service.transform_stage import (
+    TransformToEPSG3857Stage,
+    GenerateMBTilesStage,
+)
 from core_shared.ingestion.services.pyramiding_service import (
     RasterPyramidingService,
 )
@@ -25,6 +29,7 @@ LOGGER = logging.getLogger("services.ingest")
 
 
 def _build_pipeline() -> IngestionPipeline:
+    """Build the complete ingestion pipeline with all stages."""
     return IngestionPipeline(
         stages=[
             ValidatePathStage(),
@@ -34,6 +39,8 @@ def _build_pipeline() -> IngestionPipeline:
                 pyramiding_service=RasterPyramidingService(),
             ),
             ExtractMetadataStage(),
+            TransformToEPSG3857Stage(),
+            GenerateMBTilesStage(),
             PersistCatalogStage(),
             BuildTileUrlStage(url_policy=TiTilerUrlPolicy()),
         ]

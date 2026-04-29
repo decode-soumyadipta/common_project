@@ -141,10 +141,12 @@ class ControlPanel(QWidget):
     """Desktop control panel widgets for ingest, search, display, and measurement tools."""
 
     search_result_visibility_toggled = Signal(str, bool)
+    search_layers_reordered = Signal(list)  # Signal for drag-and-drop layer reordering
     visualization_tools_toggled = Signal(bool)
     measurement_tools_toggled = Signal(bool)
     measurement_result_clear_selected_requested = Signal()
     measurement_result_clear_all_requested = Signal()
+    uploaded_assets_refresh_requested = Signal()  # Signal to request controller cache clearing
 
     def __init__(
         self,
@@ -155,6 +157,12 @@ class ControlPanel(QWidget):
         super().__init__(parent)
         self.api_client = api_client
         self.setMinimumWidth(380)
+        
+        # Drag-and-drop reordering debounce timer
+        self._reorder_debounce_timer = QTimer(self)
+        self._reorder_debounce_timer.setSingleShot(True)
+        self._reorder_debounce_timer.timeout.connect(self._process_pending_reorder)
+        self._pending_reorder_data = None
         root = QVBoxLayout(self)
         root.setContentsMargins(10, 10, 10, 10)
         root.setSpacing(8)
@@ -164,18 +172,14 @@ class ControlPanel(QWidget):
 
         self.path_edit = QLineEdit()
         self.path_edit.setPlaceholderText(
-            "Select local/LAN raster path (GeoTIFF / JP2 / MBTiles / DEM)..."
+            "Select folder containing rasters (GeoTIFF / JP2 / MBTiles / DEM)..."
         )
-        self.browse_btn = QPushButton("Browse")
-        self.preview_btn = QPushButton("Preview")
-        self.save_btn = QPushButton("Save")
+        self.browse_btn = QPushButton("Browse Folder")
+        self.ingest_btn = QPushButton("Ingest Folder")
 
-        self.browse_btn.setToolTip("Pick raster from local disk or secure LAN mount.")
-        self.preview_btn.setToolTip(
-            "Preview raster on the globe without saving it to catalog."
-        )
-        self.save_btn.setToolTip(
-            "Save by queueing ingest with checkpoint + resume support."
+        self.browse_btn.setToolTip("Select folder containing rasters from local disk or secure LAN mount.")
+        self.ingest_btn.setToolTip(
+            "Queue folder for ingestion with automatic processing, transformation, and tiling."
         )
 
         self.upload_box = QGroupBox("Ingest")
@@ -183,8 +187,7 @@ class ControlPanel(QWidget):
         upload_layout.addWidget(self.path_edit)
         row = QHBoxLayout()
         row.addWidget(self.browse_btn, 1)
-        row.addWidget(self.preview_btn, 1)
-        row.addWidget(self.save_btn, 1)
+        row.addWidget(self.ingest_btn, 1)
         upload_layout.addLayout(row)
 
         self.ingest_progress_bar = QProgressBar()
@@ -193,12 +196,22 @@ class ControlPanel(QWidget):
         self.ingest_progress_bar.setFormat("%p%")
         self.ingest_status_value = QLabel("Idle")
         self.ingest_step_value = QLabel("No active ingest")
-        self.ingest_counts_value = QLabel("Processed 0/0 | Failed 0")
-        self.ingest_elapsed_value = QLabel("Elapsed 00:00")
-        self.ingest_item_value = QLabel("Source: -")
+        self.ingest_counts_value = QLabel("Processed: 0/0 | Failed: 0")
+        self.ingest_elapsed_value = QLabel("Elapsed: 00:00")
+        self.ingest_item_value = QLabel("Current: -")
         self.ingest_details = QTextEdit()
         self.ingest_details.setReadOnly(True)
-        self.ingest_details.setMaximumHeight(85)
+        self.ingest_details.setMaximumHeight(100)
+        self.ingest_details.setStyleSheet("""
+            QTextEdit { 
+                background: #fafafa; 
+                border: 1px solid #e0e0e0; 
+                border-radius: 2px; 
+                font-family: 'Consolas', 'Monaco', monospace;
+                font-size: 11px;
+                padding: 4px;
+            }
+        """)
 
         # Uploaded Assets table (numbered metadata view)
         self.uploaded_assets_list = QTableWidget(0, 7)
@@ -227,13 +240,26 @@ class ControlPanel(QWidget):
         self.uploaded_assets_list.horizontalHeader().setSectionResizeMode(
             6, QHeaderView.ResizeToContents
         )
-        self.uploaded_assets_list.setColumnWidth(0, 40)
-        self.uploaded_assets_list.setColumnWidth(1, 220)
-        self.uploaded_assets_list.setColumnWidth(2, 78)
-        self.uploaded_assets_list.setColumnWidth(3, 96)
-        self.uploaded_assets_list.setColumnWidth(4, 112)
-        self.uploaded_assets_list.setColumnWidth(5, 110)
-        self.uploaded_assets_list.setColumnWidth(6, 120)
+        # Configure column widths for better display and enable horizontal scrolling
+        self.uploaded_assets_list.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.uploaded_assets_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        
+        # Set minimum column widths to ensure content is visible
+        self.uploaded_assets_list.setColumnWidth(0, 40)   # Row number
+        self.uploaded_assets_list.setColumnWidth(1, 350)  # File Name (increased for full visibility)
+        self.uploaded_assets_list.setColumnWidth(2, 100)  # Type (increased)
+        self.uploaded_assets_list.setColumnWidth(3, 120)  # CRS (increased)
+        self.uploaded_assets_list.setColumnWidth(4, 120)  # Cell Size (increased)
+        self.uploaded_assets_list.setColumnWidth(5, 120)  # Dimensions (increased)
+        self.uploaded_assets_list.setColumnWidth(6, 140)  # Added (increased)
+        
+        # Allow columns to be resized by user
+        header = self.uploaded_assets_list.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setStretchLastSection(False)  # Don't stretch last column
+        
+        # Set minimum section size to prevent columns from becoming too narrow
+        header.setMinimumSectionSize(60)
         self.uploaded_assets_list.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.uploaded_assets_list.setSelectionMode(QAbstractItemView.SingleSelection)
         self.uploaded_assets_list.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -257,11 +283,15 @@ class ControlPanel(QWidget):
 
         self.ingest_progress_box = QGroupBox("Progress")
         ingest_progress_layout = QFormLayout(self.ingest_progress_box)
-        ingest_progress_layout.addRow("Overall", self.ingest_progress_bar)
-        ingest_progress_layout.addRow("Job Status", self.ingest_status_value)
-        ingest_progress_layout.addRow("Current Step", self.ingest_step_value)
-        ingest_progress_layout.addRow("Elapsed", self.ingest_elapsed_value)
-        ingest_progress_layout.addRow("Activity", self.ingest_details)
+        ingest_progress_layout.setSpacing(6)
+        ingest_progress_layout.setContentsMargins(10, 10, 10, 10)
+        ingest_progress_layout.addRow("Overall:", self.ingest_progress_bar)
+        ingest_progress_layout.addRow("Status:", self.ingest_status_value)
+        ingest_progress_layout.addRow("Stage:", self.ingest_step_value)
+        ingest_progress_layout.addRow("Items:", self.ingest_counts_value)
+        ingest_progress_layout.addRow("Elapsed:", self.ingest_elapsed_value)
+        ingest_progress_layout.addRow("Current:", self.ingest_item_value)
+        ingest_progress_layout.addRow("Activity:", self.ingest_details)
 
         self.assets_combo = QComboBox()
         self.refresh_assets_btn = QPushButton("Refresh")
@@ -401,25 +431,48 @@ class ControlPanel(QWidget):
         self.search_results_summary.setStyleSheet("font-weight: 600; color: #2a2a2a;")
         search_layout.addWidget(self.search_results_summary)
 
-        self.search_results_table = QTableWidget(0, 5)
+        self.search_results_table = QTableWidget(0, 6)  # Added one more column for drag handle
         self.search_results_table.setHorizontalHeaderLabels(
-            ["File", "Kind", "CRS", "Added", "View"]
+            ["⋮⋮", "File", "Kind", "CRS", "Added", "View"]  # Added drag handle column
+        )
+        
+        # Configure drag and drop for layer reordering
+        self.search_results_table.setDragDropMode(QAbstractItemView.InternalMove)
+        self.search_results_table.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.search_results_table.setDragDropOverwriteMode(False)
+        self.search_results_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        
+        # Enable drag indicator and ensure text visibility during drag
+        self.search_results_table.setDragEnabled(True)
+        self.search_results_table.setAcceptDrops(True)
+        
+        # Set column widths for drag handle
+        self.search_results_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeToContents  # Drag handle column
         )
         self.search_results_table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.Stretch
+            1, QHeaderView.Stretch  # File name
         )
         self.search_results_table.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeToContents
+            2, QHeaderView.ResizeToContents  # Kind
         )
         self.search_results_table.horizontalHeader().setSectionResizeMode(
-            2, QHeaderView.ResizeToContents
+            3, QHeaderView.ResizeToContents  # CRS
         )
         self.search_results_table.horizontalHeader().setSectionResizeMode(
-            3, QHeaderView.ResizeToContents
+            4, QHeaderView.ResizeToContents  # Added
         )
         self.search_results_table.horizontalHeader().setSectionResizeMode(
-            4, QHeaderView.ResizeToContents
+            5, QHeaderView.ResizeToContents  # View
         )
+        
+        # Set specific column widths
+        self.search_results_table.setColumnWidth(0, 30)   # Drag handle
+        self.search_results_table.setColumnWidth(1, 220)  # File name
+        self.search_results_table.setColumnWidth(2, 78)   # Kind
+        self.search_results_table.setColumnWidth(3, 96)   # CRS
+        self.search_results_table.setColumnWidth(4, 120)  # Added
+        self.search_results_table.setColumnWidth(5, 60)   # View
         self.search_results_table.verticalHeader().setVisible(False)
         self.search_results_table.verticalHeader().setDefaultSectionSize(22)
         self.search_results_table.setVerticalScrollBarPolicy(
@@ -450,8 +503,49 @@ class ControlPanel(QWidget):
             QTableWidget::item:alternate {
                 background: #fafafa;
             }
-            QTableWidget::item { padding: 2px; }
-            QHeaderView::section {
+            QTableWidget::item { 
+                padding: 2px; 
+            }
+            QTableWidget::item:first-child {
+                text-align: center;
+                color: #666666;
+                font-weight: bold;
+                background: #f8f8f8;
+            }
+            QTableWidget::item:first-child:hover {
+                background: #e8e8e8;
+                color: #333333;
+            }
+            QTableWidget::item:selected {
+                background: #dcecff;
+                color: #10233f;
+            }
+            QTableWidget::item:selected:first-child {
+                background: #c8e0ff;
+                color: #0a1a2f;
+            }
+            /* Enhanced drag-and-drop styling for better text visibility */
+            QTableWidget::item:drag {
+                background: #ffffff !important;
+                color: #000000 !important;
+                border: 2px solid #0066cc !important;
+                opacity: 0.9 !important;
+                font-weight: bold !important;
+            }
+            QTableWidget::item:drop {
+                background: #e8f4ff !important;
+                border: 2px dashed #0066cc !important;
+                color: #000000 !important;
+            }
+            /* Ensure text remains visible during drag operations */
+            QTableWidget QTableWidgetItem {
+                color: #000000;
+            }
+            QTableWidget::item:drag QTableWidgetItem {
+                color: #000000 !important;
+                background: transparent !important;
+            }
+            QTableWidget QHeaderView::section {
                 background: #f5f5f5;
                 padding: 2px;
                 border: none;
@@ -459,10 +553,17 @@ class ControlPanel(QWidget):
                 font-weight: 600;
                 font-size: 11px;
             }
+            QHeaderView::section:first {
+                text-align: center;
+                color: #888888;
+            }
             """
         )
         self._set_search_results_table_visible_rows(5)
         search_layout.addWidget(self.search_results_table)
+        
+        # Connect drag-and-drop signals for real-time layer reordering
+        self.search_results_table.model().rowsMoved.connect(self._on_search_results_reordered)
 
         search_layout.addStretch()
 
@@ -848,7 +949,7 @@ class ControlPanel(QWidget):
             created_at = self._format_search_created_at(asset.get("created_at"))
             file_path = str(asset.get("file_path") or "")
             is_visible = visibility_map.get(file_path, True)
-            toggle_button = QPushButton("👁" if is_visible else "🚫")
+            toggle_button = QPushButton("●" if is_visible else "○")
             toggle_button.setObjectName("searchVisibilityToggle")
             toggle_button.setToolTip("Hide from map" if is_visible else "Show on map")
             toggle_button.setFixedSize(28, 22)
@@ -861,11 +962,18 @@ class ControlPanel(QWidget):
                     )
                 )
 
-            self.search_results_table.setItem(row, 0, QTableWidgetItem(file_name))
-            self.search_results_table.setItem(row, 1, QTableWidgetItem(kind))
-            self.search_results_table.setItem(row, 2, QTableWidgetItem(crs))
-            self.search_results_table.setItem(row, 3, QTableWidgetItem(created_at))
-            self.search_results_table.setCellWidget(row, 4, toggle_button)
+            # Add drag handle in first column
+            drag_handle_item = QTableWidgetItem("⋮⋮")
+            drag_handle_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            drag_handle_item.setToolTip(f"Drag to reorder (Layer {row + 1})")
+            drag_handle_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            
+            self.search_results_table.setItem(row, 0, drag_handle_item)
+            self.search_results_table.setItem(row, 1, QTableWidgetItem(file_name))
+            self.search_results_table.setItem(row, 2, QTableWidgetItem(kind))
+            self.search_results_table.setItem(row, 3, QTableWidgetItem(crs))
+            self.search_results_table.setItem(row, 4, QTableWidgetItem(created_at))
+            self.search_results_table.setCellWidget(row, 5, toggle_button)
 
         self.search_results_table.setSortingEnabled(True)
 
@@ -1087,34 +1195,76 @@ class ControlPanel(QWidget):
 
     def refresh_uploaded_assets(self) -> None:
         """Fetch and display list of uploaded assets from the catalog."""
+        # Emit signal to request controller cache clearing
+        self.uploaded_assets_refresh_requested.emit()
+        
+        # Always clear the table first to remove any cached data
+        self.uploaded_assets_list.clear()
+        self.uploaded_assets_list.setRowCount(0)
+        self.uploaded_assets_list.setColumnCount(7)
+        self.uploaded_assets_list.setHorizontalHeaderLabels(
+            ["#", "File Name", "Type", "CRS", "Cell Size", "Dimensions", "Added"]
+        )
+        
+        # Ensure header text is visible and properly formatted
+        header = self.uploaded_assets_list.horizontalHeader()
+        header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setStretchLastSection(False)
+        header.setMinimumSectionSize(60)
+        
         if not self.api_client:
             self.uploaded_assets_list.setRowCount(1)
-            self.uploaded_assets_list.setItem(
-                0, 0, QTableWidgetItem("Waiting for API...")
-            )
+            # Show waiting message in File Name column
+            waiting_item = QTableWidgetItem("Waiting for API...")
+            waiting_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            waiting_item.setForeground(QColor("#666666"))  # Gray text
+            self.uploaded_assets_list.setItem(0, 1, waiting_item)
+            
+            # Clear other columns
+            for col in [0, 2, 3, 4, 5, 6]:
+                empty_item = QTableWidgetItem("")
+                self.uploaded_assets_list.setItem(0, col, empty_item)
             return
 
         try:
             assets = self.api_client.list_assets()
-            self.uploaded_assets_list.setRowCount(0)
 
             if not assets:
                 self.uploaded_assets_list.setRowCount(1)
-                self.uploaded_assets_list.setItem(
-                    0, 0, QTableWidgetItem("No assets ingested yet")
-                )
+                # Show a centered "No assets" message across all columns
+                no_assets_item = QTableWidgetItem("No assets ingested yet")
+                no_assets_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                no_assets_item.setForeground(QColor("#666666"))  # Gray text
+                self.uploaded_assets_list.setItem(0, 1, no_assets_item)  # Show in File Name column
+                
+                # Clear other columns
+                for col in [0, 2, 3, 4, 5, 6]:
+                    empty_item = QTableWidgetItem("")
+                    self.uploaded_assets_list.setItem(0, col, empty_item)
                 return
 
-            # Sort by ingest timestamp (most recent first)
+            # Sort by ingest timestamp (most recent first) - API already returns in this order
+            # but we ensure it here for consistency
             sorted_assets = sorted(
                 assets, key=lambda a: a.get("created_at", ""), reverse=True
             )
 
-            for row, asset in enumerate(sorted_assets, start=1):
+            for row, asset in enumerate(sorted_assets):
                 filename = str(asset.get("file_name") or "Unknown")
                 timestamp = asset.get("created_at")
                 kind = str(asset.get("kind") or "Unknown").upper()
-                crs = str(asset.get("crs") or "-")
+                
+                # Enhanced CRS display with better formatting
+                crs_raw = str(asset.get("crs") or "-")
+                if crs_raw.startswith("EPSG:"):
+                    crs = crs_raw
+                elif crs_raw.startswith("http://www.opengis.net/def/crs/EPSG/0/"):
+                    epsg_code = crs_raw.split("/")[-1]
+                    crs = f"EPSG:{epsg_code}"
+                else:
+                    crs = crs_raw if crs_raw != "-" else "Unknown"
+                
                 cell_size = self._format_asset_cell_size(
                     asset.get("resolution_x"), asset.get("resolution_y")
                 )
@@ -1123,31 +1273,98 @@ class ControlPanel(QWidget):
                 )
                 formatted_date = self._format_asset_created_at(timestamp)
 
-                self.uploaded_assets_list.insertRow(row - 1)
-                number_item = QTableWidgetItem(str(row))
+                self.uploaded_assets_list.insertRow(row)
+                
+                # Row number (1-based, newest first)
+                number_item = QTableWidgetItem(str(row + 1))
                 number_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.uploaded_assets_list.setItem(row - 1, 0, number_item)
+                self.uploaded_assets_list.setItem(row, 0, number_item)
 
-                file_item = QTableWidgetItem(filename)
+                # File name with asset data attached - show just filename, full path in tooltip
+                display_name = filename
+                file_item = QTableWidgetItem(display_name)
                 file_item.setData(Qt.ItemDataRole.UserRole, asset)
-                self.uploaded_assets_list.setItem(row - 1, 1, file_item)
-                self.uploaded_assets_list.setItem(row - 1, 2, QTableWidgetItem(kind))
-                self.uploaded_assets_list.setItem(row - 1, 3, QTableWidgetItem(crs))
-                self.uploaded_assets_list.setItem(
-                    row - 1, 4, QTableWidgetItem(cell_size)
-                )
-                self.uploaded_assets_list.setItem(
-                    row - 1, 5, QTableWidgetItem(dimensions)
-                )
-                self.uploaded_assets_list.setItem(
-                    row - 1, 6, QTableWidgetItem(formatted_date)
-                )
+                file_item.setToolTip(f"Full path: {asset.get('file_path', 'Unknown')}")
+                
+                # Highlight recently added files (within last hour)
+                if self._is_recent_asset(timestamp):
+                    file_item.setBackground(QColor("#e8f5e8"))  # Light green background
+                    file_item.setToolTip(f"Recently added asset\nFull path: {asset.get('file_path', 'Unknown')}")
+                self.uploaded_assets_list.setItem(row, 1, file_item)
+                
+                # Enhanced kind display with proper capitalization
+                kind_item = QTableWidgetItem(kind)
+                if kind == "DEM":
+                    kind_item.setBackground(QColor("#fff3e0"))  # Light orange for DEM
+                    kind_item.setToolTip("Digital Elevation Model")
+                elif kind == "GEOTIFF":
+                    kind_item.setBackground(QColor("#e3f2fd"))  # Light blue for imagery
+                    kind_item.setToolTip("GeoTIFF raster image")
+                elif kind == "JPEG2000":
+                    kind_item.setBackground(QColor("#f3e5f5"))  # Light purple for JPEG2000
+                    kind_item.setToolTip("JPEG2000 compressed image")
+                elif kind == "MBTILES":
+                    kind_item.setBackground(QColor("#e8f5e8"))  # Light green for tiles
+                    kind_item.setToolTip("Pre-tiled MBTiles format")
+                self.uploaded_assets_list.setItem(row, 2, kind_item)
+                
+                # CRS with enhanced formatting
+                crs_item = QTableWidgetItem(crs)
+                crs_item.setToolTip(f"Coordinate Reference System: {crs}")
+                self.uploaded_assets_list.setItem(row, 3, crs_item)
+                
+                self.uploaded_assets_list.setItem(row, 4, QTableWidgetItem(cell_size))
+                self.uploaded_assets_list.setItem(row, 5, QTableWidgetItem(dimensions))
+                self.uploaded_assets_list.setItem(row, 6, QTableWidgetItem(formatted_date))
 
         except Exception as e:
+            # Clear everything and show error message
+            self.uploaded_assets_list.clear()
             self.uploaded_assets_list.setRowCount(1)
-            self.uploaded_assets_list.setItem(
-                0, 0, QTableWidgetItem(f"Error loading assets: {str(e)}")
+            self.uploaded_assets_list.setColumnCount(7)
+            self.uploaded_assets_list.setHorizontalHeaderLabels(
+                ["#", "File Name", "Type", "CRS", "Cell Size", "Dimensions", "Added"]
             )
+            
+            # Ensure header text is visible and properly formatted
+            header = self.uploaded_assets_list.horizontalHeader()
+            header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
+            header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+            header.setStretchLastSection(False)
+            header.setMinimumSectionSize(60)
+            
+            # Show error message in the File Name column
+            error_item = QTableWidgetItem(f"Error loading assets: {str(e)}")
+            error_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            error_item.setForeground(QColor("#cc0000"))  # Red text for errors
+            error_item.setToolTip("Click 'Refresh Catalog' to retry after fixing the issue")
+            self.uploaded_assets_list.setItem(0, 1, error_item)
+            
+            # Clear the other columns for this error row
+            for col in [0, 2, 3, 4, 5, 6]:
+                empty_item = QTableWidgetItem("")
+                self.uploaded_assets_list.setItem(0, col, empty_item)
+
+    def _is_recent_asset(self, timestamp: str | None) -> bool:
+        """Check if an asset was created recently (within last hour)."""
+        if not timestamp:
+            return False
+        try:
+            from datetime import datetime, timezone, timedelta
+            # Parse ISO timestamp
+            if timestamp.endswith('Z'):
+                asset_time = datetime.fromisoformat(timestamp[:-1] + '+00:00')
+            else:
+                asset_time = datetime.fromisoformat(timestamp)
+            
+            # Make timezone-aware if needed
+            if asset_time.tzinfo is None:
+                asset_time = asset_time.replace(tzinfo=timezone.utc)
+            
+            now = datetime.now(timezone.utc)
+            return (now - asset_time) < timedelta(hours=1)
+        except Exception:
+            return False
 
     def _apply_panel_styles(self) -> None:
         self.setStyleSheet(
@@ -1219,6 +1436,10 @@ class ControlPanel(QWidget):
                 left: 8px;
                 padding: 0 4px;
                 color: #1a1a1a;
+            }
+            QFormLayout QLabel {
+                font-weight: 600;
+                color: #4a4a4a;
             }
             QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit {
                 background: #ffffff;
@@ -1380,8 +1601,7 @@ class ControlPanel(QWidget):
         # Apply subtle shadows to buttons for traditional desktop GUI look
         for button in (
             self.browse_btn,
-            self.preview_btn,
-            self.save_btn,
+            self.ingest_btn,
             self.assets_refresh_btn,
             self.refresh_assets_btn,
             self.add_layer_btn,
@@ -1403,3 +1623,77 @@ class ControlPanel(QWidget):
         self.layer_load_progress.setRange(0, 100)
         self.layer_load_progress.setValue(100)
         self.layer_load_progress.setVisible(False)
+
+    def _on_search_results_reordered(self, parent, start, end, destination, row) -> None:
+        """Handle drag-and-drop reordering of search results with debounced real-time globe updates."""
+        try:
+            # Get the current search results data
+            table = self.search_results_table
+            if table.rowCount() == 0:
+                return
+            
+            # Extract layer information from reordered table
+            reordered_layers = []
+            for i in range(table.rowCount()):
+                # Get file name from the File column (index 1)
+                file_item = table.item(i, 1)
+                if not file_item:
+                    continue
+                    
+                file_name = file_item.text()
+                
+                # Get kind from the Kind column (index 2) 
+                kind_item = table.item(i, 2)
+                kind = kind_item.text() if kind_item else "Unknown"
+                
+                # Get CRS from the CRS column (index 3)
+                crs_item = table.item(i, 3)
+                crs = crs_item.text() if crs_item else "-"
+                
+                reordered_layers.append({
+                    "file_name": file_name,
+                    "kind": kind,
+                    "crs": crs,
+                    "display_order": i  # New order based on table position
+                })
+            
+            # Update the drag handle column to show new order immediately with better visibility
+            for i, layer_info in enumerate(reordered_layers):
+                handle_item = table.item(i, 0)  # Drag handle column
+                if handle_item:
+                    handle_item.setText("⋮⋮")
+                    handle_item.setToolTip(f"Layer order: {i + 1}")
+                    # Ensure text is visible during and after drag operations
+                    handle_item.setForeground(QColor(102, 102, 102))  # Dark gray for visibility
+                
+                # Ensure all text items maintain visibility
+                for col in range(1, table.columnCount()):
+                    item = table.item(i, col)
+                    if item:
+                        item.setForeground(QColor(0, 0, 0))  # Black text for visibility
+            
+            # Store the reorder data and start debounce timer
+            self._pending_reorder_data = reordered_layers
+            self._reorder_debounce_timer.start(150)  # 150ms debounce
+            
+        except Exception as e:
+            print(f"ERROR: Failed to handle search results reordering: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _process_pending_reorder(self) -> None:
+        """Process the pending reorder operation after debounce delay."""
+        if self._pending_reorder_data is None:
+            return
+        
+        try:
+            # Emit signal to controller for real-time globe layer reordering
+            if hasattr(self, 'search_layers_reordered'):
+                self.search_layers_reordered.emit(self._pending_reorder_data)
+            
+            self._pending_reorder_data = None
+            
+        except Exception as e:
+            print(f"ERROR: Failed to process pending reorder: {e}")
+            import traceback
+            traceback.print_exc()

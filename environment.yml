@@ -4,11 +4,13 @@ channels:
 dependencies:
   - python=3.11
   - pip
-  # Keep heavy geo/native libs in conda for better cross-platform reliability.
+  # Heavy geo/native libs in conda for cross-platform reliability (Windows/macOS/Linux)
+  - gdal>=3.8.0  # GDAL with GPU support for NVIDIA on Windows
   - rasterio=1.4.3
   - pyproj
   - shapely=2.0.7
   - scipy
+  - numpy
   - pip:
-      # Pull app + desktop + dev dependencies from pyproject.toml.
+      # Pull app + desktop + dev dependencies from pyproject.toml
       - -e .[desktop,dev]

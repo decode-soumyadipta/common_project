@@ -7,6 +7,7 @@ This module provides the main window UI components including:
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 import time
 
@@ -388,6 +389,15 @@ class MainWindow(QMainWindow):
         self.app_mode = app_mode
         self.setWindowTitle(self._window_title_for_mode(app_mode))
 
+        # Initialize database when in server mode
+        if app_mode in (DesktopAppMode.UNIFIED, DesktopAppMode.SERVER):
+            try:
+                from core_shared.db.session import init_db
+                init_db()
+                logging.getLogger("desktop").info("Database initialized successfully")
+            except Exception as exc:
+                logging.getLogger("desktop").error("Database initialization failed: %s", exc)
+
         screen = QGuiApplication.primaryScreen()
         if screen is not None:
             available = screen.availableGeometry()
@@ -597,11 +607,15 @@ class MainWindow(QMainWindow):
 
         logger = logging.getLogger("desktop.cesium_assets")
         is_windows = platform.system().lower() == "windows"
+        # OSM basemap tiles are in desktop_assets/web_assets/basemap/
+        desktop_assets_web = web_assets_dir.parent.parent / "desktop_assets" / "web_assets"
+        # Cesium files are in desktop/web_assets/cesium/ (if they exist)
         desktop_web_assets = web_assets_dir.parent.parent / "desktop" / "web_assets"
 
-        def _link_dir(name: str, required_file: str | None = None) -> None:
+        def _link_dir(name: str, required_file: str | None = None, source_override: Path | None = None) -> None:
             link_path = web_assets_dir / name
-            canonical = desktop_web_assets / name
+            # Use source_override if provided, otherwise use desktop_web_assets
+            canonical = source_override if source_override else (desktop_web_assets / name)
 
             if not canonical.exists():
                 logger.warning(
@@ -655,7 +669,7 @@ class MainWindow(QMainWindow):
                     shutil.copytree(str(canonical), str(link_path))
 
         _link_dir("cesium", required_file="Cesium.js")
-        _link_dir("basemap")
+        _link_dir("basemap", source_override=desktop_assets_web / "basemap")
 
     def _set_visualization_tools_visible(self, visible: bool) -> None:
         """Show or hide visualization tools in the toolbar.

@@ -181,15 +181,23 @@ class IngestJobRepository:
         self._session.commit()
 
     def refresh_job_counters(self, job: IngestJob) -> None:
-        stmt = select(IngestJobItem.status).where(IngestJobItem.job_id == job.id)
-        statuses = list(self._session.scalars(stmt))
-        job.processed_items = sum(
-            1 for status in statuses if status == IngestJobItemStatus.SUCCEEDED
-        )
-        job.failed_items = sum(
-            1 for status in statuses if status == IngestJobItemStatus.FAILED
-        )
-        job.total_items = len(statuses)
-        job.updated_at = datetime.utcnow()
-        self._session.add(job)
-        self._session.commit()
+        try:
+            stmt = select(IngestJobItem.status).where(IngestJobItem.job_id == job.id)
+            statuses = list(self._session.scalars(stmt))
+            job.processed_items = sum(
+                1 for status in statuses if status == IngestJobItemStatus.SUCCEEDED
+            )
+            job.failed_items = sum(
+                1 for status in statuses if status == IngestJobItemStatus.FAILED
+            )
+            job.total_items = len(statuses)
+            job.updated_at = datetime.utcnow()
+            self._session.add(job)
+            self._session.commit()
+        except Exception as exc:
+            # Log error but don't fail - use existing counters
+            import logging
+            logger = logging.getLogger("ingest_job_repository")
+            logger.warning("Failed to refresh job counters for job %s: %s", job.id, exc)
+            # Rollback any partial changes
+            self._session.rollback()

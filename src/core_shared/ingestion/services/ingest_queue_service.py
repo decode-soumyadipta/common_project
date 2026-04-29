@@ -17,7 +17,6 @@ from core_shared.ingestion.repository.ingest_job_repository import (
 )
 from core_shared.db.models import IngestJob, IngestJobItemStatus, IngestJobStatus
 from core_shared.db.session import SessionLocal, init_db
-from core_shared.ingestion.services.ingest_service import register_raster
 
 LOGGER = logging.getLogger("services.ingest_queue")
 
@@ -150,16 +149,19 @@ class IngestQueueService:
 
     def get_job(self, job_id: str) -> IngestJobView | None:
         """Return current job view, or None if the job does not exist."""
-        with self._session_factory() as session:
-            repo = IngestJobRepository(session)
-            job = repo.get_job(job_id)
-            if job is None:
-                return None
-            repo.refresh_job_counters(job)
-            job = repo.get_job(job_id)
-            if job is None:
-                return None
-            return self._attach_runtime_progress(_job_to_view(job))
+        try:
+            with self._session_factory() as session:
+                repo = IngestJobRepository(session)
+                job = repo.get_job(job_id)
+                if job is None:
+                    return None
+                repo.refresh_job_counters(job)
+                # Refresh the job object to get updated counters
+                session.refresh(job)
+                return self._attach_runtime_progress(_job_to_view(job))
+        except Exception as exc:
+            LOGGER.error("Failed to get job %s: %s", job_id, exc)
+            return None
 
     def resume_job(self, job_id: str) -> IngestJobView:
         """Resume a paused or recoverable job by id."""
@@ -271,6 +273,8 @@ class IngestQueueService:
                 self._set_runtime_stage(job_id, stage_name)
 
             try:
+                from core_shared.ingestion.services.ingest_service import register_raster
+                
                 with self._session_factory() as session:
                     result = register_raster(
                         Path(item.file_path),
@@ -389,7 +393,7 @@ class IngestQueueService:
         with self._lock:
             runtime = self._runtime_progress.get(view.id)
 
-        total = max(0, int(view.total_items))
+        total = max(1, int(view.total_items))  # Avoid division by zero
         done = min(total, int(view.processed_items) + int(view.failed_items))
         progress_percent = int((done * 100) / total) if total > 0 else 0
 

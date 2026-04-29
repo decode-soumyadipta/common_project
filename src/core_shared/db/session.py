@@ -13,6 +13,16 @@ from core_shared.config_pkg.settings import settings
 from core_shared.db.base import Base
 from core_shared.db.migrations.runner import apply_migrations
 
+# Import all models to ensure they are registered with Base.metadata
+from core_shared.db.models import (  # noqa: F401
+    IngestJob,
+    IngestJobItem,
+    IngestJobItemStatus,
+    IngestJobStatus,
+    RasterAsset,
+    RasterKind,
+)
+
 
 LOGGER = logging.getLogger("db.session")
 
@@ -82,9 +92,14 @@ SessionLocal = sessionmaker(
 
 def init_db() -> None:
     """Initialize database: create tables and apply migrations."""
+    # First create all tables from models
     Base.metadata.create_all(bind=engine)
+    LOGGER.info("Database tables created from models")
+    
+    # Then apply migrations (which may add indexes, columns, etc.)
     try:
         apply_migrations(engine)
+        LOGGER.info("Database migrations applied successfully")
     except Exception as exc:  # noqa: BLE001
         LOGGER.warning("Migration failed during database initialization: %s", exc)
 

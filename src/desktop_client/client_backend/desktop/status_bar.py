@@ -252,25 +252,42 @@ class GISStatusBar(QStatusBar):
             self.clear_coordinates()
             return
 
-        # Longitude
-        lon_str = f"{lon:.{self._coord_decimal_places}f}°"
+        # Enhanced coordinate display with higher precision for professional use
+        # Use 8 decimal places for sub-meter accuracy
+        precision = min(self._coord_decimal_places, 8)
+        
+        # Longitude with enhanced formatting
+        lon_str = f"{lon:.{precision}f}°"
         self._lon_box.label.setText(f"Lon: {lon_str}")
 
-        # Latitude
-        lat_str = f"{lat:.{self._coord_decimal_places}f}°"
+        # Latitude with enhanced formatting  
+        lat_str = f"{lat:.{precision}f}°"
         self._lat_box.label.setText(f"Lat: {lat_str}")
 
-        # UTM
+        # UTM with zone information for better context
         utm_text = self._format_utm_coordinates(lon, lat)
         self._utm_box.label.setText(f"UTM: {utm_text}")
 
-        # Elevation - only show when DEM data is available
+        # Dynamic CRS display - show UTM zone for current location
+        utm_epsg = _utm_epsg_for_lon_lat(lon, lat)
+        utm_zone = int((lon + 180.0) // 6.0) + 1
+        hemisphere = "N" if lat >= 0 else "S"
+        self._crs_box.label.setText(f"UTM {utm_zone}{hemisphere}")
+        self._crs_box.setToolTip(f"EPSG:{utm_epsg} (UTM Zone {utm_zone}{hemisphere})")
+
+        # Elevation - enhanced display with better formatting
         # -9999 indicates no DEM terrain is loaded
         if math.isfinite(elevation_m) and elevation_m > -9000.0:
-            elev_text = f"{elevation_m:,.{self._elev_decimal_places}f} m"
+            # Format elevation with appropriate precision based on magnitude
+            if abs(elevation_m) >= 1000:
+                elev_text = f"{elevation_m:,.{max(0, self._elev_decimal_places-1)}f} m"
+            elif abs(elevation_m) >= 100:
+                elev_text = f"{elevation_m:.{self._elev_decimal_places}f} m"
+            else:
+                elev_text = f"{elevation_m:.{self._elev_decimal_places+1}f} m"
             self._elev_box.label.setText(f"Elev: {elev_text}")
         else:
-            # No DEM available - keep box visible but blank
+            # No DEM available - keep box visible but show dash
             self._elev_box.label.setText("Elev: —")
 
     @Slot(float, float)
