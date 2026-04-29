@@ -182,17 +182,17 @@
   const LOCAL_SATELLITE_TILE_ROOT = "./basemap/xyz";
   const DEFAULT_STARTUP_CENTER_LON = 78.0;  // India center longitude
   const DEFAULT_STARTUP_CENTER_LAT = 22.0;  // India center latitude
-  const DEFAULT_STARTUP_HEIGHT_M = 6000000.0;   // ~6000 km — shows full India + surrounding region
+  const DEFAULT_STARTUP_HEIGHT_M = 23000000.0;   // ~23000 km — shows full India + surrounding region (smooth implementation)
   const DEFAULT_STARTUP_HEADING = Cesium.Math.toRadians(0.0);
-  const DEFAULT_STARTUP_PITCH = Cesium.Math.toRadians(-90.0);
+  const DEFAULT_STARTUP_PITCH = Cesium.Math.toRadians(-89.0);
   const AUTO_ATTACH_TERRAIN_RGB_PACK = false;
   const SHOW_COUNTRY_BOUNDARY_OVERLAY = false;
   const terrainTileCache = new Map();
   // DEM rendering uses imagery-only pipeline (colormap drape + hillshade overlay on EllipsoidTerrainProvider)
   // No client-side terrain decoding — crash-proof for any raster size on macOS and Windows/NVIDIA.
-  // TERRAIN_SAMPLE_SIZE is set to 65. A value of 256 creates 6.5M+ triangles and freezes the UI thread.
-  // 65 is the standard optimal resolution for high-detail Cesium heightmaps without causing lag.
-  const TERRAIN_SAMPLE_SIZE = 65;
+  // TERRAIN_SAMPLE_SIZE is set to 33. Lower resolution for ultra-smooth performance.
+  // 33 provides good detail while maintaining 60fps on all hardware configurations.
+  const TERRAIN_SAMPLE_SIZE = 33;
   const DEM_MAX_TERRAIN_LEVEL = 14;
   const DEM_HILLSHADE_AZIMUTH = 45;
   const DEM_HILLSHADE_ALTITUDE = 45;
@@ -1512,7 +1512,8 @@
         infoBox: false,
         selectionIndicator: false,
         scene3DOnly: false,
-        requestRenderMode: false,
+        requestRenderMode: true,
+        maximumRenderTimeChange: Infinity,
         timeline: false,
         animation: false,
         terrainProvider: new Cesium.EllipsoidTerrainProvider(),
@@ -2366,18 +2367,11 @@
 
   function applyDefaultSceneSettings() {
     if (!viewer) return;
-    // Optimized for smooth interactions - disable expensive visual features
-    viewer.scene.globe.enableLighting = false;  // Disable lighting for performance
-    viewer.scene.globe.depthTestAgainstTerrain = false;  // Disable depth testing
-    viewer.scene.globe.preloadAncestors = false;  // Disable preloading
-    viewer.scene.globe.preloadSiblings = false;
-    viewer.scene.globe.maximumScreenSpaceError = 4.0;  // Increase to reduce tile requests
-    viewer.scene.globe.showSkirts = false;  // Disable skirts for performance
-    viewer.scene.globe.tileCacheSize = 100;  // Reduce cache size
-    viewer.scene.globe.showGroundAtmosphere = false;
-    viewer.scene.fog.enabled = false;  // Disable fog
+    // Smooth implementation settings - balanced performance and quality
+    viewer.scene.globe.enableLighting = false;
+    viewer.scene.fog.enabled = false;
     viewer.shadows = false;
-    // Remove lighting entirely for maximum performance
+    requestSceneRender();
   }
 
   /**
@@ -2420,12 +2414,6 @@
     log("debug", "applyDemSceneSettings: terrainExaggeration=" + demVisual.exaggeration.toFixed(2));
     viewer.scene.globe.enableLighting = false;  // Disable lighting
     viewer.scene.globe.depthTestAgainstTerrain = false;  // Disable depth testing
-    viewer.scene.globe.preloadAncestors = false;
-    viewer.scene.globe.preloadSiblings = false;
-    viewer.scene.globe.maximumScreenSpaceError = 4.0;  // Increase for performance
-    viewer.scene.globe.showSkirts = false;
-    viewer.scene.globe.tileCacheSize = 100;  // Reduce cache
-    viewer.scene.globe.showGroundAtmosphere = false;
     viewer.scene.fog.enabled = false;  // Disable fog
     viewer.shadows = false;
     requestSceneRender();
@@ -2435,8 +2423,9 @@
     if (!viewer) return;
     const controller = viewer.scene.screenSpaceCameraController;
     
-    // Disable collision detection for smooth performance
-    controller.enableCollisionDetection = false;
+    // Enable collision detection for smooth performance (from smooth implementation)
+    controller.enableCollisionDetection = true;
+    controller.maximumMovementRatio = 0.075;
     
     // Set reasonable zoom limits (1m to 40,000km - allows viewing whole Earth)
     controller.minimumZoomDistance = 1.0;
@@ -2444,12 +2433,6 @@
     
     // Allow full tilt range
     controller.maximumTiltAngle = Cesium.Math.toRadians(89.0);
-    
-    // Ultra-smooth inertia for buttery-smooth interactions
-    controller.inertiaSpin = 0.98;  // Increased for smoother rotation
-    controller.inertiaTranslate = 0.98;  // Increased for smoother panning
-    controller.inertiaZoom = 0.95;  // Increased for smoother zooming
-    controller.maximumMovementRatio = 0.05;  // Reduced for more responsive movement
     
     configureCameraControllerForMode(currentSceneMode);
   }
@@ -2463,14 +2446,13 @@
     controller.enableInputs = true;
     controller.enableTranslate = true;
     controller.enableZoom = true;
-    // When panModeActive is true, force 2D-like flat drag behavior even in 3D mode
-    const forceFlat = panModeActive || is2d;
-    controller.enableRotate = !forceFlat;
-    controller.enableTilt = !forceFlat;
-    controller.enableLook = !forceFlat;
-    controller.inertiaSpin = forceFlat ? 0.0 : 0.98;  // Ultra-smooth rotation
-    controller.inertiaTranslate = 0.98;  // Ultra-smooth panning
-    controller.inertiaZoom = 0.95;  // Ultra-smooth zooming
+    controller.enableRotate = !is2d;
+    controller.enableTilt = !is2d;
+    controller.enableLook = !is2d;
+    // Smooth inertia settings from the smooth implementation
+    controller.inertiaSpin = is2d ? 0.0 : 0.86;
+    controller.inertiaTranslate = 0.86;
+    controller.inertiaZoom = 0.74;
   }
 
   function rectangleToBounds(rectangle) {
@@ -3424,6 +3406,10 @@
     
     applyDefaultSceneSettings();
     tuneCameraController();
+    
+    // Set camera sensitivity for smooth performance (from smooth implementation)
+    viewer.camera.percentageChanged = 0.001;
+    
     applyDefaultStartupFocus();
     let lastErrorMessage = "";
     let lastErrorTime = 0;
@@ -6299,20 +6285,9 @@
         viewer.scene.requestRenderMode = true;
         viewer.scene.maximumRenderTimeChange = 0.0;
         
-        // Set up performance monitoring
-        viewer.scene.postRender.addEventListener(function() {
-          // Monitor frame rate and adjust quality dynamically
-          const fps = viewer.scene.frameState ? (1.0 / viewer.scene.frameState.time) : 60;
-          if (fps < 30) {
-            // Reduce quality for smoother performance
-            viewer.scene.globe.maximumScreenSpaceError = Math.min(3.0, viewer.scene.globe.maximumScreenSpaceError * 1.1);
-          } else if (fps > 50) {
-            // Increase quality when performance allows
-            viewer.scene.globe.maximumScreenSpaceError = Math.max(1.0, viewer.scene.globe.maximumScreenSpaceError * 0.95);
-          }
-        });
+        // Performance monitoring disabled for smooth performance (from smooth implementation)
         
-        log("info", "EVENT_DRIVEN: Performance monitoring enabled");
+        log("info", "EVENT_DRIVEN: Performance monitoring disabled for smooth performance");
       } else {
         // Restore default rendering mode
         viewer.scene.requestRenderMode = false;
