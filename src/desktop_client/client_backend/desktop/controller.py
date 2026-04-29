@@ -1416,6 +1416,8 @@ class DesktopController:
             asset["file_path"] = best_file_path
             asset["tile_url"] = build_xyz_url(best_file_path)
             self._logger.info(f"Updated asset to use optimized file: {Path(best_file_path).name}")
+        else:
+            self._logger.debug(f"Using original asset file: {Path(original_file_path).name}")
         
         if (
             self.app_mode != DesktopAppMode.CLIENT
@@ -2896,6 +2898,7 @@ class DesktopController:
         
         original_path = Path(file_path)
         if not original_path.exists():
+            self._logger.debug(f"Original file not found: {file_path}")
             return file_path
         
         # Priority order: _3857.cog.tif > _3857.tif > .cog.tif > original
@@ -2905,19 +2908,23 @@ class DesktopController:
         web_mercator_cog = original_path.parent / f"{original_path.stem}_3857.cog.tif"
         if web_mercator_cog.exists():
             candidates.append((web_mercator_cog, 4))  # Highest priority
+            self._logger.debug(f"Found Web Mercator COG: {web_mercator_cog}")
         
         # Check for Web Mercator version
         web_mercator = original_path.parent / f"{original_path.stem}_3857.tif"
         if web_mercator.exists():
             candidates.append((web_mercator, 3))
+            self._logger.debug(f"Found Web Mercator: {web_mercator}")
         
         # Check for COG version of original
         cog_version = original_path.parent / f"{original_path.stem}.cog.tif"
         if cog_version.exists():
             candidates.append((cog_version, 2))
+            self._logger.debug(f"Found COG: {cog_version}")
         
         # Original file
         candidates.append((original_path, 1))
+        self._logger.debug(f"Original file: {original_path}")
         
         # Sort by priority (highest first) and return the best option
         candidates.sort(key=lambda x: x[1], reverse=True)
@@ -2925,6 +2932,8 @@ class DesktopController:
         
         if best_file != file_path:
             self._logger.info(f"Using optimized file version: {Path(best_file).name} instead of {original_path.name}")
+        else:
+            self._logger.debug(f"Using original file: {original_path.name}")
         
         return best_file
 
@@ -2936,19 +2945,35 @@ class DesktopController:
 
         if platform.system() == "Windows":
             # Handle URL-encoded Windows paths with spaces and special characters
-            # First, decode any URL-encoded characters in the path portion
             if "url=" in tile_url:
-                url_part = tile_url.split("url=", 1)[1]
-                # Decode URL-encoded characters (like %20 for spaces, %3A for :, %2F for /)
+                # Split the URL to get the file path part
+                base_part, url_part = tile_url.split("url=", 1)
+                
+                # First decode any URL-encoded characters (like %20 for spaces, %3A for :, %2F for /)
                 decoded_url = unquote(url_part)
+                self._logger.debug(f"Windows URL decode: {url_part} -> {decoded_url}")
                 
                 # Strip any file:/// or file:// or file: prefix so GDAL sees raw C:/...
-                decoded_url = re.sub(r"^file:/{0,3}([a-zA-Z]:)", r"\1", decoded_url)
+                if decoded_url.startswith("file:///"):
+                    decoded_url = decoded_url[8:]
+                elif decoded_url.startswith("file://"):
+                    decoded_url = decoded_url[7:]
+                elif decoded_url.startswith("file:"):
+                    decoded_url = decoded_url[5:]
+                
+                # Ensure Windows drive letter format (C:/...)
+                if re.match(r"^[a-zA-Z]:", decoded_url):
+                    # Already in correct format
+                    pass
+                elif decoded_url.startswith("/") and len(decoded_url) > 3 and decoded_url[2] == ":":
+                    # Remove leading slash from /C:/... format
+                    decoded_url = decoded_url[1:]
                 
                 # Reconstruct the tile URL with the properly decoded path
-                tile_url = tile_url.split("url=", 1)[0] + "url=" + decoded_url
+                tile_url = base_part + "url=" + decoded_url
+                self._logger.debug(f"Windows final URL: {tile_url}")
             
-            # Also handle already partially processed URLs
+            # Also handle already partially processed URLs with encoded characters
             tile_url = re.sub(r"url=file:/{0,3}([a-zA-Z]:)", r"url=\1", tile_url)
             tile_url = re.sub(
                 r"url=file%3A(?:%2F){1,3}([a-zA-Z](?:%3A|:))",
@@ -3132,14 +3157,18 @@ class DesktopController:
 
     def _raster_render_query(self, asset: dict) -> dict[str, object]:
         query: dict[str, object] = {}
+        file_name = asset.get("file_name", "")
         is_dem = (
             str(asset.get("kind", "")).lower() == "dem"
-            or "dem" in str(asset.get("file_name", "")).lower()
+            or "dem" in str(file_name).lower()
         )
+        
+        self._logger.debug(f"Raster render query for {file_name}: is_dem={is_dem}")
 
         info = {}
         try:
             info = self.api.get_cog_info(asset["file_path"])
+            self._logger.debug(f"COG info for {file_name}: {info}")
         except httpx.HTTPError as exc:
             self._logger.warning(
                 "COG info unavailable for %s: %s", asset.get("file_name"), exc
@@ -3147,6 +3176,9 @@ class DesktopController:
 
         band_count = int(info.get("count", 1) or 1)
         nodata_value = info.get("nodata_value", info.get("nodata"))
+        
+        self._logger.debug(f"Band count for {file_name}: {band_count}, nodata: {nodata_value}")
+        
         try:
             if nodata_value is not None:
                 query["nodata"] = float(nodata_value)
@@ -3154,6 +3186,7 @@ class DesktopController:
             pass
 
         if band_count >= 3 and not is_dem:
+            self._logger.info(f"Multi-band imagery detected for {file_name}: {band_count} bands, adding bidx=[1,2,3]")
             query["bidx"] = [1, 2, 3]
             # nearest resampling avoids interpolated reads that fail on non-COG
             # GeoTIFFs on Windows (GDAL "Read failed" error)
@@ -3162,6 +3195,8 @@ class DesktopController:
             # error on Windows when the file has no nodata value defined.
             if "nodata" not in query:
                 query["nodata"] = 0
+        else:
+            self._logger.debug(f"Single-band or DEM for {file_name}: band_count={band_count}, is_dem={is_dem}")
 
         stats = {}
         try:
@@ -3177,11 +3212,13 @@ class DesktopController:
                 query["algorithm"] = "slope"
                 query["colormap_name"] = "viridis"
                 query["rescale"] = "0,90"
+                self._logger.debug(f"DEM slope mode for {file_name}: {query}")
                 return query
             if color_mode == "aspect":
                 query["algorithm"] = "aspect"
                 query["colormap_name"] = "turbo"
                 query["rescale"] = "0,360"
+                self._logger.debug(f"DEM aspect mode for {file_name}: {query}")
                 return query
 
             query["colormap_name"] = color_mode
@@ -3205,9 +3242,11 @@ class DesktopController:
                         low, high = float(b_low), float(b_high)
 
             query["rescale"] = f"{low},{high}"
+            self._logger.debug(f"Final DEM raster query for {file_name}: {query}")
             return query
 
         if not isinstance(stats, dict) or not stats:
+            self._logger.debug(f"No stats available for {file_name}, final query: {query}")
             return query
 
         if band_count >= 3 and not is_dem:
@@ -3225,6 +3264,7 @@ class DesktopController:
                 highs.append(float(high))
             if len(lows) == 3 and max(highs) > min(lows):
                 query["rescale"] = f"{min(lows)},{max(highs)}"
+            self._logger.debug(f"Final multi-band raster query for {asset.get('file_name', '')}: {query}")
             return query
 
         first_band = (
@@ -3233,14 +3273,18 @@ class DesktopController:
             else next(iter(stats.values()))
         )
         if not isinstance(first_band, dict):
+            self._logger.debug(f"No valid first band stats for {asset.get('file_name', '')}, final query: {query}")
             return query
 
         low = first_band.get("percentile_2", first_band.get("min"))
         high = first_band.get("percentile_98", first_band.get("max"))
         if low is None or high is None or float(high) <= float(low):
+            self._logger.debug(f"Invalid rescale values for {asset.get('file_name', '')}, final query: {query}")
             return query
 
         query["rescale"] = f"{float(low)},{float(high)}"
+        
+        self._logger.debug(f"Final raster query for {asset.get('file_name', '')}: {query}")
         return query
 
     @staticmethod
