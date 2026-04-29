@@ -489,8 +489,8 @@ class DesktopController:
             self.panel.log(f"Path is not a folder: {path}")
             return
 
-        # Collect all raster files from folder
-        raster_extensions = {'.tif', '.tiff', '.jp2', '.j2k', '.mbtiles'}
+        # Collect all raster files from folder (exclude .mbtiles as they are already processed)
+        raster_extensions = {'.tif', '.tiff', '.jp2', '.j2k'}
         
         all_files = list(folder_path.iterdir())
         raster_files = [
@@ -502,7 +502,7 @@ class DesktopController:
         
         if not raster_files:
             self.panel.log(f"No raster files found in folder: {path}")
-            self.panel.log(f"Supported formats: .tif, .tiff, .jp2, .j2k, .mbtiles")
+            self.panel.log(f"Supported formats: .tif, .tiff, .jp2, .j2k (excluding .mbtiles - already processed)")
             self.panel.log(f"Found {len(all_files)} other file(s) - check file extensions")
             return
 
@@ -1164,9 +1164,9 @@ class DesktopController:
             return
         self.panel.path_edit.setText(folder)
         
-        # Count raster files in folder
+        # Count raster files in folder (exclude .mbtiles as they are already processed)
         folder_path = Path(folder)
-        raster_extensions = {'.tif', '.tiff', '.jp2', '.j2k', '.mbtiles'}
+        raster_extensions = {'.tif', '.tiff', '.jp2', '.j2k'}
         
         all_files = list(folder_path.iterdir())
         raster_files = [
@@ -1179,7 +1179,7 @@ class DesktopController:
         if file_count > 0:
             self.panel.log(f"Found {file_count} raster file(s): {', '.join(f.name for f in raster_files)}")
         else:
-            self.panel.log(f"No raster files found (supported: .tif, .tiff, .jp2, .j2k, .mbtiles)")
+            self.panel.log(f"No raster files found (supported: .tif, .tiff, .jp2, .j2k - excluding .mbtiles)")
             self.panel.log(f"Found {len(all_files)} other file(s) in folder")
         self._logger.info("Selected folder path: %s (files: %d)", folder, file_count)
 

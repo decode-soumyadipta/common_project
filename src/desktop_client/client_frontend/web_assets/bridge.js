@@ -182,7 +182,7 @@
   const LOCAL_SATELLITE_TILE_ROOT = "./basemap/xyz";
   const DEFAULT_STARTUP_CENTER_LON = 78.0;  // India center longitude
   const DEFAULT_STARTUP_CENTER_LAT = 22.0;  // India center latitude
-  const DEFAULT_STARTUP_HEIGHT_M = 23000000.0;   // ~23000 km — shows full India + surrounding region (smooth implementation)
+  const DEFAULT_STARTUP_HEIGHT_M = 6000000.0;   // ~6000 km — shows full India + surrounding region (better for tile visibility)
   const DEFAULT_STARTUP_HEADING = Cesium.Math.toRadians(0.0);
   const DEFAULT_STARTUP_PITCH = Cesium.Math.toRadians(-89.0);
   const AUTO_ATTACH_TERRAIN_RGB_PACK = false;
@@ -3455,7 +3455,8 @@
       infoBox: false,
       selectionIndicator: false,
       scene3DOnly: false,
-      requestRenderMode: false,
+      requestRenderMode: true,  // Start with on-demand rendering (smooth interaction manager will control this)
+      maximumRenderTimeChange: Infinity,  // Let smooth interaction manager control render timing
       timeline: false,
       animation: false,
       terrainProvider: new Cesium.EllipsoidTerrainProvider(),
