@@ -1447,8 +1447,13 @@ class DesktopController:
             except Exception:
                 self._logger.warning("COG preparation failed", exc_info=True)
         if not self.titiler.ensure_running():
-            self.panel.log("Warning: TiTiler could not start. Layer may not draw.")
-            self._logger.error("TiTiler unavailable before add layer")
+            detail = getattr(self.titiler, "last_error", "") or ""
+            if detail:
+                self.panel.log("TiTiler failed to start: " + detail.strip())
+                self._logger.error("TiTiler unavailable before add layer: %s", detail.strip())
+            else:
+                self.panel.log("Warning: TiTiler could not start. Layer may not draw.")
+                self._logger.error("TiTiler unavailable before add layer")
         bounds = self._asset_bounds(asset)
         if bounds is None:
             try:
@@ -2862,7 +2867,7 @@ class DesktopController:
     def _get_server_optimized_tile_url(self, asset: dict, tile_url: str) -> str:
         """Get server-optimized tile URL for terabyte-scale performance."""
         # Server handles all URL optimization and caching strategies
-        optimized_url = tile_url
+        optimized_url = self._normalize_tile_url_legacy(tile_url)
         
         # Add server-side optimization parameters for large datasets
         if "?" in optimized_url:

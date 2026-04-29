@@ -19,6 +19,7 @@ class TiTilerManager:
         self._logger = logging.getLogger("desktop.titiler")
         self._process: subprocess.Popen | None = None
         self._health_url = f"{settings.titiler_base_url.rstrip('/')}/healthz"
+        self.last_error: str = ""
 
     def is_ready(self) -> bool:
         try:
@@ -28,6 +29,7 @@ class TiTilerManager:
             return False
 
     def ensure_running(self) -> bool:
+        self.last_error = ""
         if self.is_ready():
             return True
         self._start_process()
@@ -55,10 +57,14 @@ class TiTilerManager:
                 t.start()
                 t.join(timeout=0.5)
                 if _lines:
-                    self._logger.error("TiTiler stderr: %s", "".join(_lines[:20]))
+                    stderr_text = "".join(_lines[:20])
+                    self.last_error = stderr_text
+                    self._logger.error("TiTiler stderr: %s", stderr_text)
             except Exception:
                 pass
         self._logger.error("TiTiler failed health check after auto-start")
+        if not self.last_error:
+            self.last_error = "TiTiler failed health check after auto-start"
         return False
 
     def _start_process(self) -> None:
@@ -81,6 +87,8 @@ class TiTilerManager:
             "            raw = request.scope.get('query_string', b'').decode('utf-8', errors='replace')\n"
             "            fixed = re.sub(r'(?<=[?&])url=%2F([A-Za-z](?:%3A|:))', lambda m: 'url=' + m.group(1).replace('%3A', ':'), raw)\n"
             "            fixed = re.sub(r'(?<=[?&])url=/([A-Za-z]:)', r'url=\\1', fixed)\n"
+            "            fixed = re.sub(r'(?<=[?&])url=file:/{2,3}([A-Za-z]:)', r'url=\\1', fixed)\n"
+            "            fixed = re.sub(r'(?<=[?&])url=file%3A(?:%2F){2,3}([A-Za-z](?:%3A|:))', lambda m: 'url=' + m.group(1).replace('%3A', ':'), fixed)\n"
             "            request.scope['query_string'] = fixed.encode('utf-8')\n"
             "        return await call_next(request)\n"
             "\n"
@@ -171,6 +179,8 @@ class TiTilerManager:
                 stderr_out = self._process.stderr.read().decode("utf-8", errors="replace") if self._process.stderr else ""
             except Exception:
                 stderr_out = ""
+            if stderr_out:
+                self.last_error = stderr_out[:2000]
             self._logger.error(
                 "TiTiler process exited immediately (rc=%s). stderr: %s",
                 self._process.returncode,

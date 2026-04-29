@@ -2084,6 +2084,37 @@
       layerErrorCounts.set(name, currentCount);
       const msg = error && error.message ? String(error.message) : "tile request failed";
       
+      function resolveTileTemplateUrl(template, providerRef, errorRef) {
+        if (!template || !errorRef) {
+          return "";
+        }
+        let url = String(template);
+        let yValue = errorRef.y;
+        if (url.indexOf("{reverseY}") >= 0) {
+          try {
+            if (providerRef && providerRef.tilingScheme && typeof providerRef.tilingScheme.getNumberOfYTilesAtLevel === "function") {
+              const total = providerRef.tilingScheme.getNumberOfYTilesAtLevel(errorRef.level);
+              yValue = total - errorRef.y - 1;
+            }
+          } catch (_err) {
+            yValue = errorRef.y;
+          }
+        }
+        url = url.replace("{z}", String(errorRef.level));
+        url = url.replace("{x}", String(errorRef.x));
+        url = url.replace("{y}", String(errorRef.y));
+        url = url.replace("{reverseY}", String(yValue));
+        return url;
+      }
+
+      let templateUrlForError = "";
+      try {
+        templateUrlForError = String(provider && provider.url ? provider.url : "");
+      } catch (_err) {
+        templateUrlForError = "";
+      }
+      const resolvedTileUrl = resolveTileTemplateUrl(templateUrlForError, provider, error);
+
       // Enhanced error logging with more details
       log("error", "TILE_ERROR: provider=" + name + 
           " count=" + currentCount + 
@@ -2091,7 +2122,7 @@
           " x=" + error.x + 
           " y=" + error.y + 
           " msg=" + msg +
-          " url=" + (error.url || "unknown"));
+          " url=" + (error.url || resolvedTileUrl || templateUrlForError || "unknown"));
       
       // Log tile coordinate analysis for debugging only on first error
       if (provider.rectangle && currentCount === 1) {
@@ -2109,14 +2140,11 @@
       }
       
       if (currentCount === 1) {
-        let templateUrl = "";
-        try {
-          templateUrl = String(provider && provider.url ? provider.url : "");
-        } catch (_err) {
-          templateUrl = "";
+        if (templateUrlForError) {
+          log("warn", "TILE_DEBUG: Template URL for " + name + " => " + templateUrlForError);
         }
-        if (templateUrl) {
-          log("warn", "TILE_DEBUG: Template URL for " + name + " => " + templateUrl);
+        if (resolvedTileUrl) {
+          log("warn", "TILE_DEBUG: Sample tile URL for " + name + " => " + resolvedTileUrl);
         }
         
         // Log provider details
@@ -3298,6 +3326,114 @@
       initViewer();
     });
   }
+  function installSmoothInteractionManager(targetViewer) {
+    if (!targetViewer || !targetViewer.scene || !targetViewer.canvas) {
+      return;
+    }
+    if (targetViewer.__smoothInteractionManagerInstalled) {
+      return;
+    }
+    targetViewer.__smoothInteractionManagerInstalled = true;
+
+    const scene = targetViewer.scene;
+    const canvas = targetViewer.canvas;
+    let interacting = false;
+    let idleTimer = null;
+    const IDLE_DELAY_MS = 150;
+    const baseSse = Number(scene.globe.maximumScreenSpaceError) || 2.0;
+    const movingSse = Math.max(4.0, baseSse + 2.0);
+
+    function applyInteractionTilePolicy(active) {
+      if (!scene.globe) {
+        return;
+      }
+      if (active) {
+        // Prioritize visible tiles only while moving.
+        scene.globe.maximumScreenSpaceError = movingSse;
+        scene.globe.preloadAncestors = false;
+        scene.globe.preloadSiblings = false;
+      } else {
+        // Restore higher detail once idle.
+        scene.globe.maximumScreenSpaceError = baseSse;
+        scene.globe.preloadAncestors = false;
+        scene.globe.preloadSiblings = false;
+      }
+    }
+
+    function startInteraction() {
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+        idleTimer = null;
+      }
+      if (!interacting) {
+        interacting = true;
+        scene.requestRenderMode = false;
+        scene.maximumRenderTimeChange = 0;
+        applyInteractionTilePolicy(true);
+      }
+      scene.requestRender();
+    }
+
+    function scheduleIdle() {
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+      }
+      idleTimer = setTimeout(function () {
+        interacting = false;
+        scene.requestRenderMode = true;
+        scene.maximumRenderTimeChange = Infinity;
+        applyInteractionTilePolicy(false);
+        scene.requestRender();
+        idleTimer = null;
+      }, IDLE_DELAY_MS);
+    }
+
+    targetViewer.camera.moveStart.addEventListener(startInteraction);
+    targetViewer.camera.moveEnd.addEventListener(scheduleIdle);
+
+    ["pointerdown", "touchstart"].forEach(function (eventName) {
+      canvas.addEventListener(eventName, startInteraction, { passive: true });
+    });
+    ["pointermove", "touchmove", "wheel"].forEach(function (eventName) {
+      canvas.addEventListener(
+        eventName,
+        function () {
+          if (!interacting) {
+            startInteraction();
+          }
+        },
+        { passive: true }
+      );
+    });
+    ["pointerup", "pointercancel", "touchend"].forEach(function (eventName) {
+      canvas.addEventListener(eventName, scheduleIdle, { passive: true });
+    });
+
+    scene.globe.tileLoadProgressEvent.addEventListener(function (tilesRemaining) {
+      if (tilesRemaining > 0) {
+        startInteraction();
+        return;
+      }
+      scheduleIdle();
+    });
+
+    window._requestRender = function () {
+      if (!targetViewer || !targetViewer.scene) {
+        return;
+      }
+      const currentScene = targetViewer.scene;
+      const wasOnDemand = currentScene.requestRenderMode;
+      currentScene.requestRenderMode = false;
+      currentScene.requestRender();
+      setTimeout(function () {
+        currentScene.requestRenderMode = wasOnDemand;
+        currentScene.requestRender();
+      }, 200);
+    };
+
+    scheduleIdle();
+    log("info", "Smooth interaction manager installed (Windows-optimized)");
+  }
 
   function initViewer() {
     if (!window.Cesium) {
@@ -3319,8 +3455,7 @@
       infoBox: false,
       selectionIndicator: false,
       scene3DOnly: false,
-      requestRenderMode: true,  // Enable request render mode for better performance
-      maximumRenderTimeChange: Infinity,  // Only render when needed
+      requestRenderMode: false,
       timeline: false,
       animation: false,
       terrainProvider: new Cesium.EllipsoidTerrainProvider(),
@@ -3334,17 +3469,17 @@
           powerPreference: "high-performance",  // Use discrete GPU (NVIDIA) if available
           preserveDrawingBuffer: false,
           failIfMajorPerformanceCaveat: false,
-          desynchronized: true,  // Reduce input lag on Windows
+          desynchronized: false,
         },
       },
       msaaSamples: 1,  // Disable MSAA for performance
-      useBrowserRecommendedResolution: true,  // Use optimal resolution for the display
+      useBrowserRecommendedResolution: false,
     });
     runtime.viewer = viewer;
     baseTerrainProvider = viewer.terrainProvider;
     
     // GPU-accelerated rendering optimizations
-    viewer.resolutionScale = 1.0;  // Native resolution for crisp rendering
+    viewer.resolutionScale = 1.0 / Math.max(1, window.devicePixelRatio || 1);
     viewer.scene.postProcessStages.fxaa.enabled = false;  // Disable FXAA for performance
     viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#2a3a4a");
     viewer.scene.backgroundColor = Cesium.Color.fromCssColorString("#0a0a0a");
@@ -3352,8 +3487,6 @@
     
     // Performance optimizations for ultra-smooth interaction
     viewer.scene.globe.tileCacheSize = 300;  // Larger cache for smoother panning (increased from 200)
-    viewer.scene.requestRenderMode = true;  // Only render when needed
-    viewer.scene.maximumRenderTimeChange = Infinity;
     viewer.scene.fog.enabled = false;  // Disable fog for performance
     viewer.scene.skyAtmosphere.show = false;  // Disable atmosphere for performance
     viewer.scene.sun.show = false;  // Disable sun for performance
@@ -3365,8 +3498,8 @@
     
     // Optimize tile loading for smoother experience
     viewer.scene.globe.maximumScreenSpaceError = 2;  // Slightly higher for faster loading (default is 2)
-    viewer.scene.globe.preloadAncestors = true;  // Preload parent tiles
-    viewer.scene.globe.preloadSiblings = true;  // Preload sibling tiles
+    viewer.scene.globe.preloadAncestors = false;  // Lazy-load offscreen ancestors
+    viewer.scene.globe.preloadSiblings = false;  // Lazy-load offscreen siblings
     
     // Additional performance optimizations
     viewer.scene.fxaa = false;  // Disable FXAA post-processing
@@ -3506,6 +3639,7 @@
     viewer.scene.postRender.addEventListener(updateEdgeScaleWidgets);
     wireClickHandlers();
     wireStatusBarListeners();
+    installSmoothInteractionManager(viewer);
     
     // Force a few initial renders to ensure the globe paints
     viewer.scene.requestRender();
@@ -3513,11 +3647,6 @@
       viewer.scene.requestRender();
       window.requestAnimationFrame(function () {
         viewer.scene.requestRender();
-        // Enable request render mode on all platforms for optimal performance
-        // Cesium will automatically render when needed (camera moves, tiles load, etc.)
-        viewer.scene.requestRenderMode = true;
-        viewer.scene.maximumRenderTimeChange = Infinity;
-        log("info", "Request render mode enabled for optimal performance");
       });
     });
     setStatus("Offline Cesium initialized.");
@@ -5342,13 +5471,15 @@
       setSearchBusy(active, message);
     },
     setDemColorMode: function (colormapName) {
-      const normalized = String(colormapName || "gray").toLowerCase() === "terrain" ? "terrain" : "gray";
+      const normalized = String(colormapName || "gray").toLowerCase();
+      const allowed = new Set(["gray", "terrain", "slope", "aspect"]);
+      const mode = allowed.has(normalized) ? normalized : "gray";
       if (comparatorModeEnabled) {
         const paneState = getComparatorPaneVisual(comparatorSelectedPane);
         if (!paneState) {
           return;
         }
-        paneState.dem.colorMode = normalized;
+        paneState.dem.colorMode = mode;
         if (getComparatorPaneLayerType(comparatorSelectedPane) === "dem") {
           scheduleComparatorDemRefresh(comparatorSelectedPane);
         }
@@ -5356,7 +5487,7 @@
         requestSceneRender();
         return;
       }
-      setDemColorMode(normalized);
+      setDemColorMode(mode);
     },
     setSwipeComparatorLayers: function (leftLayerKey, rightLayerKey, leftLabel, rightLabel) {
       if (typeof refreshComparatorLayers === "function") {

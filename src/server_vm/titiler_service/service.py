@@ -23,6 +23,12 @@ class _WindowsEncodedPathFixMiddleware(BaseHTTPMiddleware):
                 raw,
             )
             fixed = re.sub(r"(?<=[?&])url=/([A-Za-z]:)", r"url=\1", fixed)
+            fixed = re.sub(r"(?<=[?&])url=file:/{2,3}([A-Za-z]:)", r"url=\1", fixed)
+            fixed = re.sub(
+                r"(?<=[?&])url=file%3A(?:%2F){2,3}([A-Za-z](?:%3A|:))",
+                lambda match: "url=" + match.group(1).replace("%3A", ":"),
+                fixed,
+            )
             request.scope["query_string"] = fixed.encode("utf-8")
         return await call_next(request)
 
