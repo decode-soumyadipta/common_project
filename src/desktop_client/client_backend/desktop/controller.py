@@ -1405,6 +1405,18 @@ class DesktopController:
     ) -> dict | None:
         if show_loading:
             self._set_layer_loading(True, f"Loading {asset['file_name']}...")
+        
+        # Find the best version of the file (prioritize Web Mercator projected files)
+        original_file_path = asset["file_path"]
+        best_file_path = self._find_best_file_version(original_file_path)
+        
+        # Update asset to use the best file version
+        if best_file_path != original_file_path:
+            asset = dict(asset)  # Don't mutate the original
+            asset["file_path"] = best_file_path
+            asset["tile_url"] = build_xyz_url(best_file_path)
+            self._logger.info(f"Updated asset to use optimized file: {Path(best_file_path).name}")
+        
         if (
             self.app_mode != DesktopAppMode.CLIENT
             and not Path(asset["file_path"]).exists()
@@ -2878,13 +2890,65 @@ class DesktopController:
         self._logger.info("Server-optimized tile URL for %s", asset.get("file_name"))
         return optimized_url
 
+    def _find_best_file_version(self, file_path: str) -> str:
+        """Find the best version of a file, prioritizing Web Mercator projected and COG versions."""
+        from pathlib import Path
+        
+        original_path = Path(file_path)
+        if not original_path.exists():
+            return file_path
+        
+        # Priority order: _3857.cog.tif > _3857.tif > .cog.tif > original
+        candidates = []
+        
+        # Check for Web Mercator + COG version
+        web_mercator_cog = original_path.parent / f"{original_path.stem}_3857.cog.tif"
+        if web_mercator_cog.exists():
+            candidates.append((web_mercator_cog, 4))  # Highest priority
+        
+        # Check for Web Mercator version
+        web_mercator = original_path.parent / f"{original_path.stem}_3857.tif"
+        if web_mercator.exists():
+            candidates.append((web_mercator, 3))
+        
+        # Check for COG version of original
+        cog_version = original_path.parent / f"{original_path.stem}.cog.tif"
+        if cog_version.exists():
+            candidates.append((cog_version, 2))
+        
+        # Original file
+        candidates.append((original_path, 1))
+        
+        # Sort by priority (highest first) and return the best option
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        best_file = str(candidates[0][0])
+        
+        if best_file != file_path:
+            self._logger.info(f"Using optimized file version: {Path(best_file).name} instead of {original_path.name}")
+        
+        return best_file
+
     def _normalize_tile_url_legacy(self, tile_url: str) -> str:
         """Legacy tile URL normalization for backward compatibility."""
         import platform
         import re
+        from urllib.parse import unquote
 
         if platform.system() == "Windows":
-            # Strip any file:/// or file:// or file: prefix so GDAL sees raw C:/...
+            # Handle URL-encoded Windows paths with spaces and special characters
+            # First, decode any URL-encoded characters in the path portion
+            if "url=" in tile_url:
+                url_part = tile_url.split("url=", 1)[1]
+                # Decode URL-encoded characters (like %20 for spaces, %3A for :, %2F for /)
+                decoded_url = unquote(url_part)
+                
+                # Strip any file:/// or file:// or file: prefix so GDAL sees raw C:/...
+                decoded_url = re.sub(r"^file:/{0,3}([a-zA-Z]:)", r"\1", decoded_url)
+                
+                # Reconstruct the tile URL with the properly decoded path
+                tile_url = tile_url.split("url=", 1)[0] + "url=" + decoded_url
+            
+            # Also handle already partially processed URLs
             tile_url = re.sub(r"url=file:/{0,3}([a-zA-Z]:)", r"url=\1", tile_url)
             tile_url = re.sub(
                 r"url=file%3A(?:%2F){1,3}([a-zA-Z](?:%3A|:))",
