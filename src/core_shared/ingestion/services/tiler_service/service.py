@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import platform
 import re
 from urllib.parse import quote
 
@@ -43,8 +44,11 @@ class TiTilerUrlPolicy:
         while "//" in normalized:
             normalized = normalized.replace("//", "/")
 
-        # Windows drive path -> file:///C:/...
+        # Windows drive path -> raw path on Windows (GDAL opens C:/... best),
+        # file:///C:/... on macOS/Linux for cross-platform compatibility.
         if re.match(r"^[A-Za-z]:/", normalized):
+            if platform.system() == "Windows":
+                return normalized
             return f"file:///{normalized}"
 
         # POSIX absolute path -> file:///...

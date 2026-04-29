@@ -5084,9 +5084,10 @@
         return;
       }
       if (replaceExisting) {
-        // Always fully clear DEM terrain so imagery renders flat on the ellipsoid.
-        // Imagery is a 2D product and should not drape over DEM elevation.
-        clearDemTerrainMode();
+        // Keep DEM terrain unless explicitly requested to clear it.
+        if (options && options.clear_dem === true) {
+          clearDemTerrainMode();
+        }
         clearManagedImageryLayers();
       }
       setSceneModeControlEnabled(true);
