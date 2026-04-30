@@ -89,17 +89,44 @@ class IngestQueueService:
 
     def enqueue_paths(self, paths: list[str]) -> IngestJobView:
         """Create a new ingest job for provided paths and submit it."""
-        cleaned = [str(Path(path).expanduser()) for path in paths if str(path).strip()]
+        # Enhanced path cleaning with Windows compatibility
+        cleaned = []
+        for path in paths:
+            if not str(path).strip():
+                continue
+            try:
+                # Expand user path and resolve to absolute path
+                resolved_path = Path(path).expanduser().resolve()
+                
+                # Validate that the file exists
+                if not resolved_path.exists():
+                    LOGGER.warning("Skipping non-existent file: %s", path)
+                    continue
+                    
+                # Validate that it's a file (not a directory)
+                if not resolved_path.is_file():
+                    LOGGER.warning("Skipping non-file path: %s", path)
+                    continue
+                    
+                cleaned.append(str(resolved_path))
+            except (OSError, ValueError) as e:
+                LOGGER.warning("Skipping invalid path %s: %s", path, e)
+                continue
+        
         if not cleaned:
-            raise ValueError("No ingest paths provided")
+            raise ValueError("No valid ingest paths provided after validation")
+        
+        LOGGER.info("Enqueuing %d validated file paths for ingestion", len(cleaned))
 
         schema_refreshed = False
         for attempt in range(1, 4):
             try:
                 with self._session_factory() as session:
                     repo = IngestJobRepository(session)
+                    LOGGER.debug("Creating ingest job for %d files (attempt %d)", len(cleaned), attempt)
                     job = repo.create_job(cleaned)
                     view = _job_to_view(job)
+                    LOGGER.info("Successfully created ingest job %s with %d items", job.id, len(cleaned))
                 break
             except (OperationalError, ProgrammingError) as exc:
                 message = str(exc).lower()
@@ -141,6 +168,19 @@ class IngestQueueService:
                     ) from exc
 
                 raise
+            except Exception as exc:
+                # Catch-all for other database/session issues (like SQLAlchemy refresh errors)
+                LOGGER.error(
+                    "Unexpected error creating ingest job (attempt %d/%d): %s", 
+                    attempt, 3, exc, exc_info=True
+                )
+                if attempt >= 3:
+                    raise RuntimeError(
+                        f"Failed to create ingest job after {attempt} attempts: {exc}"
+                    ) from exc
+                # Wait before retrying
+                time.sleep(0.2 * attempt)
+                continue
 
         self._set_runtime_progress(job.id, "Queued for metadata ingest", None)
 
@@ -156,8 +196,8 @@ class IngestQueueService:
                 if job is None:
                     return None
                 repo.refresh_job_counters(job)
-                # Refresh the job object to get updated counters
-                session.refresh(job)
+                # The job object already has updated counters from refresh_job_counters
+                # No need to refresh the session object
                 return self._attach_runtime_progress(_job_to_view(job))
         except Exception as exc:
             LOGGER.error("Failed to get job %s: %s", job_id, exc)

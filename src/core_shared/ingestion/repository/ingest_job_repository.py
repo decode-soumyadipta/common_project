@@ -19,33 +19,49 @@ class IngestJobRepository:
         self._session = session
 
     def create_job(self, file_paths: list[str]) -> IngestJob:
+        job_id = str(uuid4())
+        
+        # Create job object
         job = IngestJob(
-            id=str(uuid4()),
+            id=job_id,
             status=IngestJobStatus.QUEUED,
             total_items=len(file_paths),
             processed_items=0,
             failed_items=0,
             checkpoint_item_index=0,
         )
-        self._session.add(job)
-        self._session.flush()
+        
+        try:
+            self._session.add(job)
+            self._session.flush()
 
-        for index, path in enumerate(file_paths, start=1):
-            item = IngestJobItem(
-                id=str(uuid4()),
-                job_id=job.id,
-                item_index=index,
-                file_path=path,
-                status=IngestJobItemStatus.PENDING,
-                attempts=0,
-                checkpoint_stage=None,
-                stage_attempt=0,
-            )
-            self._session.add(item)
+            # Create job items
+            for index, path in enumerate(file_paths, start=1):
+                item = IngestJobItem(
+                    id=str(uuid4()),
+                    job_id=job_id,
+                    item_index=index,
+                    file_path=path,
+                    status=IngestJobItemStatus.PENDING,
+                    attempts=0,
+                    checkpoint_stage=None,
+                    stage_attempt=0,
+                )
+                self._session.add(item)
 
-        self._session.commit()
-        self._session.refresh(job)
-        return job
+            # Commit all changes
+            self._session.commit()
+            
+            # Return the job object - it has all the correct data
+            return job
+            
+        except Exception as e:
+            # Rollback on any error
+            try:
+                self._session.rollback()
+            except Exception:
+                pass  # Ignore rollback errors
+            raise RuntimeError(f"Failed to create ingest job: {e}") from e
 
     def get_job(self, job_id: str) -> IngestJob | None:
         stmt = select(IngestJob).where(IngestJob.id == job_id)

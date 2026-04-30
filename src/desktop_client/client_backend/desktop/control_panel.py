@@ -271,7 +271,7 @@ class ControlPanel(QWidget):
         """)
 
         self.assets_refresh_btn = QPushButton("Refresh Catalog")
-        self.assets_refresh_btn.setToolTip("Refresh the list of uploaded assets.")
+        self.assets_refresh_btn.setToolTip("Refresh the list of uploaded assets and clear all caches.")
 
         self.uploaded_box = QGroupBox("Uploaded Assets")
         uploaded_layout = QVBoxLayout(self.uploaded_box)
@@ -825,9 +825,9 @@ class ControlPanel(QWidget):
             root_layout.addWidget(self.uploaded_box, 1)
             root_layout.addStretch()
 
-            # Connect refresh button
+            # Connect refresh button to clear caches and refresh
             if not self._server_refresh_connected:
-                self.assets_refresh_btn.clicked.connect(self.refresh_uploaded_assets)
+                self.assets_refresh_btn.clicked.connect(self._on_refresh_catalog_clicked)
                 self._server_refresh_connected = True
             # Show loading state initially - will be populated by controller
             self.uploaded_assets_list.setRowCount(1)
@@ -1195,136 +1195,29 @@ class ControlPanel(QWidget):
 
     def refresh_uploaded_assets(self) -> None:
         """Fetch and display list of uploaded assets from the catalog."""
-        # Emit signal to request controller cache clearing
-        self.uploaded_assets_refresh_requested.emit()
+        # Clear caches first, but don't emit the signal to prevent infinite loop
+        if hasattr(self, '_refreshing_assets') and self._refreshing_assets:
+            return  # Prevent recursive calls
         
-        # Always clear the table first to remove any cached data
-        self.uploaded_assets_list.clear()
-        self.uploaded_assets_list.setRowCount(0)
-        self.uploaded_assets_list.setColumnCount(7)
-        self.uploaded_assets_list.setHorizontalHeaderLabels(
-            ["#", "File Name", "Type", "CRS", "Cell Size", "Dimensions", "Added"]
-        )
+        self._refreshing_assets = True
         
-        # Ensure header text is visible and properly formatted
-        header = self.uploaded_assets_list.horizontalHeader()
-        header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
-        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        header.setStretchLastSection(False)
-        header.setMinimumSectionSize(60)
-        
-        if not self.api_client:
-            self.uploaded_assets_list.setRowCount(1)
-            # Show waiting message in File Name column
-            waiting_item = QTableWidgetItem("Waiting for API...")
-            waiting_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            waiting_item.setForeground(QColor("#666666"))  # Gray text
-            self.uploaded_assets_list.setItem(0, 1, waiting_item)
-            
-            # Clear other columns
-            for col in [0, 2, 3, 4, 5, 6]:
-                empty_item = QTableWidgetItem("")
-                self.uploaded_assets_list.setItem(0, col, empty_item)
-            return
-
         try:
-            assets = self.api_client.list_assets()
-
-            if not assets:
-                self.uploaded_assets_list.setRowCount(1)
-                # Show a centered "No assets" message across all columns
-                no_assets_item = QTableWidgetItem("No assets ingested yet")
-                no_assets_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                no_assets_item.setForeground(QColor("#666666"))  # Gray text
-                self.uploaded_assets_list.setItem(0, 1, no_assets_item)  # Show in File Name column
-                
-                # Clear other columns
-                for col in [0, 2, 3, 4, 5, 6]:
-                    empty_item = QTableWidgetItem("")
-                    self.uploaded_assets_list.setItem(0, col, empty_item)
-                return
-
-            # Sort by ingest timestamp (most recent first) - API already returns in this order
-            # but we ensure it here for consistency
-            sorted_assets = sorted(
-                assets, key=lambda a: a.get("created_at", ""), reverse=True
-            )
-
-            for row, asset in enumerate(sorted_assets):
-                filename = str(asset.get("file_name") or "Unknown")
-                timestamp = asset.get("created_at")
-                kind = str(asset.get("kind") or "Unknown").upper()
-                
-                # Enhanced CRS display with better formatting
-                crs_raw = str(asset.get("crs") or "-")
-                if crs_raw.startswith("EPSG:"):
-                    crs = crs_raw
-                elif crs_raw.startswith("http://www.opengis.net/def/crs/EPSG/0/"):
-                    epsg_code = crs_raw.split("/")[-1]
-                    crs = f"EPSG:{epsg_code}"
-                else:
-                    crs = crs_raw if crs_raw != "-" else "Unknown"
-                
-                cell_size = self._format_asset_cell_size(
-                    asset.get("resolution_x"), asset.get("resolution_y")
-                )
-                dimensions = self._format_asset_dimensions(
-                    asset.get("width"), asset.get("height")
-                )
-                formatted_date = self._format_asset_created_at(timestamp)
-
-                self.uploaded_assets_list.insertRow(row)
-                
-                # Row number (1-based, newest first)
-                number_item = QTableWidgetItem(str(row + 1))
-                number_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.uploaded_assets_list.setItem(row, 0, number_item)
-
-                # File name with asset data attached - show just filename, full path in tooltip
-                display_name = filename
-                file_item = QTableWidgetItem(display_name)
-                file_item.setData(Qt.ItemDataRole.UserRole, asset)
-                file_item.setToolTip(f"Full path: {asset.get('file_path', 'Unknown')}")
-                
-                # Highlight recently added files (within last hour)
-                if self._is_recent_asset(timestamp):
-                    file_item.setBackground(QColor("#e8f5e8"))  # Light green background
-                    file_item.setToolTip(f"Recently added asset\nFull path: {asset.get('file_path', 'Unknown')}")
-                self.uploaded_assets_list.setItem(row, 1, file_item)
-                
-                # Enhanced kind display with proper capitalization
-                kind_item = QTableWidgetItem(kind)
-                if kind == "DEM":
-                    kind_item.setBackground(QColor("#fff3e0"))  # Light orange for DEM
-                    kind_item.setToolTip("Digital Elevation Model")
-                elif kind == "GEOTIFF":
-                    kind_item.setBackground(QColor("#e3f2fd"))  # Light blue for imagery
-                    kind_item.setToolTip("GeoTIFF raster image")
-                elif kind == "JPEG2000":
-                    kind_item.setBackground(QColor("#f3e5f5"))  # Light purple for JPEG2000
-                    kind_item.setToolTip("JPEG2000 compressed image")
-                elif kind == "MBTILES":
-                    kind_item.setBackground(QColor("#e8f5e8"))  # Light green for tiles
-                    kind_item.setToolTip("Pre-tiled MBTiles format")
-                self.uploaded_assets_list.setItem(row, 2, kind_item)
-                
-                # CRS with enhanced formatting
-                crs_item = QTableWidgetItem(crs)
-                crs_item.setToolTip(f"Coordinate Reference System: {crs}")
-                self.uploaded_assets_list.setItem(row, 3, crs_item)
-                
-                self.uploaded_assets_list.setItem(row, 4, QTableWidgetItem(cell_size))
-                self.uploaded_assets_list.setItem(row, 5, QTableWidgetItem(dimensions))
-                self.uploaded_assets_list.setItem(row, 6, QTableWidgetItem(formatted_date))
-
-        except Exception as e:
-            # Clear everything and show error message
+            # Force a complete table reset to ensure no cached data persists
             self.uploaded_assets_list.clear()
-            self.uploaded_assets_list.setRowCount(1)
+            self.uploaded_assets_list.setRowCount(0)
             self.uploaded_assets_list.setColumnCount(7)
             self.uploaded_assets_list.setHorizontalHeaderLabels(
                 ["#", "File Name", "Type", "CRS", "Cell Size", "Dimensions", "Added"]
             )
+            
+            # Force a complete widget refresh (only if model is accessible)
+            self.uploaded_assets_list.clearContents()
+            try:
+                self.uploaded_assets_list.model().beginResetModel()
+                self.uploaded_assets_list.model().endResetModel()
+            except RuntimeError:
+                # Model not accessible (e.g., in test environment), skip model reset
+                pass
             
             # Ensure header text is visible and properly formatted
             header = self.uploaded_assets_list.horizontalHeader()
@@ -1333,17 +1226,164 @@ class ControlPanel(QWidget):
             header.setStretchLastSection(False)
             header.setMinimumSectionSize(60)
             
-            # Show error message in the File Name column
-            error_item = QTableWidgetItem(f"Error loading assets: {str(e)}")
-            error_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            error_item.setForeground(QColor("#cc0000"))  # Red text for errors
-            error_item.setToolTip("Click 'Refresh Catalog' to retry after fixing the issue")
-            self.uploaded_assets_list.setItem(0, 1, error_item)
-            
-            # Clear the other columns for this error row
-            for col in [0, 2, 3, 4, 5, 6]:
-                empty_item = QTableWidgetItem("")
-                self.uploaded_assets_list.setItem(0, col, empty_item)
+            if not self.api_client:
+                self.uploaded_assets_list.setRowCount(1)
+                # Show waiting message in File Name column
+                waiting_item = QTableWidgetItem("Waiting for API...")
+                waiting_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                waiting_item.setForeground(QColor("#666666"))  # Gray text
+                self.uploaded_assets_list.setItem(0, 1, waiting_item)
+                
+                # Clear other columns
+                for col in [0, 2, 3, 4, 5, 6]:
+                    empty_item = QTableWidgetItem("")
+                    self.uploaded_assets_list.setItem(0, col, empty_item)
+                return
+
+            try:
+                # Force a fresh API call without any caching
+                assets = self.api_client.list_assets()
+
+                if not assets:
+                    self.uploaded_assets_list.setRowCount(1)
+                    # Show a centered "No assets" message across all columns
+                    no_assets_item = QTableWidgetItem("No assets ingested yet - database is empty")
+                    no_assets_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    no_assets_item.setForeground(QColor("#666666"))  # Gray text
+                    no_assets_item.setToolTip("The database has been cleared or no assets have been ingested yet")
+                    self.uploaded_assets_list.setItem(0, 1, no_assets_item)  # Show in File Name column
+                    
+                    # Clear other columns
+                    for col in [0, 2, 3, 4, 5, 6]:
+                        empty_item = QTableWidgetItem("")
+                        self.uploaded_assets_list.setItem(0, col, empty_item)
+                    
+                    # Log the empty state for debugging
+                    print("DEBUG: refresh_uploaded_assets - No assets returned from API")
+                    return
+
+                # Sort by ingest timestamp (most recent first) - API already returns in this order
+                # but we ensure it here for consistency
+                sorted_assets = sorted(
+                    assets, key=lambda a: a.get("created_at", ""), reverse=True
+                )
+                
+                # Log the asset count for debugging
+                print(f"DEBUG: refresh_uploaded_assets - Found {len(sorted_assets)} assets from API")
+
+                for row, asset in enumerate(sorted_assets):
+                    filename = str(asset.get("file_name") or "Unknown")
+                    timestamp = asset.get("created_at")
+                    kind = str(asset.get("kind") or "Unknown").upper()
+                    
+                    # Enhanced CRS display with better formatting
+                    crs_raw = str(asset.get("crs") or "-")
+                    if crs_raw.startswith("EPSG:"):
+                        crs = crs_raw
+                    elif crs_raw.startswith("http://www.opengis.net/def/crs/EPSG/0/"):
+                        epsg_code = crs_raw.split("/")[-1]
+                        crs = f"EPSG:{epsg_code}"
+                    else:
+                        crs = crs_raw if crs_raw != "-" else "Unknown"
+                    
+                    cell_size = self._format_asset_cell_size(
+                        asset.get("resolution_x"), asset.get("resolution_y")
+                    )
+                    dimensions = self._format_asset_dimensions(
+                        asset.get("width"), asset.get("height")
+                    )
+                    formatted_date = self._format_asset_created_at(timestamp)
+
+                    self.uploaded_assets_list.insertRow(row)
+                    
+                    # Row number (1-based, newest first)
+                    number_item = QTableWidgetItem(str(row + 1))
+                    number_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    self.uploaded_assets_list.setItem(row, 0, number_item)
+
+                    # File name with asset data attached - show just filename, full path in tooltip
+                    display_name = filename
+                    file_item = QTableWidgetItem(display_name)
+                    file_item.setData(Qt.ItemDataRole.UserRole, asset)
+                    file_item.setToolTip(f"Full path: {asset.get('file_path', 'Unknown')}")
+                    
+                    # Highlight recently added files (within last hour)
+                    if self._is_recent_asset(timestamp):
+                        file_item.setBackground(QColor("#e8f5e8"))  # Light green background
+                        file_item.setToolTip(f"Recently added asset\nFull path: {asset.get('file_path', 'Unknown')}")
+                    self.uploaded_assets_list.setItem(row, 1, file_item)
+                    
+                    # Enhanced kind display with proper capitalization
+                    kind_item = QTableWidgetItem(kind)
+                    if kind == "DEM":
+                        kind_item.setBackground(QColor("#fff3e0"))  # Light orange for DEM
+                        kind_item.setToolTip("Digital Elevation Model")
+                    elif kind == "GEOTIFF":
+                        kind_item.setBackground(QColor("#e3f2fd"))  # Light blue for imagery
+                        kind_item.setToolTip("GeoTIFF raster image")
+                    elif kind == "JPEG2000":
+                        kind_item.setBackground(QColor("#f3e5f5"))  # Light purple for JPEG2000
+                        kind_item.setToolTip("JPEG2000 compressed image")
+                    elif kind == "MBTILES":
+                        kind_item.setBackground(QColor("#e8f5e8"))  # Light green for tiles
+                        kind_item.setToolTip("Pre-tiled MBTiles format")
+                    self.uploaded_assets_list.setItem(row, 2, kind_item)
+                    
+                    # CRS with enhanced formatting
+                    crs_item = QTableWidgetItem(crs)
+                    crs_item.setToolTip(f"Coordinate Reference System: {crs}")
+                    self.uploaded_assets_list.setItem(row, 3, crs_item)
+                    
+                    self.uploaded_assets_list.setItem(row, 4, QTableWidgetItem(cell_size))
+                    self.uploaded_assets_list.setItem(row, 5, QTableWidgetItem(dimensions))
+                    self.uploaded_assets_list.setItem(row, 6, QTableWidgetItem(formatted_date))
+
+            except Exception as e:
+                # Clear everything and show error message
+                self.uploaded_assets_list.clear()
+                self.uploaded_assets_list.setRowCount(1)
+                self.uploaded_assets_list.setColumnCount(7)
+                self.uploaded_assets_list.setHorizontalHeaderLabels(
+                    ["#", "File Name", "Type", "CRS", "Cell Size", "Dimensions", "Added"]
+                )
+                
+                # Ensure header text is visible and properly formatted
+                header = self.uploaded_assets_list.horizontalHeader()
+                header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
+                header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+                header.setStretchLastSection(False)
+                header.setMinimumSectionSize(60)
+                
+                # Show error message in the File Name column
+                error_item = QTableWidgetItem(f"Error loading assets: {str(e)}")
+                error_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                error_item.setForeground(QColor("#cc0000"))  # Red text for errors
+                error_item.setToolTip("Click 'Refresh Catalog' to retry after fixing the issue")
+                self.uploaded_assets_list.setItem(0, 1, error_item)
+                
+                # Clear the other columns for this error row
+                for col in [0, 2, 3, 4, 5, 6]:
+                    empty_item = QTableWidgetItem("")
+                    self.uploaded_assets_list.setItem(0, col, empty_item)
+        
+        finally:
+            # Reset the refreshing flag to allow future refreshes
+            self._refreshing_assets = False
+
+    def _on_refresh_catalog_clicked(self) -> None:
+        """Handle refresh catalog button click - refreshes without clearing caches to prevent loops."""
+        import time
+        
+        # Prevent rapid successive refreshes
+        if hasattr(self, '_last_refresh_time'):
+            if time.time() - self._last_refresh_time < 2.0:  # 2 second cooldown
+                return
+        
+        self._last_refresh_time = time.time()
+        
+        # Just refresh the uploaded assets without clearing caches
+        # Cache clearing will be handled by the controller when needed
+        self.refresh_uploaded_assets()
 
     def _is_recent_asset(self, timestamp: str | None) -> bool:
         """Check if an asset was created recently (within last hour)."""

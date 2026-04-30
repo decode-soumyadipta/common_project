@@ -155,6 +155,7 @@ class DesktopController:
         self._ingest_poll_timer.timeout.connect(self._poll_active_ingest_job)
         self._last_ingest_step: str | None = None
         self._last_ingest_status: str | None = None
+        self._ingest_poll_start_time: dt.datetime | None = None  # Track when polling started
         self._search = SearchCoordinator(self)
         self._comparator = ComparatorCoordinator(self)
         self._project_io = ProjectIoCoordinator(self)
@@ -259,7 +260,48 @@ class DesktopController:
         self._dem_asset_kind_cache.clear()
         self._search_result_assets_by_path.clear()
         self._search_layer_visibility.clear()
-        self._logger.debug("Asset caches cleared")
+        self._loaded_search_layer_keys.clear()
+        
+        # Clear additional state variables that might cache data
+        self._active_dem_search_layer_key = None
+        self._last_visible_focus_signature = None
+        
+        # Clear performance metrics cache
+        if hasattr(self, '_performance_metrics'):
+            self._performance_metrics = {
+                "layer_load_times": [],
+                "search_times": [],
+                "render_performance": "optimal"
+            }
+        
+        # Clear any API client caches
+        if hasattr(self.api, '_cache'):
+            self.api._cache.clear()
+        
+        # Clear the assets combo box completely
+        self.panel.assets_combo.clear()
+        
+        # Clear the uploaded assets table completely
+        self.panel.uploaded_assets_list.clear()
+        self.panel.uploaded_assets_list.setRowCount(0)
+        
+        # Clear search results table
+        if hasattr(self.panel, 'search_results_table'):
+            self.panel.search_results_table.clear()
+            self.panel.search_results_table.setRowCount(0)
+        
+        # Reset state variables
+        self.state.selected_asset = None
+        if hasattr(self.state, 'active_ingest_job_id'):
+            self.state.active_ingest_job_id = None
+        if hasattr(self.state, 'pending_ingest_source_path'):
+            self.state.pending_ingest_source_path = None
+        
+        # Log the cache clearing (removed the refresh call to prevent infinite loop)
+        self._logger.info("Asset caches cleared successfully")
+        self.panel.log("Asset caches cleared")
+        
+        self._logger.debug("All asset caches cleared")
 
     def _prepare_api_runtime(self) -> None:
         self._offline_endpoints_valid = self._validate_offline_endpoints()
@@ -489,36 +531,127 @@ class DesktopController:
             self.panel.log(f"Path is not a folder: {path}")
             return
 
-        # Collect all raster files from folder (exclude .mbtiles as they are already processed)
-        raster_extensions = {'.tif', '.tiff', '.jp2', '.j2k'}
-        
-        all_files = list(folder_path.iterdir())
-        raster_files = [
-            str(f) for f in all_files
-            if f.is_file() and f.suffix.lower() in raster_extensions
-        ]
-        
-        self._logger.info("Enqueue: Found %d raster files in %s", len(raster_files), path)
-        
-        if not raster_files:
-            self.panel.log(f"No raster files found in folder: {path}")
-            self.panel.log(f"Supported formats: .tif, .tiff, .jp2, .j2k (excluding .mbtiles - already processed)")
-            self.panel.log(f"Found {len(all_files)} other file(s) - check file extensions")
-            return
+        # Use intelligent file grouping for robust multi-file ingestion
+        try:
+            from core_shared.ingestion.services.file_grouping_service import FileGroupingService
+            
+            self.panel.log("Analyzing folder structure and grouping related files...")
+            self.panel.ingest_progress_bar.setRange(0, 0)
+            self.panel.ingest_status_value.setText("ANALYZING")
+            self.panel.ingest_step_value.setText("Intelligent file grouping in progress")
+            self.panel.ingest_item_value.setText(f"Scanning: {folder_path.name}")
+            
+            # Group files intelligently
+            grouping_service = FileGroupingService()
+            file_groups = grouping_service.group_files_in_folder(
+                folder_path=folder_path,
+                recursive=True,  # Enable recursive scanning
+                max_groups=None  # Process all groups
+            )
+            
+            # Filter groups by confidence score (only process high-confidence groups)
+            high_confidence_groups = [
+                group for group in file_groups 
+                if group.confidence_score >= 0.5  # Minimum confidence threshold
+            ]
+            
+            if not high_confidence_groups:
+                self.panel.log(f"No suitable geospatial file groups found in folder: {path}")
+                self.panel.log("Supported formats: .tif, .tiff, .jp2, .j2k with optional auxiliary files (.prj, .tfw, .aux.xml)")
+                self.panel.log(f"Found {len(file_groups)} total groups, but none met confidence threshold (≥0.5)")
+                
+                # Show details about what was found
+                if file_groups:
+                    self.panel.log("Low-confidence groups found:")
+                    for group in file_groups[:3]:  # Show first 3
+                        self.panel.log(f"  - {group.scene_name} (confidence: {group.confidence_score:.2f}, method: {group.grouping_method})")
+                
+                self.panel.ingest_progress_bar.setRange(0, 100)
+                self.panel.ingest_progress_bar.setValue(0)
+                self.panel.ingest_status_value.setText("NO_FILES")
+                self.panel.ingest_step_value.setText("No suitable files found")
+                return
+            
+            # Extract primary raster files for ingestion
+            raster_files = [str(group.primary_file) for group in high_confidence_groups]
+            total_files = sum(1 + len(group.auxiliary_files) for group in high_confidence_groups)
+            
+            self._logger.info(
+                "Intelligent grouping: Found %d file groups (%d primary rasters, %d total files) in %s", 
+                len(high_confidence_groups), len(raster_files), total_files, path
+            )
+            
+            # Log grouping statistics
+            method_counts = {}
+            for group in high_confidence_groups:
+                method_counts[group.grouping_method] = method_counts.get(group.grouping_method, 0) + 1
+            
+            self.panel.log(f"Intelligent file grouping completed:")
+            self.panel.log(f"  - Found {len(high_confidence_groups)} file groups ({total_files} total files)")
+            self.panel.log(f"  - Grouping methods: {', '.join(f'{method}: {count}' for method, count in method_counts.items())}")
+            self.panel.log(f"  - Average confidence: {sum(g.confidence_score for g in high_confidence_groups) / len(high_confidence_groups):.2f}")
+            
+            # Show sample groups
+            self.panel.log("Sample groups:")
+            for i, group in enumerate(high_confidence_groups[:3]):
+                aux_count = len(group.auxiliary_files)
+                aux_info = f" + {aux_count} auxiliary files" if aux_count > 0 else ""
+                self.panel.log(f"  {i+1}. {group.scene_name} (confidence: {group.confidence_score:.2f}){aux_info}")
+            
+            if len(high_confidence_groups) > 3:
+                self.panel.log(f"  ... and {len(high_confidence_groups) - 3} more groups")
+            
+        except Exception as e:
+            self._logger.error("Intelligent file grouping failed: %s", e, exc_info=True)
+            self.panel.log(f"File grouping failed: {e}")
+            self.panel.log("Falling back to simple file scanning...")
+            
+            # Fallback to simple file collection
+            raster_extensions = {'.tif', '.tiff', '.jp2', '.j2k'}
+            all_files = list(folder_path.iterdir())
+            raster_files = [
+                str(f) for f in all_files
+                if f.is_file() and f.suffix.lower() in raster_extensions
+            ]
+            
+            if not raster_files:
+                self.panel.log(f"No raster files found in folder: {path}")
+                self.panel.log(f"Supported formats: .tif, .tiff, .jp2, .j2k (excluding .mbtiles - already processed)")
+                self.panel.log(f"Found {len(all_files)} other file(s) - check file extensions")
+                return
 
         # Show immediate queueing state
         self.panel.ingest_progress_bar.setRange(0, 0)
         self.panel.ingest_status_value.setText("QUEUING")
-        self.panel.ingest_step_value.setText("Sending folder to ingest queue")
+        self.panel.ingest_step_value.setText("Sending grouped files to ingest queue")
         self.panel.ingest_item_value.setText(f"Current: {folder_path.name}")
         self.panel.ingest_counts_value.setText(f"Processed: 0/{len(raster_files)} | Failed: 0")
         self.panel.ingest_elapsed_value.setText("Elapsed: 00:00")
         self.panel.append_ingest_detail(
-            f"[00:00] QUEUING - Sending {len(raster_files)} file(s) to ingest queue"
+            f"[00:00] QUEUING - Sending {len(raster_files)} grouped file(s) to ingest queue"
         )
 
         try:
+            # Track asset count before ingestion for comparison
+            try:
+                self._pre_ingest_asset_count = len(self.api.list_assets())
+            except Exception:
+                self._pre_ingest_asset_count = 0
+                
             job = self.api.enqueue_ingest_job(raster_files)
+            
+            # Log details about what was queued
+            self._logger.info(
+                "Enqueued ingest job: %s files, job_id=%s, total_items=%s", 
+                len(raster_files), job.get("id"), job.get("total_items")
+            )
+            
+            # Log sample file paths for debugging
+            sample_files = raster_files[:3]
+            self._logger.info("Sample queued files: %s", sample_files)
+            if len(raster_files) > 3:
+                self._logger.info("... and %d more files", len(raster_files) - 3)
+                
         except httpx.HTTPError as exc:
             self.panel.ingest_progress_bar.setRange(0, 100)
             self.panel.ingest_progress_bar.setValue(0)
@@ -532,12 +665,15 @@ class DesktopController:
         self.state.pending_ingest_source_path = path
         self.state.auto_visualize_ingest_result = True  # Enable auto-visualization for folder ingests
         self.panel.log(
-            f"Folder queued for ingestion: {len(raster_files)} file(s)"
+            f"Folder queued for ingestion: {len(raster_files)} grouped file(s)"
         )
         self.panel.log(
             f"Job ID: {job.get('id')} | Status: {job.get('status')} | Total: {job.get('total_items')}"
         )
         self._update_ingest_progress_ui(job, emit_detail=True)
+        
+        # Record polling start time and start polling
+        self._ingest_poll_start_time = dt.datetime.now(dt.timezone.utc)
         self._ingest_poll_timer.start()
 
     def search_assets_by_coordinate(self) -> None:
@@ -1164,30 +1300,120 @@ class DesktopController:
             return
         self.panel.path_edit.setText(folder)
         
-        # Count raster files in folder (exclude .mbtiles as they are already processed)
+        # Use intelligent file grouping to analyze folder contents
         folder_path = Path(folder)
-        raster_extensions = {'.tif', '.tiff', '.jp2', '.j2k'}
         
-        all_files = list(folder_path.iterdir())
-        raster_files = [
-            f for f in all_files
-            if f.is_file() and f.suffix.lower() in raster_extensions
-        ]
-        
-        file_count = len(raster_files)
-        self.panel.log(f"Selected folder: {folder}")
-        if file_count > 0:
-            self.panel.log(f"Found {file_count} raster file(s): {', '.join(f.name for f in raster_files)}")
-        else:
-            self.panel.log(f"No raster files found (supported: .tif, .tiff, .jp2, .j2k - excluding .mbtiles)")
-            self.panel.log(f"Found {len(all_files)} other file(s) in folder")
-        self._logger.info("Selected folder path: %s (files: %d)", folder, file_count)
+        try:
+            from core_shared.ingestion.services.file_grouping_service import FileGroupingService
+            
+            self.panel.log(f"Selected folder: {folder}")
+            self.panel.log("Analyzing folder structure with intelligent grouping...")
+            
+            # Analyze folder with intelligent grouping
+            grouping_service = FileGroupingService()
+            file_groups = grouping_service.group_files_in_folder(
+                folder_path=folder_path,
+                recursive=True,
+                max_groups=None
+            )
+            
+            if not file_groups:
+                self.panel.log("No geospatial file groups found")
+                self.panel.log("Supported formats: .tif, .tiff, .jp2, .j2k with optional auxiliary files")
+                return
+            
+            # Calculate statistics
+            total_files = sum(1 + len(group.auxiliary_files) for group in file_groups)
+            high_confidence_groups = [g for g in file_groups if g.confidence_score >= 0.5]
+            
+            # Group by confidence levels
+            confidence_stats = {
+                "high (≥0.8)": len([g for g in file_groups if g.confidence_score >= 0.8]),
+                "medium (0.5-0.8)": len([g for g in file_groups if 0.5 <= g.confidence_score < 0.8]),
+                "low (<0.5)": len([g for g in file_groups if g.confidence_score < 0.5])
+            }
+            
+            # Group by methods
+            method_stats = {}
+            for group in file_groups:
+                method_stats[group.grouping_method] = method_stats.get(group.grouping_method, 0) + 1
+            
+            # Report results
+            self.panel.log(f"Intelligent analysis completed:")
+            self.panel.log(f"  - Total file groups: {len(file_groups)} ({total_files} files)")
+            self.panel.log(f"  - High-confidence groups: {len(high_confidence_groups)} (will be processed)")
+            
+            # Show confidence distribution
+            conf_details = [f"{level}: {count}" for level, count in confidence_stats.items() if count > 0]
+            if conf_details:
+                self.panel.log(f"  - Confidence distribution: {', '.join(conf_details)}")
+            
+            # Show grouping methods
+            method_details = [f"{method}: {count}" for method, count in method_stats.items()]
+            if method_details:
+                self.panel.log(f"  - Grouping methods: {', '.join(method_details)}")
+            
+            # Show sample groups
+            if high_confidence_groups:
+                self.panel.log("Sample high-confidence groups:")
+                for i, group in enumerate(high_confidence_groups[:3]):
+                    aux_info = f" + {len(group.auxiliary_files)} aux files" if group.auxiliary_files else ""
+                    size_mb = group.file_size_bytes / (1024 * 1024) if group.file_size_bytes > 0 else 0
+                    self.panel.log(f"  {i+1}. {group.scene_name} (conf: {group.confidence_score:.2f}, {size_mb:.1f}MB){aux_info}")
+                
+                if len(high_confidence_groups) > 3:
+                    self.panel.log(f"  ... and {len(high_confidence_groups) - 3} more groups")
+            
+            # Show warnings for low-confidence groups
+            low_confidence_groups = [g for g in file_groups if g.confidence_score < 0.5]
+            if low_confidence_groups:
+                self.panel.log(f"Note: {len(low_confidence_groups)} low-confidence groups will be skipped")
+                if len(low_confidence_groups) <= 3:
+                    for group in low_confidence_groups:
+                        self.panel.log(f"  - {group.scene_name} (conf: {group.confidence_score:.2f}, method: {group.grouping_method})")
+            
+            self._logger.info(
+                "Folder analysis: %s - %d groups (%d high-confidence, %d total files)", 
+                folder, len(file_groups), len(high_confidence_groups), total_files
+            )
+            
+        except Exception as e:
+            self._logger.error("Intelligent folder analysis failed: %s", e, exc_info=True)
+            self.panel.log(f"Folder analysis failed: {e}")
+            self.panel.log("Falling back to simple file counting...")
+            
+            # Fallback to simple file counting
+            raster_extensions = {'.tif', '.tiff', '.jp2', '.j2k'}
+            all_files = list(folder_path.iterdir())
+            raster_files = [
+                f for f in all_files
+                if f.is_file() and f.suffix.lower() in raster_extensions
+            ]
+            
+            file_count = len(raster_files)
+            self.panel.log(f"Selected folder: {folder}")
+            if file_count > 0:
+                self.panel.log(f"Found {file_count} raster file(s): {', '.join(f.name for f in raster_files)}")
+            else:
+                self.panel.log(f"No raster files found (supported: .tif, .tiff, .jp2, .j2k - excluding .mbtiles)")
+                self.panel.log(f"Found {len(all_files)} other file(s) in folder")
+            
+            self._logger.info("Selected folder path: %s (files: %d)", folder, file_count)
 
     def refresh_assets(self) -> None:
         if not self._require_offline_endpoints("Catalog refresh"):
             return
+        
+        # Clear all caches first to ensure fresh data
+        self._clear_asset_caches()
+        
         try:
+            # Force a fresh API call without any caching
             assets = self.api.list_assets()
+            
+            # Log the API response for debugging
+            self._logger.info(f"API returned {len(assets) if assets else 0} assets")
+            
         except httpx.HTTPError as exc:
             self._handle_api_error("Catalog refresh", exc)
             return
@@ -1199,6 +1425,17 @@ class DesktopController:
         self._search_result_assets_by_path.clear()
         self._search_layer_visibility.clear()
         
+        # Check if assets is empty or None
+        if not assets:
+            self.panel.log("Catalog refreshed: 0 assets (database is empty)")
+            self._logger.info("Catalog refreshed: database is empty")
+            
+            # Force refresh uploaded assets list to show empty state
+            if self.app_mode == DesktopAppMode.SERVER:
+                from qtpy.QtCore import QTimer
+                QTimer.singleShot(100, self.panel.refresh_uploaded_assets)
+            return
+        
         for asset in assets:
             self._asset_cache[asset["file_path"]] = asset
             name_suffix = ""
@@ -1208,9 +1445,12 @@ class DesktopController:
             label += name_suffix
             self.panel.assets_combo.addItem(label, asset)
 
-        # Refresh uploaded assets list on server mode
+        # Force refresh uploaded assets list on server mode
         if self.app_mode == DesktopAppMode.SERVER:
-            self.panel.refresh_uploaded_assets()
+            # Use a small delay to ensure the API has processed any recent changes
+            from qtpy.QtCore import QTimer
+            QTimer.singleShot(100, lambda: self.panel.refresh_uploaded_assets())
+        
         shown = self.panel.assets_combo.count()
         recommendation = self.performance.recommend_policy(
             asset_count=shown,
@@ -1245,13 +1485,73 @@ class DesktopController:
         if not job_id:
             self._ingest_poll_timer.stop()
             return
+        
+        # Check for polling timeout (max 2 hours)
+        if self._ingest_poll_start_time:
+            elapsed = dt.datetime.now(dt.timezone.utc) - self._ingest_poll_start_time
+            if elapsed.total_seconds() > 7200:  # 2 hours
+                self._logger.warning("Ingest polling timeout after 2 hours, stopping polling for job %s", job_id)
+                self.panel.log("Ingest polling timed out - job may have completed")
+                self.panel.ingest_status_value.setText("TIMEOUT")
+                self.panel.ingest_step_value.setText("Polling timed out - check job status manually")
+                self._ingest_poll_timer.stop()
+                self.state.active_ingest_job_id = None
+                self._ingest_poll_start_time = None
+                return
+        
         try:
             job = self.api.get_ingest_job(job_id)
         except httpx.HTTPError as exc:
-            # Don't stop polling on temporary errors - keep trying
+            # Handle different types of HTTP errors
             if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
                 status_code = exc.response.status_code
-                if status_code >= 500:
+                if status_code == 404:
+                    # Job not found - it was likely completed and cleaned up
+                    self._logger.info("Ingest job completed and cleaned up: %s", job_id)
+                    
+                    # Check if any new assets were actually added to the database
+                    try:
+                        current_asset_count = len(self.api.list_assets())
+                        if hasattr(self, '_pre_ingest_asset_count'):
+                            new_assets = current_asset_count - self._pre_ingest_asset_count
+                            if new_assets > 0:
+                                self.panel.log(f"Ingest completed: {new_assets} new assets added to database")
+                                self.panel.ingest_step_value.setText(f"Completed: {new_assets} new assets added")
+                            else:
+                                self.panel.log("Ingest completed: No new assets (files may already be in database)")
+                                self.panel.ingest_step_value.setText("Completed: No new files (duplicates skipped)")
+                        else:
+                            self.panel.log("Ingest job completed successfully")
+                            self.panel.ingest_step_value.setText("Job completed and cleaned up")
+                    except Exception:
+                        self.panel.log("Ingest job completed successfully")
+                        self.panel.ingest_step_value.setText("Job completed and cleaned up")
+                    
+                    # Update UI to show completion
+                    self.panel.ingest_status_value.setText("COMPLETED")
+                    self.panel.ingest_progress_bar.setValue(100)
+                    
+                    # Add informative completion message
+                    self.panel.append_ingest_detail(
+                        f"[COMPLETED] Job finished - check asset count for new additions"
+                    )
+                    
+                    # Stop polling and clear job ID
+                    self._ingest_poll_timer.stop()
+                    self.state.active_ingest_job_id = None
+                    self._ingest_poll_start_time = None
+                    
+                    # Try to visualize if auto-visualization is enabled
+                    if self.state.auto_visualize_ingest_result:
+                        self._try_visualize_ingested_asset()
+                    
+                    # Auto-refresh the uploaded assets table when ingestion completes
+                    if self.app_mode == DesktopAppMode.SERVER:
+                        from qtpy.QtCore import QTimer
+                        QTimer.singleShot(500, lambda: self.panel.refresh_uploaded_assets())
+                    
+                    return
+                elif status_code >= 500:
                     # Server error - log but continue polling
                     self._logger.warning(
                         "Ingest progress refresh failed with server error %s, continuing to poll", 
@@ -1261,17 +1561,36 @@ class DesktopController:
             # For other errors, handle normally and stop polling
             self._handle_api_error("Ingest progress refresh", exc)
             self._ingest_poll_timer.stop()
+            self.state.active_ingest_job_id = None
+            self._ingest_poll_start_time = None
             return
 
         self._update_ingest_progress_ui(job, emit_detail=True)
         status = str(job.get("status") or "").lower()
         if status in {"completed", "failed", "partial"}:
             self._ingest_poll_timer.stop()
+            self.state.active_ingest_job_id = None
+            self._ingest_poll_start_time = None
             if (
                 status in {"completed", "partial"}
                 and self.state.auto_visualize_ingest_result
             ):
                 self._try_visualize_ingested_asset()
+            
+            # Auto-refresh the uploaded assets table when ingestion completes
+            if self.app_mode == DesktopAppMode.SERVER and status in {"completed", "partial"}:
+                from qtpy.QtCore import QTimer
+                QTimer.singleShot(500, lambda: self.panel.refresh_uploaded_assets())
+
+    def stop_ingest_polling(self) -> None:
+        """Manually stop ingest job polling."""
+        if self._ingest_poll_timer.isActive():
+            self._ingest_poll_timer.stop()
+            self.state.active_ingest_job_id = None
+            self._ingest_poll_start_time = None
+            self.panel.log("Ingest polling stopped manually")
+            self.panel.ingest_status_value.setText("STOPPED")
+            self.panel.ingest_step_value.setText("Polling stopped by user")
 
     def _update_ingest_progress_ui(self, job: dict, *, emit_detail: bool) -> None:
         status = str(job.get("status") or "unknown").lower()
@@ -1293,9 +1612,23 @@ class DesktopController:
         self.panel.ingest_progress_bar.setValue(max(0, min(progress_percent, 100)))
         self.panel.ingest_status_value.setText(status.upper())
         self.panel.ingest_step_value.setText(current_step)
-        self.panel.ingest_counts_value.setText(
-            f"Processed: {processed_items}/{total_items} | Failed: {failed_items}"
-        )
+        # Enhanced progress display with duplicate detection info
+        if status.lower() == "completed" and processed_items == 0 and total_items > 0:
+            # Likely all files were duplicates
+            self.panel.ingest_counts_value.setText(
+                f"Analyzed: {total_items} files | New: 0 | Duplicates skipped: {total_items}"
+            )
+        elif status.lower() == "completed" and processed_items < total_items:
+            # Some files were duplicates
+            skipped = total_items - processed_items - failed_items
+            self.panel.ingest_counts_value.setText(
+                f"Processed: {processed_items}/{total_items} | Failed: {failed_items} | Skipped: {skipped}"
+            )
+        else:
+            # Normal progress display
+            self.panel.ingest_counts_value.setText(
+                f"Processed: {processed_items}/{total_items} | Failed: {failed_items}"
+            )
         self.panel.ingest_item_value.setText(f"Current: {current_filename}")
         self.panel.ingest_elapsed_value.setText(
             f"Elapsed: {self._format_elapsed(elapsed_seconds)}"
