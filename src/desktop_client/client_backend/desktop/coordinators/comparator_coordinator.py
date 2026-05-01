@@ -72,7 +72,9 @@ class ComparatorCoordinator:
         return 0
 
     def comparator_candidate_count(self) -> int:
-        return len(self._visible_imagery_layer_paths()) + self._visible_dem_layer_count()
+        return (
+            len(self._visible_imagery_layer_paths()) + self._visible_dem_layer_count()
+        )
 
     def swipe_comparator_candidate_count(self) -> int:
         return self.comparator_candidate_count()
@@ -132,9 +134,7 @@ class ComparatorCoordinator:
     def apply_comparator_selection(self, selected_paths: list[str]) -> bool:
         c = self._controller
         selected = [
-            path
-            for path in selected_paths
-            if path in c._search_result_assets_by_path
+            path for path in selected_paths if path in c._search_result_assets_by_path
         ]
         if len(selected) < 2:
             c._swipe_comparator_enabled = False
@@ -146,8 +146,12 @@ class ComparatorCoordinator:
         right_path = selected[1]
         left_asset = c._search_result_assets_by_path.get(left_path) or {}
         right_asset = c._search_result_assets_by_path.get(right_path) or {}
-        left_label = str(left_asset.get("file_name") or Path(left_path).name or "Layer A")
-        right_label = str(right_asset.get("file_name") or Path(right_path).name or "Layer B")
+        left_label = str(
+            left_asset.get("file_name") or Path(left_path).name or "Layer A"
+        )
+        right_label = str(
+            right_asset.get("file_name") or Path(right_path).name or "Layer B"
+        )
         c._run_js_call(
             "setComparatorLayers", left_path, right_path, left_label, right_label
         )
@@ -169,7 +173,9 @@ class ComparatorCoordinator:
     def _toolbar_toggle_comparator(self, enabled: bool | None = None) -> bool:
         c = self._controller
         candidate_count = self.comparator_candidate_count()
-        next_state = (not c._swipe_comparator_enabled) if enabled is None else bool(enabled)
+        next_state = (
+            (not c._swipe_comparator_enabled) if enabled is None else bool(enabled)
+        )
 
         if next_state and candidate_count < 2:
             if self._auto_enable_second_comparator_imagery_layer():

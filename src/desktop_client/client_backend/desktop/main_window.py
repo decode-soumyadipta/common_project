@@ -5,6 +5,7 @@ This module provides the main window UI components including:
 - MapOverlayControls: Controls for scene mode and polygon visibility
 - MainWindow: Primary application window with toolbar and web view
 """
+
 from __future__ import annotations
 
 import logging
@@ -12,7 +13,16 @@ from pathlib import Path
 import time
 
 from qtpy.QtCore import QSize, Qt, QUrl
-from qtpy.QtGui import QAction, QColor, QCursor, QGuiApplication, QIcon, QPainter, QPen, QPixmap
+from qtpy.QtGui import (
+    QAction,
+    QColor,
+    QCursor,
+    QGuiApplication,
+    QIcon,
+    QPainter,
+    QPen,
+    QPixmap,
+)
 from qtpy.QtWebChannel import QWebChannel
 from qtpy.QtWebEngineWidgets import QWebEngineSettings, QWebEngineView
 from qtpy.QtWidgets import (
@@ -47,14 +57,14 @@ from desktop_client.client_backend.desktop.web_page import LoggingWebEnginePage
 
 class LayerCompositorOverlay(QWidget):
     """Overlay widget for adjusting layer opacities in the compositor mode.
-    
+
     This widget displays sliders for each active layer, allowing users to
     adjust the opacity of individual layers in real-time.
     """
-    
+
     def __init__(self, parent: QWidget, controller: DesktopController):
         """Initialize the layer compositor overlay.
-        
+
         Args:
             parent: Parent widget (typically the web view).
             controller: Desktop controller instance for layer management.
@@ -92,7 +102,7 @@ class LayerCompositorOverlay(QWidget):
 
     def update_layers(self) -> None:
         """Update the overlay with current active layers and their sliders.
-        
+
         Clears existing sliders and creates new ones for all visible layers.
         Each slider controls the opacity of its corresponding layer.
         """
@@ -148,7 +158,7 @@ class LayerCompositorOverlay(QWidget):
 
     def _on_slider_changed(self, value: int, label: QLabel, path: str) -> None:
         """Handle slider value changes.
-        
+
         Args:
             value: New slider value (0-100).
             label: Label widget to update with percentage.
@@ -159,7 +169,7 @@ class LayerCompositorOverlay(QWidget):
 
     def _apply_settings(self, *args: object) -> None:
         """Apply current slider values to the layer compositor.
-        
+
         Args:
             *args: Unused arguments from signal connections.
         """
@@ -173,7 +183,7 @@ class LayerCompositorOverlay(QWidget):
 
     def apply_state(self, state_dict: dict) -> None:
         """Apply saved state to the layer compositor overlay.
-        
+
         Args:
             state_dict: Dictionary containing saved state (currently unused).
         """
@@ -182,18 +192,20 @@ class LayerCompositorOverlay(QWidget):
 
 class MapOverlayControls(QWidget):
     """Overlay widget for map display controls.
-    
+
     Provides controls for:
     - Scene mode (3D Globe vs 2D Map)
     - Search polygon visibility
     - Area of Interest (AOI) statistics display
     """
-    
+
     def __init__(self, parent: QWidget, controller: DesktopController):
         """Initialize the map overlay controls."""
         super().__init__(parent, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
         self.controller = controller
-        self._special_mode_active = False  # True when comparator or compositor is active
+        self._special_mode_active = (
+            False  # True when comparator or compositor is active
+        )
         self.setObjectName("mapOverlayControls")
         self.setStyleSheet(
             """
@@ -225,14 +237,20 @@ class MapOverlayControls(QWidget):
 
         # Basemap Visibility Toggle
         self.basemap_visibility_combo = QComboBox()
-        self.basemap_visibility_combo.addItems(["Hide Map", "Show Map"])  # Default to "Hide Map" for faster startup
-        self.basemap_visibility_combo.currentTextChanged.connect(self._on_basemap_visibility_changed)
+        self.basemap_visibility_combo.addItems(
+            ["Hide Map", "Show Map"]
+        )  # Default to "Hide Map" for faster startup
+        self.basemap_visibility_combo.currentTextChanged.connect(
+            self._on_basemap_visibility_changed
+        )
         self.layout_main.addWidget(self.basemap_visibility_combo)
 
         # Polygon Visibility (hidden by default, shown only when polygon exists)
         self.polygon_visibility_checkbox = QCheckBox("Show Search AOI Polygon")
         self.polygon_visibility_checkbox.setChecked(True)
-        self.polygon_visibility_checkbox.setVisible(False)  # Hidden until polygon exists
+        self.polygon_visibility_checkbox.setVisible(
+            False
+        )  # Hidden until polygon exists
         self.polygon_visibility_checkbox.toggled.connect(
             self._on_polygon_visibility_toggled
         )
@@ -253,7 +271,7 @@ class MapOverlayControls(QWidget):
 
     def set_special_mode(self, active: bool) -> None:
         """Call when comparator or compositor mode is activated/deactivated.
-        
+
         Hides the AOI polygon checkbox in special modes.
         """
         self._special_mode_active = bool(active)
@@ -304,7 +322,7 @@ class MapOverlayControls(QWidget):
         else:
             self.polygon_visibility_checkbox.setVisible(False)
             self.aoi_stats_label.setVisible(False)
-        
+
         self.adjustSize()
         main_win = self.window()
         if hasattr(main_win, "_position_compositor_overlay"):
@@ -313,21 +331,21 @@ class MapOverlayControls(QWidget):
 
 class MainWindow(QMainWindow):
     """Main application window for the Offline GIS Desktop.
-    
+
     Provides the primary UI including:
     - Toolbar with visualization, measurement, and navigation tools
     - Control panel for data management
     - Web view for Cesium-based 3D/2D map display
     - Status bar with coordinate and camera information
     - Overlay controls for layer management
-    
+
     Attributes:
         IMAGERY_ONLY_ACTIONS: Actions available only for imagery layers.
         DEM_ONLY_ACTIONS: Actions available only for DEM layers.
         TOGGLE_ACTIONS: Actions that can be toggled on/off.
         TOOLBAR_GROUPS: Organized groups of toolbar actions.
     """
-    
+
     IMAGERY_ONLY_ACTIONS: set[str] = set()
     DEM_ONLY_ACTIONS: set[str] = {
         "Elevation Profile",
@@ -394,7 +412,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, app_mode: DesktopAppMode = DesktopAppMode.UNIFIED):
         """Initialize the main window.
-        
+
         Args:
             app_mode: Application mode (UNIFIED, CLIENT, or SERVER).
         """
@@ -406,10 +424,13 @@ class MainWindow(QMainWindow):
         if app_mode in (DesktopAppMode.UNIFIED, DesktopAppMode.SERVER):
             try:
                 from core_shared.db.session import init_db
+
                 init_db()
                 logging.getLogger("desktop").info("Database initialized successfully")
             except Exception as exc:
-                logging.getLogger("desktop").error("Database initialization failed: %s", exc)
+                logging.getLogger("desktop").error(
+                    "Database initialization failed: %s", exc
+                )
 
         screen = QGuiApplication.primaryScreen()
         if screen is not None:
@@ -462,20 +483,22 @@ class MainWindow(QMainWindow):
         # causes stale bridge.js to be served after code updates.
         try:
             from qtpy.QtWebEngineWidgets import QWebEngineProfile
+
             profile = self.web_view.page().profile()
             profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.NoCache)
-            
+
             # Set up proper cache directory to avoid permission errors
             import tempfile
             from pathlib import Path
+
             cache_dir = Path(tempfile.gettempdir()) / "offline_gis_webengine"
             cache_dir.mkdir(parents=True, exist_ok=True)
             profile.setCachePath(str(cache_dir))
             profile.setPersistentStoragePath(str(cache_dir / "storage"))
-            
+
             # Disable problematic cache features
             profile.setHttpCacheMaximumSize(0)  # No HTTP cache
-            
+
         except Exception as e:
             # Log the error but don't fail - cache issues are not critical
             logging.getLogger("desktop").warning("WebEngine cache setup failed: %s", e)
@@ -486,6 +509,7 @@ class MainWindow(QMainWindow):
         from desktop_client.client_backend.desktop.elevation_profile_panel import (
             ElevationProfilePanel,
         )
+
         self.elevation_profile_panel = ElevationProfilePanel(self)
         self.elevation_profile_panel.hide()
         self.elevation_profile_panel.close_requested.connect(
@@ -548,7 +572,9 @@ class MainWindow(QMainWindow):
         if vp:
             vp.installEventFilter(self)
         # Wire elevation profile completion → uncheck toolbar button
-        self.controller._elevation_profile.on_complete = self._on_elevation_profile_complete
+        self.controller._elevation_profile.on_complete = (
+            self._on_elevation_profile_complete
+        )
         # Wire coordinator to use the embedded panel
         self.controller._elevation_profile.set_panel(self.elevation_profile_panel)
         # Wire fill volume job completion → uncheck toolbar button
@@ -634,14 +660,22 @@ class MainWindow(QMainWindow):
         logger = logging.getLogger("desktop.cesium_assets")
         is_windows = platform.system().lower() == "windows"
         # OSM basemap tiles are in desktop_assets/web_assets/basemap/
-        desktop_assets_web = web_assets_dir.parent.parent / "desktop_assets" / "web_assets"
+        desktop_assets_web = (
+            web_assets_dir.parent.parent / "desktop_assets" / "web_assets"
+        )
         # Cesium files are in desktop/web_assets/cesium/ (if they exist)
         desktop_web_assets = web_assets_dir.parent.parent / "desktop" / "web_assets"
 
-        def _link_dir(name: str, required_file: str | None = None, source_override: Path | None = None) -> None:
+        def _link_dir(
+            name: str,
+            required_file: str | None = None,
+            source_override: Path | None = None,
+        ) -> None:
             link_path = web_assets_dir / name
             # Use source_override if provided, otherwise use desktop_web_assets
-            canonical = source_override if source_override else (desktop_web_assets / name)
+            canonical = (
+                source_override if source_override else (desktop_web_assets / name)
+            )
 
             if not canonical.exists():
                 logger.warning(
@@ -699,7 +733,7 @@ class MainWindow(QMainWindow):
 
     def _set_visualization_tools_visible(self, visible: bool) -> None:
         """Show or hide visualization tools in the toolbar.
-        
+
         Args:
             visible: True to show tools, False to hide.
         """
@@ -712,7 +746,7 @@ class MainWindow(QMainWindow):
 
     def _set_measurement_tools_visible(self, visible: bool) -> None:
         """Show or hide measurement tools in the toolbar.
-        
+
         Args:
             visible: True to show tools, False to hide.
         """
@@ -723,7 +757,7 @@ class MainWindow(QMainWindow):
 
     def _on_toolbar_action_triggered(self, action_label: str, checked: bool) -> None:
         """Handle toolbar action triggers.
-        
+
         Args:
             action_label: Label of the triggered action.
             checked: Checked state for toggle actions.
@@ -854,7 +888,7 @@ class MainWindow(QMainWindow):
 
     def showEvent(self, event: object) -> None:
         """Handle window show event.
-        
+
         Args:
             event: Show event object.
         """
@@ -867,7 +901,7 @@ class MainWindow(QMainWindow):
 
     def moveEvent(self, event: object) -> None:
         """Handle window move event.
-        
+
         Args:
             event: Move event object.
         """
@@ -876,7 +910,7 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event: object) -> None:
         """Handle window resize event.
-        
+
         Args:
             event: Resize event object.
         """
@@ -1083,6 +1117,7 @@ class MainWindow(QMainWindow):
     def _show_export_dropdown(self) -> None:
         """Show export options dropdown under the Export toolbar button."""
         from qtpy.QtWidgets import QMenu
+
         action = self.toolbar_actions.get("Export")
         anchor = self.main_toolbar.widgetForAction(action) if action else None
 
@@ -1114,7 +1149,11 @@ class MainWindow(QMainWindow):
             IconRegistry.get("export_geotiff", size=16), "Export as GeoTIFF"
         )
 
-        pos = anchor.mapToGlobal(anchor.rect().bottomLeft()) if anchor else self.cursor().pos()
+        pos = (
+            anchor.mapToGlobal(anchor.rect().bottomLeft())
+            if anchor
+            else self.cursor().pos()
+        )
         chosen = menu.exec(pos)
 
         if chosen == gpkg_act:
@@ -1126,7 +1165,7 @@ class MainWindow(QMainWindow):
 
     def set_toolbar_layer_context(self, context: str) -> None:
         """Set the current layer context for toolbar action filtering.
-        
+
         Args:
             context: Layer context ("none", "imagery", "dem", or "mixed").
         """
@@ -1172,10 +1211,7 @@ class MainWindow(QMainWindow):
 
             action.setVisible(True)
 
-            if (
-                group == "measurement"
-                and self._toolbar_layer_context == "none"
-            ):
+            if group == "measurement" and self._toolbar_layer_context == "none":
                 action.setEnabled(False)
                 if action.isCheckable():
                     action.setChecked(False)
@@ -1234,8 +1270,9 @@ class MainWindow(QMainWindow):
     def _build_crosshair_cursor(self) -> QCursor:
         """Build a precise black crosshair QCursor using QPainter."""
         from qtpy.QtGui import QPen
-        size = 20          # smaller = more precise feel
-        hot = size // 2    # hotspot at centre
+
+        size = 20  # smaller = more precise feel
+        hot = size // 2  # hotspot at centre
         px = QPixmap(size, size)
         px.fill(QColor(0, 0, 0, 0))  # transparent background
 
@@ -1251,18 +1288,18 @@ class MainWindow(QMainWindow):
         gap = radius + 1
         arm = 5
         p.drawLine(hot, hot - gap - arm, hot, hot - gap)
-        p.drawLine(hot, hot + gap,       hot, hot + gap + arm)
+        p.drawLine(hot, hot + gap, hot, hot + gap + arm)
         p.drawLine(hot - gap - arm, hot, hot - gap, hot)
-        p.drawLine(hot + gap,       hot, hot + gap + arm, hot)
+        p.drawLine(hot + gap, hot, hot + gap + arm, hot)
 
         # Black foreground on top
         black_pen = QPen(QColor(0, 0, 0, 255), 1.2)
         p.setPen(black_pen)
         p.drawEllipse(hot - radius, hot - radius, radius * 2, radius * 2)
         p.drawLine(hot, hot - gap - arm, hot, hot - gap)
-        p.drawLine(hot, hot + gap,       hot, hot + gap + arm)
+        p.drawLine(hot, hot + gap, hot, hot + gap + arm)
         p.drawLine(hot - gap - arm, hot, hot - gap, hot)
-        p.drawLine(hot + gap,       hot, hot + gap + arm, hot)
+        p.drawLine(hot + gap, hot, hot + gap + arm, hot)
 
         p.end()
         return QCursor(px, hot, hot)
@@ -1270,6 +1307,7 @@ class MainWindow(QMainWindow):
     def _on_measure_cursor_changed(self, enabled: bool) -> None:
         """Set or restore the crosshair cursor on the map web view only."""
         from qtpy.QtWidgets import QApplication
+
         self._measure_cursor_active = bool(enabled)
         # Always clear any application-level override so toolbar/panel stay normal
         while QApplication.overrideCursor():
@@ -1298,6 +1336,7 @@ class MainWindow(QMainWindow):
     def eventFilter(self, obj: object, event: object) -> bool:
         """Re-apply crosshair when mouse enters or moves over the web view."""
         from qtpy.QtCore import QEvent
+
         if self._measure_cursor_active and not getattr(self, "_applying_cursor", False):
             if hasattr(event, "type"):
                 et = event.type()
@@ -1309,11 +1348,11 @@ class MainWindow(QMainWindow):
 
     def _toolbar_icon(self, tool_name: str, fallback: QStyle.StandardPixmap) -> QIcon:
         """Get icon for toolbar action.
-        
+
         Args:
             tool_name: Name of the tool.
             fallback: Fallback standard pixmap if custom icon not found.
-            
+
         Returns:
             QIcon for the toolbar action.
         """
@@ -1334,7 +1373,7 @@ class MainWindow(QMainWindow):
         QCheckBox,
     ]:
         """Create and configure the main toolbar.
-        
+
         Returns:
             Tuple containing:
                 - QToolBar: The main toolbar widget
@@ -1469,10 +1508,10 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _window_title_for_mode(app_mode: DesktopAppMode) -> str:
         """Get window title based on application mode.
-        
+
         Args:
             app_mode: Application mode.
-            
+
         Returns:
             Window title string.
         """

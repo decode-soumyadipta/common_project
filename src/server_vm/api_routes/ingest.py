@@ -9,10 +9,16 @@ from sqlalchemy.orm import Session
 from core_shared.ingestion.services.ingest_queue_service import ingest_queue_service
 from core_shared.ingestion.services.ingest_service import register_raster
 from core_shared.ingestion.services.metadata_extractor import MetadataExtractorError
-from server_vm.server_backend.schemas import IngestJobResponse, IngestQueueRequest, RegisterRasterRequest
+from server_vm.server_backend.schemas import (
+    IngestJobResponse,
+    IngestQueueRequest,
+    RegisterRasterRequest,
+)
 
 
-def register_raster_from_request(request: RegisterRasterRequest, session: Session) -> dict:
+def register_raster_from_request(
+    request: RegisterRasterRequest, session: Session
+) -> dict:
     """Register a raster and map service-layer failures into API-safe exceptions."""
     path = Path(request.path)
     try:

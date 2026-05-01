@@ -37,7 +37,7 @@ from pyproj import Transformer
 
 def _make_separator() -> QFrame:
     """Create a vertical separator line for the status bar.
-    
+
     Returns:
         QFrame configured as a vertical line separator.
     """
@@ -51,12 +51,12 @@ def _make_separator() -> QFrame:
 
 def _coord_box(text: str = "—", tooltip: str = "", min_width: int = 120) -> QFrame:
     """Create a styled coordinate display box.
-    
+
     Args:
         text: Initial text content.
         tooltip: Tooltip text.
         min_width: Minimum width in pixels.
-        
+
     Returns:
         QFrame containing a label with the coordinate value.
     """
@@ -80,30 +80,30 @@ def _coord_box(text: str = "—", tooltip: str = "", min_width: int = 120) -> QF
         }
     """)
     box.setMinimumWidth(min_width)
-    
+
     layout = QHBoxLayout(box)
     layout.setContentsMargins(4, 2, 4, 2)
     layout.setSpacing(0)
-    
+
     label = QLabel(text)
     label.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
     label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
     if tooltip:
         label.setToolTip(tooltip)
-    
+
     layout.addWidget(label)
     box.label = label  # Store reference for easy access
-    
+
     return box
 
 
 def _utm_epsg_for_lon_lat(lon: float, lat: float) -> int:
     """Calculate the UTM EPSG code for given coordinates.
-    
+
     Args:
         lon: Longitude in degrees.
         lat: Latitude in degrees.
-        
+
     Returns:
         EPSG code for the appropriate UTM zone.
     """
@@ -152,7 +152,7 @@ class GISStatusBar(QStatusBar):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         """Initialize the GIS status bar.
-        
+
         Args:
             parent: Parent widget (typically the main window).
         """
@@ -171,14 +171,16 @@ class GISStatusBar(QStatusBar):
         # ── Progress label (2-3 word status beside the bar) ───────────────
         self._progress_label = QLabel("", self)
         self._progress_label.setFixedWidth(110)
-        self._progress_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self._progress_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
         self._progress_label.setStyleSheet(
             "QLabel { color: #90caf9; font-size: 11px; font-family: 'Menlo','Consolas','Monaco',monospace; }"
         )
 
         # ── Coordinate boxes ──────────────────────────────────────────────
         self._utm_transformers: dict[int, Transformer] = {}
-        
+
         self._lon_box = _coord_box("Lon: —", "Longitude (WGS-84)", 140)
         self._lat_box = _coord_box("Lat: —", "Latitude (WGS-84)", 140)
         self._utm_box = _coord_box("UTM: —", "UTM coordinates (meters)", 180)
@@ -238,7 +240,7 @@ class GISStatusBar(QStatusBar):
     @Slot(float, float, float)
     def on_mouse_coordinates(self, lon: float, lat: float, elevation_m: float) -> None:
         """Receive live mouse coordinates from the CesiumJS bridge.
-        
+
         Args:
             lon: Longitude in degrees.
             lat: Latitude in degrees.
@@ -252,12 +254,12 @@ class GISStatusBar(QStatusBar):
         # Enhanced coordinate display with higher precision for professional use
         # Use 8 decimal places for sub-meter accuracy
         precision = min(self._coord_decimal_places, 8)
-        
+
         # Longitude with enhanced formatting
         lon_str = f"{lon:.{precision}f}°"
         self._lon_box.label.setText(f"Lon: {lon_str}")
 
-        # Latitude with enhanced formatting  
+        # Latitude with enhanced formatting
         lat_str = f"{lat:.{precision}f}°"
         self._lat_box.label.setText(f"Lat: {lat_str}")
 
@@ -275,7 +277,7 @@ class GISStatusBar(QStatusBar):
     @Slot(float, float)
     def on_camera_changed(self, scale_denominator: float, heading_deg: float) -> None:
         """Receive camera scale and heading from the CesiumJS bridge.
-        
+
         Args:
             scale_denominator: Map scale denominator (e.g., 25000 for 1:25000).
             heading_deg: Camera heading in degrees (0° = North).
@@ -286,7 +288,7 @@ class GISStatusBar(QStatusBar):
     @Slot(int, str)
     def on_loading_progress(self, percent: int, message: str) -> None:
         """Update the progress bar with loading status.
-        
+
         Args:
             percent: Progress percentage (0-100), or -1 for indeterminate spinner.
             message: Status message describing what's loading.
@@ -335,14 +337,14 @@ class GISStatusBar(QStatusBar):
     def _short_label(message: str) -> str:
         """Return a crisp 2-3 word label from a longer message string."""
         _MAP = {
-            "fill volume":   "Fill Volume…",
-            "analysing":     "Analysing…",
-            "computing":     "Computing…",
-            "loading":       "Loading…",
-            "rendering":     "Rendering…",
-            "searching":     "Searching…",
-            "done":          "",
-            "complete":      "",
+            "fill volume": "Fill Volume…",
+            "analysing": "Analysing…",
+            "computing": "Computing…",
+            "loading": "Loading…",
+            "rendering": "Rendering…",
+            "searching": "Searching…",
+            "done": "",
+            "complete": "",
         }
         lower = (message or "").lower()
         for key, label in _MAP.items():
@@ -356,7 +358,7 @@ class GISStatusBar(QStatusBar):
     @Slot(bool)
     def on_render_busy(self, busy: bool) -> None:
         """Show indeterminate progress while the renderer is active.
-        
+
         Args:
             busy: True when the renderer is processing frames.
         """
@@ -375,7 +377,7 @@ class GISStatusBar(QStatusBar):
 
     def set_crs(self, auth_id: str) -> None:
         """Set the CRS badge text.
-        
+
         Args:
             auth_id: CRS authority identifier (e.g., 'EPSG:4326').
         """
@@ -383,7 +385,7 @@ class GISStatusBar(QStatusBar):
 
     def set_coordinate_precision(self, decimal_places: int) -> None:
         """Set the number of decimal places for coordinate display.
-        
+
         Args:
             decimal_places: Number of decimal places (1-10).
         """
@@ -391,7 +393,7 @@ class GISStatusBar(QStatusBar):
 
     def set_elevation_precision(self, decimal_places: int) -> None:
         """Set the number of decimal places for elevation display.
-        
+
         Args:
             decimal_places: Number of decimal places (0-4).
         """
@@ -409,18 +411,20 @@ class GISStatusBar(QStatusBar):
 
     def _format_utm_coordinates(self, lon: float, lat: float) -> str:
         """Format coordinates as UTM string with meters.
-        
+
         Args:
             lon: Longitude in degrees.
             lat: Latitude in degrees.
-            
+
         Returns:
             Formatted UTM coordinate string with meters (e.g., "32N 500000 mE 4500000 mN").
         """
         epsg = _utm_epsg_for_lon_lat(lon, lat)
         transformer = self._utm_transformers.get(epsg)
         if transformer is None:
-            transformer = Transformer.from_crs("EPSG:4326", f"EPSG:{epsg}", always_xy=True)
+            transformer = Transformer.from_crs(
+                "EPSG:4326", f"EPSG:{epsg}", always_xy=True
+            )
             self._utm_transformers[epsg] = transformer
 
         easting, northing = transformer.transform(lon, lat)

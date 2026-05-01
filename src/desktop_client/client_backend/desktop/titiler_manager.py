@@ -33,7 +33,7 @@ class TiTilerManager:
         if self.is_ready():
             return True
         self._start_process()
-        for _ in range(40):          # up to 10 s — Windows process startup is slower
+        for _ in range(40):  # up to 10 s — Windows process startup is slower
             if self.is_ready():
                 self._logger.info("TiTiler is ready")
                 return True
@@ -42,9 +42,12 @@ class TiTilerManager:
         if self._process is not None and self._process.stderr is not None:
             try:
                 import select as _select
+
                 # Non-blocking read on Windows via os.read with a short timeout
                 import threading
+
                 _lines: list[str] = []
+
                 def _drain():
                     try:
                         for line in self._process.stderr:
@@ -53,6 +56,7 @@ class TiTilerManager:
                                 break
                     except Exception:
                         pass
+
                 t = threading.Thread(target=_drain, daemon=True)
                 t.start()
                 t.join(timeout=0.5)
@@ -100,14 +104,14 @@ class TiTilerManager:
 
         # ── GDAL/PROJ data paths ──────────────────────────────────────────────
         _python_exe = Path(sys.executable).resolve()
-        _env_root = _python_exe.parent          # conda env root on Windows (bin folder)
-        
+        _env_root = _python_exe.parent  # conda env root on Windows (bin folder)
+
         # On Windows/Conda, the DLLs (GEOS for shapely, GDAL for rasterio) are in Library/bin.
         # We must ensure this is in the PATH of the subprocess.
         _env_lib_bin = _env_root / "Library" / "bin"
         _env_scripts = _env_root / "Scripts"
         _new_paths = [str(_env_root), str(_env_scripts), str(_env_lib_bin)]
-        
+
         existing_path = env.get("PATH", "")
         if existing_path:
             env["PATH"] = os.pathsep.join(_new_paths + [existing_path])
@@ -121,12 +125,14 @@ class TiTilerManager:
         if not _proj_data_candidate.exists():
             try:
                 import pyproj
+
                 _proj_data_candidate = Path(pyproj.datadir.get_data_dir())
             except Exception:
                 pass
         if not _gdal_data_candidate.exists():
             try:
                 import rasterio
+
                 _gdal_data_candidate = Path(rasterio.__file__).parent / "gdal_data"
             except Exception:
                 pass
@@ -135,7 +141,7 @@ class TiTilerManager:
             env.setdefault("GDAL_DATA", str(_gdal_data_candidate))
         if Path(str(_proj_data_candidate)).exists():
             env.setdefault("PROJ_DATA", str(_proj_data_candidate))
-            env.setdefault("PROJ_LIB",  str(_proj_data_candidate))
+            env.setdefault("PROJ_LIB", str(_proj_data_candidate))
 
         env["GDAL_DISABLE_READDIR_ON_OPEN"] = "EMPTY_DIR"
         env["GDAL_HTTP_MERGE_CONSECUTIVE_RANGES"] = "YES"
@@ -152,7 +158,9 @@ class TiTilerManager:
         warning_filter = "ignore:invalid value encountered in cast:RuntimeWarning"
         existing_filters = env.get("PYTHONWARNINGS", "").strip()
         env["PYTHONWARNINGS"] = (
-            f"{existing_filters},{warning_filter}" if existing_filters else warning_filter
+            f"{existing_filters},{warning_filter}"
+            if existing_filters
+            else warning_filter
         )
 
         command: Sequence[str] = (sys.executable, "-c", bootstrap_code)
@@ -176,7 +184,11 @@ class TiTilerManager:
         time.sleep(0.5)
         if self._process.poll() is not None:
             try:
-                stderr_out = self._process.stderr.read().decode("utf-8", errors="replace") if self._process.stderr else ""
+                stderr_out = (
+                    self._process.stderr.read().decode("utf-8", errors="replace")
+                    if self._process.stderr
+                    else ""
+                )
             except Exception:
                 stderr_out = ""
             if stderr_out:

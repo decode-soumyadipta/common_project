@@ -35,12 +35,16 @@ class _WindowsEncodedPathFixMiddleware(BaseHTTPMiddleware):
 
 def create_titiler_app():
     """Create a TiTiler app with offline desktop compatibility middleware."""
-    if _WindowsEncodedPathFixMiddleware not in [m.cls for m in titiler_app.user_middleware]:
+    if _WindowsEncodedPathFixMiddleware not in [
+        m.cls for m in titiler_app.user_middleware
+    ]:
         titiler_app.add_middleware(_WindowsEncodedPathFixMiddleware)
     return titiler_app
 
 
-def run_titiler(host: str = "127.0.0.1", port: int = 8081, log_level: str = "warning") -> None:
+def run_titiler(
+    host: str = "127.0.0.1", port: int = 8081, log_level: str = "warning"
+) -> None:
     """Run the TiTiler ASGI app using uvicorn."""
     uvicorn.run(create_titiler_app(), host=host, port=port, log_level=log_level)
 

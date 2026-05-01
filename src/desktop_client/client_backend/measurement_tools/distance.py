@@ -4,6 +4,7 @@ This module provides accurate distance measurements using GeographicLib,
 matching QGIS QgsDistanceArea implementation. Optionally computes 3D distance
 when a DEM is provided.
 """
+
 from __future__ import annotations
 
 import math
@@ -19,7 +20,7 @@ def vincenty_distance(
     lon1: float, lat1: float, lon2: float, lat2: float
 ) -> tuple[float, float, float]:
     """Compute exact ellipsoidal distance and azimuths between two points.
-    
+
     Uses GeographicLib / PROJ underneath, identical to QGIS QgsDistanceArea::measureLine.
 
     Args:
@@ -45,14 +46,14 @@ def measure_distance(
     dem_path: Optional[str] = None,
 ) -> DistanceMeasurement:
     """Measure the 2D ellipsoidal distance and optionally the 3D distance.
-    
+
     Args:
         lon1: Longitude of first point in degrees.
         lat1: Latitude of first point in degrees.
         lon2: Longitude of second point in degrees.
         lat2: Latitude of second point in degrees.
         dem_path: Optional path to DEM file for 3D distance calculation.
-        
+
     Returns:
         DistanceMeasurement containing 2D distance, azimuths, and optionally
         elevation difference and 3D distance.

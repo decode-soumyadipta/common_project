@@ -427,10 +427,7 @@
     _tileLoadingActive = true;
   }
   
-  function stopTileLoadingMonitor() {
-    _tileLoadingActive = false;
-    _tileQueuePeak = 0;
-  }
+  // stopTileLoadingMonitor removed — monitor resets via tileLoadProgressEvent directly
 
   function setSearchBusy(active, message) {
     const overlay = document.getElementById("searchBusyOverlay");
@@ -624,15 +621,7 @@
     }
   }
 
-  function getComparatorLayerTypeForViewer(targetViewer) {
-    if (targetViewer === comparatorLeftViewer) {
-      return comparatorLeftLayerType;
-    }
-    if (targetViewer === comparatorRightViewer) {
-      return comparatorRightLayerType;
-    }
-    return null;
-  }
+  // getComparatorLayerTypeForViewer removed — callers use comparatorLeftLayerType/comparatorRightLayerType directly
 
   function getComparatorPaneKeyForViewer(targetViewer) {
     if (targetViewer === comparatorLeftViewer) {
@@ -723,35 +712,10 @@
     }
   }
 
-  function markComparatorInputViewer(sourceViewer) {
-    if (!sourceViewer) {
-      return;
-    }
-    comparatorActiveInputViewer = sourceViewer;
-    if (comparatorActiveInputReleaseTimer !== null) {
-      window.clearTimeout(comparatorActiveInputReleaseTimer);
-      comparatorActiveInputReleaseTimer = null;
-    }
-    comparatorActiveInputReleaseTimer = window.setTimeout(function () {
-      comparatorActiveInputReleaseTimer = null;
-      comparatorActiveInputViewer = null;
-      log("debug", "Comparator activeInputViewer released after inactivity window");
-    }, 650);
-  }
+  // markComparatorInputViewer removed — comparatorActiveInputViewer is unused in active code
 
-  function scheduleComparatorCameraSync(sourceViewer) {
-    if (comparatorModeEnabled && sourceViewer) {
-      updateComparatorCenterReadout(sourceViewer);
-    }
-  }
-
-  function lockComparatorFocusToCurrentView() {
-    if (!comparatorModeEnabled || !comparatorLeftViewer || !comparatorRightViewer) {
-      return;
-    }
-    updateComparatorCenterReadout(getComparatorDemViewer() || comparatorLeftViewer);
-    requestSceneRender();
-  }
+  // scheduleComparatorCameraSync removed — updateComparatorCenterReadout called directly
+  // lockComparatorFocusToCurrentView removed — no callers
 
   function setComparatorViewerModeByType(targetViewer, layerType) {
     if (!targetViewer || !targetViewer.scene) {
@@ -2072,9 +2036,7 @@
     log("debug", "Layer stack: " + viewer.imageryLayers.length + " layers");
   }
 
-  function requestLayerStackDump() {
-    logLayerStack();
-  }
+  // requestLayerStackDump removed — call logLayerStack() directly when needed
 
   // ═══════════════════════════════════════════════════════════════════════════
   // SECTION: Imagery Layer Management  →  future: modules/imagery.js
@@ -4403,68 +4365,7 @@
 
 
 
-  function clearPolarCapLayers() {
-    if (!viewer) return;
-    if (northPolarCapLayer) {
-      viewer.imageryLayers.remove(northPolarCapLayer, false);
-      northPolarCapLayer = null;
-    }
-    if (southPolarCapLayer) {
-      viewer.imageryLayers.remove(southPolarCapLayer, false);
-      southPolarCapLayer = null;
-    }
-  }
-
-  function ensurePolarCapLayers() {
-    if (!viewer) return;
-    const url = Cesium.buildModuleUrl("Assets/Textures/NaturalEarthII/{z}/{x}/{reverseY}.jpg");
-    const tilingScheme = new Cesium.GeographicTilingScheme();
-    const fallbackDataUrl = createSolidPolarCapDataUrl();
-    if (!northPolarCapLayer) {
-      let northProvider;
-      try {
-        northProvider = new Cesium.UrlTemplateImageryProvider({
-          url: url,
-          tilingScheme: tilingScheme,
-          maximumLevel: 2,
-          enablePickFeatures: false,
-          rectangle: Cesium.Rectangle.fromDegrees(-180.0, WEB_MERCATOR_SAFE_EDGE_LAT_DEGREES, 180.0, 90.0),
-          credit: "NaturalEarthII (polar fallback)",
-        });
-      } catch (_error) {
-        northProvider = new Cesium.SingleTileImageryProvider({
-          url: fallbackDataUrl,
-          rectangle: Cesium.Rectangle.fromDegrees(-180.0, WEB_MERCATOR_SAFE_EDGE_LAT_DEGREES, 180.0, 90.0),
-          credit: "Polar cap fallback",
-        });
-      }
-      northPolarCapLayer = viewer.imageryLayers.addImageryProvider(northProvider, 2);
-      northPolarCapLayer.alpha = 1.0;
-    }
-    if (!southPolarCapLayer) {
-      let southProvider;
-      try {
-        southProvider = new Cesium.UrlTemplateImageryProvider({
-          url: url,
-          tilingScheme: tilingScheme,
-          maximumLevel: 2,
-          enablePickFeatures: false,
-          rectangle: Cesium.Rectangle.fromDegrees(-180.0, -90.0, 180.0, -WEB_MERCATOR_SAFE_EDGE_LAT_DEGREES),
-          credit: "NaturalEarthII (polar fallback)",
-        });
-      } catch (_error) {
-        southProvider = new Cesium.SingleTileImageryProvider({
-          url: fallbackDataUrl,
-          rectangle: Cesium.Rectangle.fromDegrees(-180.0, -90.0, 180.0, -WEB_MERCATOR_SAFE_EDGE_LAT_DEGREES),
-          credit: "Polar cap fallback",
-        });
-      }
-      southPolarCapLayer = viewer.imageryLayers.addImageryProvider(southProvider, 2);
-      southPolarCapLayer.alpha = 1.0;
-    }
-    viewer.imageryLayers.raiseToTop(northPolarCapLayer);
-    viewer.imageryLayers.raiseToTop(southPolarCapLayer);
-  }
+  // clearPolarCapLayers + ensurePolarCapLayers removed — polar cap rendering not used in current pipeline
 
 
 

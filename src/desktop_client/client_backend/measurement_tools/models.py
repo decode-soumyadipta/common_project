@@ -8,6 +8,7 @@ This module defines dataclasses for various measurement types including:
 - Viewshed analysis
 - Shadow height estimation
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -17,7 +18,7 @@ from typing import Optional
 @dataclass
 class DistanceMeasurement:
     """Result of a distance measurement between two points.
-    
+
     Attributes:
         distance_m: 2D ellipsoidal distance in meters.
         azimuth_fwd_deg: Forward azimuth in degrees (0° = North).
@@ -37,7 +38,7 @@ class DistanceMeasurement:
 @dataclass
 class PolygonAreaMeasurement:
     """Result of a polygon area measurement.
-    
+
     Attributes:
         planimetric_area_m2: 2D ellipsoidal area in square meters.
         perimeter_m: Perimeter length in meters.
@@ -57,7 +58,7 @@ class PolygonAreaMeasurement:
 @dataclass
 class SlopeAspectMeasurement:
     """Result of slope and aspect analysis.
-    
+
     Attributes:
         mean_slope_deg: Mean slope in degrees.
         std_slope_deg: Standard deviation of slope in degrees.
@@ -75,7 +76,7 @@ class SlopeAspectMeasurement:
 @dataclass
 class VolumeMeasurement:
     """Result of volume cut/fill calculation.
-    
+
     Attributes:
         cut_volume_m3: Volume of material to cut in cubic meters.
         fill_volume_m3: Volume of material to fill in cubic meters.
@@ -139,7 +140,7 @@ class FillVolumeResult:
 @dataclass
 class ViewshedMeasurement:
     """Result of viewshed analysis.
-    
+
     Attributes:
         visible_area_m2: Area visible from observer point in square meters.
         total_area_m2: Total analysis area in square meters.
@@ -157,7 +158,7 @@ class ViewshedMeasurement:
 @dataclass
 class ShadowHeightMeasurement:
     """Result of shadow-based height estimation.
-    
+
     Attributes:
         estimated_height_m: Estimated object height in meters.
         corrected_height_m: Height corrected for terrain slope (None if unavailable).

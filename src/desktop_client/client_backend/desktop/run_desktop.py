@@ -65,7 +65,7 @@ def run(
     cache_dir = Path(tempfile.gettempdir()) / "offline_gis_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
     os.environ["QTWEBENGINE_CACHE_DIR"] = str(cache_dir)
-    
+
     # Suppress QtWebEngine error messages
     os.environ["QT_LOGGING_RULES"] = "qt.webenginecontext.debug=false"
     os.environ["QTWEBENGINE_DISABLE_SANDBOX"] = "1"
@@ -94,34 +94,40 @@ def run(
     if system == "Windows":
         # Windows: force NVIDIA discrete GPU via Optimus override.
         # Use ANGLE D3D11 backend — best GPU path for Qt5 WebEngine on Windows.
-        required_flags.extend([
-            "--use-gl=angle",
-            "--use-angle=d3d11",
-            "--disable-gpu-vsync",
-            "--enable-zero-copy",
-            "--disable-features=RendererCodeIntegrity",
-            "--enable-features=VaapiVideoDecoder",
-        ])
+        required_flags.extend(
+            [
+                "--use-gl=angle",
+                "--use-angle=d3d11",
+                "--disable-gpu-vsync",
+                "--enable-zero-copy",
+                "--disable-features=RendererCodeIntegrity",
+                "--enable-features=VaapiVideoDecoder",
+            ]
+        )
         os.environ.setdefault("SHIM_MCCOMPAT", "0x800000001")
         os.environ.setdefault("NvOptimusEnablement", "0x00000001")
         os.environ.setdefault("AmdPowerXpressRequestHighPerformance", "1")
 
     elif system == "Linux":
         # Linux: NVIDIA PRIME offload for discrete GPU
-        required_flags.extend([
-            "--use-gl=desktop",
-            "--disable-gpu-vsync",
-        ])
+        required_flags.extend(
+            [
+                "--use-gl=desktop",
+                "--disable-gpu-vsync",
+            ]
+        )
         os.environ.setdefault("__NV_PRIME_RENDER_OFFLOAD", "1")
         os.environ.setdefault("__GLX_VENDOR_LIBRARY_NAME", "nvidia")
         os.environ.setdefault("__VK_LAYER_NV_optimus", "NVIDIA_only")
 
     elif system == "Darwin":
         # macOS: use Metal-backed GL for best performance on Apple Silicon / AMD / NVIDIA eGPU
-        required_flags.extend([
-            "--use-gl=angle",
-            "--use-angle=metal",
-        ])
+        required_flags.extend(
+            [
+                "--use-gl=angle",
+                "--use-angle=metal",
+            ]
+        )
 
     for flag in required_flags:
         if flag not in existing_flags:

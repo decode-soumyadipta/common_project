@@ -6,6 +6,7 @@ Single responsibility: manage the two-click elevation profile workflow.
 - Calls the API to extract the profile
 - Displays results in the ElevationProfilePanel Qt widget
 """
+
 from __future__ import annotations
 
 import logging
@@ -24,8 +25,10 @@ class ElevationProfileCoordinator:
         self._logger = logging.getLogger("desktop.elevation_profile")
         self._active = False
         self._clicks: list[list[float]] = []
-        self._panel = None   # set externally via set_panel()
-        self.on_complete = None  # optional callback: called when profile finishes or is cancelled
+        self._panel = None  # set externally via set_panel()
+        self.on_complete = (
+            None  # optional callback: called when profile finishes or is cancelled
+        )
 
     def set_panel(self, panel) -> None:
         """Inject the embedded ElevationProfilePanel from the main window."""
@@ -39,7 +42,9 @@ class ElevationProfileCoordinator:
         """Start elevation profile mode. Returns True if activated."""
         dem_path = self._c._selected_dem_path()
         if not dem_path:
-            self._c.panel.log("Select or show a DEM layer first, then click Elevation Profile.")
+            self._c.panel.log(
+                "Select or show a DEM layer first, then click Elevation Profile."
+            )
             return False
 
         self._active = True
@@ -83,9 +88,7 @@ class ElevationProfileCoordinator:
         n = len(self._clicks)
 
         if n == 1:
-            self._c.panel.log(
-                f"Start point: ({lon:.6f}, {lat:.6f}) — click END point."
-            )
+            self._c.panel.log(f"Start point: ({lon:.6f}, {lat:.6f}) — click END point.")
             # Draw a preview marker on the globe for the start point
             self._c._run_js_call("drawProfileStartMarker", lon, lat)
             return True
@@ -117,6 +120,7 @@ class ElevationProfileCoordinator:
         """Compute geodesic distance in metres between two WGS-84 points."""
         try:
             from pyproj import Geod
+
             geod = Geod(ellps="WGS84")
             _, _, dist = geod.inv(lon1, lat1, lon2, lat2)
             return float(dist)
@@ -126,7 +130,10 @@ class ElevationProfileCoordinator:
             phi1, phi2 = math.radians(lat1), math.radians(lat2)
             dphi = math.radians(lat2 - lat1)
             dlam = math.radians(lon2 - lon1)
-            a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
+            a = (
+                math.sin(dphi / 2) ** 2
+                + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
+            )
             return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
     def _run_profile(self) -> None:
@@ -143,9 +150,7 @@ class ElevationProfileCoordinator:
         (lon1, lat1), (lon2, lat2) = points[0], points[1]
 
         try:
-            result = self._c.api.extract_profile(
-                dem_path, points, samples=samples
-            )
+            result = self._c.api.extract_profile(dem_path, points, samples=samples)
         except httpx.HTTPError as exc:
             self._c.panel.log(f"Profile extraction failed: {exc}")
             self._logger.exception("Profile extraction failed path=%s", dem_path)
@@ -164,14 +169,14 @@ class ElevationProfileCoordinator:
                 len(self._c._last_profile_values),
             )
         if not self._c._last_profile_values:
-            self._c.panel.log("Profile extraction returned only null values — check DEM nodata settings.")
+            self._c.panel.log(
+                "Profile extraction returned only null values — check DEM nodata settings."
+            )
             return
         distance_m = self._geodesic_distance_m(lon1, lat1, lon2, lat2)
 
         # Draw the profile line on the Cesium globe (clears any previous line)
-        self._c._run_js_call(
-            "drawProfileLine", lon1, lat1, lon2, lat2
-        )
+        self._c._run_js_call("drawProfileLine", lon1, lat1, lon2, lat2)
 
         # Show/update the Qt profile panel
         self._show_panel(values, distance_m, lon1, lat1, lon2, lat2)
@@ -181,19 +186,23 @@ class ElevationProfileCoordinator:
         self._c.panel.log(
             f"Elevation Profile: {len(values)} samples  "
             f"Min: {vmin:.1f} m  Max: {vmax:.1f} m  "
-            f"Length: {distance_m/1000:.2f} km"
+            f"Length: {distance_m / 1000:.2f} km"
         )
         self._logger.info(
             "Profile extracted samples=%s path=%s dist_m=%.1f",
-            len(values), dem_path, distance_m,
+            len(values),
+            dem_path,
+            distance_m,
         )
 
     def _show_panel(
         self,
         values: list,
         distance_m: float,
-        lon1: float, lat1: float,
-        lon2: float, lat2: float,
+        lon1: float,
+        lat1: float,
+        lon2: float,
+        lat2: float,
     ) -> None:
         """Populate the embedded panel and expand the splitter to show it."""
         if self._panel is None:

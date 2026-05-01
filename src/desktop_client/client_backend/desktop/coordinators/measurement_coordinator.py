@@ -43,11 +43,11 @@ class MeasurementCoordinator:
 
     def submit_measurement_job(self, name: str, task, formatter) -> None:
         c = self._controller
-        
+
         # Emit progress start via signal (not @Slot method directly)
-        if hasattr(c, 'bridge') and hasattr(c.bridge, 'loadingProgress'):
+        if hasattr(c, "bridge") and hasattr(c.bridge, "loadingProgress"):
             c.bridge.loadingProgress.emit(0, f"Computing {name}")
-        
+
         worker = MeasurementWorker(name=name, task=task)
         # Keep a strong Python reference so the worker and its signals QObject
         # stay alive until on_measurement_job_finished clears it.
@@ -68,11 +68,11 @@ class MeasurementCoordinator:
     ) -> None:
         c = self._controller
         self._active_worker = None  # release worker reference
-        
+
         # Emit progress complete via signal (not @Slot method directly)
-        if hasattr(c, 'bridge') and hasattr(c.bridge, 'loadingProgress'):
+        if hasattr(c, "bridge") and hasattr(c.bridge, "loadingProgress"):
             c.bridge.loadingProgress.emit(100, "Complete")
-        
+
         if error:
             c.panel.log(f"{name} failed: {error}")
             c._logger.error("Measurement job failed name=%s error=%s", name, error)

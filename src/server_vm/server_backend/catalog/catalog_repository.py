@@ -69,7 +69,7 @@ class CatalogRepository:
         try:
             stmt = select(RasterAsset).where(RasterAsset.id == asset_id)
             asset = self._session.scalar(stmt)
-            
+
             if asset:
                 self._session.delete(asset)
                 self._session.commit()

@@ -23,7 +23,7 @@ class WebBridge(QObject):
 
     # Emitted when the renderer starts/stops a frame batch.
     renderBusy = Signal(bool)
-    
+
     # Emitted with loading progress (0-100) and status message
     loadingProgress = Signal(int, str)
 
@@ -60,7 +60,7 @@ class WebBridge(QObject):
     @Slot(int, str)
     def on_loading_progress(self, percent: int, message: str) -> None:
         """Receive loading progress updates from JavaScript.
-        
+
         Args:
             percent: Progress percentage (0-100).
             message: Status message describing what's loading.
@@ -90,7 +90,10 @@ class WebBridge(QObject):
     @Slot(bool)
     def on_measure_cursor(self, enabled: bool) -> None:
         import logging
-        logging.getLogger("desktop.bridge").info("[CURSOR_DEBUG] on_measure_cursor slot called enabled=%s", enabled)
+
+        logging.getLogger("desktop.bridge").info(
+            "[CURSOR_DEBUG] on_measure_cursor slot called enabled=%s", enabled
+        )
         self.measureCursorChanged.emit(enabled)
 
     @Slot(float)

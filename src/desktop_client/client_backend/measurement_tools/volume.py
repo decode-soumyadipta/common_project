@@ -18,6 +18,7 @@ Algorithm
    - Centroid lon/lat for label placement
    - Convex-hull outline in lon/lat for 3-D extrusion
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -47,6 +48,7 @@ from desktop_client.client_backend.measurement_tools.dem_utils import read_dem_w
 
 # ── Legacy entry-point (kept for backward compatibility) ─────────────────────
 
+
 def compute_volume(
     lon_lat_points: list[tuple[float, float]],
     dem_path: str,
@@ -64,6 +66,7 @@ def compute_volume(
 
 
 # ── Main entry-point ──────────────────────────────────────────────────────────
+
 
 def compute_fill_volume(
     lon_lat_points: list[tuple[float, float]],
@@ -105,7 +108,7 @@ def compute_fill_volume(
     with rasterio.open(dem_path) as src:
         dem_crs = src.crs
         is_geographic = dem_crs.is_geographic if dem_crs else False
-        
+
         if is_geographic:
             # DEM is already in EPSG:4326 (WGS84) - no transformation needed
             # Identity transformers that just pass through coordinates
@@ -113,7 +116,7 @@ def compute_fill_volume(
                 @staticmethod
                 def transform(x, y):
                     return (x, y)
-            
+
             to_dem = IdentityTransformer()
             from_dem = IdentityTransformer()
             poly_dem = Polygon(lon_lat_points)
@@ -121,8 +124,10 @@ def compute_fill_volume(
             # DEM is in a projected CRS - need transformation
             to_dem = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
             from_dem = Transformer.from_crs(src.crs, "EPSG:4326", always_xy=True)
-            poly_dem = Polygon([to_dem.transform(lon, lat) for lon, lat in lon_lat_points])
-        
+            poly_dem = Polygon(
+                [to_dem.transform(lon, lat) for lon, lat in lon_lat_points]
+            )
+
         poly_dem = poly_dem if poly_dem.is_valid else poly_dem.buffer(0)
 
     dem, transform, res = read_dem_window(dem_path, poly_dem.bounds)
@@ -140,7 +145,7 @@ def compute_fill_volume(
         center_lat = (poly_dem.bounds[1] + poly_dem.bounds[3]) / 2
         meters_per_degree_lat = 111320.0
         meters_per_degree_lon = 111320.0 * np.cos(np.radians(center_lat))
-        
+
         # res is in degrees, convert to meters
         res_x_m = res * meters_per_degree_lon
         res_y_m = res * meters_per_degree_lat
@@ -148,7 +153,7 @@ def compute_fill_volume(
     else:
         # For projected CRS, resolution is already in meters
         px_area = res * res  # m²
-    
+
     report_progress(15, "Rasterizing polygon mask")
 
     # ── 2. Rasterise polygon mask ─────────────────────────────────────────────
@@ -208,7 +213,7 @@ def compute_fill_volume(
             continue
 
         z_region = dem[region_pixels]
-        dz = ref - z_region          # depth below reference (always > 0)
+        dz = ref - z_region  # depth below reference (always > 0)
         fill_vol = float(np.sum(dz) * px_area)
         max_depth = float(np.max(dz))
         mean_depth = float(np.mean(dz))
@@ -222,11 +227,11 @@ def compute_fill_volume(
         rows, cols = np.where(region_pixels)
         cx_px = float(np.mean(cols))
         cy_px = float(np.mean(rows))
-        
+
         # Use rasterio's transform to convert pixel coordinates to DEM CRS coordinates
         # The * operator applies the affine transform: (x, y) = transform * (col, row)
         cx_dem, cy_dem = transform * (cx_px, cy_px)
-        
+
         # Transform from DEM CRS to WGS84 lon/lat
         # pyproj Transformer with always_xy=True expects (x, y) order and returns (x, y)
         clon, clat = from_dem.transform(cx_dem, cy_dem)
@@ -265,7 +270,7 @@ def compute_fill_volume(
                 outline_lonlat=outline_lonlat,
             )
         )
-        
+
         processed += 1
         progress_pct = 55 + int((processed / n_regions) * 40)
         report_progress(progress_pct, f"Processing region {processed}/{n_regions}")
@@ -290,6 +295,7 @@ def _region_outline_lonlat(
     """Extract the outer polygon ring of a binary mask in lon/lat."""
     try:
         from shapely.geometry import shape
+
         geoms = [
             shape(geom)
             for geom, val in shapes(mask.astype(np.uint8), transform=transform)
@@ -299,6 +305,7 @@ def _region_outline_lonlat(
             return []
         # Union all fragments (handles fragmented geometry from raster tracing)
         from shapely.ops import unary_union
+
         merged = unary_union(geoms)
 
         # Keep the actual region boundary (do not inflate with convex hull),
@@ -318,15 +325,25 @@ def _region_outline_lonlat(
         # 2) light round buffer in/out softens hard orthogonal corners
         px_x = float(abs(transform.a)) if hasattr(transform, "a") else 0.0
         px_y = float(abs(transform.e)) if hasattr(transform, "e") else 0.0
-        px = min(v for v in [px_x, px_y] if v > 0.0) if (px_x > 0.0 or px_y > 0.0) else 0.0
+        px = (
+            min(v for v in [px_x, px_y] if v > 0.0)
+            if (px_x > 0.0 or px_y > 0.0)
+            else 0.0
+        )
 
         if px > 0.0:
             simplified = boundary.simplify(px * 0.35, preserve_topology=True)
-            if simplified is not None and not simplified.is_empty and simplified.geom_type == "Polygon":
+            if (
+                simplified is not None
+                and not simplified.is_empty
+                and simplified.geom_type == "Polygon"
+            ):
                 boundary = simplified
 
             smooth_r = px * 0.55
-            smoothed = boundary.buffer(smooth_r, resolution=8, join_style=1).buffer(-smooth_r, resolution=8, join_style=1)
+            smoothed = boundary.buffer(smooth_r, resolution=8, join_style=1).buffer(
+                -smooth_r, resolution=8, join_style=1
+            )
             if smoothed is not None and not smoothed.is_empty:
                 if smoothed.geom_type == "Polygon":
                     boundary = smoothed
@@ -337,4 +354,3 @@ def _region_outline_lonlat(
         return [from_dem.transform(x, y) for x, y in coords]
     except Exception:
         return []
-

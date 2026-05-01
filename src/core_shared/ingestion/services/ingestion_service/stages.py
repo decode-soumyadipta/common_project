@@ -77,7 +77,10 @@ class PersistCatalogStage(IngestionStage):
     def run(self, context: IngestionContext) -> None:
         if context.metadata is None:
             raise ValueError("metadata is required before catalog persistence")
-        from server_vm.server_backend.catalog.catalog_repository import CatalogRepository
+        from server_vm.server_backend.catalog.catalog_repository import (
+            CatalogRepository,
+        )
+
         repo = CatalogRepository(context.session)
         context.asset = repo.upsert_asset(context.metadata)
 

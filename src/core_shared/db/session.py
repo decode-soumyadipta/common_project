@@ -3,6 +3,7 @@
 This module provides SQLAlchemy session management, database initialization,
 and connection event handlers for PostgreSQL and SQLite databases.
 """
+
 import logging
 from collections.abc import Generator
 
@@ -44,7 +45,7 @@ if "postgresql" in settings.database_url:
     @event.listens_for(engine, "connect")
     def enable_postgis(dbapi_conn, _connection_record):
         """Enable PostGIS extension on PostgreSQL connection.
-        
+
         Args:
             dbapi_conn: Database API connection object.
             _connection_record: Connection record (unused but required by SQLAlchemy).
@@ -67,7 +68,7 @@ if "sqlite" in settings.database_url:
     @event.listens_for(engine, "connect")
     def set_sqlite_pragma(dbapi_conn, _connection_record):
         """Set SQLite pragmas for WAL mode and synchronous mode.
-        
+
         Args:
             dbapi_conn: Database API connection object.
             _connection_record: Connection record (unused but required by SQLAlchemy).
@@ -95,7 +96,7 @@ def init_db() -> None:
     # First create all tables from models
     Base.metadata.create_all(bind=engine)
     LOGGER.info("Database tables created from models")
-    
+
     # Then apply migrations (which may add indexes, columns, etc.)
     try:
         apply_migrations(engine)
@@ -106,10 +107,10 @@ def init_db() -> None:
 
 def get_session() -> Generator[Session, None, None]:
     """Yield a transactional SQLAlchemy session for request handlers.
-    
+
     Yields:
         Session: SQLAlchemy session instance.
-        
+
     Note:
         Session is automatically closed after use.
     """

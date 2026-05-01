@@ -5,11 +5,7 @@ from pathlib import Path
 
 def runtime_web_assets_dir() -> Path:
     """Return the packaged runtime web asset directory for the desktop client."""
-    return (
-        Path(__file__).resolve().parents[1]
-        / "client_frontend"
-        / "web_assets"
-    )
+    return Path(__file__).resolve().parents[1] / "client_frontend" / "web_assets"
 
 
 def runtime_asset_path(*parts: str) -> Path:

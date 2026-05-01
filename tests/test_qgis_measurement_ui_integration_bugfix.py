@@ -90,6 +90,7 @@ def test_status_bar_updates_coordinates_and_clears_invalid_sample(qapp):
     assert "31N" in status_bar._utm_box.label.text()  # UTM zone for 0,0
     assert status_bar._elev_box.label.text() == "Elev: —"  # No DEM = blank elevation
 
+
 def test_polygon_measurement_button_enables_crosshair_and_draw_mode(controller):
     controller.state.clicked_points = []
 
@@ -109,7 +110,10 @@ def test_viewshed_button_enters_point_selection_mode(controller):
     assert controller._viewshed_mode_enabled is True
     controller._run_js_call.assert_any_call("setMeasurementCursor", True)
     controller.panel.log.assert_called()
-    assert "Click on the map to select observer point" in controller.panel.log.call_args[0][0]
+    assert (
+        "Click on the map to select observer point"
+        in controller.panel.log.call_args[0][0]
+    )
 
 
 def test_clear_all_resets_measurement_cursor(controller):
@@ -144,19 +148,27 @@ def test_compositor_comparator_mutual_exclusion(qapp, mock_panel, mock_web_view)
     # Simulate: Comparator turned ON → Compositor must be disabled
     compositor_action.setEnabled(False)
     compositor_action.setChecked(False)
-    assert not compositor_action.isEnabled(), "Compositor must be disabled when Comparator is on"
+    assert not compositor_action.isEnabled(), (
+        "Compositor must be disabled when Comparator is on"
+    )
     assert not compositor_action.isChecked()
 
     # Simulate: Comparator turned OFF → Compositor must be re-enabled
     compositor_action.setEnabled(True)
-    assert compositor_action.isEnabled(), "Compositor must be re-enabled when Comparator is off"
+    assert compositor_action.isEnabled(), (
+        "Compositor must be re-enabled when Comparator is off"
+    )
 
     # Simulate: Compositor turned ON → Comparator must be disabled
     comparator_action.setEnabled(False)
     comparator_action.setChecked(False)
-    assert not comparator_action.isEnabled(), "Comparator must be disabled when Compositor is on"
+    assert not comparator_action.isEnabled(), (
+        "Comparator must be disabled when Compositor is on"
+    )
     assert not comparator_action.isChecked()
 
     # Simulate: Compositor turned OFF → Comparator must be re-enabled
     comparator_action.setEnabled(True)
-    assert comparator_action.isEnabled(), "Comparator must be re-enabled when Compositor is off"
+    assert comparator_action.isEnabled(), (
+        "Comparator must be re-enabled when Compositor is off"
+    )

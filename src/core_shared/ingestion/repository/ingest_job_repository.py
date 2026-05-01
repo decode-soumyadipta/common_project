@@ -20,7 +20,7 @@ class IngestJobRepository:
 
     def create_job(self, file_paths: list[str]) -> IngestJob:
         job_id = str(uuid4())
-        
+
         # Create job object
         job = IngestJob(
             id=job_id,
@@ -30,7 +30,7 @@ class IngestJobRepository:
             failed_items=0,
             checkpoint_item_index=0,
         )
-        
+
         try:
             self._session.add(job)
             self._session.flush()
@@ -51,10 +51,10 @@ class IngestJobRepository:
 
             # Commit all changes
             self._session.commit()
-            
+
             # Return the job object - it has all the correct data
             return job
-            
+
         except Exception as e:
             # Rollback on any error
             try:
@@ -213,6 +213,7 @@ class IngestJobRepository:
         except Exception as exc:
             # Log error but don't fail - use existing counters
             import logging
+
             logger = logging.getLogger("ingest_job_repository")
             logger.warning("Failed to refresh job counters for job %s: %s", job.id, exc)
             # Rollback any partial changes

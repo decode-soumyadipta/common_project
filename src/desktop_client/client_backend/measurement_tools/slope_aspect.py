@@ -3,6 +3,7 @@
 This module provides slope statistics computation using Horn's algorithm,
 matching GDAL's implementation for consistency with QGIS.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -32,14 +33,14 @@ def compute_slope_aspect(
     dem_path: str,
 ) -> SlopeAspectMeasurement:
     """Compute slope statistics inside a polygon using Horn's algorithm.
-    
+
     Args:
         lon_lat_points: List of (longitude, latitude) tuples defining the polygon.
         dem_path: Path to the DEM raster file.
-        
+
     Returns:
         SlopeAspectMeasurement containing slope statistics and area by class.
-        
+
     Raises:
         RuntimeError: If rasterio is not available.
         ValueError: If fewer than 3 vertices are provided.

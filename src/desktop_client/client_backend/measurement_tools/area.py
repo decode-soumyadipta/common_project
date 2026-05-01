@@ -4,6 +4,7 @@ This module provides accurate area and perimeter measurements using GeographicLi
 matching QGIS QgsDistanceArea implementation. Optionally computes 3D surface area
 when a DEM is provided.
 """
+
 from __future__ import annotations
 
 import math
@@ -37,18 +38,18 @@ def measure_polygon_area(
     dem_path: Optional[str] = None,
 ) -> PolygonAreaMeasurement:
     """Compute exact ellipsoidal area and perimeter of a polygon.
-    
+
     Uses GeographicLib / PROJ underneath, identical to QGIS QgsDistanceArea::measurePolygon.
     Also computes surface area and void fraction if a DEM is provided.
-    
+
     Args:
         lon_lat_points: List of (longitude, latitude) tuples defining the polygon.
         dem_path: Optional path to DEM file for surface area calculation.
-        
+
     Returns:
         PolygonAreaMeasurement containing planimetric area, perimeter, compactness,
         and optionally surface area and void fraction.
-        
+
     Raises:
         ValueError: If fewer than 3 vertices are provided.
 

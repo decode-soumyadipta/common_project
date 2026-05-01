@@ -61,9 +61,9 @@ def _fmt_vol(m3: float) -> str:
     For sub-metre DEM / cm-resolution imagery the volumes are always m³.
     """
     if m3 >= 1_000_000_000:
-        return f"{m3/1_000_000_000:.3f} km³"
+        return f"{m3 / 1_000_000_000:.3f} km³"
     if m3 >= 1_000_000:
-        return f"{m3/1_000_000:.3f} Mm³"
+        return f"{m3 / 1_000_000:.3f} Mm³"
     return f"{m3:.3f} m³"
 
 
@@ -99,7 +99,9 @@ class DesktopController:
         self._dem_asset_kind_cache: dict[str, bool] = {}
         self._search_result_assets_by_path: dict[str, dict] = {}
         self._search_layer_visibility: dict[str, bool] = {}
-        self._last_synced_visibility: dict[str, bool] = {}  # Track last synced state to avoid unnecessary JS calls
+        self._last_synced_visibility: dict[
+            str, bool
+        ] = {}  # Track last synced state to avoid unnecessary JS calls
         self._loaded_search_layer_keys: set[str] = set()
         self._active_dem_search_layer_key: str | None = None
         self._last_visible_focus_signature: tuple[float, float, float, float] | None = (
@@ -142,21 +144,25 @@ class DesktopController:
         self._annotation_records: list[dict[str, object]] = []
         self._annotation_line_records: list[dict[str, object]] = []
         self._annotation_polygon_records: list[dict[str, object]] = []
-        
+
         # Event-driven architecture performance tracking
         self._event_driven_enabled = False
         self._terabyte_scale_assets_loaded = 0
         self._performance_metrics = {
             "layer_load_times": [],
             "search_times": [],
-            "render_performance": "optimal"
+            "render_performance": "optimal",
         }
         self._ingest_poll_timer = QTimer(panel)
-        self._ingest_poll_timer.setInterval(500)  # Poll every 500ms for real-time updates
+        self._ingest_poll_timer.setInterval(
+            500
+        )  # Poll every 500ms for real-time updates
         self._ingest_poll_timer.timeout.connect(self._poll_active_ingest_job)
         self._last_ingest_step: str | None = None
         self._last_ingest_status: str | None = None
-        self._ingest_poll_start_time: dt.datetime | None = None  # Track when polling started
+        self._ingest_poll_start_time: dt.datetime | None = (
+            None  # Track when polling started
+        )
         self._search = SearchCoordinator(self)
         self._comparator = ComparatorCoordinator(self)
         self._project_io = ProjectIoCoordinator(self)
@@ -191,39 +197,49 @@ class DesktopController:
         try:
             # Enable event-driven mode in the JavaScript bridge
             self._run_js_call("enableEventDrivenMode", True)
-            
+
             # Apply terabyte-scale optimizations
             optimization_options = {
                 "screenSpaceError": 1.5,  # Reduce detail for smoother performance
-                "tileCacheSize": 2000,    # Aggressive tile caching
+                "tileCacheSize": 2000,  # Aggressive tile caching
             }
             self._run_js_call("optimizeForTerabyteScale", optimization_options)
-            
+
             self._event_driven_enabled = True
-            self.panel.log("Event-driven architecture initialized for terabyte-scale performance")
+            self.panel.log(
+                "Event-driven architecture initialized for terabyte-scale performance"
+            )
             self._logger.info("Event-driven mode initialized successfully")
-            
+
         except Exception:
-            self._logger.warning("Event-driven mode initialization failed", exc_info=True)
+            self._logger.warning(
+                "Event-driven mode initialization failed", exc_info=True
+            )
             self.panel.log("Warning: Event-driven optimizations not available")
 
-    def _track_performance_metric(self, metric_type: str, value: float, context: str = "") -> None:
+    def _track_performance_metric(
+        self, metric_type: str, value: float, context: str = ""
+    ) -> None:
         """Track performance metrics for event-driven architecture."""
         if not self._event_driven_enabled:
             return
-        
+
         if metric_type in self._performance_metrics:
             if isinstance(self._performance_metrics[metric_type], list):
-                self._performance_metrics[metric_type].append({
-                    "value": value,
-                    "context": context,
-                    "timestamp": dt.datetime.now(dt.timezone.utc).isoformat()
-                })
-                
+                self._performance_metrics[metric_type].append(
+                    {
+                        "value": value,
+                        "context": context,
+                        "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
+                    }
+                )
+
                 # Keep only recent metrics (last 50 entries)
                 if len(self._performance_metrics[metric_type]) > 50:
-                    self._performance_metrics[metric_type] = self._performance_metrics[metric_type][-50:]
-        
+                    self._performance_metrics[metric_type] = self._performance_metrics[
+                        metric_type
+                    ][-50:]
+
         # Log significant performance events
         if metric_type == "layer_load_times" and value > 5.0:
             self._logger.info("Event-driven layer load: %.2fs %s", value, context)
@@ -234,25 +250,27 @@ class DesktopController:
         """Get performance summary for event-driven architecture."""
         if not self._event_driven_enabled:
             return {"status": "disabled"}
-        
+
         summary = {
             "status": "enabled",
             "terabyte_assets_loaded": self._terabyte_scale_assets_loaded,
-            "render_performance": self._performance_metrics.get("render_performance", "unknown")
+            "render_performance": self._performance_metrics.get(
+                "render_performance", "unknown"
+            ),
         }
-        
+
         # Calculate average load times
         load_times = self._performance_metrics.get("layer_load_times", [])
         if load_times:
             avg_load_time = sum(m["value"] for m in load_times) / len(load_times)
             summary["avg_layer_load_time"] = round(avg_load_time, 2)
-        
+
         # Calculate average search times
         search_times = self._performance_metrics.get("search_times", [])
         if search_times:
             avg_search_time = sum(m["value"] for m in search_times) / len(search_times)
             summary["avg_search_time"] = round(avg_search_time, 2)
-        
+
         return summary
 
     def _clear_asset_caches(self) -> None:
@@ -262,46 +280,46 @@ class DesktopController:
         self._search_result_assets_by_path.clear()
         self._search_layer_visibility.clear()
         self._loaded_search_layer_keys.clear()
-        
+
         # Clear additional state variables that might cache data
         self._active_dem_search_layer_key = None
         self._last_visible_focus_signature = None
-        
+
         # Clear performance metrics cache
-        if hasattr(self, '_performance_metrics'):
+        if hasattr(self, "_performance_metrics"):
             self._performance_metrics = {
                 "layer_load_times": [],
                 "search_times": [],
-                "render_performance": "optimal"
+                "render_performance": "optimal",
             }
-        
+
         # Clear any API client caches
-        if hasattr(self.api, '_cache'):
+        if hasattr(self.api, "_cache"):
             self.api._cache.clear()
-        
+
         # Clear the assets combo box completely
         self.panel.assets_combo.clear()
-        
+
         # Clear the uploaded assets table completely
         self.panel.uploaded_assets_list.clear()
         self.panel.uploaded_assets_list.setRowCount(0)
-        
+
         # Clear search results table
-        if hasattr(self.panel, 'search_results_table'):
+        if hasattr(self.panel, "search_results_table"):
             self.panel.search_results_table.clear()
             self.panel.search_results_table.setRowCount(0)
-        
+
         # Reset state variables
         self.state.selected_asset = None
-        if hasattr(self.state, 'active_ingest_job_id'):
+        if hasattr(self.state, "active_ingest_job_id"):
             self.state.active_ingest_job_id = None
-        if hasattr(self.state, 'pending_ingest_source_path'):
+        if hasattr(self.state, "pending_ingest_source_path"):
             self.state.pending_ingest_source_path = None
-        
+
         # Log the cache clearing (removed the refresh call to prevent infinite loop)
         self._logger.info("Asset caches cleared successfully")
         self.panel.log("Asset caches cleared")
-        
+
         self._logger.debug("All asset caches cleared")
 
     def _prepare_api_runtime(self) -> None:
@@ -374,12 +392,14 @@ class DesktopController:
             self.panel.browse_files_btn.clicked, "Browse Files", self.browse_files
         )
         self._connect_button(
-            self.panel.clear_selection_btn.clicked, "Clear Selection", self.clear_file_selection
+            self.panel.clear_selection_btn.clicked,
+            "Clear Selection",
+            self.clear_file_selection,
         )
         self._connect_button(
             self.panel.ingest_btn.clicked, "Ingest Files", self.enqueue_selected_files
         )
-        
+
         # Asset management
         self._connect_button(
             self.panel.refresh_assets_btn.clicked, "Refresh Assets", self.refresh_assets
@@ -387,10 +407,10 @@ class DesktopController:
         self._connect_button(
             self.panel.add_layer_btn.clicked, "Add Layer", self.add_selected_layer
         )
-        
+
         # Asset deletion
         self.panel.asset_delete_requested.connect(self.delete_asset)
-        
+
         # Display controls
         self.panel.brightness_slider.valueChanged.connect(
             self._on_visual_slider_changed
@@ -449,9 +469,7 @@ class DesktopController:
         self.panel.search_result_visibility_toggled.connect(
             self.toggle_search_result_visibility
         )
-        self.panel.search_layers_reordered.connect(
-            self.reorder_search_result_layers
-        )
+        self.panel.search_layers_reordered.connect(self.reorder_search_result_layers)
         self.bridge.mapClicked.connect(self.on_map_click)
         self.bridge.measurementUpdated.connect(self.on_measurement)
         self.bridge.jsLogReceived.connect(self.on_js_log)
@@ -466,9 +484,7 @@ class DesktopController:
         self.panel.measurement_result_clear_all_requested.connect(
             self.clear_all_measurement_results
         )
-        self.panel.uploaded_assets_refresh_requested.connect(
-            self._clear_asset_caches
-        )
+        self.panel.uploaded_assets_refresh_requested.connect(self._clear_asset_caches)
 
     def _connect_button(
         self, signal, label: str, callback: Callable[..., object]
@@ -497,12 +513,12 @@ class DesktopController:
         row = self.panel.uploaded_assets_list.currentRow()
         if row < 0:
             return
-        
+
         # Get asset data from the first column (serial number column)
         item = self.panel.uploaded_assets_list.item(row, 0)
         if item is None:
             return
-        
+
         asset = item.data(Qt.ItemDataRole.UserRole)
         if not isinstance(asset, dict):
             return
@@ -510,31 +526,31 @@ class DesktopController:
         file_path = str(asset.get("file_path") or "")
         file_name = str(asset.get("file_name") or "Unknown")
         kind = str(asset.get("kind") or "Unknown").upper()
-        
+
         if not file_path:
             return
 
         # Cache the asset
         self._asset_cache[file_path] = asset
         self.state.selected_asset = asset
-        
+
         # Load the asset layer
         loaded_asset = self._load_asset_layer(asset)
         if not loaded_asset:
             self.panel.log(f"Failed to load asset: {file_name}")
             return
-        
+
         self.panel.log(f"Loading {kind}: {file_name}")
-        
+
         # Smooth flyto the asset region
         self._flyto_asset_bounds(asset, kind)
-        
+
         self._logger.info(
             "Asset loaded and camera moved: name=%s kind=%s",
             file_name,
             kind,
         )
-    
+
     def _flyto_asset_bounds(self, asset: dict, kind: str) -> None:
         """Smooth camera flyto for the asset bounds with smart 2D/3D rendering."""
         try:
@@ -543,27 +559,30 @@ class DesktopController:
             if not bounds or len(bounds) != 4:
                 self.panel.log("Asset bounds not available for flyto")
                 return
-            
+
             west, south, east, north = bounds
-            
+
             # Calculate center and appropriate camera height
             center_lon = (west + east) / 2
             center_lat = (south + north) / 2
-            
+
             # Calculate diagonal distance for camera height
             import math
+
             lat_diff = north - south
             lon_diff = east - west
             diagonal = math.sqrt(lat_diff**2 + lon_diff**2)
-            
+
             # Camera height based on asset size (in degrees to meters approximation)
             # 1 degree ≈ 111km, we want to see the whole asset
             camera_height = diagonal * 111000 * 1.5  # 1.5x for padding
-            camera_height = max(1000, min(camera_height, 50000000))  # Clamp between 1km and 50,000km
-            
+            camera_height = max(
+                1000, min(camera_height, 50000000)
+            )  # Clamp between 1km and 50,000km
+
             # Determine rendering mode based on asset type
             is_dem = kind in ["DEM", "ELEVATION"]
-            
+
             # Smart camera positioning
             if is_dem:
                 # For DEM: 3D view with tilt for terrain visualization
@@ -575,7 +594,7 @@ class DesktopController:
                 pitch_degrees = -90  # Straight down
                 heading_degrees = 0
                 self.panel.log(f"Flying to imagery (2D view): {asset.get('file_name')}")
-            
+
             # Execute smooth flyto
             self._run_js_call(
                 "flyToLocation",
@@ -587,15 +606,18 @@ class DesktopController:
                     "pitch": pitch_degrees,
                     "roll": 0,
                     "duration": 2.0,  # 2 second smooth animation
-                }
+                },
             )
-            
+
             self._logger.info(
                 "Camera flyto: lon=%.4f lat=%.4f height=%.0f pitch=%d (mode=%s)",
-                center_lon, center_lat, camera_height, pitch_degrees,
-                "3D" if is_dem else "2D"
+                center_lon,
+                center_lat,
+                camera_height,
+                pitch_degrees,
+                "3D" if is_dem else "2D",
             )
-            
+
         except Exception as e:
             self._logger.error("Flyto failed: %s", e, exc_info=True)
             self.panel.log(f"Camera movement failed: {e}")
@@ -603,7 +625,9 @@ class DesktopController:
     # DEPRECATED: This method has been replaced by enqueue_selected_files
     # The new UI uses file selection instead of path text input
     def enqueue_selected_path(self) -> None:
-        self.panel.log("This method is deprecated. Use the new file selection interface.")
+        self.panel.log(
+            "This method is deprecated. Use the new file selection interface."
+        )
         return
         if not folder_path.exists():
             self.panel.log(f"Path does not exist: {path}")
@@ -614,91 +638,126 @@ class DesktopController:
 
         # Use intelligent file grouping for robust multi-file ingestion
         try:
-            from core_shared.ingestion.services.file_grouping_service import FileGroupingService
-            
+            from core_shared.ingestion.services.file_grouping_service import (
+                FileGroupingService,
+            )
+
             self.panel.log("Analyzing folder structure and grouping related files...")
             self.panel.ingest_progress_bar.setRange(0, 0)
             self.panel.ingest_status_value.setText("ANALYZING")
-            self.panel.ingest_step_value.setText("Intelligent file grouping in progress")
+            self.panel.ingest_step_value.setText(
+                "Intelligent file grouping in progress"
+            )
             self.panel.ingest_item_value.setText(f"Scanning: {folder_path.name}")
-            
+
             # Group files intelligently
             grouping_service = FileGroupingService()
             file_groups = grouping_service.group_files_in_folder(
                 folder_path=folder_path,
                 recursive=True,  # Enable recursive scanning
-                max_groups=None  # Process all groups
+                max_groups=None,  # Process all groups
             )
-            
+
             # Filter groups by confidence score (only process high-confidence groups)
             high_confidence_groups = [
-                group for group in file_groups 
+                group
+                for group in file_groups
                 if group.confidence_score >= 0.5  # Minimum confidence threshold
             ]
-            
+
             if not high_confidence_groups:
-                self.panel.log(f"No suitable geospatial file groups found in folder: {path}")
-                self.panel.log("Supported formats: .tif, .tiff, .jp2, .j2k with optional auxiliary files (.prj, .tfw, .aux.xml)")
-                self.panel.log(f"Found {len(file_groups)} total groups, but none met confidence threshold (≥0.5)")
-                
+                self.panel.log(
+                    f"No suitable geospatial file groups found in folder: {path}"
+                )
+                self.panel.log(
+                    "Supported formats: .tif, .tiff, .jp2, .j2k with optional auxiliary files (.prj, .tfw, .aux.xml)"
+                )
+                self.panel.log(
+                    f"Found {len(file_groups)} total groups, but none met confidence threshold (≥0.5)"
+                )
+
                 # Show details about what was found
                 if file_groups:
                     self.panel.log("Low-confidence groups found:")
                     for group in file_groups[:3]:  # Show first 3
-                        self.panel.log(f"  - {group.scene_name} (confidence: {group.confidence_score:.2f}, method: {group.grouping_method})")
-                
+                        self.panel.log(
+                            f"  - {group.scene_name} (confidence: {group.confidence_score:.2f}, method: {group.grouping_method})"
+                        )
+
                 self.panel.ingest_progress_bar.setRange(0, 100)
                 self.panel.ingest_progress_bar.setValue(0)
                 self.panel.ingest_status_value.setText("NO_FILES")
                 self.panel.ingest_step_value.setText("No suitable files found")
                 return
-            
+
             # Extract primary raster files for ingestion
             raster_files = [str(group.primary_file) for group in high_confidence_groups]
-            total_files = sum(1 + len(group.auxiliary_files) for group in high_confidence_groups)
-            
-            self._logger.info(
-                "Intelligent grouping: Found %d file groups (%d primary rasters, %d total files) in %s", 
-                len(high_confidence_groups), len(raster_files), total_files, path
+            total_files = sum(
+                1 + len(group.auxiliary_files) for group in high_confidence_groups
             )
-            
+
+            self._logger.info(
+                "Intelligent grouping: Found %d file groups (%d primary rasters, %d total files) in %s",
+                len(high_confidence_groups),
+                len(raster_files),
+                total_files,
+                path,
+            )
+
             # Log grouping statistics
             method_counts = {}
             for group in high_confidence_groups:
-                method_counts[group.grouping_method] = method_counts.get(group.grouping_method, 0) + 1
-            
+                method_counts[group.grouping_method] = (
+                    method_counts.get(group.grouping_method, 0) + 1
+                )
+
             self.panel.log(f"Intelligent file grouping completed:")
-            self.panel.log(f"  - Found {len(high_confidence_groups)} file groups ({total_files} total files)")
-            self.panel.log(f"  - Grouping methods: {', '.join(f'{method}: {count}' for method, count in method_counts.items())}")
-            self.panel.log(f"  - Average confidence: {sum(g.confidence_score for g in high_confidence_groups) / len(high_confidence_groups):.2f}")
-            
+            self.panel.log(
+                f"  - Found {len(high_confidence_groups)} file groups ({total_files} total files)"
+            )
+            self.panel.log(
+                f"  - Grouping methods: {', '.join(f'{method}: {count}' for method, count in method_counts.items())}"
+            )
+            self.panel.log(
+                f"  - Average confidence: {sum(g.confidence_score for g in high_confidence_groups) / len(high_confidence_groups):.2f}"
+            )
+
             # Show sample groups
             self.panel.log("Sample groups:")
             for i, group in enumerate(high_confidence_groups[:3]):
                 aux_count = len(group.auxiliary_files)
                 aux_info = f" + {aux_count} auxiliary files" if aux_count > 0 else ""
-                self.panel.log(f"  {i+1}. {group.scene_name} (confidence: {group.confidence_score:.2f}){aux_info}")
-            
+                self.panel.log(
+                    f"  {i + 1}. {group.scene_name} (confidence: {group.confidence_score:.2f}){aux_info}"
+                )
+
             if len(high_confidence_groups) > 3:
-                self.panel.log(f"  ... and {len(high_confidence_groups) - 3} more groups")
-            
+                self.panel.log(
+                    f"  ... and {len(high_confidence_groups) - 3} more groups"
+                )
+
         except Exception as e:
             self._logger.error("Intelligent file grouping failed: %s", e, exc_info=True)
             self.panel.log(f"File grouping failed: {e}")
             self.panel.log("Falling back to simple file scanning...")
-            
+
             # Fallback to simple file collection
-            raster_extensions = {'.tif', '.tiff', '.jp2', '.j2k'}
+            raster_extensions = {".tif", ".tiff", ".jp2", ".j2k"}
             all_files = list(folder_path.iterdir())
             raster_files = [
-                str(f) for f in all_files
+                str(f)
+                for f in all_files
                 if f.is_file() and f.suffix.lower() in raster_extensions
             ]
-            
+
             if not raster_files:
                 self.panel.log(f"No raster files found in folder: {path}")
-                self.panel.log(f"Supported formats: .tif, .tiff, .jp2, .j2k (excluding .mbtiles - already processed)")
-                self.panel.log(f"Found {len(all_files)} other file(s) - check file extensions")
+                self.panel.log(
+                    f"Supported formats: .tif, .tiff, .jp2, .j2k (excluding .mbtiles - already processed)"
+                )
+                self.panel.log(
+                    f"Found {len(all_files)} other file(s) - check file extensions"
+                )
                 return
 
         # Show immediate queueing state
@@ -706,7 +765,9 @@ class DesktopController:
         self.panel.ingest_status_value.setText("QUEUING")
         self.panel.ingest_step_value.setText("Sending grouped files to ingest queue")
         self.panel.ingest_item_value.setText(f"Current: {folder_path.name}")
-        self.panel.ingest_counts_value.setText(f"Processed: 0/{len(raster_files)} | Failed: 0")
+        self.panel.ingest_counts_value.setText(
+            f"Processed: 0/{len(raster_files)} | Failed: 0"
+        )
         self.panel.ingest_elapsed_value.setText("Elapsed: 00:00")
         self.panel.append_ingest_detail(
             f"[00:00] QUEUING - Sending {len(raster_files)} grouped file(s) to ingest queue"
@@ -718,21 +779,23 @@ class DesktopController:
                 self._pre_ingest_asset_count = len(self.api.list_assets())
             except Exception:
                 self._pre_ingest_asset_count = 0
-                
+
             job = self.api.enqueue_ingest_job(raster_files)
-            
+
             # Log details about what was queued
             self._logger.info(
-                "Enqueued ingest job: %s files, job_id=%s, total_items=%s", 
-                len(raster_files), job.get("id"), job.get("total_items")
+                "Enqueued ingest job: %s files, job_id=%s, total_items=%s",
+                len(raster_files),
+                job.get("id"),
+                job.get("total_items"),
             )
-            
+
             # Log sample file paths for debugging
             sample_files = raster_files[:3]
             self._logger.info("Sample queued files: %s", sample_files)
             if len(raster_files) > 3:
                 self._logger.info("... and %d more files", len(raster_files) - 3)
-                
+
         except httpx.HTTPError as exc:
             self.panel.ingest_progress_bar.setRange(0, 100)
             self.panel.ingest_progress_bar.setValue(0)
@@ -744,7 +807,9 @@ class DesktopController:
         self.panel.ingest_progress_bar.setRange(0, 100)
         self.state.active_ingest_job_id = str(job.get("id"))
         self.state.pending_ingest_source_path = path
-        self.state.auto_visualize_ingest_result = True  # Enable auto-visualization for folder ingests
+        self.state.auto_visualize_ingest_result = (
+            True  # Enable auto-visualization for folder ingests
+        )
         self.panel.log(
             f"Folder queued for ingestion: {len(raster_files)} grouped file(s)"
         )
@@ -752,7 +817,7 @@ class DesktopController:
             f"Job ID: {job.get('id')} | Status: {job.get('status')} | Total: {job.get('total_items')}"
         )
         self._update_ingest_progress_ui(job, emit_detail=True)
-        
+
         # Record polling start time and start polling
         self._ingest_poll_start_time = dt.datetime.now(dt.timezone.utc)
         self._ingest_poll_timer.start()
@@ -883,11 +948,15 @@ class DesktopController:
         """Apply search results with standard processing."""
         self._apply_search_results_internal(assets, label, event_driven=False)
 
-    def _apply_search_results_event_driven(self, assets: list[dict], label: str) -> None:
+    def _apply_search_results_event_driven(
+        self, assets: list[dict], label: str
+    ) -> None:
         """Apply search results with event-driven optimization for terabyte-scale performance."""
         self._apply_search_results_internal(assets, label, event_driven=True)
 
-    def _apply_search_results_internal(self, assets: list[dict], label: str, event_driven: bool = False) -> None:
+    def _apply_search_results_internal(
+        self, assets: list[dict], label: str, event_driven: bool = False
+    ) -> None:
         """Internal method to apply search results with optional event-driven optimization."""
         self.panel.assets_combo.clear()
         self._asset_cache = {}
@@ -900,11 +969,11 @@ class DesktopController:
         had_visible_assets = bool(previously_visible_paths)
         self._search_result_assets_by_path = {}
         local_missing_count = 0
-        
+
         # Event-driven optimization: Pre-process assets for terabyte-scale performance
         if event_driven:
             assets = self._preprocess_assets_for_terabyte_scale(assets)
-        
+
         for asset in assets:
             if not self._asset_path_accessible_locally(asset):
                 local_missing_count += 1
@@ -913,14 +982,14 @@ class DesktopController:
                 continue
             self._asset_cache[file_path] = asset
             self._search_result_assets_by_path[file_path] = asset
-            
+
             # Event-driven display optimization
             display_suffix = ""
             if event_driven and asset.get("performance_tier") == "ultra_large":
                 display_suffix = " [TB-Scale]"
             elif event_driven and asset.get("performance_tier") == "large":
                 display_suffix = " [Large]"
-            
+
             display = f"{asset['file_name']} [{asset['kind']}]{display_suffix}"
             self.panel.assets_combo.addItem(display, asset)
 
@@ -955,24 +1024,28 @@ class DesktopController:
             self._sync_search_visibility_layers_event_driven()
         else:
             self._sync_search_visibility_layers()
-        
+
         # Enhanced focus behavior: force focus on first search, fit all assets for multiple results
         self._focus_visible_search_assets_with_enhanced_behavior(
-            force=not had_visible_assets, 
+            force=not had_visible_assets,
             is_first_search=not had_visible_assets,
-            asset_count=len(assets)
+            asset_count=len(assets),
         )
 
         self.panel.update_search_results(assets, self._search_layer_visibility)
-        
+
         # Enhanced logging for event-driven mode
         if event_driven:
-            terabyte_count = sum(1 for a in assets if a.get("performance_tier") == "ultra_large")
+            terabyte_count = sum(
+                1 for a in assets if a.get("performance_tier") == "ultra_large"
+            )
             large_count = sum(1 for a in assets if a.get("performance_tier") == "large")
-            self.panel.log(f"{label}: {self.panel.assets_combo.count()} assets (TB-scale: {terabyte_count}, Large: {large_count})")
+            self.panel.log(
+                f"{label}: {self.panel.assets_combo.count()} assets (TB-scale: {terabyte_count}, Large: {large_count})"
+            )
         else:
             self.panel.log(f"{label}: {self.panel.assets_combo.count()} assets")
-        
+
         if local_missing_count:
             self.panel.log(
                 f"Note: {local_missing_count} result(s) are remote-only paths; loading uses server-side tiles."
@@ -981,11 +1054,11 @@ class DesktopController:
     def _preprocess_assets_for_terabyte_scale(self, assets: list[dict]) -> list[dict]:
         """Preprocess assets for terabyte-scale performance optimization."""
         processed = []
-        
+
         for asset in assets:
             # Add event-driven optimization metadata
             processed_asset = dict(asset)
-            
+
             # Determine performance tier based on file size
             file_size = asset.get("file_size_bytes", 0)
             if file_size > 1_000_000_000_000:  # > 1TB
@@ -997,21 +1070,26 @@ class DesktopController:
             else:
                 processed_asset["performance_tier"] = "standard"
                 processed_asset["ui_priority"] = "normal"
-            
+
             # Add server optimization flags
             processed_asset["event_driven"] = True
             processed_asset["server_optimized"] = True
-            
+
             processed.append(processed_asset)
-        
+
         # Sort by performance tier and size for optimal display order
-        processed.sort(key=lambda a: (
-            a.get("performance_tier") == "ultra_large",
-            a.get("performance_tier") == "large",
-            a.get("file_size_bytes", 0)
-        ), reverse=True)
-        
-        self._logger.info("Preprocessed %d assets for terabyte-scale performance", len(processed))
+        processed.sort(
+            key=lambda a: (
+                a.get("performance_tier") == "ultra_large",
+                a.get("performance_tier") == "large",
+                a.get("file_size_bytes", 0),
+            ),
+            reverse=True,
+        )
+
+        self._logger.info(
+            "Preprocessed %d assets for terabyte-scale performance", len(processed)
+        )
         return processed
 
     def _sync_search_visibility_layers_event_driven(self) -> None:
@@ -1083,7 +1161,7 @@ class DesktopController:
             performance_tier = asset.get("performance_tier", "standard")
             loading_msg = f"Loading {asset['file_name']} [{performance_tier}]..."
             self._set_layer_loading(True, loading_msg)
-        
+
         # Use existing _load_asset_layer but with event-driven flags
         options = self._get_server_optimized_layer_options(asset)
         options["replace_existing"] = replace_existing
@@ -1091,7 +1169,7 @@ class DesktopController:
             options["layer_key"] = str(layer_key).replace("\\", "/")
         options["apply_scene_mode"] = apply_scene_mode
         options["event_driven"] = True
-        
+
         if self._add_layer_event_driven(asset, options):
             if auto_fly_to:
                 self._fly_through_asset_event_driven(asset)
@@ -1099,19 +1177,19 @@ class DesktopController:
             if show_loading:
                 self._set_layer_loading(False, "Layer load failed")
             return None
-        
+
         self.state.selected_asset = asset
         return asset
 
     def toggle_search_result_visibility(self, file_path: str, visible: bool) -> None:
         """Toggle visibility of a search result layer with debug logging."""
-        print(f"\n{'='*80}")
+        print(f"\n{'=' * 80}")
         print(f"DEBUG: toggle_search_result_visibility called")
         print(f"  file_path: {file_path}")
         print(f"  visible (requested): {visible}")
         print(f"  Current visibility map: {self._search_layer_visibility}")
-        print(f"{'='*80}\n")
-        
+        print(f"{'=' * 80}\n")
+
         normalized_path = str(file_path or "").strip().replace("\\", "/")
         if not normalized_path:
             print("DEBUG: Visibility toggle ignored: missing asset path")
@@ -1120,16 +1198,22 @@ class DesktopController:
 
         asset = self._search_result_assets_by_path.get(normalized_path)
         if not isinstance(asset, dict):
-            print(f"DEBUG: Visibility toggle ignored: asset not in search results for path={normalized_path}")
-            print(f"DEBUG: Available paths in search results: {list(self._search_result_assets_by_path.keys())}")
+            print(
+                f"DEBUG: Visibility toggle ignored: asset not in search results for path={normalized_path}"
+            )
+            print(
+                f"DEBUG: Available paths in search results: {list(self._search_result_assets_by_path.keys())}"
+            )
             self.panel.log(
                 "Visibility toggle ignored: asset is no longer in current search results."
             )
             return
 
         next_visible = bool(visible)
-        print(f"DEBUG: Asset found: {asset.get('file_name')}, kind={asset.get('kind')}, next_visible={next_visible}")
-        
+        print(
+            f"DEBUG: Asset found: {asset.get('file_name')}, kind={asset.get('kind')}, next_visible={next_visible}"
+        )
+
         if next_visible and self._is_dem_asset(asset):
             print("DEBUG: Showing DEM - hiding other DEM layers")
             for path, candidate in self._search_result_assets_by_path.items():
@@ -1139,8 +1223,10 @@ class DesktopController:
 
         self._search_layer_visibility[normalized_path] = next_visible
         print(f"DEBUG: Updated visibility map: {normalized_path} = {next_visible}")
-        print(f"DEBUG: Full visibility map after update: {self._search_layer_visibility}")
-        
+        print(
+            f"DEBUG: Full visibility map after update: {self._search_layer_visibility}"
+        )
+
         self._sync_search_visibility_layers()
 
         if self._search_layer_visibility.get(normalized_path, False):
@@ -1151,11 +1237,11 @@ class DesktopController:
             print(f"DEBUG: Layer hidden: {asset.get('file_name')}")
 
         self._focus_visible_search_assets_with_enhanced_behavior(
-            force=False, 
+            force=False,
             is_first_search=False,  # This is a toggle, not a first search
-            asset_count=len([p for p, v in self._search_layer_visibility.items() if v])
+            asset_count=len([p for p, v in self._search_layer_visibility.items() if v]),
         )
-        
+
         print(f"DEBUG: Calling panel.update_search_results to refresh UI")
         self.panel.update_search_results(
             list(self._search_result_assets_by_path.values()),
@@ -1165,21 +1251,21 @@ class DesktopController:
 
     def _sync_search_visibility_layers(self) -> None:
         """Sync layer visibility between UI and globe with debug logging - optimized to only update changed layers."""
-        print(f"\n{'='*80}")
+        print(f"\n{'=' * 80}")
         print(f"DEBUG: _sync_search_visibility_layers called")
         print(f"  Current visibility map: {self._search_layer_visibility}")
         print(f"  Last synced visibility: {self._last_synced_visibility}")
         print(f"  Loaded layer keys: {self._loaded_search_layer_keys}")
         print(f"  Active DEM layer key: {self._active_dem_search_layer_key}")
-        print(f"{'='*80}\n")
-        
+        print(f"{'=' * 80}\n")
+
         for file_path, asset in self._search_result_assets_by_path.items():
             should_show = bool(self._search_layer_visibility.get(file_path, False))
             last_synced = self._last_synced_visibility.get(file_path, None)
             is_dem_asset = self._is_dem_asset(asset)
-            file_name = asset.get('file_name', 'unknown')
+            file_name = asset.get("file_name", "unknown")
             is_loaded = file_path in self._loaded_search_layer_keys
-            
+
             print(f"DEBUG: Processing layer: {file_name}")
             print(f"  file_path: {file_path}")
             print(f"  should_show: {should_show}")
@@ -1189,7 +1275,9 @@ class DesktopController:
 
             # OPTIMIZATION: Skip if visibility hasn't changed since last sync
             if last_synced is not None and last_synced == should_show and is_loaded:
-                print(f"  SKIP: Visibility unchanged (already {'visible' if should_show else 'hidden'})")
+                print(
+                    f"  SKIP: Visibility unchanged (already {'visible' if should_show else 'hidden'})"
+                )
                 continue
 
             if not should_show:
@@ -1263,9 +1351,9 @@ class DesktopController:
     def _focus_visible_search_assets(self, *, force: bool) -> None:
         """Legacy focus function - delegates to enhanced version."""
         self._focus_visible_search_assets_with_enhanced_behavior(
-            force=force, 
+            force=force,
             is_first_search=force,
-            asset_count=len(self._search_result_assets_by_path)
+            asset_count=len(self._search_result_assets_by_path),
         )
 
     def _focus_visible_search_assets_with_enhanced_behavior(
@@ -1304,24 +1392,28 @@ class DesktopController:
             if not force and self._last_visible_focus_signature == signature:
                 return
             self._last_visible_focus_signature = signature
-            
+
             # Enhanced behavior for multiple assets and first search
             if is_first_search:
                 if len(visible_assets) == 1:
                     # Single asset: fly to it with appropriate zoom
                     self._logger.info("First search: Flying to single asset")
                     self._fly_to_asset(visible_assets[0])
-                    self.panel.log(f"Focused on search result: {visible_assets[0].get('file_name', 'asset')}")
+                    self.panel.log(
+                        f"Focused on search result: {visible_assets[0].get('file_name', 'asset')}"
+                    )
                 else:
                     # Multiple assets: fit all in view with padding
-                    self._logger.info(f"First search: Fitting {len(visible_assets)} assets in view")
+                    self._logger.info(
+                        f"First search: Fitting {len(visible_assets)} assets in view"
+                    )
                     self._run_js_call(
                         "focusBoundsWithPadding",
                         union_bounds["west"],
                         union_bounds["south"],
                         union_bounds["east"],
                         union_bounds["north"],
-                        1.5  # 50% padding to ensure all assets are visible
+                        1.5,  # 50% padding to ensure all assets are visible
                     )
                     self.panel.log(f"Focused on {len(visible_assets)} search results")
             else:
@@ -1340,21 +1432,22 @@ class DesktopController:
 
     def reorder_search_result_layers(self, reordered_layers: list[dict]) -> None:
         """Handle drag-and-drop reordering of search result layers with real-time globe updates."""
-        print(f"\n{'='*80}")
+        print(f"\n{'=' * 80}")
         print(f"DEBUG: reorder_search_result_layers called in controller!")
         print(f"  reordered_layers: {reordered_layers}")
-        print(f"{'='*80}\n")
+        print(f"{'=' * 80}\n")
         try:
             if not reordered_layers:
                 print("DEBUG: No reordered layers, returning")
                 return
-            
+
             print(f"DEBUG: Processing {len(reordered_layers)} layers")
-            
+
             # Track performance for event-driven architecture
             import time
+
             start_time = time.time()
-            
+
             # Find corresponding assets using file_path (not file_name, to handle duplicates)
             reordered_assets = []
             for layer_info in reordered_layers:
@@ -1362,30 +1455,40 @@ class DesktopController:
                 if not file_path:
                     print(f"WARNING: Layer info missing file_path: {layer_info}")
                     continue
-                
+
                 # Normalize path for lookup
                 normalized_path = file_path.replace("\\", "/")
-                
+
                 # Find the asset with matching file path
                 if normalized_path in self._search_result_assets_by_path:
                     asset = self._search_result_assets_by_path[normalized_path]
                     # Add visibility info from the layer_info
                     asset_with_visibility = asset.copy()
-                    asset_with_visibility["is_visible"] = layer_info.get("is_visible", True)
+                    asset_with_visibility["is_visible"] = layer_info.get(
+                        "is_visible", True
+                    )
                     reordered_assets.append(asset_with_visibility)
-                    print(f"  Matched asset: {asset.get('file_name', 'Unknown')} at {normalized_path} (visible={layer_info.get('is_visible', True)})")
+                    print(
+                        f"  Matched asset: {asset.get('file_name', 'Unknown')} at {normalized_path} (visible={layer_info.get('is_visible', True)})"
+                    )
                 else:
                     print(f"  WARNING: No asset found for path: {normalized_path}")
-            
+
             if not reordered_assets:
                 self.panel.log("Layer reordering failed: No matching assets found")
-                print("ERROR: No matching assets found in _search_result_assets_by_path")
-                print(f"DEBUG: Available asset paths: {list(self._search_result_assets_by_path.keys())}")
-                print(f"DEBUG: Requested paths: {[layer_info.get('file_path', '') for layer_info in reordered_layers]}")
+                print(
+                    "ERROR: No matching assets found in _search_result_assets_by_path"
+                )
+                print(
+                    f"DEBUG: Available asset paths: {list(self._search_result_assets_by_path.keys())}"
+                )
+                print(
+                    f"DEBUG: Requested paths: {[layer_info.get('file_path', '') for layer_info in reordered_layers]}"
+                )
                 return
-            
+
             print(f"DEBUG: Found {len(reordered_assets)} matching assets")
-            
+
             # CRITICAL FIX: Ensure all layers are actually loaded before reordering
             # Sometimes the reorder happens before layers are fully loaded
             missing_layers = []
@@ -1393,13 +1496,17 @@ class DesktopController:
                 file_path = str(asset.get("file_path", "")).replace("\\", "/")
                 if file_path not in self._loaded_search_layer_keys:
                     missing_layers.append(asset)
-            
+
             if missing_layers:
-                print(f"WARNING: {len(missing_layers)} layers not yet loaded, attempting to load them first")
+                print(
+                    f"WARNING: {len(missing_layers)} layers not yet loaded, attempting to load them first"
+                )
                 for asset in missing_layers:
                     file_path = str(asset.get("file_path", "")).replace("\\", "/")
-                    print(f"  Loading missing layer: {asset.get('file_name', 'Unknown')} - {file_path}")
-                    
+                    print(
+                        f"  Loading missing layer: {asset.get('file_name', 'Unknown')} - {file_path}"
+                    )
+
                     # Try to load the layer
                     loaded = self._load_asset_layer_event_driven(
                         asset,
@@ -1409,53 +1516,72 @@ class DesktopController:
                         apply_scene_mode=False,
                         show_loading=False,
                     )
-                    
+
                     if loaded:
                         self._loaded_search_layer_keys.add(file_path)
                         print(f"  Successfully loaded missing layer: {file_path}")
                     else:
                         print(f"  Failed to load missing layer: {file_path}")
-                
+
                 # Small delay to allow layers to initialize
                 import time
+
                 time.sleep(0.1)
-            
+
             # Update the Cesium layer stack order using event-driven approach
             if self._event_driven_enabled:
                 self._reorder_layers_event_driven(reordered_assets)
             else:
                 self._reorder_layers_standard(reordered_assets)
-            
+
             # Track performance metrics
             elapsed_time = time.time() - start_time
-            self._track_performance_metric("layer_reorder_times", elapsed_time, f"layers={len(reordered_layers)}")
-            
+            self._track_performance_metric(
+                "layer_reorder_times", elapsed_time, f"layers={len(reordered_layers)}"
+            )
+
             # Log the successful reordering
-            layer_names = [asset.get("file_name", "Unknown") for asset in reordered_assets]
+            layer_names = [
+                asset.get("file_name", "Unknown") for asset in reordered_assets
+            ]
             if len(layer_names) <= 3:
                 self.panel.log(f"Layers reordered: {', '.join(layer_names)}")
             else:
-                self.panel.log(f"Layers reordered: {', '.join(layer_names[:3])} and {len(layer_names) - 3} more")
-            
-            self._logger.info("Search result layers reordered: %d layers in %.3fs", len(reordered_layers), elapsed_time)
-            
+                self.panel.log(
+                    f"Layers reordered: {', '.join(layer_names[:3])} and {len(layer_names) - 3} more"
+                )
+
+            self._logger.info(
+                "Search result layers reordered: %d layers in %.3fs",
+                len(reordered_layers),
+                elapsed_time,
+            )
+
         except Exception as e:
             self.panel.log(f"Layer reordering failed: {str(e)}")
-            self._logger.error("Failed to reorder search result layers: %s", e, exc_info=True)
+            self._logger.error(
+                "Failed to reorder search result layers: %s", e, exc_info=True
+            )
 
     def _reorder_layers_event_driven(self, reordered_assets: list[dict]) -> None:
         """Reorder layers using event-driven approach for optimal performance.
-        
+
         CRITICAL: We reorder ALL layers that are loaded, regardless of current visibility.
         The visibility state is managed separately by the toggle buttons.
         """
         try:
-            print(f"\n{'='*80}")
-            print(f"DEBUG: _reorder_layers_event_driven called with {len(reordered_assets)} assets")
-            print(f"DEBUG: Current _loaded_search_layer_keys: {self._loaded_search_layer_keys}")
-            print(f"DEBUG: Current _search_result_assets_by_path keys: {list(self._search_result_assets_by_path.keys())}")
-            print(f"{'='*80}\n")
-            
+            print(f"\n{'=' * 80}")
+            print(
+                f"DEBUG: _reorder_layers_event_driven called with {len(reordered_assets)} assets"
+            )
+            print(
+                f"DEBUG: Current _loaded_search_layer_keys: {self._loaded_search_layer_keys}"
+            )
+            print(
+                f"DEBUG: Current _search_result_assets_by_path keys: {list(self._search_result_assets_by_path.keys())}"
+            )
+            print(f"{'=' * 80}\n")
+
             # Build layer reorder commands for the JavaScript bridge
             layer_commands = []
             for i, asset in enumerate(reordered_assets):
@@ -1463,41 +1589,55 @@ class DesktopController:
                 if not file_path:
                     print(f"  WARNING: Asset {i} has no file_path")
                     continue
-                
-                print(f"  Processing asset {i}: {asset.get('file_name', 'Unknown')} - {file_path}")
-                
+
+                print(
+                    f"  Processing asset {i}: {asset.get('file_name', 'Unknown')} - {file_path}"
+                )
+
                 # Check if this layer is actually loaded on the map
                 if file_path not in self._loaded_search_layer_keys:
-                    print(f"  SKIP: Layer not in _loaded_search_layer_keys: {file_path}")
-                    self._logger.debug("Skipping layer reorder for %s: not loaded on map", 
-                                     asset.get("file_name", ""))
+                    print(
+                        f"  SKIP: Layer not in _loaded_search_layer_keys: {file_path}"
+                    )
+                    self._logger.debug(
+                        "Skipping layer reorder for %s: not loaded on map",
+                        asset.get("file_name", ""),
+                    )
                     continue
-                
-                print(f"  INCLUDE: Layer found in _loaded_search_layer_keys: {file_path}")
-                
+
+                print(
+                    f"  INCLUDE: Layer found in _loaded_search_layer_keys: {file_path}"
+                )
+
                 # Include the layer in reordering regardless of visibility state
                 # The visibility is controlled by the toggle button, not by reordering
-                layer_commands.append({
-                    "layer_key": file_path,
-                    "file_name": asset.get("file_name", ""),
-                    "kind": asset.get("kind", ""),
-                    "new_order": i,
-                    "is_dem": self._is_dem_asset(asset)
-                })
-            
+                layer_commands.append(
+                    {
+                        "layer_key": file_path,
+                        "file_name": asset.get("file_name", ""),
+                        "kind": asset.get("kind", ""),
+                        "new_order": i,
+                        "is_dem": self._is_dem_asset(asset),
+                    }
+                )
+
             print(f"DEBUG: Built {len(layer_commands)} layer commands")
-            
+
             if layer_commands:
                 # Log the reordering plan for debugging
                 print(f"DEBUG: EVENT_DRIVEN Layer reordering plan:")
                 for cmd in layer_commands:
-                    print(f"  Order {cmd['new_order']}: {cmd['file_name']} ({cmd['kind']}) - key={cmd['layer_key']}")
-                
+                    print(
+                        f"  Order {cmd['new_order']}: {cmd['file_name']} ({cmd['kind']}) - key={cmd['layer_key']}"
+                    )
+
                 # Send batch reorder command to Cesium
                 print(f"DEBUG: Sending reorderLayersEventDriven command to JavaScript")
                 self._run_js_call("reorderLayersEventDriven", layer_commands)
-                self._logger.info("EVENT_DRIVEN: Sent %d layer reorder commands", len(layer_commands))
-                
+                self._logger.info(
+                    "EVENT_DRIVEN: Sent %d layer reorder commands", len(layer_commands)
+                )
+
                 # Force additional render after reordering
                 self._run_js_call("requestSceneRender")
                 print(f"DEBUG: Reorder commands sent successfully")
@@ -1505,22 +1645,31 @@ class DesktopController:
                 print(f"WARNING: No loaded layers found to reorder")
                 self._logger.warning("EVENT_DRIVEN: No loaded layers found to reorder")
                 self.panel.log("Layer reordering: No loaded layers found on map")
-                
+
                 # Debug: Show what layers we have vs what we're looking for
-                print(f"DEBUG: Available loaded layer keys: {self._loaded_search_layer_keys}")
-                print(f"DEBUG: Requested asset paths: {[asset.get('file_path', '') for asset in reordered_assets]}")
-                
+                print(
+                    f"DEBUG: Available loaded layer keys: {self._loaded_search_layer_keys}"
+                )
+                print(
+                    f"DEBUG: Requested asset paths: {[asset.get('file_path', '') for asset in reordered_assets]}"
+                )
+
         except Exception as e:
             print(f"ERROR: Event-driven layer reordering failed: {e}")
             import traceback
+
             traceback.print_exc()
-            self._logger.warning("Event-driven layer reordering failed, falling back to standard: %s", e)
-            self.panel.log(f"Layer reordering: Event-driven approach failed, using fallback")
+            self._logger.warning(
+                "Event-driven layer reordering failed, falling back to standard: %s", e
+            )
+            self.panel.log(
+                f"Layer reordering: Event-driven approach failed, using fallback"
+            )
             self._reorder_layers_standard(reordered_assets)
 
     def _reorder_layers_standard(self, reordered_assets: list[dict]) -> None:
         """Reorder layers using standard approach.
-        
+
         CRITICAL: Reorder ALL loaded layers, not just visible ones.
         """
         try:
@@ -1531,21 +1680,24 @@ class DesktopController:
                 file_path = str(asset.get("file_path", "")).replace("\\", "/")
                 if not file_path:
                     continue
-                
+
                 # Check if layer is loaded (not just visible)
                 if file_path in self._loaded_search_layer_keys:
                     loaded_layers.append(file_path)
-                    self._logger.debug("STANDARD: Including layer for reorder: %s", asset.get("file_name", ""))
-            
+                    self._logger.debug(
+                        "STANDARD: Including layer for reorder: %s",
+                        asset.get("file_name", ""),
+                    )
+
             if not loaded_layers:
                 self._logger.warning("STANDARD: No loaded layers found to reorder")
                 return
-            
+
             # Reorder loaded layers from bottom to top (reverse order)
             self._logger.info("STANDARD: Reordering %d layers", len(loaded_layers))
             for layer_key in reversed(loaded_layers):
                 self._run_js_call("raiseLayerToTop", layer_key)
-                
+
         except Exception as e:
             self._logger.error("Standard layer reordering failed: %s", e)
 
@@ -1580,13 +1732,15 @@ class DesktopController:
     def browse_files(self) -> None:
         """Browse and select multiple raster files based on selected format."""
         from qtpy.QtWidgets import QFileDialog
-        
+
         # Get selected format from dropdown
         format_index = self.panel.format_combo.currentIndex()
-        
+
         # Define file filters based on format
         if format_index == 0:  # GeoTIFF
-            file_filter = "GeoTIFF and world files (*.tif *.tiff *.tfw *.tifw);;All Files (*)"
+            file_filter = (
+                "GeoTIFF and world files (*.tif *.tiff *.tfw *.tifw);;All Files (*)"
+            )
             dialog_title = "Select GeoTIFF files and optional .tfw world files"
         elif format_index == 1:  # JPEG2000 + PRJ
             # Include world files (.j2w, .jgw) in the filter
@@ -1596,41 +1750,40 @@ class DesktopController:
             file_filter = "MBTiles (*.mbtiles);;All Files (*)"
             dialog_title = "Select MBTiles files"
         else:
-            file_filter = "Raster Files (*.tif *.tiff *.jp2 *.j2k *.mbtiles);;All Files (*)"
+            file_filter = (
+                "Raster Files (*.tif *.tiff *.jp2 *.j2k *.mbtiles);;All Files (*)"
+            )
             dialog_title = "Select raster files"
-        
+
         files, _ = QFileDialog.getOpenFileNames(
-            self.panel,
-            dialog_title,
-            "",
-            file_filter
+            self.panel, dialog_title, "", file_filter
         )
-        
+
         if files:
             self.panel.add_selected_files(files)
-            
+
             # Count valid files after validation
             valid_count = self.panel.selected_files_list.count()
-            
+
             if valid_count > 0:
                 self.panel.log(f"Selected {valid_count} valid file(s) for ingestion")
-                
+
                 # Log file details (first 5)
                 for i in range(min(5, valid_count)):
                     item = self.panel.selected_files_list.item(i)
                     if item:
                         self.panel.log(f"  - {item.text()}")
-                
+
                 if valid_count > 5:
                     self.panel.log(f"  ... and {valid_count - 5} more files")
             else:
                 self.panel.log("No valid files selected after validation")
-    
+
     def clear_file_selection(self) -> None:
         """Clear the current file selection."""
         self.panel.clear_selected_files()
         self.panel.log("File selection cleared")
-    
+
     def enqueue_selected_files(self) -> None:
         """Enqueue the selected files for ingestion."""
         if not self._require_offline_endpoints("Ingest files"):
@@ -1640,14 +1793,17 @@ class DesktopController:
                 f"API unavailable at {self.api.base_url}. Start API/server desktop, then retry 'Ingest files'."
             )
             return
-        
+
         selected_files = self.panel.get_selected_files()
         if not selected_files:
-            self.panel.log("No files selected. Use 'Select Files' or 'Select Folder' first.")
+            self.panel.log(
+                "No files selected. Use 'Select Files' or 'Select Folder' first."
+            )
             return
-        
+
         # Validate files exist
         from pathlib import Path
+
         valid_files = []
         for file_path in selected_files:
             path_obj = Path(file_path)
@@ -1658,11 +1814,11 @@ class DesktopController:
                 self.panel.log(f"Not a file: {path_obj.name}")
                 continue
             valid_files.append(file_path)
-        
+
         if not valid_files:
             self.panel.log("No valid files to ingest")
             return
-        
+
         try:
             self.panel.log(f"Starting ingestion of {len(valid_files)} file(s)...")
             # Set progress bar to 0% initially (not infinite loading)
@@ -1670,18 +1826,20 @@ class DesktopController:
             self.panel.ingest_progress_bar.setValue(0)
             self.panel.ingest_status_value.setText("QUEUING")
             self.panel.ingest_step_value.setText("Submitting files for ingestion")
-            
+
             # Submit to ingestion queue
             job_response = self.api.enqueue_ingest_job(valid_files)
             job_id = job_response.get("id")
-            
+
             if job_id:
                 self.panel.log(f"Ingestion job queued: {job_id}")
-                self.panel.log(f"Processing {len(valid_files)} file(s) in background...")
-                
+                self.panel.log(
+                    f"Processing {len(valid_files)} file(s) in background..."
+                )
+
                 # Start monitoring the job
                 self._start_ingest_monitoring(job_id)
-                
+
                 # Clear selection after successful submission
                 self.panel.clear_selected_files()
                 self.panel.validation_status_label.clear()
@@ -1690,27 +1848,29 @@ class DesktopController:
                 self.panel.ingest_progress_bar.setRange(0, 100)
                 self.panel.ingest_progress_bar.setValue(0)
                 self.panel.ingest_status_value.setText("FAILED")
-                
+
         except Exception as e:
-            self._logger.error("Failed to enqueue files for ingestion: %s", e, exc_info=True)
+            self._logger.error(
+                "Failed to enqueue files for ingestion: %s", e, exc_info=True
+            )
             self.panel.log(f"Ingestion failed: {e}")
             self.panel.ingest_progress_bar.setRange(0, 100)
             self.panel.ingest_progress_bar.setValue(0)
             self.panel.ingest_status_value.setText("FAILED")
-    
+
     def _start_ingest_monitoring(self, job_id: str) -> None:
         """Start monitoring an ingestion job by setting up the polling timer."""
         # Set the active job ID in state
         self.state.active_ingest_job_id = str(job_id)
-        
+
         # Record polling start time for timeout tracking
         self._ingest_poll_start_time = dt.datetime.now(dt.timezone.utc)
-        
+
         # Start the polling timer (polls every 500ms)
         self._ingest_poll_timer.start()
-        
+
         self._logger.info("Started monitoring ingestion job: %s", job_id)
-    
+
     def delete_asset(self, asset_data: dict) -> None:
         """Delete an asset from the database and catalog."""
         if not self._require_offline_endpoints("Delete asset"):
@@ -1720,77 +1880,82 @@ class DesktopController:
                 f"API unavailable at {self.api.base_url}. Start API/server desktop, then retry."
             )
             return
-        
-        asset_id = asset_data.get('id')
-        filename = asset_data.get('file_name', 'Unknown')
-        
+
+        asset_id = asset_data.get("id")
+        filename = asset_data.get("file_name", "Unknown")
+
         if not asset_id:
             self.panel.log(f"Cannot delete asset: missing ID for {filename}")
             return
-        
+
         try:
             self.panel.log(f"Deleting asset: {filename}...")
-            
+
             # Call delete API endpoint
             success = self.api.delete_asset(asset_id)
-            
+
             if success:
                 self.panel.log(f"Asset deleted successfully: {filename}")
-                
+
                 # Clear caches and refresh the assets list
                 self._clear_asset_caches()
-                
+
                 # Refresh the uploaded assets list to reflect the deletion
                 if self.app_mode == DesktopAppMode.SERVER:
                     from qtpy.QtCore import QTimer
+
                     QTimer.singleShot(100, self.panel.refresh_uploaded_assets)
-                
+
                 # Also refresh the main assets combo if in unified/client mode
                 if self.app_mode in [DesktopAppMode.UNIFIED, DesktopAppMode.CLIENT]:
                     QTimer.singleShot(200, self.refresh_assets)
-                    
+
             else:
                 self.panel.log(f"Failed to delete asset: {filename}")
-                
+
         except Exception as e:
-            self._logger.error("Failed to delete asset %s: %s", filename, e, exc_info=True)
+            self._logger.error(
+                "Failed to delete asset %s: %s", filename, e, exc_info=True
+            )
             self.panel.log(f"Delete failed: {e}")
+
     def refresh_assets(self) -> None:
         if not self._require_offline_endpoints("Catalog refresh"):
             return
-        
+
         # Clear all caches first to ensure fresh data
         self._clear_asset_caches()
-        
+
         try:
             # Force a fresh API call without any caching
             assets = self.api.list_assets()
-            
+
             # Log the API response for debugging
             self._logger.info(f"API returned {len(assets) if assets else 0} assets")
-            
+
         except httpx.HTTPError as exc:
             self._handle_api_error("Catalog refresh", exc)
             return
-        
+
         # Clear all asset caches to ensure fresh data after database operations
         self.panel.assets_combo.clear()
         self._asset_cache.clear()
         self._dem_asset_kind_cache.clear()
         self._search_result_assets_by_path.clear()
         self._search_layer_visibility.clear()
-        
+
         # Check if assets is empty or None
         if not assets:
             self.panel.log("Catalog refreshed: 0 assets (database is empty)")
             self._logger.info("Catalog refreshed: database is empty")
-            
+
             # Force refresh uploaded assets list to show empty state
             if self.app_mode == DesktopAppMode.SERVER:
                 from qtpy.QtCore import QTimer
+
                 QTimer.singleShot(100, self.panel.refresh_uploaded_assets)
             return
-        
+
         for asset in assets:
             self._asset_cache[asset["file_path"]] = asset
             name_suffix = ""
@@ -1804,8 +1969,9 @@ class DesktopController:
         if self.app_mode == DesktopAppMode.SERVER:
             # Use a small delay to ensure the API has processed any recent changes
             from qtpy.QtCore import QTimer
+
             QTimer.singleShot(100, lambda: self.panel.refresh_uploaded_assets())
-        
+
         shown = self.panel.assets_combo.count()
         recommendation = self.performance.recommend_policy(
             asset_count=shown,
@@ -1840,20 +2006,25 @@ class DesktopController:
         if not job_id:
             self._ingest_poll_timer.stop()
             return
-        
+
         # Check for polling timeout (max 2 hours)
         if self._ingest_poll_start_time:
             elapsed = dt.datetime.now(dt.timezone.utc) - self._ingest_poll_start_time
             if elapsed.total_seconds() > 7200:  # 2 hours
-                self._logger.warning("Ingest polling timeout after 2 hours, stopping polling for job %s", job_id)
+                self._logger.warning(
+                    "Ingest polling timeout after 2 hours, stopping polling for job %s",
+                    job_id,
+                )
                 self.panel.log("Ingest polling timed out - job may have completed")
                 self.panel.ingest_status_value.setText("TIMEOUT")
-                self.panel.ingest_step_value.setText("Polling timed out - check job status manually")
+                self.panel.ingest_step_value.setText(
+                    "Polling timed out - check job status manually"
+                )
                 self._ingest_poll_timer.stop()
                 self.state.active_ingest_job_id = None
                 self._ingest_poll_start_time = None
                 return
-        
+
         try:
             job = self.api.get_ingest_job(job_id)
         except httpx.HTTPError as exc:
@@ -1863,50 +2034,67 @@ class DesktopController:
                 if status_code == 404:
                     # Job not found - it was likely completed and cleaned up
                     self._logger.info("Ingest job completed and cleaned up: %s", job_id)
-                    
+
                     # Check if any new assets were actually added to the database
                     try:
                         current_asset_count = len(self.api.list_assets())
-                        if hasattr(self, '_pre_ingest_asset_count'):
-                            new_assets = current_asset_count - self._pre_ingest_asset_count
+                        if hasattr(self, "_pre_ingest_asset_count"):
+                            new_assets = (
+                                current_asset_count - self._pre_ingest_asset_count
+                            )
                             if new_assets > 0:
-                                self.panel.log(f"Ingest completed: {new_assets} new assets added to database")
-                                self.panel.ingest_step_value.setText(f"Completed: {new_assets} new assets added")
+                                self.panel.log(
+                                    f"Ingest completed: {new_assets} new assets added to database"
+                                )
+                                self.panel.ingest_step_value.setText(
+                                    f"Completed: {new_assets} new assets added"
+                                )
                             else:
-                                self.panel.log("Ingest completed: No new assets (files may already be in database)")
-                                self.panel.ingest_step_value.setText("Completed: No new files (duplicates skipped)")
+                                self.panel.log(
+                                    "Ingest completed: No new assets (files may already be in database)"
+                                )
+                                self.panel.ingest_step_value.setText(
+                                    "Completed: No new files (duplicates skipped)"
+                                )
                         else:
                             self.panel.log("Ingest job completed successfully")
-                            self.panel.ingest_step_value.setText("Job completed and cleaned up")
+                            self.panel.ingest_step_value.setText(
+                                "Job completed and cleaned up"
+                            )
                     except Exception:
                         self.panel.log("Ingest job completed successfully")
-                        self.panel.ingest_step_value.setText("Job completed and cleaned up")
-                    
+                        self.panel.ingest_step_value.setText(
+                            "Job completed and cleaned up"
+                        )
+
                     # Update UI to show completion
                     self.panel.ingest_status_value.setText("COMPLETED")
                     self.panel.ingest_progress_bar.setValue(100)
-                    
+
                     # Add informative completion message
                     self.panel.append_ingest_detail(
                         f"[COMPLETED] Job finished - check asset count for new additions"
                     )
-                    
+
                     # Stop polling and clear job ID
                     self._ingest_poll_timer.stop()
                     self.state.active_ingest_job_id = None
                     self._ingest_poll_start_time = None
-                    
+
                     # Auto-refresh the uploaded assets table when ingestion completes
                     if self.app_mode == DesktopAppMode.SERVER:
                         from qtpy.QtCore import QTimer
-                        QTimer.singleShot(500, lambda: self.panel.refresh_uploaded_assets())
-                    
+
+                        QTimer.singleShot(
+                            500, lambda: self.panel.refresh_uploaded_assets()
+                        )
+
                     return
                 elif status_code >= 500:
                     # Server error - log but continue polling
                     self._logger.warning(
-                        "Ingest progress refresh failed with server error %s, continuing to poll", 
-                        status_code
+                        "Ingest progress refresh failed with server error %s, continuing to poll",
+                        status_code,
                     )
                     return
             # For other errors, handle normally and stop polling
@@ -1922,10 +2110,14 @@ class DesktopController:
             self._ingest_poll_timer.stop()
             self.state.active_ingest_job_id = None
             self._ingest_poll_start_time = None
-            
+
             # Auto-refresh the uploaded assets table when ingestion completes
-            if self.app_mode == DesktopAppMode.SERVER and status in {"completed", "partial"}:
+            if self.app_mode == DesktopAppMode.SERVER and status in {
+                "completed",
+                "partial",
+            }:
                 from qtpy.QtCore import QTimer
+
                 QTimer.singleShot(500, lambda: self.panel.refresh_uploaded_assets())
 
     def stop_ingest_polling(self) -> None:
@@ -1983,8 +2175,12 @@ class DesktopController:
         # Log progress updates for debugging
         if emit_detail:
             self._logger.debug(
-                "Progress update: %d%% (%d/%d processed, %d failed) - %s", 
-                progress_percent, processed_items, total_items, failed_items, current_step
+                "Progress update: %d%% (%d/%d processed, %d failed) - %s",
+                progress_percent,
+                processed_items,
+                total_items,
+                failed_items,
+                current_step,
             )
 
         if emit_detail and (
@@ -2002,7 +2198,10 @@ class DesktopController:
                 f"Processed: {processed_items}/{total_items} | Failed: {failed_items}"
             )
             # Auto-refresh the uploaded assets table when ingestion completes
-            if self.app_mode == DesktopAppMode.SERVER and status in {"completed", "partial"}:
+            if self.app_mode == DesktopAppMode.SERVER and status in {
+                "completed",
+                "partial",
+            }:
                 QTimer.singleShot(500, self.panel.refresh_uploaded_assets)
 
     @staticmethod
@@ -2084,20 +2283,24 @@ class DesktopController:
     ) -> dict | None:
         if show_loading:
             self._set_layer_loading(True, f"Loading {asset['file_name']}...")
-        
+
         # Find the best version of the file (prioritize Web Mercator projected files)
         original_file_path = asset["file_path"]
         best_file_path = self._find_best_file_version(original_file_path)
-        
+
         # Update asset to use the best file version
         if best_file_path != original_file_path:
             asset = dict(asset)  # Don't mutate the original
             asset["file_path"] = best_file_path
             asset["tile_url"] = build_xyz_url(best_file_path)
-            self._logger.info(f"Updated asset to use optimized file: {Path(best_file_path).name}")
+            self._logger.info(
+                f"Updated asset to use optimized file: {Path(best_file_path).name}"
+            )
         else:
-            self._logger.debug(f"Using original asset file: {Path(original_file_path).name}")
-        
+            self._logger.debug(
+                f"Using original asset file: {Path(original_file_path).name}"
+            )
+
         if (
             self.app_mode != DesktopAppMode.CLIENT
             and not Path(asset["file_path"]).exists()
@@ -2118,32 +2321,43 @@ class DesktopController:
                 from core_shared.ingestion.services.cog_service import (
                     CogPreparationService,
                 )
+
                 src_path = Path(asset["file_path"])
-                self._logger.info("COG check: %s is_cog=%s", src_path.name,
-                                  CogPreparationService._looks_like_cog(src_path))
+                self._logger.info(
+                    "COG check: %s is_cog=%s",
+                    src_path.name,
+                    CogPreparationService._looks_like_cog(src_path),
+                )
                 if not CogPreparationService._looks_like_cog(src_path):
-                    self.panel.log(f"Converting to COG for fast tiling: {src_path.name}…")
+                    self.panel.log(
+                        f"Converting to COG for fast tiling: {src_path.name}…"
+                    )
                     if show_loading:
-                        self._set_layer_loading(True, f"Converting {src_path.name} to COG…")
+                        self._set_layer_loading(
+                            True, f"Converting {src_path.name} to COG…"
+                        )
                 cog_result = CogPreparationService().prepare(src_path)
-                self._logger.info("COG result: working_path=%s converted=%s",
-                                  cog_result.working_path, cog_result.converted)
+                self._logger.info(
+                    "COG result: working_path=%s converted=%s",
+                    cog_result.working_path,
+                    cog_result.converted,
+                )
                 if cog_result.working_path != src_path:
                     asset = dict(asset)  # don't mutate the original
                     asset["file_path"] = str(cog_result.working_path)
                     asset["tile_url"] = build_xyz_url(str(cog_result.working_path))
                     self._logger.info("COG tile_url updated to: %s", asset["tile_url"])
                     if cog_result.converted:
-                        self.panel.log(
-                            f"COG ready: {cog_result.working_path.name}"
-                        )
+                        self.panel.log(f"COG ready: {cog_result.working_path.name}")
             except Exception:
                 self._logger.warning("COG preparation failed", exc_info=True)
         if not self.titiler.ensure_running():
             detail = getattr(self.titiler, "last_error", "") or ""
             if detail:
                 self.panel.log("TiTiler failed to start: " + detail.strip())
-                self._logger.error("TiTiler unavailable before add layer: %s", detail.strip())
+                self._logger.error(
+                    "TiTiler unavailable before add layer: %s", detail.strip()
+                )
             else:
                 self.panel.log("Warning: TiTiler could not start. Layer may not draw.")
                 self._logger.error("TiTiler unavailable before add layer")
@@ -2203,7 +2417,7 @@ class DesktopController:
 
     def _try_visualize_ingested_asset(self) -> None:
         """Try to visualize newly ingested assets with event-driven server-side processing.
-        
+
         For folder ingests, loads up to 5 most recent assets automatically.
         Uses server-side metadata processing for ultra-high performance with terabyte-scale data.
         All processing happens on server, client only requests metadata and tile URLs.
@@ -2221,15 +2435,17 @@ class DesktopController:
             return
 
         self.refresh_assets()
-        
+
         # Check if source_path is a folder
         source_path_obj = Path(source_path)
         is_folder = source_path_obj.is_dir()
-        
+
         if is_folder:
             # Server-side folder processing for terabyte-scale data
-            matching_assets = self._get_server_processed_folder_assets(assets, source_path_obj)
-            
+            matching_assets = self._get_server_processed_folder_assets(
+                assets, source_path_obj
+            )
+
             if not matching_assets:
                 self.panel.log(
                     "Ingest completed, but catalog items are not yet visible. Use Refresh Assets."
@@ -2239,20 +2455,22 @@ class DesktopController:
                     source_path,
                 )
                 return
-            
+
             # Server-side sorting by metadata timestamps (no file system access)
-            assets_to_load = self._get_server_sorted_recent_assets(matching_assets, limit=5)
-            
+            assets_to_load = self._get_server_sorted_recent_assets(
+                matching_assets, limit=5
+            )
+
             self.panel.log(
                 f"Auto-loading {len(assets_to_load)} most recent asset(s) from {len(matching_assets)} total"
             )
-            
+
             # Event-driven layer loading with server-side tile preparation
             self._load_assets_event_driven(assets_to_load)
         else:
             # Single file ingest with server-side processing
             match = self._find_server_processed_asset(assets, source_path)
-            
+
             if not isinstance(match, dict):
                 self.panel.log(
                     "Ingest completed, but catalog item is not yet visible. Use Refresh Assets."
@@ -2265,7 +2483,7 @@ class DesktopController:
 
             # Event-driven single asset loading
             self._load_single_asset_event_driven(match)
-        
+
         self.state.auto_visualize_ingest_result = False
         self.state.pending_ingest_source_path = None
 
@@ -2274,33 +2492,42 @@ class DesktopController:
         try:
             # Use existing API but with server-side optimization hints
             assets = self.api.list_assets()
-            self._logger.info("Server-side asset processing completed for path=%s", source_path)
+            self._logger.info(
+                "Server-side asset processing completed for path=%s", source_path
+            )
             return assets
         except httpx.HTTPError as exc:
             self._logger.error("Server-side asset processing failed: %s", exc)
             raise
 
-    def _get_server_processed_folder_assets(self, assets: list[dict], source_path_obj: Path) -> list[dict]:
+    def _get_server_processed_folder_assets(
+        self, assets: list[dict], source_path_obj: Path
+    ) -> list[dict]:
         """Get folder assets using server-side metadata processing."""
         # Server processes folder contents without client file system access
         matching_assets = [
-            asset for asset in assets
+            asset
+            for asset in assets
             if Path(str(asset.get("file_path") or "")).parent == source_path_obj
         ]
-        self._logger.info("Server processed %d assets from folder", len(matching_assets))
+        self._logger.info(
+            "Server processed %d assets from folder", len(matching_assets)
+        )
         return matching_assets
 
-    def _get_server_sorted_recent_assets(self, assets: list[dict], limit: int = 5) -> list[dict]:
+    def _get_server_sorted_recent_assets(
+        self, assets: list[dict], limit: int = 5
+    ) -> list[dict]:
         """Get recent assets sorted by server-side metadata timestamps."""
         # Sort by server-provided created_at timestamp instead of file system access
         sorted_assets = sorted(
-            assets,
-            key=lambda a: a.get("created_at", ""),
-            reverse=True
+            assets, key=lambda a: a.get("created_at", ""), reverse=True
         )
         return sorted_assets[:limit]
 
-    def _find_server_processed_asset(self, assets: list[dict], source_path: str) -> dict | None:
+    def _find_server_processed_asset(
+        self, assets: list[dict], source_path: str
+    ) -> dict | None:
         """Find asset using server-side metadata matching."""
         # Strategy 1: Server-side exact path matching
         match = next(
@@ -2313,7 +2540,7 @@ class DesktopController:
             ),
             None,
         )
-        
+
         # Strategy 2: Server-side filename matching
         if not isinstance(match, dict):
             source_filename = Path(source_path).name
@@ -2331,25 +2558,26 @@ class DesktopController:
                     source_path,
                     match.get("file_path"),
                 )
-        
+
         return match
 
     def _load_assets_event_driven(self, assets_to_load: list[dict]) -> None:
         """Load multiple assets using event-driven architecture."""
         import time
+
         start_time = time.time()
-        
+
         for idx, match in enumerate(assets_to_load):
             self._asset_cache[match["file_path"]] = match
             self.state.selected_asset = match
-            
+
             # Track terabyte-scale assets
             if match.get("performance_tier") == "ultra_large":
                 self._terabyte_scale_assets_loaded += 1
-            
+
             # Request server-side tile preparation and optimization
             options = self._get_server_optimized_layer_options(match)
-            
+
             if idx == 0:
                 # For first asset, show loading indicator and fly to it
                 self._set_layer_loading(True, f"Loading {match['file_name']}...")
@@ -2360,59 +2588,68 @@ class DesktopController:
             else:
                 # For subsequent assets, just add them without flying
                 self._add_layer_event_driven(match, options)
-            
+
             self.panel.log(f"Auto-loaded: {match['file_name']}")
-        
+
         # Track performance
         load_time = time.time() - start_time
-        self._track_performance_metric("layer_load_times", load_time, f"{len(assets_to_load)} assets")
+        self._track_performance_metric(
+            "layer_load_times", load_time, f"{len(assets_to_load)} assets"
+        )
 
     def _load_single_asset_event_driven(self, match: dict) -> None:
         """Load single asset using event-driven architecture."""
         import time
+
         start_time = time.time()
-        
+
         self._asset_cache[match["file_path"]] = match
         self.state.selected_asset = match
-        
+
         # Track terabyte-scale assets
         if match.get("performance_tier") == "ultra_large":
             self._terabyte_scale_assets_loaded += 1
-        
+
         # Request server-side optimization
         options = self._get_server_optimized_layer_options(match)
-        
+
         self._set_layer_loading(True, f"Loading {match['file_name']}...")
         if self._add_layer_event_driven(match, options):
             self._fly_through_asset_event_driven(match)
         else:
             self._set_layer_loading(False, "Layer load failed")
         self.panel.log(f"Auto-loaded ingested asset: {match['file_name']}")
-        
+
         # Track performance
         load_time = time.time() - start_time
-        self._track_performance_metric("layer_load_times", load_time, f"single asset: {match['file_name']}")
+        self._track_performance_metric(
+            "layer_load_times", load_time, f"single asset: {match['file_name']}"
+        )
 
     def _get_server_optimized_layer_options(self, asset: dict) -> dict:
         """Get layer options optimized by server-side processing."""
         bounds = self._asset_bounds(asset)
         options = self._layer_options(asset, bounds)
-        
+
         # Add server-side optimization hints for terabyte-scale data
         options["server_optimized"] = True
         options["tile_cache_strategy"] = "aggressive"
         options["memory_efficient"] = True
-        
+
         return options
 
     def _add_layer_event_driven(self, asset: dict, options: dict) -> bool:
         """Add layer using event-driven architecture with server-side processing."""
         # Test JavaScript bridge connectivity first
         if not self._test_js_bridge_connectivity():
-            self._logger.warning("JavaScript bridge connectivity test failed, falling back to standard layer loading")
-            self.panel.log("Warning: JavaScript bridge issue detected, using fallback method")
+            self._logger.warning(
+                "JavaScript bridge connectivity test failed, falling back to standard layer loading"
+            )
+            self.panel.log(
+                "Warning: JavaScript bridge issue detected, using fallback method"
+            )
             return self._add_layer(asset, options)
-        
+
         # Use existing _add_layer but with server optimization flags
         options["event_driven"] = True
         return self._add_layer(asset, options)
@@ -2815,7 +3052,7 @@ class DesktopController:
             self._volume_mode_enabled = False
             self._slope_aspect_mode_enabled = False
             self._pan_mode_enabled = False
-            
+
             # Enable polygon drawing mode for measurement
             self._polygon_drawing_context = "measurement"
             self._polygon_area_mode_enabled = True
@@ -2845,16 +3082,18 @@ class DesktopController:
         self._set_measurement_cursor_enabled(False)
 
     def _toolbar_measure_volume(self) -> bool | None:
-        self._logger.info("FillVolume: enter computing=%s active=%s",
-                          getattr(self, '_fill_volume_computing', False),
-                          getattr(self, '_fill_volume_active', False))
+        self._logger.info(
+            "FillVolume: enter computing=%s active=%s",
+            getattr(self, "_fill_volume_computing", False),
+            getattr(self, "_fill_volume_active", False),
+        )
         # Guard: ignore clicks while analysis is already running
-        if getattr(self, '_fill_volume_computing', False):
+        if getattr(self, "_fill_volume_computing", False):
             self.panel.log("Fill Volume: analysis in progress, please wait")
             return True  # keep button highlighted
 
         # Toggle off: clear overlays, keep polygon for re-use on next tap
-        if getattr(self, '_fill_volume_active', False):
+        if getattr(self, "_fill_volume_active", False):
             self._logger.info("FillVolume: toggling off")
             self._fill_volume_active = False
             self._fill_volume_computing = False
@@ -2900,7 +3139,9 @@ class DesktopController:
             return True
 
         # Polygon ready — submit analysis
-        self._logger.info("FillVolume: submitting analysis polygon_pts=%d", len(polygon))
+        self._logger.info(
+            "FillVolume: submitting analysis polygon_pts=%d", len(polygon)
+        )
         self._fill_volume_computing = True
 
         # Wire a one-shot relay so the worker thread can safely post progress
@@ -2924,10 +3165,14 @@ class DesktopController:
             # _relay kept alive via default-arg capture for the worker's lifetime
             def progress_cb(pct: float, msg: str) -> None:
                 _relay.progress.emit(int(pct), f"Fill Volume: {msg}")
+
             return compute_fill_volume(polygon, dem_path, progress_callback=progress_cb)
 
         def formatter(result: object) -> str:
-            from desktop_client.client_backend.measurement_tools.models import FillVolumeResult
+            from desktop_client.client_backend.measurement_tools.models import (
+                FillVolumeResult,
+            )
+
             if not isinstance(result, FillVolumeResult):
                 return "Fill Volume: no result"
             n = len(result.regions)
@@ -2936,7 +3181,7 @@ class DesktopController:
                 return (
                     f"Fill Volume: no depressions found "
                     f"(ref={result.reference_elevation_m:.1f} m, "
-                    f"void={100*result.void_fraction:.1f}%)"
+                    f"void={100 * result.void_fraction:.1f}%)"
                 )
             lines = [
                 f"Fill Volume: {n} depression(s) found, "
@@ -2951,17 +3196,23 @@ class DesktopController:
             return "\n".join(lines)
 
         def on_done(name: str, result: object, error: str, fmt) -> None:
-            self._logger.info("FillVolume: on_done called error=%s result_type=%s",
-                              error or "none", type(result).__name__)
+            self._logger.info(
+                "FillVolume: on_done called error=%s result_type=%s",
+                error or "none",
+                type(result).__name__,
+            )
             self._fill_volume_computing = False
             self._active_fill_volume_worker = None  # release worker reference
-            self._active_fill_volume_pool = None    # release pool reference
+            self._active_fill_volume_pool = None  # release pool reference
             self.bridge.loadingProgress.emit(100, "Fill Volume: Complete")
             self._measure.on_measurement_job_finished(name, result, error, fmt)
             if error or result is None:
                 self._fill_volume_active = False
                 return
-            from desktop_client.client_backend.measurement_tools.models import FillVolumeResult
+            from desktop_client.client_backend.measurement_tools.models import (
+                FillVolumeResult,
+            )
+
             if not isinstance(result, FillVolumeResult) or not result.regions:
                 self._run_js_call("clearFillVolumes")
                 self._fill_volume_active = False
@@ -2977,7 +3228,9 @@ class DesktopController:
                     "rim_elevation_m": r.rim_elevation_m,
                     "centroid_lon": r.centroid_lon,
                     "centroid_lat": r.centroid_lat,
-                    "outline": [{"lon": lon, "lat": lat} for lon, lat in r.outline_lonlat],
+                    "outline": [
+                        {"lon": lon, "lat": lat} for lon, lat in r.outline_lonlat
+                    ],
                 }
                 for r in result.regions
             ]
@@ -2985,7 +3238,10 @@ class DesktopController:
             self._fill_volume_active = True
 
         from qtpy.QtCore import Qt, QThreadPool
-        from desktop_client.client_backend.desktop.measurement_worker import MeasurementWorker
+        from desktop_client.client_backend.desktop.measurement_worker import (
+            MeasurementWorker,
+        )
+
         worker = MeasurementWorker(name="Fill Volume", task=task)
         # Keep a strong Python reference so the worker (and its signals QObject)
         # stays alive until on_done fires and clears it.
@@ -2995,8 +3251,11 @@ class DesktopController:
         pool = QThreadPool()
         pool.setMaxThreadCount(1)
         self._active_fill_volume_pool = pool
-        self._logger.info("FillVolume: worker created id=%s pool_active=%s",
-                          id(worker), pool.activeThreadCount())
+        self._logger.info(
+            "FillVolume: worker created id=%s pool_active=%s",
+            id(worker),
+            pool.activeThreadCount(),
+        )
         worker.signals.finished.connect(
             lambda job_name, res, err, fmt=formatter: on_done(job_name, res, err, fmt),
             Qt.QueuedConnection,
@@ -3015,21 +3274,36 @@ class DesktopController:
         """Return a bounding-box polygon for the active DEM asset, or None."""
         # Try to get bounds from the asset cache
         for path, asset in self._asset_cache.items():
-            if str(asset.get("file_path") or "") == dem_path and self._is_dem_asset(asset):
+            if str(asset.get("file_path") or "") == dem_path and self._is_dem_asset(
+                asset
+            ):
                 bounds = self._asset_bounds(asset)
                 if bounds:
-                    w, s, e, n = bounds["west"], bounds["south"], bounds["east"], bounds["north"]
+                    w, s, e, n = (
+                        bounds["west"],
+                        bounds["south"],
+                        bounds["east"],
+                        bounds["north"],
+                    )
                     return [(w, s), (e, s), (e, n), (w, n), (w, s)]
         for path, asset in self._search_result_assets_by_path.items():
-            if str(asset.get("file_path") or "") == dem_path and self._is_dem_asset(asset):
+            if str(asset.get("file_path") or "") == dem_path and self._is_dem_asset(
+                asset
+            ):
                 bounds = self._asset_bounds(asset)
                 if bounds:
-                    w, s, e, n = bounds["west"], bounds["south"], bounds["east"], bounds["north"]
+                    w, s, e, n = (
+                        bounds["west"],
+                        bounds["south"],
+                        bounds["east"],
+                        bounds["north"],
+                    )
                     return [(w, s), (e, s), (e, n), (w, n), (w, s)]
         # Fallback: read bounds directly from the raster file
         try:
             import rasterio
             from pyproj import Transformer as _T
+
             with rasterio.open(dem_path) as src:
                 b = src.bounds
                 crs = src.crs
@@ -3047,7 +3321,7 @@ class DesktopController:
         if (
             enabled is False
             and not self._slope_aspect_mode_enabled
-            and not getattr(self, '_slope_aspect_computing', False)
+            and not getattr(self, "_slope_aspect_computing", False)
         ):
             # Defensive: treat unchecked-while-idle as an activation request.
             enabled = True
@@ -3063,7 +3337,7 @@ class DesktopController:
             return False
 
         # Guard while computing
-        if getattr(self, '_slope_aspect_computing', False):
+        if getattr(self, "_slope_aspect_computing", False):
             self.panel.log("Slope & Aspect: analysis in progress, please wait")
             return True
 
@@ -3096,7 +3370,9 @@ class DesktopController:
             self._slope_aspect_mode_enabled = True
             self.set_search_draw_mode(enabled=True)
             self._set_measurement_cursor_enabled(True)
-            self.panel.log("Draw a polygon on the map, then click Finish to calculate slope & aspect.")
+            self.panel.log(
+                "Draw a polygon on the map, then click Finish to calculate slope & aspect."
+            )
             return True
 
         # Polygon ready — run async
@@ -3119,6 +3395,7 @@ class DesktopController:
         def task(_relay=relay) -> object:
             def _cb(pct: float, msg: str) -> None:
                 _relay.progress.emit(int(pct), f"Slope & Aspect: {msg}")
+
             _cb(5, "Starting")
             result = compute_slope_aspect(polygon, dem_path)
             _cb(95, "Finalising")
@@ -3126,7 +3403,9 @@ class DesktopController:
 
         def formatter(result: object) -> str:
             m = result
-            area_txt = ", ".join(f"{k}:{v:.1f}m²" for k, v in m.area_by_class_m2.items())
+            area_txt = ", ".join(
+                f"{k}:{v:.1f}m²" for k, v in m.area_by_class_m2.items()
+            )
             return (
                 f"Slope & Aspect: mean={m.mean_slope_deg:.2f}°, "
                 f"std={m.std_slope_deg:.2f}°, max={m.max_slope_deg:.2f}°; "
@@ -3139,12 +3418,15 @@ class DesktopController:
             self._active_slope_aspect_pool = None
             self.bridge.loadingProgress.emit(100, "Slope & Aspect: Complete")
             self._measure.on_measurement_job_finished(name, result, error, fmt)
-            callback = getattr(self, '_on_slope_aspect_done', None)
+            callback = getattr(self, "_on_slope_aspect_done", None)
             if callable(callback):
                 callback()
 
         from qtpy.QtCore import Qt, QThreadPool
-        from desktop_client.client_backend.desktop.measurement_worker import MeasurementWorker
+        from desktop_client.client_backend.desktop.measurement_worker import (
+            MeasurementWorker,
+        )
+
         worker = MeasurementWorker(name="Slope & Aspect", task=task)
         self._active_slope_aspect_worker = worker
         pool = QThreadPool()
@@ -3177,7 +3459,7 @@ class DesktopController:
             self._run_js_call("setSearchDrawMode", "none")
             self._polygon_drawing_context = "none"
             self._pan_mode_enabled = False
-            
+
             # Enable viewshed mode
             self._viewshed_mode_enabled = True
             self._set_measurement_cursor_enabled(True)
@@ -3403,7 +3685,7 @@ class DesktopController:
             encoded = ", ".join(json.dumps(arg) for arg in args)
             script = f"window.offlineGIS && window.offlineGIS.{method}({encoded});"
             self.web_view.page().runJavaScript(script)
-                
+
         except Exception as e:
             self._logger.error("JavaScript call failed: %s - %s", method, e)
             self.panel.log(f"JavaScript error: {method} failed - {str(e)}")
@@ -3528,7 +3810,7 @@ class DesktopController:
     def _add_layer(self, asset: dict, options: dict) -> bool:
         """Add layer with event-driven architecture and server-side optimization."""
         tile_url = str(asset.get("tile_url") or "")
-        
+
         # Event-driven optimization: Let server handle URL normalization
         if options.get("event_driven", False):
             tile_url = self._get_server_optimized_tile_url(asset, tile_url)
@@ -3547,73 +3829,77 @@ class DesktopController:
 
         is_dem = bool(options.get("is_dem"))
         from_search_results = bool(str(options.get("layer_key") or "").strip())
-        
+
         # Event-driven performance optimizations
         if options.get("server_optimized", False):
             self._apply_server_performance_hints(options)
-        
+
         if is_dem:
             return self._add_dem_layer_event_driven(asset, options, from_search_results)
         else:
-            return self._add_imagery_layer_event_driven(asset, options, from_search_results)
+            return self._add_imagery_layer_event_driven(
+                asset, options, from_search_results
+            )
 
     def _get_server_optimized_tile_url(self, asset: dict, tile_url: str) -> str:
         """Get server-optimized tile URL for terabyte-scale performance."""
         # Server handles all URL optimization and caching strategies
         optimized_url = self._normalize_tile_url_legacy(tile_url)
-        
+
         # Add server-side optimization parameters for large datasets
         if "?" in optimized_url:
             optimized_url += "&cache_strategy=aggressive&memory_efficient=true"
         else:
             optimized_url += "?cache_strategy=aggressive&memory_efficient=true"
-        
+
         self._logger.info("Server-optimized tile URL for %s", asset.get("file_name"))
         return optimized_url
 
     def _find_best_file_version(self, file_path: str) -> str:
         """Find the best version of a file, prioritizing Web Mercator projected and COG versions."""
         from pathlib import Path
-        
+
         original_path = Path(file_path)
         if not original_path.exists():
             self._logger.debug(f"Original file not found: {file_path}")
             return file_path
-        
+
         # Priority order: _3857.cog.tif > _3857.tif > .cog.tif > original
         candidates = []
-        
+
         # Check for Web Mercator + COG version
         web_mercator_cog = original_path.parent / f"{original_path.stem}_3857.cog.tif"
         if web_mercator_cog.exists():
             candidates.append((web_mercator_cog, 4))  # Highest priority
             self._logger.debug(f"Found Web Mercator COG: {web_mercator_cog}")
-        
+
         # Check for Web Mercator version
         web_mercator = original_path.parent / f"{original_path.stem}_3857.tif"
         if web_mercator.exists():
             candidates.append((web_mercator, 3))
             self._logger.debug(f"Found Web Mercator: {web_mercator}")
-        
+
         # Check for COG version of original
         cog_version = original_path.parent / f"{original_path.stem}.cog.tif"
         if cog_version.exists():
             candidates.append((cog_version, 2))
             self._logger.debug(f"Found COG: {cog_version}")
-        
+
         # Original file
         candidates.append((original_path, 1))
         self._logger.debug(f"Original file: {original_path}")
-        
+
         # Sort by priority (highest first) and return the best option
         candidates.sort(key=lambda x: x[1], reverse=True)
         best_file = str(candidates[0][0])
-        
+
         if best_file != file_path:
-            self._logger.info(f"Using optimized file version: {Path(best_file).name} instead of {original_path.name}")
+            self._logger.info(
+                f"Using optimized file version: {Path(best_file).name} instead of {original_path.name}"
+            )
         else:
             self._logger.debug(f"Using original file: {original_path.name}")
-        
+
         return best_file
 
     def _normalize_tile_url_legacy(self, tile_url: str) -> str:
@@ -3627,11 +3913,11 @@ class DesktopController:
             if "url=" in tile_url:
                 # Split the URL to get the file path part
                 base_part, url_part = tile_url.split("url=", 1)
-                
+
                 # First decode any URL-encoded characters (like %20 for spaces, %3A for :, %2F for /)
                 decoded_url = unquote(url_part)
                 self._logger.debug(f"Windows URL decode: {url_part} -> {decoded_url}")
-                
+
                 # Strip any file:/// or file:// or file: prefix so GDAL sees raw C:/...
                 if decoded_url.startswith("file:///"):
                     decoded_url = decoded_url[8:]
@@ -3639,19 +3925,23 @@ class DesktopController:
                     decoded_url = decoded_url[7:]
                 elif decoded_url.startswith("file:"):
                     decoded_url = decoded_url[5:]
-                
+
                 # Ensure Windows drive letter format (C:/...)
                 if re.match(r"^[a-zA-Z]:", decoded_url):
                     # Already in correct format
                     pass
-                elif decoded_url.startswith("/") and len(decoded_url) > 3 and decoded_url[2] == ":":
+                elif (
+                    decoded_url.startswith("/")
+                    and len(decoded_url) > 3
+                    and decoded_url[2] == ":"
+                ):
                     # Remove leading slash from /C:/... format
                     decoded_url = decoded_url[1:]
-                
+
                 # Reconstruct the tile URL with the properly decoded path
                 tile_url = base_part + "url=" + decoded_url
                 self._logger.debug(f"Windows final URL: {tile_url}")
-            
+
             # Also handle already partially processed URLs with encoded characters
             tile_url = re.sub(r"url=file:/{0,3}([a-zA-Z]:)", r"url=\1", tile_url)
             tile_url = re.sub(
@@ -3669,7 +3959,7 @@ class DesktopController:
                 tile_url = tile_url.replace("url=file%3A%2F%2F%2F", "url=%2F")
             elif "url=file%3A%2F%2F" in tile_url:
                 tile_url = tile_url.replace("url=file%3A%2F%2F", "url=")
-        
+
         return tile_url
 
     def _apply_server_performance_hints(self, options: dict) -> None:
@@ -3678,37 +3968,43 @@ class DesktopController:
         options["tile_cache_size"] = "large"
         options["prefetch_strategy"] = "aggressive"
         options["memory_management"] = "optimized"
-        
+
         self._logger.info("Applied server performance hints for terabyte-scale data")
 
-    def _add_dem_layer_event_driven(self, asset: dict, options: dict, from_search_results: bool) -> bool:
+    def _add_dem_layer_event_driven(
+        self, asset: dict, options: dict, from_search_results: bool
+    ) -> bool:
         """Add DEM layer using event-driven architecture."""
         if bool(options.get("replace_existing", True)) and not from_search_results:
             self._explicit_imagery_layer_visible = False
         if not from_search_results:
             self._explicit_dem_layer_visible = True
-        
+
         self.state.active_layer_is_dem = True
         layer_key = str(options.get("layer_key") or "")
         self._active_dem_search_layer_key = layer_key or None
-        
+
         # Event-driven DEM loading with server optimization
         self._run_js_call(
             "addDemLayerEventDriven", asset["file_name"], asset["tile_url"], options
         )
-        
+
         self.panel.rgb_view_mode_combo.setCurrentIndex(0)
         self.panel.rgb_view_mode_combo.setEnabled(True)
         self.panel.apply_rgb_view_mode_btn.setEnabled(True)
         self._apply_display_control_mode()
-        self._logger.info("Event-driven DEM terrain layer requested name=%s", asset["file_name"])
+        self._logger.info(
+            "Event-driven DEM terrain layer requested name=%s", asset["file_name"]
+        )
         return True
 
-    def _add_imagery_layer_event_driven(self, asset: dict, options: dict, from_search_results: bool) -> bool:
+    def _add_imagery_layer_event_driven(
+        self, asset: dict, options: dict, from_search_results: bool
+    ) -> bool:
         """Add imagery layer using event-driven architecture."""
         replace_existing = bool(options.get("replace_existing", True))
         apply_scene_mode = bool(options.get("apply_scene_mode", True))
-        
+
         if replace_existing:
             if not from_search_results:
                 self._explicit_dem_layer_visible = False
@@ -3722,7 +4018,7 @@ class DesktopController:
         # CRITICAL FIX: Do NOT force scene mode from Python backend
         # JavaScript will automatically switch to 2D for imagery, 3D for DEM
         # Forcing mode here creates conflicts and unnecessary morphing
-        
+
         self._logger.info(
             "Event-driven layer render request name=%s kind=%s is_dem=%s replace_existing=%s apply_scene_mode=%s",
             asset.get("file_name"),
@@ -3731,11 +4027,11 @@ class DesktopController:
             replace_existing,
             apply_scene_mode,
         )
-        
+
         # Removed: Python-side setSceneMode call that conflicts with JavaScript auto-switching
         # JavaScript addTileLayer() will automatically call setSceneModeInternal("2d")
         # JavaScript addDemLayer() will automatically call setSceneModeInternal("3d")
-        
+
         # Event-driven imagery loading with server optimization
         self._run_js_call(
             "addTileLayerEventDriven",
@@ -3744,7 +4040,7 @@ class DesktopController:
             asset["kind"],
             options,
         )
-        
+
         if not from_search_results:
             self._explicit_imagery_layer_visible = True
         self._apply_display_control_mode()
@@ -3779,9 +4075,11 @@ class DesktopController:
             widget.setEnabled(imagery_visible)
 
         # CRITICAL FIX: Determine current scene mode from RGB view mode combo
-        current_scene_mode = str(self.panel.rgb_view_mode_combo.currentData() or "3d").lower()
+        current_scene_mode = str(
+            self.panel.rgb_view_mode_combo.currentData() or "3d"
+        ).lower()
         is_2d_mode = current_scene_mode == "2d"
-        
+
         # DEM controls: enabled when DEM is visible
         for widget in (
             self.panel.dem_exaggeration_slider,
@@ -3842,7 +4140,7 @@ class DesktopController:
 
     def _is_dem_asset(self, asset: dict) -> bool:
         """Detect if asset is DEM or RGB imagery using robust band count + data type analysis.
-        
+
         CRITICAL: Single-band imagery (like JP2 aerials) must NOT be detected as DEM.
         DEM detection requires BOTH single-band AND elevation-like data type/range.
         """
@@ -3853,24 +4151,24 @@ class DesktopController:
         # Step 1: Check explicit kind or filename hints
         kind = str(asset.get("kind", "")).lower()
         file_name = str(asset.get("file_name", "")).lower()
-        
+
         # Explicit DEM markers
         if kind == "dem" or kind == "elevation":
             if file_path:
                 self._dem_asset_kind_cache[file_path] = True
             return True
-        
+
         # Explicit imagery markers (JP2, RGB, etc.) - NOT DEM
-        imagery_extensions = ('.jp2', '.jpeg', '.jpg', '.png', '.tif', '.tiff')
-        imagery_keywords = ('rgb', 'aerial', 'ortho', 'satellite', 'imagery', 'photo')
-        
+        imagery_extensions = (".jp2", ".jpeg", ".jpg", ".png", ".tif", ".tiff")
+        imagery_keywords = ("rgb", "aerial", "ortho", "satellite", "imagery", "photo")
+
         if any(file_name.endswith(ext) for ext in imagery_extensions):
             # Check if filename contains imagery keywords
             if any(keyword in file_name for keyword in imagery_keywords):
                 if file_path:
                     self._dem_asset_kind_cache[file_path] = False
                 return False
-        
+
         # Step 2: Analyze raster metadata (band count + data type)
         try:
             info = self.api.get_cog_info(asset["file_path"])
@@ -3878,44 +4176,44 @@ class DesktopController:
             if file_path:
                 self._dem_asset_kind_cache[file_path] = False
             return False
-        
+
         try:
             band_count = int(info.get("count", 0) or 0)
             dtype = str(info.get("dtype", "")).lower()
-            
+
             # Multi-band = RGB imagery (NOT DEM)
             if band_count >= 3:
                 if file_path:
                     self._dem_asset_kind_cache[file_path] = False
                 return False
-            
+
             # Single-band: Check data type to distinguish DEM from grayscale imagery
             # DEM typically uses float32/float64 or int16/int32 for elevation values
             # Grayscale imagery typically uses uint8/uint16 for pixel values
             if band_count == 1:
                 # Float types = likely DEM (elevation values)
-                if 'float' in dtype:
+                if "float" in dtype:
                     if file_path:
                         self._dem_asset_kind_cache[file_path] = True
                     return True
-                
+
                 # Signed integer types = likely DEM (elevation can be negative)
-                if 'int16' in dtype or 'int32' in dtype:
+                if "int16" in dtype or "int32" in dtype:
                     if file_path:
                         self._dem_asset_kind_cache[file_path] = True
                     return True
-                
+
                 # Unsigned integer types = likely grayscale imagery (NOT DEM)
-                if 'uint' in dtype:
+                if "uint" in dtype:
                     if file_path:
                         self._dem_asset_kind_cache[file_path] = False
                     return False
-            
+
             # Default: single-band with unknown dtype = assume imagery (safer default)
             if file_path:
                 self._dem_asset_kind_cache[file_path] = False
             return False
-            
+
         except (TypeError, ValueError):
             if file_path:
                 self._dem_asset_kind_cache[file_path] = False
@@ -3928,7 +4226,7 @@ class DesktopController:
             str(asset.get("kind", "")).lower() == "dem"
             or "dem" in str(file_name).lower()
         )
-        
+
         self._logger.debug(f"Raster render query for {file_name}: is_dem={is_dem}")
 
         info = {}
@@ -3942,9 +4240,11 @@ class DesktopController:
 
         band_count = int(info.get("count", 1) or 1)
         nodata_value = info.get("nodata_value", info.get("nodata"))
-        
-        self._logger.debug(f"Band count for {file_name}: {band_count}, nodata: {nodata_value}")
-        
+
+        self._logger.debug(
+            f"Band count for {file_name}: {band_count}, nodata: {nodata_value}"
+        )
+
         try:
             if nodata_value is not None:
                 query["nodata"] = float(nodata_value)
@@ -3952,7 +4252,9 @@ class DesktopController:
             pass
 
         if band_count >= 3 and not is_dem:
-            self._logger.info(f"Multi-band imagery detected for {file_name}: {band_count} bands, adding bidx=[1,2,3]")
+            self._logger.info(
+                f"Multi-band imagery detected for {file_name}: {band_count} bands, adding bidx=[1,2,3]"
+            )
             query["bidx"] = [1, 2, 3]
             # nearest resampling avoids interpolated reads that fail on non-COG
             # GeoTIFFs on Windows (GDAL "Read failed" error)
@@ -3962,7 +4264,9 @@ class DesktopController:
             if "nodata" not in query:
                 query["nodata"] = 0
         else:
-            self._logger.debug(f"Single-band or DEM for {file_name}: band_count={band_count}, is_dem={is_dem}")
+            self._logger.debug(
+                f"Single-band or DEM for {file_name}: band_count={band_count}, is_dem={is_dem}"
+            )
 
         stats = {}
         try:
@@ -4012,7 +4316,9 @@ class DesktopController:
             return query
 
         if not isinstance(stats, dict) or not stats:
-            self._logger.debug(f"No stats available for {file_name}, final query: {query}")
+            self._logger.debug(
+                f"No stats available for {file_name}, final query: {query}"
+            )
             return query
 
         if band_count >= 3 and not is_dem:
@@ -4030,7 +4336,9 @@ class DesktopController:
                 highs.append(float(high))
             if len(lows) == 3 and max(highs) > min(lows):
                 query["rescale"] = f"{min(lows)},{max(highs)}"
-            self._logger.debug(f"Final multi-band raster query for {asset.get('file_name', '')}: {query}")
+            self._logger.debug(
+                f"Final multi-band raster query for {asset.get('file_name', '')}: {query}"
+            )
             return query
 
         first_band = (
@@ -4039,18 +4347,24 @@ class DesktopController:
             else next(iter(stats.values()))
         )
         if not isinstance(first_band, dict):
-            self._logger.debug(f"No valid first band stats for {asset.get('file_name', '')}, final query: {query}")
+            self._logger.debug(
+                f"No valid first band stats for {asset.get('file_name', '')}, final query: {query}"
+            )
             return query
 
         low = first_band.get("percentile_2", first_band.get("min"))
         high = first_band.get("percentile_98", first_band.get("max"))
         if low is None or high is None or float(high) <= float(low):
-            self._logger.debug(f"Invalid rescale values for {asset.get('file_name', '')}, final query: {query}")
+            self._logger.debug(
+                f"Invalid rescale values for {asset.get('file_name', '')}, final query: {query}"
+            )
             return query
 
         query["rescale"] = f"{float(low)},{float(high)}"
-        
-        self._logger.debug(f"Final raster query for {asset.get('file_name', '')}: {query}")
+
+        self._logger.debug(
+            f"Final raster query for {asset.get('file_name', '')}: {query}"
+        )
         return query
 
     @staticmethod

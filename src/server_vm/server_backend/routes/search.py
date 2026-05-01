@@ -24,7 +24,9 @@ def list_assets(session: Session = Depends(get_session)) -> list[dict[str, Any]]
 
 
 @router.delete("/assets/{asset_id}")
-def delete_asset(asset_id: str, session: Session = Depends(get_session)) -> dict[str, Any]:
+def delete_asset(
+    asset_id: str, session: Session = Depends(get_session)
+) -> dict[str, Any]:
     """Delete an asset from the catalog and database."""
     service = CatalogService(CatalogRepository(session))
     success = service.delete_asset(asset_id)

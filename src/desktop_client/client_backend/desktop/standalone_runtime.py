@@ -106,6 +106,7 @@ def _configure_gdal_proj_paths() -> None:
     if not proj_candidate.exists():
         try:
             import pyproj
+
             proj_candidate = _Path(pyproj.datadir.get_data_dir())
         except Exception:
             pass
@@ -114,6 +115,7 @@ def _configure_gdal_proj_paths() -> None:
     if not gdal_candidate.exists():
         try:
             import rasterio
+
             gdal_candidate = _Path(rasterio.__file__).parent / "gdal_data"
         except Exception:
             pass
@@ -122,4 +124,4 @@ def _configure_gdal_proj_paths() -> None:
         os.environ.setdefault("GDAL_DATA", str(gdal_candidate))
     if proj_candidate.exists():
         os.environ.setdefault("PROJ_DATA", str(proj_candidate))
-        os.environ.setdefault("PROJ_LIB",  str(proj_candidate))
+        os.environ.setdefault("PROJ_LIB", str(proj_candidate))

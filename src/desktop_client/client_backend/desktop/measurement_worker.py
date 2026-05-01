@@ -27,6 +27,7 @@ class MeasurementWorker(QRunnable):
         try:
             from pyproj import network  # noqa: F401 — side-effect: bootstraps context
             from pyproj.crs import CRS
+
             CRS("EPSG:4326")  # warm up the thread-local PROJ context
         except Exception:  # pragma: no cover - optional warm-up, never fatal
             pass

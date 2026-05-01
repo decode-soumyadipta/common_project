@@ -6,6 +6,7 @@ This module provides utilities for:
 - Computing gradients using Horn's algorithm
 - 3x3 convolution operations
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -29,21 +30,21 @@ def read_dem_window(
     bounds: tuple[float, float, float, float],
 ) -> tuple[NDArray[np.float64], object, float]:
     """Read a window of DEM data given geographic bounds.
-    
+
     Args:
         dem_path: Path to the DEM raster file.
         bounds: Geographic bounds as (minx, miny, maxx, maxy).
-        
+
     Returns:
         Tuple of (data array, transform, resolution).
-        
+
     Raises:
         RuntimeError: If rasterio is not available.
 
     """
     if rasterio is None:
         raise RuntimeError("rasterio is not available")
-    
+
     with rasterio.open(dem_path) as src:
         # Clip requested bounds to DEM bounds to avoid reading outside the raster
         dem_bounds = src.bounds
@@ -53,15 +54,20 @@ def read_dem_window(
             min(bounds[2], dem_bounds.right),
             min(bounds[3], dem_bounds.top),
         )
-        
+
         # Check if there's any overlap
-        if (clipped_bounds[0] >= clipped_bounds[2] or 
-            clipped_bounds[1] >= clipped_bounds[3]):
+        if (
+            clipped_bounds[0] >= clipped_bounds[2]
+            or clipped_bounds[1] >= clipped_bounds[3]
+        ):
             import logging
+
             logger = logging.getLogger(__name__)
-            logger.warning(f"Requested bounds {bounds} do not overlap with DEM bounds {dem_bounds}")
+            logger.warning(
+                f"Requested bounds {bounds} do not overlap with DEM bounds {dem_bounds}"
+            )
             return np.empty((0, 0), dtype=np.float64), src.transform, float(src.res[0])
-        
+
         win = from_bounds(*clipped_bounds, transform=src.transform)
 
         # Prevent OOM bus errors on massive windows
@@ -96,12 +102,12 @@ def read_dem_window(
 
 def sample_dem_height(dem_path: str, lon: float, lat: float) -> float:
     """Sample the elevation at a single geographic point.
-    
+
     Args:
         dem_path: Path to the DEM raster file.
         lon: Longitude in degrees.
         lat: Latitude in degrees.
-        
+
     Returns:
         Elevation in meters, or NaN if unavailable.
 
@@ -130,11 +136,11 @@ def convolve3x3_nearest(
     arr: NDArray[np.float64], kernel: NDArray[np.float64]
 ) -> NDArray[np.float64]:
     """Vectorized 3x3 convolution with nearest-edge padding.
-    
+
     Args:
         arr: Input array to convolve.
         kernel: 3x3 convolution kernel.
-        
+
     Returns:
         Convolved array with same shape as input.
 
@@ -151,11 +157,11 @@ def horn_gradient(
     dem: NDArray[np.float64], res: float
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """Compute gradients using Horn's algorithm (as used in GDAL).
-    
+
     Args:
         dem: DEM elevation array.
         res: Pixel resolution in meters.
-        
+
     Returns:
         Tuple of (dz_dx, dz_dy) gradient arrays.
 

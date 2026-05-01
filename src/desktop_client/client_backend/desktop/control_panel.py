@@ -146,7 +146,9 @@ class ControlPanel(QWidget):
     measurement_tools_toggled = Signal(bool)
     measurement_result_clear_selected_requested = Signal()
     measurement_result_clear_all_requested = Signal()
-    uploaded_assets_refresh_requested = Signal()  # Signal to request controller cache clearing
+    uploaded_assets_refresh_requested = (
+        Signal()
+    )  # Signal to request controller cache clearing
     asset_delete_requested = Signal(dict)  # Signal to request asset deletion
 
     def __init__(
@@ -158,10 +160,10 @@ class ControlPanel(QWidget):
         super().__init__(parent)
         self.api_client = api_client
         self.setMinimumWidth(380)
-        
+
         # Persistent layer order tracking (independent of Qt table state)
         self._layer_order_registry = {}  # {file_path: {"file_name": str, "kind": str, "crs": str, "created_at": str, "is_visible": bool, "order": int}}
-        
+
         # Drag-and-drop reordering debounce timer
         self._reorder_debounce_timer = QTimer(self)
         self._reorder_debounce_timer.setSingleShot(True)
@@ -194,10 +196,12 @@ class ControlPanel(QWidget):
                 color: #10233f;
             }
         """)
-        
+
         # Format selection dropdown
         self.format_combo = QComboBox()
-        self.format_combo.addItems(["GeoTIFF (.tif)", "JPEG2000 (.jp2 + .prj)", "MBTiles (.mbtiles)"])
+        self.format_combo.addItems(
+            ["GeoTIFF (.tif)", "JPEG2000 (.jp2 + .prj)", "MBTiles (.mbtiles)"]
+        )
         self.format_combo.setCurrentIndex(0)  # Default to GeoTIFF
         self.format_combo.setToolTip("Select raster format type for ingestion")
         self.format_combo.setStyleSheet("""
@@ -216,14 +220,18 @@ class ControlPanel(QWidget):
                 width: 20px;
             }
         """)
-        
+
         self.browse_files_btn = QPushButton("Select Files")
         self.clear_selection_btn = QPushButton("Clear")
         self.ingest_btn = QPushButton("Ingest Files")
 
-        self.browse_files_btn.setToolTip("Select multiple raster files based on chosen format")
+        self.browse_files_btn.setToolTip(
+            "Select multiple raster files based on chosen format"
+        )
         self.clear_selection_btn.setToolTip("Clear all selected files")
-        self.ingest_btn.setToolTip("Queue selected files for ingestion with automatic processing")
+        self.ingest_btn.setToolTip(
+            "Queue selected files for ingestion with automatic processing"
+        )
 
         # Validation status label
         self.validation_status_label = QLabel("")
@@ -239,7 +247,7 @@ class ControlPanel(QWidget):
 
         self.upload_box = QGroupBox("Ingest")
         upload_layout = QVBoxLayout(self.upload_box)
-        
+
         # Format selection row
         format_row = QHBoxLayout()
         format_label = QLabel("Format:")
@@ -247,22 +255,22 @@ class ControlPanel(QWidget):
         format_row.addWidget(format_label)
         format_row.addWidget(self.format_combo, 1)
         upload_layout.addLayout(format_row)
-        
+
         # File selection area
         selection_label = QLabel("Selected Files:")
         selection_label.setStyleSheet("font-weight: 600; color: #4a4a4a;")
         upload_layout.addWidget(selection_label)
         upload_layout.addWidget(self.selected_files_list)
-        
+
         # Validation status
         upload_layout.addWidget(self.validation_status_label)
-        
+
         # Button row for file selection (removed Select Folder button)
         selection_row = QHBoxLayout()
         selection_row.addWidget(self.browse_files_btn, 1)
         selection_row.addWidget(self.clear_selection_btn, 0)
         upload_layout.addLayout(selection_row)
-        
+
         # Ingest button
         ingest_row = QHBoxLayout()
         ingest_row.addStretch()
@@ -294,38 +302,48 @@ class ControlPanel(QWidget):
         """)
 
         # Uploaded Assets table (simplified view with delete functionality)
-        self.uploaded_assets_list = QTableWidget(0, 4)  # Simplified: #, Type, Added, Delete
+        self.uploaded_assets_list = QTableWidget(
+            0, 4
+        )  # Simplified: #, Type, Added, Delete
         self.uploaded_assets_list.setMaximumHeight(200)
         self.uploaded_assets_list.setHorizontalHeaderLabels(
             ["#", "Type", "Added", "Delete"]
         )
         self.uploaded_assets_list.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeToContents  # Serial number
+            0,
+            QHeaderView.ResizeToContents,  # Serial number
         )
         self.uploaded_assets_list.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeToContents  # Type
+            1,
+            QHeaderView.ResizeToContents,  # Type
         )
         self.uploaded_assets_list.horizontalHeader().setSectionResizeMode(
-            2, QHeaderView.Stretch  # Added date (stretch to fill)
+            2,
+            QHeaderView.Stretch,  # Added date (stretch to fill)
         )
         self.uploaded_assets_list.horizontalHeader().setSectionResizeMode(
-            3, QHeaderView.ResizeToContents  # Delete button
+            3,
+            QHeaderView.ResizeToContents,  # Delete button
         )
         # Configure column widths for better display and enable horizontal scrolling
-        self.uploaded_assets_list.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
-        self.uploaded_assets_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        
+        self.uploaded_assets_list.setHorizontalScrollMode(
+            QAbstractItemView.ScrollPerPixel
+        )
+        self.uploaded_assets_list.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+
         # Set column widths for simplified table
-        self.uploaded_assets_list.setColumnWidth(0, 50)   # Serial number
+        self.uploaded_assets_list.setColumnWidth(0, 50)  # Serial number
         self.uploaded_assets_list.setColumnWidth(1, 100)  # Type
         self.uploaded_assets_list.setColumnWidth(2, 150)  # Added date
-        self.uploaded_assets_list.setColumnWidth(3, 70)   # Delete button
-        
+        self.uploaded_assets_list.setColumnWidth(3, 70)  # Delete button
+
         # Allow columns to be resized by user
         header = self.uploaded_assets_list.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setStretchLastSection(False)  # Don't stretch last column
-        
+
         # Set minimum section size to prevent columns from becoming too narrow
         header.setMinimumSectionSize(60)
         self.uploaded_assets_list.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -339,7 +357,9 @@ class ControlPanel(QWidget):
         """)
 
         self.assets_refresh_btn = QPushButton("Refresh Catalog")
-        self.assets_refresh_btn.setToolTip("Refresh the list of uploaded assets and clear all caches.")
+        self.assets_refresh_btn.setToolTip(
+            "Refresh the list of uploaded assets and clear all caches."
+        )
 
         self.uploaded_box = QGroupBox("Uploaded Assets")
         uploaded_layout = QVBoxLayout(self.uploaded_box)
@@ -499,56 +519,68 @@ class ControlPanel(QWidget):
         self.search_results_summary.setStyleSheet("font-weight: 600; color: #2a2a2a;")
         search_layout.addWidget(self.search_results_summary)
 
-        self.search_results_table = QTableWidget(0, 6)  # Added one more column for drag handle
+        self.search_results_table = QTableWidget(
+            0, 6
+        )  # Added one more column for drag handle
         self._ensure_search_results_header()
-        
+
         # Configure drag and drop for layer reordering with smooth animations
         self.search_results_table.setDragDropMode(QAbstractItemView.InternalMove)
         self.search_results_table.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.search_results_table.setDragDropOverwriteMode(False)
         self.search_results_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        
+
         # Enable drag indicator and ensure smooth dragging
         self.search_results_table.setDragEnabled(True)
         self.search_results_table.setAcceptDrops(True)
-        
+
         # CRITICAL: Disable sorting during drag operations to prevent conflicts
         self.search_results_table.setSortingEnabled(False)
-        
+
         # Enable smooth scrolling for better UX
-        self.search_results_table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
-        self.search_results_table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
-        
+        self.search_results_table.setVerticalScrollMode(
+            QAbstractItemView.ScrollPerPixel
+        )
+        self.search_results_table.setHorizontalScrollMode(
+            QAbstractItemView.ScrollPerPixel
+        )
+
         # Install custom drop event handler for drag-and-drop reordering
         self.search_results_table.dropEvent = self._create_table_drop_handler()
-        
+
         # Set column widths for drag handle
         self.search_results_table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeToContents  # Drag handle column
+            0,
+            QHeaderView.ResizeToContents,  # Drag handle column
         )
         self.search_results_table.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.Stretch  # File name
+            1,
+            QHeaderView.Stretch,  # File name
         )
         self.search_results_table.horizontalHeader().setSectionResizeMode(
-            2, QHeaderView.ResizeToContents  # Kind
+            2,
+            QHeaderView.ResizeToContents,  # Kind
         )
         self.search_results_table.horizontalHeader().setSectionResizeMode(
-            3, QHeaderView.ResizeToContents  # CRS
+            3,
+            QHeaderView.ResizeToContents,  # CRS
         )
         self.search_results_table.horizontalHeader().setSectionResizeMode(
-            4, QHeaderView.ResizeToContents  # Added
+            4,
+            QHeaderView.ResizeToContents,  # Added
         )
         self.search_results_table.horizontalHeader().setSectionResizeMode(
-            5, QHeaderView.ResizeToContents  # View
+            5,
+            QHeaderView.ResizeToContents,  # View
         )
-        
+
         # Set specific column widths
-        self.search_results_table.setColumnWidth(0, 30)   # Drag handle
+        self.search_results_table.setColumnWidth(0, 30)  # Drag handle
         self.search_results_table.setColumnWidth(1, 220)  # File name
-        self.search_results_table.setColumnWidth(2, 78)   # Kind
-        self.search_results_table.setColumnWidth(3, 96)   # CRS
+        self.search_results_table.setColumnWidth(2, 78)  # Kind
+        self.search_results_table.setColumnWidth(3, 96)  # CRS
         self.search_results_table.setColumnWidth(4, 120)  # Added
-        self.search_results_table.setColumnWidth(5, 60)   # View
+        self.search_results_table.setColumnWidth(5, 60)  # View
         self.search_results_table.verticalHeader().setVisible(False)
         self.search_results_table.verticalHeader().setDefaultSectionSize(22)
         self.search_results_table.setVerticalScrollBarPolicy(
@@ -563,18 +595,27 @@ class ControlPanel(QWidget):
         self.search_results_table.setAlternatingRowColors(True)
         self.search_results_table.setWordWrap(False)
         self.search_results_table.setTextElideMode(Qt.TextElideMode.ElideMiddle)
-        
+
         # Set palette for proper text colors (more reliable than CSS for selection)
         # CRITICAL: Force black text even when selected to prevent blue bar from hiding text
         from qtpy.QtGui import QPalette
+
         palette = self.search_results_table.palette()
         palette.setColor(QPalette.ColorRole.Text, QColor(0, 0, 0))  # Normal text: black
-        palette.setColor(QPalette.ColorRole.HighlightedText, QColor(0, 0, 0))  # Selected text: FORCE BLACK
-        palette.setColor(QPalette.ColorRole.Highlight, QColor(232, 244, 255, 180))  # Selection background: semi-transparent light blue
-        palette.setColor(QPalette.ColorRole.AlternateBase, QColor(250, 250, 250))  # Alternate row: light gray
-        palette.setColor(QPalette.ColorRole.Base, QColor(255, 255, 255))  # Base background: white
+        palette.setColor(
+            QPalette.ColorRole.HighlightedText, QColor(0, 0, 0)
+        )  # Selected text: FORCE BLACK
+        palette.setColor(
+            QPalette.ColorRole.Highlight, QColor(232, 244, 255, 180)
+        )  # Selection background: semi-transparent light blue
+        palette.setColor(
+            QPalette.ColorRole.AlternateBase, QColor(250, 250, 250)
+        )  # Alternate row: light gray
+        palette.setColor(
+            QPalette.ColorRole.Base, QColor(255, 255, 255)
+        )  # Base background: white
         self.search_results_table.setPalette(palette)
-        
+
         self.search_results_table.setStyleSheet(
             """
             QTableWidget {
@@ -897,7 +938,9 @@ class ControlPanel(QWidget):
 
             # Connect refresh button to clear caches and refresh
             if not self._server_refresh_connected:
-                self.assets_refresh_btn.clicked.connect(self._on_refresh_catalog_clicked)
+                self.assets_refresh_btn.clicked.connect(
+                    self._on_refresh_catalog_clicked
+                )
                 self._server_refresh_connected = True
             # Show loading state initially - will be populated by controller
             self.uploaded_assets_list.setRowCount(1)
@@ -968,14 +1011,14 @@ class ControlPanel(QWidget):
         self, assets: list[dict], visibility_by_path: dict[str, bool] | None = None
     ) -> None:
         """Update search results table with proper ordering: Imagery first (top), then DEM (bottom)."""
-        print(f"\n{'='*80}")
+        print(f"\n{'=' * 80}")
         print(f"DEBUG: update_search_results called with {len(assets)} assets")
         if visibility_by_path:
             print(f"DEBUG: Visibility map provided: {visibility_by_path}")
         else:
             print(f"DEBUG: No visibility map provided")
-        print(f"{'='*80}\n")
-        
+        print(f"{'=' * 80}\n")
+
         self.search_results_table.setRowCount(0)
         self.search_results_table.setSortingEnabled(False)
         self._ensure_search_results_header()
@@ -1011,7 +1054,9 @@ class ControlPanel(QWidget):
             for asset in default_sorted_assets
             if str(asset.get("file_path") or "").replace("\\", "/") not in ordered_paths
         ]
-        sorted_assets = [assets_by_path[path] for path in ordered_paths] + remaining_assets
+        sorted_assets = [
+            assets_by_path[path] for path in ordered_paths
+        ] + remaining_assets
         self._layer_order_registry = {}
         for idx, asset in enumerate(sorted_assets):
             path = str(asset.get("file_path") or "").replace("\\", "/")
@@ -1025,12 +1070,12 @@ class ControlPanel(QWidget):
                 "is_visible": visibility_map.get(path, True),
                 "order": idx,
             }
-        
+
         print(f"DEBUG: Sorted assets order:")
         for i, asset in enumerate(sorted_assets):
             kind = str(asset.get("kind") or "").upper()
             file_name = str(asset.get("file_name") or "-")
-            print(f"  {i+1}. {kind}: {file_name}")
+            print(f"  {i + 1}. {kind}: {file_name}")
 
         total_matches = len(sorted_assets)
         dem_count = sum(
@@ -1073,19 +1118,21 @@ class ControlPanel(QWidget):
             crs = str(asset.get("crs") or "-")
             created_at = self._format_search_created_at(asset.get("created_at"))
             file_path = str(asset.get("file_path") or "")
-            
+
             # Normalize path for lookup (match controller's normalization)
             normalized_path = file_path.replace("\\", "/")
             is_visible = visibility_map.get(normalized_path, True)
-            
+
             print(f"\nDEBUG: Creating row {row} for {kind} - {file_name}")
             print(f"  file_path (raw): {file_path}")
             print(f"  normalized_path: {normalized_path}")
             print(f"  visibility_map has key: {normalized_path in visibility_map}")
             print(f"  is_visible: {is_visible}")
-            
+
             # Create visibility toggle button with eye icons
-            toggle_button = QPushButton("👁" if is_visible else "👁‍🗨")  # Eye / Eye with speech bubble (crossed)
+            toggle_button = QPushButton(
+                "👁" if is_visible else "👁‍🗨"
+            )  # Eye / Eye with speech bubble (crossed)
             toggle_button.setObjectName("searchVisibilityToggle")
             toggle_button.setToolTip("Hide from map" if is_visible else "Show on map")
             toggle_button.setFixedSize(32, 24)
@@ -1109,20 +1156,24 @@ class ControlPanel(QWidget):
                     border: 1px solid #e0e0e0;
                 }
             """)
-            
+
             if not file_path:
                 toggle_button.setEnabled(False)
                 print(f"  Button disabled (no file path)")
             else:
                 # Normalize path to match controller's format
                 normalized_path = file_path.replace("\\", "/")
-                
+
                 # Store current visibility state in button property
                 toggle_button.setProperty("is_visible", is_visible)
-                toggle_button.setProperty("file_path", normalized_path)  # Store normalized path
-                
-                print(f"  Button created: text={'👁' if is_visible else '👁‍🗨'}, is_visible={is_visible}, path={normalized_path}")
-                
+                toggle_button.setProperty(
+                    "file_path", normalized_path
+                )  # Store normalized path
+
+                print(
+                    f"  Button created: text={'👁' if is_visible else '👁‍🗨'}, is_visible={is_visible}, path={normalized_path}"
+                )
+
                 def make_toggle_handler(btn, path):
                     def handler():
                         current_visible = btn.property("is_visible")
@@ -1133,60 +1184,107 @@ class ControlPanel(QWidget):
                         print(f"  new_visible: {new_visible}")
                         # Update button immediately for responsive feel
                         btn.setText("👁" if new_visible else "👁‍🗨")
-                        btn.setToolTip("Hide from map" if new_visible else "Show on map")
+                        btn.setToolTip(
+                            "Hide from map" if new_visible else "Show on map"
+                        )
                         btn.setProperty("is_visible", new_visible)
                         print(f"  Button updated: text={'👁' if new_visible else '👁‍🗨'}")
                         # Emit signal to update map
-                        print(f"  Emitting signal: search_result_visibility_toggled({path}, {new_visible})")
+                        print(
+                            f"  Emitting signal: search_result_visibility_toggled({path}, {new_visible})"
+                        )
                         self.search_result_visibility_toggled.emit(path, new_visible)
+
                     return handler
-                
-                toggle_button.clicked.connect(make_toggle_handler(toggle_button, normalized_path))
+
+                toggle_button.clicked.connect(
+                    make_toggle_handler(toggle_button, normalized_path)
+                )
 
             # Add drag handle in first column
             drag_handle_item = QTableWidgetItem("⋮⋮")
             drag_handle_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             drag_handle_item.setToolTip(f"Drag to reorder (Layer {row + 1})")
-            drag_handle_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsDragEnabled | Qt.ItemFlag.ItemIsDropEnabled)
-            drag_handle_item.setForeground(QBrush(QColor(102, 102, 102)))  # Dark gray for visibility
-            
+            drag_handle_item.setFlags(
+                Qt.ItemFlag.ItemIsEnabled
+                | Qt.ItemFlag.ItemIsSelectable
+                | Qt.ItemFlag.ItemIsDragEnabled
+                | Qt.ItemFlag.ItemIsDropEnabled
+            )
+            drag_handle_item.setForeground(
+                QBrush(QColor(102, 102, 102))
+            )  # Dark gray for visibility
+
             # Create table items with explicit text color for visibility
             # CRITICAL: Store file_path in UserRole for drag-and-drop reordering
             file_item = QTableWidgetItem(file_name)
-            file_item.setData(Qt.ItemDataRole.UserRole, normalized_path)  # Store file_path for reordering
+            file_item.setData(
+                Qt.ItemDataRole.UserRole, normalized_path
+            )  # Store file_path for reordering
             file_item.setForeground(QBrush(QColor(0, 0, 0)))  # Black text
-            file_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsDragEnabled | Qt.ItemFlag.ItemIsDropEnabled)
-            
+            file_item.setFlags(
+                Qt.ItemFlag.ItemIsEnabled
+                | Qt.ItemFlag.ItemIsSelectable
+                | Qt.ItemFlag.ItemIsDragEnabled
+                | Qt.ItemFlag.ItemIsDropEnabled
+            )
+
             kind_item = QTableWidgetItem(kind)
             kind_item.setForeground(QBrush(QColor(0, 0, 0)))  # Black text
-            kind_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsDragEnabled | Qt.ItemFlag.ItemIsDropEnabled)
-            
+            kind_item.setFlags(
+                Qt.ItemFlag.ItemIsEnabled
+                | Qt.ItemFlag.ItemIsSelectable
+                | Qt.ItemFlag.ItemIsDragEnabled
+                | Qt.ItemFlag.ItemIsDropEnabled
+            )
+
             crs_item = QTableWidgetItem(crs)
             crs_item.setForeground(QBrush(QColor(0, 0, 0)))  # Black text
-            crs_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsDragEnabled | Qt.ItemFlag.ItemIsDropEnabled)
-            
+            crs_item.setFlags(
+                Qt.ItemFlag.ItemIsEnabled
+                | Qt.ItemFlag.ItemIsSelectable
+                | Qt.ItemFlag.ItemIsDragEnabled
+                | Qt.ItemFlag.ItemIsDropEnabled
+            )
+
             created_item = QTableWidgetItem(created_at)
             created_item.setForeground(QBrush(QColor(0, 0, 0)))  # Black text
-            created_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsDragEnabled | Qt.ItemFlag.ItemIsDropEnabled)
-            
+            created_item.setFlags(
+                Qt.ItemFlag.ItemIsEnabled
+                | Qt.ItemFlag.ItemIsSelectable
+                | Qt.ItemFlag.ItemIsDragEnabled
+                | Qt.ItemFlag.ItemIsDropEnabled
+            )
+
             self.search_results_table.setItem(row, 0, drag_handle_item)
             self.search_results_table.setItem(row, 1, file_item)
             self.search_results_table.setItem(row, 2, kind_item)
             self.search_results_table.setItem(row, 3, crs_item)
             self.search_results_table.setItem(row, 4, created_item)
             self.search_results_table.setCellWidget(row, 5, toggle_button)
-            
+
             # Force text color update after setting items (workaround for Qt palette issues)
-            for col_idx, item in [(1, file_item), (2, kind_item), (3, crs_item), (4, created_item)]:
+            for col_idx, item in [
+                (1, file_item),
+                (2, kind_item),
+                (3, crs_item),
+                (4, created_item),
+            ]:
                 if item:
-                    item.setData(Qt.ItemDataRole.ForegroundRole, QBrush(QColor(0, 0, 0)))
-            
-            print(f"DEBUG: Created table items for row {row}: file={file_name}, kind={kind}, crs={crs}, path={normalized_path}")
+                    item.setData(
+                        Qt.ItemDataRole.ForegroundRole, QBrush(QColor(0, 0, 0))
+                    )
+
+            print(
+                f"DEBUG: Created table items for row {row}: file={file_name}, kind={kind}, crs={crs}, path={normalized_path}"
+            )
 
         # Don't enable sorting - it conflicts with drag-and-drop
         # self.search_results_table.setSortingEnabled(True)
-        print(f"\nDEBUG: Search results table populated with {self.search_results_table.rowCount()} rows")
-        print(f"DEBUG: update_search_results completed\n{'='*80}\n")
+        print(
+            f"\nDEBUG: Search results table populated with {self.search_results_table.rowCount()} rows"
+        )
+        print(f"DEBUG: update_search_results completed\n{'=' * 80}\n")
 
     def _set_search_results_table_visible_rows(self, visible_rows: int) -> None:
         header_height = self.search_results_table.horizontalHeader().sizeHint().height()
@@ -1308,18 +1406,18 @@ class ControlPanel(QWidget):
     def add_selected_files(self, file_paths: list[str]) -> None:
         """Add files to the selection list with format-specific validation."""
         from pathlib import Path
-        
+
         # Clear existing selection
         self.selected_files_list.clear()
         self.validation_status_label.clear()
-        
+
         if not file_paths:
             return
-        
+
         # Get selected format
         format_index = self.format_combo.currentIndex()
         format_name = self.format_combo.currentText()
-        
+
         # Validate and group files based on format
         if format_index == 0:  # GeoTIFF
             validated_files, errors = self._validate_geotiff_files(file_paths)
@@ -1329,14 +1427,14 @@ class ControlPanel(QWidget):
             validated_files, errors = self._validate_mbtiles_files(file_paths)
         else:
             validated_files, errors = file_paths, []
-        
+
         # Display validated files
         for file_path in validated_files:
             path_obj = Path(file_path)
-            
+
             # Create list item with file info
             item_text = f"{path_obj.name}"
-            
+
             # Add file size info (terabyte-aware)
             try:
                 size_bytes = path_obj.stat().st_size
@@ -1351,30 +1449,30 @@ class ControlPanel(QWidget):
                 item_text += f" ({size_str})"
             except:
                 pass
-            
+
             # Check for auxiliary files
             aux_files = self._find_auxiliary_files(path_obj)
             if aux_files:
                 item_text += f" + {len(aux_files)} aux"
-            
+
             item = QListWidgetItem(item_text)
             item.setData(Qt.ItemDataRole.UserRole, file_path)
             item.setToolTip(f"Full path: {file_path}")
-            
+
             # Color code by file type
-            if path_obj.suffix.lower() in ['.jp2', '.j2k']:
+            if path_obj.suffix.lower() in [".jp2", ".j2k"]:
                 item.setBackground(QColor("#f3e5f5"))  # Light purple for JPEG2000
-            elif path_obj.suffix.lower() in ['.tif', '.tiff']:
+            elif path_obj.suffix.lower() in [".tif", ".tiff"]:
                 item.setBackground(QColor("#e3f2fd"))  # Light blue for GeoTIFF
-            elif path_obj.suffix.lower() == '.mbtiles':
+            elif path_obj.suffix.lower() == ".mbtiles":
                 item.setBackground(QColor("#e8f5e8"))  # Light green for MBTiles
-            
+
             self.selected_files_list.addItem(item)
-        
+
         # Update validation status
         total_selected = len(validated_files)
         total_errors = len(errors)
-        
+
         if total_errors == 0 and total_selected > 0:
             self.validation_status_label.setText(
                 f"✓ {total_selected} file(s) ready for ingestion ({format_name})"
@@ -1395,7 +1493,7 @@ class ControlPanel(QWidget):
                 error_summary += f"\n  • {error}"
             if len(errors) > 3:
                 error_summary += f"\n  ... and {len(errors) - 3} more"
-            
+
             self.validation_status_label.setText(error_summary)
             self.validation_status_label.setStyleSheet("""
                 QLabel {
@@ -1409,75 +1507,79 @@ class ControlPanel(QWidget):
             """)
         else:
             self.validation_status_label.clear()
-    
-    def _validate_geotiff_files(self, file_paths: list[str]) -> tuple[list[str], list[str]]:
+
+    def _validate_geotiff_files(
+        self, file_paths: list[str]
+    ) -> tuple[list[str], list[str]]:
         """Validate GeoTIFF files with optional world files (.tfw)."""
         from pathlib import Path
-        
+
         validated = []
         errors = []
         world_files = set()  # Track world files
-        
+
         # First pass: identify world files
         for file_path in file_paths:
             path_obj = Path(file_path)
-            if path_obj.suffix.lower() in ['.tfw', '.tifw']:
+            if path_obj.suffix.lower() in [".tfw", ".tifw"]:
                 world_files.add(path_obj.stem)
-        
+
         # Second pass: validate GeoTIFF files
         for file_path in file_paths:
             path_obj = Path(file_path)
-            
+
             if not path_obj.exists():
                 errors.append(f"{path_obj.name}: File not found")
                 continue
-            
+
             suffix_lower = path_obj.suffix.lower()
-            
+
             # Skip world files in validation (they're auxiliary)
-            if suffix_lower in ['.tfw', '.tifw']:
+            if suffix_lower in [".tfw", ".tifw"]:
                 continue
-            
-            if suffix_lower not in ['.tif', '.tiff']:
-                errors.append(f"{path_obj.name}: Not a GeoTIFF file (.tif/.tiff required)")
+
+            if suffix_lower not in [".tif", ".tiff"]:
+                errors.append(
+                    f"{path_obj.name}: Not a GeoTIFF file (.tif/.tiff required)"
+                )
                 continue
-            
+
             validated.append(file_path)
-            
+
             # Log if world file is present (optional but useful for positioning)
             if path_obj.stem in world_files:
                 self.log(f"  ✓ {path_obj.name} has world file (.tfw)")
-        
+
         return validated, errors
-    
+
     def _validate_jp2_files(self, file_paths: list[str]) -> tuple[list[str], list[str]]:
         """Validate JPEG2000 files with required .prj files and optional world files."""
         from pathlib import Path
-        
+
         validated = []
         errors = []
-        
+
         # Group JP2 files and check for matching .prj and world files
         jp2_files = {}
         prj_files = set()
         world_files = set()  # Track world files (.j2w, .jgw, etc.)
-        
+
         for file_path in file_paths:
             path_obj = Path(file_path)
-            
+
             if not path_obj.exists():
                 errors.append(f"{path_obj.name}: File not found")
                 continue
-            
+
             suffix_lower = path_obj.suffix.lower()
-            
-            if suffix_lower in ['.jp2', '.j2k']:
+
+            if suffix_lower in [".jp2", ".j2k"]:
                 jp2_files[path_obj.stem] = file_path
-            elif suffix_lower == '.prj':
+            elif suffix_lower == ".prj":
                 prj_files.add(path_obj.stem)
-            elif suffix_lower in ['.j2w', '.jgw']:  # World files for JPEG2000
+            elif suffix_lower in [".j2w", ".jgw"]:  # World files for JPEG2000
                 world_files.add(path_obj.stem)
-        
+
         # Validate JP2+PRJ pairs (PRJ is required, world files are optional)
         for stem, jp2_path in jp2_files.items():
             if stem in prj_files:
@@ -1486,41 +1588,47 @@ class ControlPanel(QWidget):
                 if stem in world_files:
                     self.log(f"  ✓ {Path(jp2_path).name} has .prj and world file")
                 else:
-                    self.log(f"  ✓ {Path(jp2_path).name} has .prj (world file optional)")
+                    self.log(
+                        f"  ✓ {Path(jp2_path).name} has .prj (world file optional)"
+                    )
             else:
                 errors.append(f"{Path(jp2_path).name}: Missing required .prj file")
-        
+
         # Check for orphaned .prj files
         for stem in prj_files:
             if stem not in jp2_files:
                 errors.append(f"{stem}.prj: No matching .jp2 file found")
-        
+
         # Note: World files without matching JP2 are silently ignored (they're optional)
-        
+
         return validated, errors
-    
-    def _validate_mbtiles_files(self, file_paths: list[str]) -> tuple[list[str], list[str]]:
+
+    def _validate_mbtiles_files(
+        self, file_paths: list[str]
+    ) -> tuple[list[str], list[str]]:
         """Validate MBTiles files."""
         from pathlib import Path
-        
+
         validated = []
         errors = []
-        
+
         for file_path in file_paths:
             path_obj = Path(file_path)
-            
+
             if not path_obj.exists():
                 errors.append(f"{path_obj.name}: File not found")
                 continue
-            
-            if path_obj.suffix.lower() != '.mbtiles':
-                errors.append(f"{path_obj.name}: Not an MBTiles file (.mbtiles required)")
+
+            if path_obj.suffix.lower() != ".mbtiles":
+                errors.append(
+                    f"{path_obj.name}: Not an MBTiles file (.mbtiles required)"
+                )
                 continue
-            
+
             validated.append(file_path)
-        
+
         return validated, errors
-    
+
     def get_selected_files(self) -> list[str]:
         """Get list of selected file paths."""
         files = []
@@ -1531,14 +1639,14 @@ class ControlPanel(QWidget):
                 if file_path:
                     files.append(file_path)
         return files
-    
+
     def _on_delete_asset_clicked(self, asset_data: dict) -> None:
         """Handle delete asset button click with confirmation."""
         from qtpy.QtWidgets import QMessageBox
-        
-        filename = asset_data.get('file_name', 'Unknown')
-        file_path = asset_data.get('file_path', 'Unknown')
-        
+
+        filename = asset_data.get("file_name", "Unknown")
+        file_path = asset_data.get("file_path", "Unknown")
+
         # Show confirmation dialog
         reply = QMessageBox.question(
             self,
@@ -1549,9 +1657,9 @@ class ControlPanel(QWidget):
             f"This will remove the asset from the database and catalog.\n"
             f"The original file will remain on disk.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
+            QMessageBox.StandardButton.No,
         )
-        
+
         if reply == QMessageBox.StandardButton.Yes:
             # Emit signal to controller for actual deletion
             self.asset_delete_requested.emit(asset_data)
@@ -1559,46 +1667,46 @@ class ControlPanel(QWidget):
     def clear_selected_files(self) -> None:
         """Clear all selected files."""
         self.selected_files_list.clear()
-    
+
     def _group_files_intelligently(self, file_paths: list[str]) -> list[str]:
         """Group files intelligently, automatically including .prj files for JP2s."""
         from pathlib import Path
-        
+
         result_files = []
         processed_files = set()
-        
+
         for file_path in file_paths:
             if file_path in processed_files:
                 continue
-                
+
             path_obj = Path(file_path)
             result_files.append(file_path)
             processed_files.add(file_path)
-            
+
             # For JP2 files, automatically include matching .prj file if not already selected
-            if path_obj.suffix.lower() in ['.jp2', '.j2k']:
-                prj_file = path_obj.with_suffix('.prj')
+            if path_obj.suffix.lower() in [".jp2", ".j2k"]:
+                prj_file = path_obj.with_suffix(".prj")
                 if prj_file.exists() and str(prj_file) not in file_paths:
                     # Don't add .prj to result_files, just mark as processed
                     # The ingestion system will handle auxiliary files automatically
                     processed_files.add(str(prj_file))
-        
+
         return result_files
-    
+
     def _find_auxiliary_files(self, primary_file: Path) -> list[Path]:
         """Find auxiliary files for a primary raster file."""
         aux_files = []
         base_name = primary_file.stem
         parent_dir = primary_file.parent
-        
+
         # Common auxiliary file extensions
-        aux_extensions = ['.prj', '.tfw', '.jgw', '.aux.xml', '.xml', '.wld']
-        
+        aux_extensions = [".prj", ".tfw", ".jgw", ".aux.xml", ".xml", ".wld"]
+
         for ext in aux_extensions:
             aux_file = parent_dir / f"{base_name}{ext}"
             if aux_file.exists() and aux_file != primary_file:
                 aux_files.append(aux_file)
-        
+
         return aux_files
 
     def clear_measurement_result_entries(self) -> None:
@@ -1710,11 +1818,11 @@ class ControlPanel(QWidget):
     def refresh_uploaded_assets(self) -> None:
         """Fetch and display list of uploaded assets from the catalog."""
         # Clear caches first, but don't emit the signal to prevent infinite loop
-        if hasattr(self, '_refreshing_assets') and self._refreshing_assets:
+        if hasattr(self, "_refreshing_assets") and self._refreshing_assets:
             return  # Prevent recursive calls
-        
+
         self._refreshing_assets = True
-        
+
         try:
             # Force a complete table reset to ensure no cached data persists
             self.uploaded_assets_list.clear()
@@ -1723,7 +1831,7 @@ class ControlPanel(QWidget):
             self.uploaded_assets_list.setHorizontalHeaderLabels(
                 ["#", "File Name", "Added", "Delete"]
             )
-            
+
             # Force a complete widget refresh (only if model is accessible)
             self.uploaded_assets_list.clearContents()
             try:
@@ -1732,14 +1840,14 @@ class ControlPanel(QWidget):
             except RuntimeError:
                 # Model not accessible (e.g., in test environment), skip model reset
                 pass
-            
+
             # Ensure header text is visible and properly formatted
             header = self.uploaded_assets_list.horizontalHeader()
             header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
             header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
             header.setStretchLastSection(False)
             header.setMinimumSectionSize(60)
-            
+
             if not self.api_client:
                 self.uploaded_assets_list.setRowCount(1)
                 # Show waiting message in Type column
@@ -1747,7 +1855,7 @@ class ControlPanel(QWidget):
                 waiting_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 waiting_item.setForeground(QColor("#666666"))  # Gray text
                 self.uploaded_assets_list.setItem(0, 1, waiting_item)
-                
+
                 # Clear other columns
                 for col in [0, 2, 3]:  # Simplified columns
                     empty_item = QTableWidgetItem("")
@@ -1764,16 +1872,22 @@ class ControlPanel(QWidget):
                     no_assets_item = QTableWidgetItem("No assets ingested yet")
                     no_assets_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                     no_assets_item.setForeground(QColor("#666666"))  # Gray text
-                    no_assets_item.setToolTip("The database has been cleared or no assets have been ingested yet")
-                    self.uploaded_assets_list.setItem(0, 1, no_assets_item)  # Show in Type column
-                    
+                    no_assets_item.setToolTip(
+                        "The database has been cleared or no assets have been ingested yet"
+                    )
+                    self.uploaded_assets_list.setItem(
+                        0, 1, no_assets_item
+                    )  # Show in Type column
+
                     # Clear other columns
                     for col in [0, 2, 3]:  # Simplified columns
                         empty_item = QTableWidgetItem("")
                         self.uploaded_assets_list.setItem(0, col, empty_item)
-                    
+
                     # Log the empty state for debugging
-                    print("DEBUG: refresh_uploaded_assets - No assets returned from API")
+                    print(
+                        "DEBUG: refresh_uploaded_assets - No assets returned from API"
+                    )
                     return
 
                 # Sort by ingest timestamp (most recent first) - API already returns in this order
@@ -1781,9 +1895,11 @@ class ControlPanel(QWidget):
                 sorted_assets = sorted(
                     assets, key=lambda a: a.get("created_at", ""), reverse=True
                 )
-                
+
                 # Log the asset count for debugging
-                print(f"DEBUG: refresh_uploaded_assets - Found {len(sorted_assets)} assets from API")
+                print(
+                    f"DEBUG: refresh_uploaded_assets - Found {len(sorted_assets)} assets from API"
+                )
 
                 for row, asset in enumerate(sorted_assets):
                     filename = str(asset.get("file_name") or "Unknown")
@@ -1792,25 +1908,27 @@ class ControlPanel(QWidget):
                     formatted_date = self._format_asset_created_at(timestamp)
 
                     self.uploaded_assets_list.insertRow(row)
-                    
+
                     # Serial number (reverse order: latest first gets highest number)
                     serial_number = len(sorted_assets) - row
                     number_item = QTableWidgetItem(str(serial_number))
                     number_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    number_item.setData(Qt.ItemDataRole.UserRole, asset)  # Store asset data
+                    number_item.setData(
+                        Qt.ItemDataRole.UserRole, asset
+                    )  # Store asset data
                     number_item.setToolTip(f"Asset #{serial_number}: {filename}")
                     self.uploaded_assets_list.setItem(row, 0, number_item)
-                    
+
                     # File Name (no color coding - plain text only)
                     name_item = QTableWidgetItem(filename)
                     name_item.setToolTip(f"{kind}: {filename}")
                     self.uploaded_assets_list.setItem(row, 1, name_item)
-                    
+
                     # Upload date (no highlighting)
                     date_item = QTableWidgetItem(formatted_date)
                     date_item.setToolTip(f"Uploaded: {formatted_date}")
                     self.uploaded_assets_list.setItem(row, 2, date_item)
-                    
+
                     # Add delete button
                     delete_btn = QPushButton("🗑️")
                     delete_btn.setObjectName("assetDeleteButton")
@@ -1833,13 +1951,15 @@ class ControlPanel(QWidget):
                             color: white;
                         }
                     """)
-                    
+
                     # Store asset data in button for deletion
                     delete_btn.setProperty("asset_data", asset)
                     delete_btn.clicked.connect(
-                        lambda checked=False, asset_data=asset: self._on_delete_asset_clicked(asset_data)
+                        lambda checked=False, asset_data=asset: (
+                            self._on_delete_asset_clicked(asset_data)
+                        )
                     )
-                    
+
                     self.uploaded_assets_list.setCellWidget(row, 3, delete_btn)
 
             except Exception as e:
@@ -1850,26 +1970,28 @@ class ControlPanel(QWidget):
                 self.uploaded_assets_list.setHorizontalHeaderLabels(
                     ["#", "Type", "Added", "Delete"]
                 )
-                
+
                 # Ensure header text is visible and properly formatted
                 header = self.uploaded_assets_list.horizontalHeader()
                 header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
                 header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
                 header.setStretchLastSection(False)
                 header.setMinimumSectionSize(60)
-                
+
                 # Show error message in the Type column
                 error_item = QTableWidgetItem(f"Error: {str(e)}")
                 error_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 error_item.setForeground(QColor("#cc0000"))  # Red text for errors
-                error_item.setToolTip("Click 'Refresh Catalog' to retry after fixing the issue")
+                error_item.setToolTip(
+                    "Click 'Refresh Catalog' to retry after fixing the issue"
+                )
                 self.uploaded_assets_list.setItem(0, 1, error_item)
-                
+
                 # Clear the other columns for this error row
                 for col in [0, 2, 3]:  # Simplified columns
                     empty_item = QTableWidgetItem("")
                     self.uploaded_assets_list.setItem(0, col, empty_item)
-        
+
         finally:
             # Reset the refreshing flag to allow future refreshes
             self._refreshing_assets = False
@@ -1877,14 +1999,14 @@ class ControlPanel(QWidget):
     def _on_refresh_catalog_clicked(self) -> None:
         """Handle refresh catalog button click - refreshes without clearing caches to prevent loops."""
         import time
-        
+
         # Prevent rapid successive refreshes
-        if hasattr(self, '_last_refresh_time'):
+        if hasattr(self, "_last_refresh_time"):
             if time.time() - self._last_refresh_time < 2.0:  # 2 second cooldown
                 return
-        
+
         self._last_refresh_time = time.time()
-        
+
         # Just refresh the uploaded assets without clearing caches
         # Cache clearing will be handled by the controller when needed
         self.refresh_uploaded_assets()
@@ -1895,16 +2017,17 @@ class ControlPanel(QWidget):
             return False
         try:
             from datetime import datetime, timezone, timedelta
+
             # Parse ISO timestamp
-            if timestamp.endswith('Z'):
-                asset_time = datetime.fromisoformat(timestamp[:-1] + '+00:00')
+            if timestamp.endswith("Z"):
+                asset_time = datetime.fromisoformat(timestamp[:-1] + "+00:00")
             else:
                 asset_time = datetime.fromisoformat(timestamp)
-            
+
             # Make timezone-aware if needed
             if asset_time.tzinfo is None:
                 asset_time = asset_time.replace(tzinfo=timezone.utc)
-            
+
             now = datetime.now(timezone.utc)
             return (now - asset_time) < timedelta(hours=1)
         except Exception:
@@ -2176,25 +2299,27 @@ class ControlPanel(QWidget):
         original_drag_enter = table.dragEnterEvent
         original_drag_move = table.dragMoveEvent
         original_start_drag = table.startDrag
-        
+
         # Store captured data at class level so it persists across events
         self._drag_captured_data = []
         self._drag_source_row = None
-        
+
         def custom_start_drag(supported_actions):
             """Capture data when drag STARTS (earliest possible moment).
-            
+
             CRITICAL: We must capture ALL rows, not just selected rows.
             Qt will clear the dragged row's data during the drag operation,
             so we need to preserve everything before that happens.
             """
-            print(f"\n{'='*80}")
-            print(f"DEBUG: START DRAG - capturing ALL {table.rowCount()} rows NOW (earliest moment)!")
-            print(f"{'='*80}\n")
-            
+            print(f"\n{'=' * 80}")
+            print(
+                f"DEBUG: START DRAG - capturing ALL {table.rowCount()} rows NOW (earliest moment)!"
+            )
+            print(f"{'=' * 80}\n")
+
             # Clear previous capture
             self._drag_captured_data = []
-            
+
             # Capture ALL rows (not just selected ones)
             for i in range(table.rowCount()):
                 # Get all table items for this row
@@ -2202,7 +2327,7 @@ class ControlPanel(QWidget):
                 kind_item = table.item(i, 2)
                 crs_item = table.item(i, 3)
                 created_item = table.item(i, 4)
-                
+
                 # Capture visibility button state
                 visibility_button = table.cellWidget(i, 5)
                 is_visible = True
@@ -2211,7 +2336,7 @@ class ControlPanel(QWidget):
                     is_visible = visibility_button.property("is_visible")
                     if is_visible is None:
                         is_visible = True
-                
+
                 # Extract data from items
                 if file_item:
                     file_path = file_item.data(Qt.ItemDataRole.UserRole)
@@ -2219,7 +2344,7 @@ class ControlPanel(QWidget):
                     kind = kind_item.text() if kind_item else "Unknown"
                     crs = crs_item.text() if crs_item else "-"
                     created_at = created_item.text() if created_item else "-"
-                    
+
                     if file_path and file_name:
                         row_data = {
                             "file_name": file_name,
@@ -2228,41 +2353,49 @@ class ControlPanel(QWidget):
                             "crs": crs,
                             "created_at": created_at,
                             "is_visible": is_visible,
-                            "original_row": i
+                            "original_row": i,
                         }
                         self._drag_captured_data.append(row_data)
-                        print(f"DEBUG: Captured row {i}: {file_name} - {file_path} (visible={is_visible})")
+                        print(
+                            f"DEBUG: Captured row {i}: {file_name} - {file_path} (visible={is_visible})"
+                        )
                     else:
                         print(f"WARNING: Row {i} missing file_path or file_name")
                 else:
                     print(f"WARNING: Row {i} has no file_item")
-            
-            print(f"DEBUG: Captured {len(self._drag_captured_data)} rows at START DRAG")
-            print(f"{'='*80}\n")
 
-            selected_rows = table.selectionModel().selectedRows() if table.selectionModel() else []
+            print(f"DEBUG: Captured {len(self._drag_captured_data)} rows at START DRAG")
+            print(f"{'=' * 80}\n")
+
+            selected_rows = (
+                table.selectionModel().selectedRows() if table.selectionModel() else []
+            )
             if selected_rows:
                 self._drag_source_row = selected_rows[0].row()
             else:
                 self._drag_source_row = table.currentRow()
             print(f"DEBUG: Drag source row = {self._drag_source_row}")
-            
+
             # Call original handler to start the drag
             original_start_drag(supported_actions)
-        
+
         def custom_drag_enter(event):
             # Just pass through - data already captured in startDrag
-            print(f"DEBUG: Drag enter - using {len(self._drag_captured_data)} pre-captured rows from startDrag")
+            print(
+                f"DEBUG: Drag enter - using {len(self._drag_captured_data)} pre-captured rows from startDrag"
+            )
             original_drag_enter(event)
-        
+
         def custom_drag_move(event):
             # Just pass through
             original_drag_move(event)
-        
+
         def custom_drop_event(event):
-            print(f"\n{'='*80}")
-            print(f"DEBUG: Drop event - using {len(self._drag_captured_data)} pre-captured rows")
-            print(f"{'='*80}\n")
+            print(f"\n{'=' * 80}")
+            print(
+                f"DEBUG: Drop event - using {len(self._drag_captured_data)} pre-captured rows"
+            )
+            print(f"{'=' * 80}\n")
 
             if not self._drag_captured_data:
                 print("ERROR: No captured data available for reordering!")
@@ -2278,12 +2411,22 @@ class ControlPanel(QWidget):
                 drop_row = table.rowCount()
 
             source_row = self._drag_source_row
-            if source_row is None or source_row < 0 or source_row >= len(self._drag_captured_data):
+            if (
+                source_row is None
+                or source_row < 0
+                or source_row >= len(self._drag_captured_data)
+            ):
                 source_row = table.currentRow()
-            if source_row is None or source_row < 0 or source_row >= len(self._drag_captured_data):
+            if (
+                source_row is None
+                or source_row < 0
+                or source_row >= len(self._drag_captured_data)
+            ):
                 source_row = 0
 
-            print(f"DEBUG: Drop target row = {drop_row} (indicator={indicator_pos}), source row = {source_row}")
+            print(
+                f"DEBUG: Drop target row = {drop_row} (indicator={indicator_pos}), source row = {source_row}"
+            )
 
             reordered = list(self._drag_captured_data)
             moved = reordered.pop(source_row)
@@ -2297,37 +2440,41 @@ class ControlPanel(QWidget):
 
             event.acceptProposedAction()
             print(f"DEBUG: Drop completed, triggering reorder handler")
-            self._on_search_results_reordered_with_data(self._drag_captured_data, forced_order=reordered)
-        
+            self._on_search_results_reordered_with_data(
+                self._drag_captured_data, forced_order=reordered
+            )
+
         # Install all custom handlers
         table.startDrag = custom_start_drag  # CRITICAL: Capture at drag start
         table.dragEnterEvent = custom_drag_enter
         table.dragMoveEvent = custom_drag_move
-        
+
         return custom_drop_event
 
     def _on_search_results_reordered_with_data(
         self, pre_drop_row_data: list[dict], forced_order: list[dict] | None = None
     ) -> None:
         """Handle drag-and-drop reordering using pre-captured data.
-        
+
         CRITICAL: Qt's drag-and-drop corrupts table item data during the operation.
         We use pre-captured data to rebuild the table with the correct order.
         """
-        print(f"\n{'='*80}")
+        print(f"\n{'=' * 80}")
         print(f"DEBUG: _on_search_results_reordered_with_data called!")
-        print(f"{'='*80}\n")
+        print(f"{'=' * 80}\n")
         try:
             table = self.search_results_table
             if table.rowCount() == 0:
                 print("DEBUG: Table is empty, returning")
                 return
-            
+
             print(f"DEBUG: Table has {table.rowCount()} rows")
             print(f"DEBUG: Using {len(pre_drop_row_data)} pre-captured rows")
-            
+
             if not pre_drop_row_data:
-                print("ERROR: No pre-drop data provided! Cannot reconstruct layer order.")
+                print(
+                    "ERROR: No pre-drop data provided! Cannot reconstruct layer order."
+                )
                 return
 
             if forced_order is not None:
@@ -2337,14 +2484,16 @@ class ControlPanel(QWidget):
                 reordered_layers = []
                 for i, row_data in enumerate(forced_order):
                     self._create_table_row(table, i, row_data)
-                    reordered_layers.append({
-                        "file_name": row_data["file_name"],
-                        "file_path": row_data["file_path"],
-                        "kind": row_data["kind"],
-                        "crs": row_data["crs"],
-                        "is_visible": row_data.get("is_visible", True),
-                        "display_order": i,
-                    })
+                    reordered_layers.append(
+                        {
+                            "file_name": row_data["file_name"],
+                            "file_path": row_data["file_path"],
+                            "kind": row_data["kind"],
+                            "crs": row_data["crs"],
+                            "is_visible": row_data.get("is_visible", True),
+                            "display_order": i,
+                        }
+                    )
                     print(
                         f"  Row {i} rebuilt: {row_data['file_name']} ({row_data['kind']}) visible={row_data.get('is_visible', True)}"
                     )
@@ -2373,18 +2522,18 @@ class ControlPanel(QWidget):
                 self._reorder_debounce_timer.start(150)
                 print(f"DEBUG: _on_search_results_reordered_with_data completed\n")
                 return
-            
+
             # Build a map of file_path -> full row data (use file_path as key for uniqueness)
             data_by_filepath = {}
             for row_data in pre_drop_row_data:
                 data_by_filepath[row_data["file_path"]] = row_data
-            
+
             print(f"DEBUG: Data map has {len(data_by_filepath)} unique file paths")
-            
+
             # Try to extract the new order from existing table items after Qt's drop
             current_order = []
             table_corrupted = False
-            
+
             for i in range(table.rowCount()):
                 file_item = table.item(i, 1)
                 if file_item:
@@ -2400,16 +2549,20 @@ class ControlPanel(QWidget):
                     print(f"  Row {i} has no file_item")
                     table_corrupted = True
                     break
-            
+
             # If Qt corrupted the table or we couldn't extract proper order, rebuild completely
             if table_corrupted or len(current_order) != len(pre_drop_row_data):
-                print(f"  Table corrupted or incomplete: extracted {len(current_order)} paths but expected {len(pre_drop_row_data)}")
-                print(f"  Rebuilding table completely from pre-drop data in current order")
-                
+                print(
+                    f"  Table corrupted or incomplete: extracted {len(current_order)} paths but expected {len(pre_drop_row_data)}"
+                )
+                print(
+                    f"  Rebuilding table completely from pre-drop data in current order"
+                )
+
                 # Get the current row order by examining which rows are where
                 # Qt moves rows but may clear data, so we need to infer the new order
                 new_order = []
-                
+
                 # Try to match rows by position and any remaining data
                 for i in range(min(table.rowCount(), len(pre_drop_row_data))):
                     # If we have some valid data, use it to match
@@ -2417,76 +2570,87 @@ class ControlPanel(QWidget):
                         new_order.append(current_order[i])
                     else:
                         # Fallback: use original order for remaining items
-                        remaining_paths = [data["file_path"] for data in pre_drop_row_data 
-                                         if data["file_path"] not in new_order]
+                        remaining_paths = [
+                            data["file_path"]
+                            for data in pre_drop_row_data
+                            if data["file_path"] not in new_order
+                        ]
                         if remaining_paths:
                             new_order.append(remaining_paths[0])
-                
+
                 # If we still don't have a complete order, use the original order
                 if len(new_order) != len(pre_drop_row_data):
                     print(f"  Could not determine new order, using original order")
                     new_order = [data["file_path"] for data in pre_drop_row_data]
-                
+
                 # Clear and rebuild the table with the determined order
                 table.setRowCount(0)
                 table.setRowCount(len(new_order))
-                
+
                 reordered_layers = []
                 for i, file_path in enumerate(new_order):
                     row_data = data_by_filepath[file_path]
-                    
+
                     # Create all table items from scratch with proper formatting
                     self._create_table_row(table, i, row_data)
-                    
+
                     # Add to reordered layers list
-                    reordered_layers.append({
-                        "file_name": row_data["file_name"],
-                        "file_path": row_data["file_path"],
-                        "kind": row_data["kind"],
-                        "crs": row_data["crs"],
-                        "is_visible": row_data.get("is_visible", True),
-                        "display_order": i
-                    })
-                    
-                    print(f"  Row {i} rebuilt: {row_data['file_name']} ({row_data['kind']}) visible={row_data.get('is_visible', True)}")
-                
+                    reordered_layers.append(
+                        {
+                            "file_name": row_data["file_name"],
+                            "file_path": row_data["file_path"],
+                            "kind": row_data["kind"],
+                            "crs": row_data["crs"],
+                            "is_visible": row_data.get("is_visible", True),
+                            "display_order": i,
+                        }
+                    )
+
+                    print(
+                        f"  Row {i} rebuilt: {row_data['file_name']} ({row_data['kind']}) visible={row_data.get('is_visible', True)}"
+                    )
+
                 print(f"DEBUG: Table rebuilt with {len(reordered_layers)} rows")
-                
+
             else:
                 # Table items are intact, just update them to ensure consistency
                 print(f"  Table intact: processing {len(current_order)} rows normally")
-                
+
                 reordered_layers = []
                 for i, file_path in enumerate(current_order):
                     row_data = data_by_filepath[file_path]
-                    
+
                     # Update existing items to ensure correct data and formatting
                     self._update_table_row(table, i, row_data)
-                    
+
                     # Add to reordered layers list
-                    reordered_layers.append({
-                        "file_name": row_data["file_name"],
-                        "file_path": row_data["file_path"],
-                        "kind": row_data["kind"],
-                        "crs": row_data["crs"],
-                        "is_visible": row_data.get("is_visible", True),
-                        "display_order": i
-                    })
-                    
-                    print(f"  Row {i} updated: {row_data['file_name']} ({row_data['kind']}) visible={row_data.get('is_visible', True)}")
-            
+                    reordered_layers.append(
+                        {
+                            "file_name": row_data["file_name"],
+                            "file_path": row_data["file_path"],
+                            "kind": row_data["kind"],
+                            "crs": row_data["crs"],
+                            "is_visible": row_data.get("is_visible", True),
+                            "display_order": i,
+                        }
+                    )
+
+                    print(
+                        f"  Row {i} updated: {row_data['file_name']} ({row_data['kind']}) visible={row_data.get('is_visible', True)}"
+                    )
+
             # Force table update to apply all changes
             table.viewport().update()
-            
+
             # CRITICAL: Force text color refresh after table operations
             self._force_table_text_colors(table)
-            
+
             print(f"DEBUG: Extracted {len(reordered_layers)} layers")
-            
+
             if len(reordered_layers) == 0:
                 print("ERROR: No layers extracted! Cannot proceed with reordering.")
                 return
-            
+
             # Store the reorder data and update the local order registry
             self._pending_reorder_data = reordered_layers
             self._layer_order_registry = {
@@ -2504,55 +2668,91 @@ class ControlPanel(QWidget):
             print(f"DEBUG: Starting debounce timer (150ms)")
             self._reorder_debounce_timer.start(150)  # 150ms debounce
             print(f"DEBUG: _on_search_results_reordered_with_data completed\n")
-            
+
         except Exception as e:
             print(f"ERROR: Failed to handle search results reordering: {e}")
             import traceback
+
             traceback.print_exc()
 
-    def _create_table_row(self, table: QTableWidget, row_index: int, row_data: dict) -> None:
+    def _create_table_row(
+        self, table: QTableWidget, row_index: int, row_data: dict
+    ) -> None:
         """Create a complete table row with proper formatting and event handlers."""
         # Drag handle (column 0)
         handle_item = QTableWidgetItem("⋮⋮")
         handle_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         handle_item.setToolTip(f"Layer order: {row_index + 1}")
         handle_item.setForeground(QBrush(QColor(102, 102, 102)))
-        handle_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsDragEnabled | Qt.ItemFlag.ItemIsDropEnabled)
+        handle_item.setFlags(
+            Qt.ItemFlag.ItemIsEnabled
+            | Qt.ItemFlag.ItemIsSelectable
+            | Qt.ItemFlag.ItemIsDragEnabled
+            | Qt.ItemFlag.ItemIsDropEnabled
+        )
         table.setItem(row_index, 0, handle_item)
-        
+
         # File name (column 1)
         file_item = QTableWidgetItem(row_data["file_name"])
         file_item.setData(Qt.ItemDataRole.UserRole, row_data["file_path"])
         file_item.setForeground(QBrush(QColor(0, 0, 0)))
         file_item.setData(Qt.ItemDataRole.ForegroundRole, QBrush(QColor(0, 0, 0)))
-        file_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        file_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsDragEnabled | Qt.ItemFlag.ItemIsDropEnabled)
+        file_item.setTextAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        file_item.setFlags(
+            Qt.ItemFlag.ItemIsEnabled
+            | Qt.ItemFlag.ItemIsSelectable
+            | Qt.ItemFlag.ItemIsDragEnabled
+            | Qt.ItemFlag.ItemIsDropEnabled
+        )
         table.setItem(row_index, 1, file_item)
-        
+
         # Kind (column 2)
         kind_item = QTableWidgetItem(row_data["kind"])
         kind_item.setForeground(QBrush(QColor(0, 0, 0)))
         kind_item.setData(Qt.ItemDataRole.ForegroundRole, QBrush(QColor(0, 0, 0)))
-        kind_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        kind_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsDragEnabled | Qt.ItemFlag.ItemIsDropEnabled)
+        kind_item.setTextAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        kind_item.setFlags(
+            Qt.ItemFlag.ItemIsEnabled
+            | Qt.ItemFlag.ItemIsSelectable
+            | Qt.ItemFlag.ItemIsDragEnabled
+            | Qt.ItemFlag.ItemIsDropEnabled
+        )
         table.setItem(row_index, 2, kind_item)
-        
+
         # CRS (column 3)
         crs_item = QTableWidgetItem(row_data["crs"])
         crs_item.setForeground(QBrush(QColor(0, 0, 0)))
         crs_item.setData(Qt.ItemDataRole.ForegroundRole, QBrush(QColor(0, 0, 0)))
-        crs_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        crs_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsDragEnabled | Qt.ItemFlag.ItemIsDropEnabled)
+        crs_item.setTextAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        crs_item.setFlags(
+            Qt.ItemFlag.ItemIsEnabled
+            | Qt.ItemFlag.ItemIsSelectable
+            | Qt.ItemFlag.ItemIsDragEnabled
+            | Qt.ItemFlag.ItemIsDropEnabled
+        )
         table.setItem(row_index, 3, crs_item)
-        
+
         # Created date (column 4)
         created_item = QTableWidgetItem(row_data["created_at"])
         created_item.setForeground(QBrush(QColor(0, 0, 0)))
         created_item.setData(Qt.ItemDataRole.ForegroundRole, QBrush(QColor(0, 0, 0)))
-        created_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        created_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsDragEnabled | Qt.ItemFlag.ItemIsDropEnabled)
+        created_item.setTextAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        created_item.setFlags(
+            Qt.ItemFlag.ItemIsEnabled
+            | Qt.ItemFlag.ItemIsSelectable
+            | Qt.ItemFlag.ItemIsDragEnabled
+            | Qt.ItemFlag.ItemIsDropEnabled
+        )
         table.setItem(row_index, 4, created_item)
-        
+
         # Visibility button (column 5)
         is_visible = row_data.get("is_visible", True)
         visibility_button = QPushButton("👁" if is_visible else "👁‍🗨")
@@ -2577,7 +2777,7 @@ class ControlPanel(QWidget):
         """)
         visibility_button.setProperty("is_visible", is_visible)
         visibility_button.setProperty("file_path", row_data["file_path"])
-        
+
         # Connect the click handler
         def make_toggle_handler(btn, path):
             def handler():
@@ -2588,12 +2788,17 @@ class ControlPanel(QWidget):
                 btn.setProperty("is_visible", new_visible)
                 # Emit signal to update map
                 self.search_result_visibility_toggled.emit(path, new_visible)
+
             return handler
-        
-        visibility_button.clicked.connect(make_toggle_handler(visibility_button, row_data["file_path"]))
+
+        visibility_button.clicked.connect(
+            make_toggle_handler(visibility_button, row_data["file_path"])
+        )
         table.setCellWidget(row_index, 5, visibility_button)
 
-    def _update_table_row(self, table: QTableWidget, row_index: int, row_data: dict) -> None:
+    def _update_table_row(
+        self, table: QTableWidget, row_index: int, row_data: dict
+    ) -> None:
         """Update an existing table row with correct data and formatting."""
         # Update existing items (they should be intact)
         file_item = table.item(row_index, 1)
@@ -2601,29 +2806,31 @@ class ControlPanel(QWidget):
         crs_item = table.item(row_index, 3)
         created_item = table.item(row_index, 4)
         visibility_button = table.cellWidget(row_index, 5)
-        
+
         # Ensure all items have correct data and colors
         if file_item:
             file_item.setText(row_data["file_name"])
             file_item.setData(Qt.ItemDataRole.UserRole, row_data["file_path"])
             file_item.setForeground(QBrush(QColor(0, 0, 0)))
             file_item.setData(Qt.ItemDataRole.ForegroundRole, QBrush(QColor(0, 0, 0)))
-        
+
         if kind_item:
             kind_item.setText(row_data["kind"])
             kind_item.setForeground(QBrush(QColor(0, 0, 0)))
             kind_item.setData(Qt.ItemDataRole.ForegroundRole, QBrush(QColor(0, 0, 0)))
-        
+
         if crs_item:
             crs_item.setText(row_data["crs"])
             crs_item.setForeground(QBrush(QColor(0, 0, 0)))
             crs_item.setData(Qt.ItemDataRole.ForegroundRole, QBrush(QColor(0, 0, 0)))
-        
+
         if created_item:
             created_item.setText(row_data["created_at"])
             created_item.setForeground(QBrush(QColor(0, 0, 0)))
-            created_item.setData(Qt.ItemDataRole.ForegroundRole, QBrush(QColor(0, 0, 0)))
-        
+            created_item.setData(
+                Qt.ItemDataRole.ForegroundRole, QBrush(QColor(0, 0, 0))
+            )
+
         if visibility_button:
             is_visible = row_data.get("is_visible", True)
             visibility_button.setText("👁" if is_visible else "👁‍🗨")
@@ -2634,39 +2841,46 @@ class ControlPanel(QWidget):
         """Force black text colors on all table items to prevent visibility issues after drag operations."""
         try:
             for row in range(table.rowCount()):
-                for col in range(table.columnCount() - 1):  # Skip last column (visibility button)
+                for col in range(
+                    table.columnCount() - 1
+                ):  # Skip last column (visibility button)
                     item = table.item(row, col)
                     if item:
                         # Force black text color
                         item.setForeground(QBrush(QColor(0, 0, 0)))
-                        item.setData(Qt.ItemDataRole.ForegroundRole, QBrush(QColor(0, 0, 0)))
+                        item.setData(
+                            Qt.ItemDataRole.ForegroundRole, QBrush(QColor(0, 0, 0))
+                        )
         except Exception as e:
             print(f"WARNING: Failed to force table text colors: {e}")
 
     def _process_pending_reorder(self) -> None:
         """Process the pending reorder operation after debounce delay."""
-        print(f"\n{'='*80}")
+        print(f"\n{'=' * 80}")
         print(f"DEBUG: _process_pending_reorder called!")
         print(f"  _pending_reorder_data: {self._pending_reorder_data}")
-        print(f"{'='*80}\n")
-        
+        print(f"{'=' * 80}\n")
+
         if self._pending_reorder_data is None:
             print("DEBUG: No pending reorder data, returning")
             return
-        
+
         try:
             # Emit signal to controller for real-time globe layer reordering
-            if hasattr(self, 'search_layers_reordered'):
-                print(f"DEBUG: Emitting search_layers_reordered signal with {len(self._pending_reorder_data)} layers")
+            if hasattr(self, "search_layers_reordered"):
+                print(
+                    f"DEBUG: Emitting search_layers_reordered signal with {len(self._pending_reorder_data)} layers"
+                )
                 self.search_layers_reordered.emit(self._pending_reorder_data)
                 print(f"DEBUG: Signal emitted successfully")
             else:
                 print("ERROR: search_layers_reordered signal not found!")
-            
+
             self._pending_reorder_data = None
             print(f"DEBUG: _process_pending_reorder completed\n")
-            
+
         except Exception as e:
             print(f"ERROR: Failed to process pending reorder: {e}")
             import traceback
+
             traceback.print_exc()

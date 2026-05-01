@@ -20,7 +20,9 @@ class ProjectIoCoordinator:
     def export_profile_csv(self) -> None:
         controller = self._controller
         if not controller._last_profile_values:
-            controller.panel.log("No profile values available. Run Elevation Profile first.")
+            controller.panel.log(
+                "No profile values available. Run Elevation Profile first."
+            )
             return
         file_path, _ = QFileDialog.getSaveFileName(
             controller.panel,
@@ -133,7 +135,9 @@ class ProjectIoCoordinator:
             import fiona
             from fiona.crs import CRS as FionaCRS
         except Exception:
-            controller.panel.log("Fiona is unavailable. Falling back to GeoJSON export.")
+            controller.panel.log(
+                "Fiona is unavailable. Falling back to GeoJSON export."
+            )
             self.export_annotations_geojson()
             return
 
@@ -237,7 +241,9 @@ class ProjectIoCoordinator:
                             "condition": str(item.get("condition") or "intact"),
                             "area_m2": float(item.get("area_m2") or 0.0),
                             "perimeter_m": float(item.get("perimeter_m") or 0.0),
-                            "orientation_deg": float(item.get("orientation_deg") or 0.0),
+                            "orientation_deg": float(
+                                item.get("orientation_deg") or 0.0
+                            ),
                             "notes": str(item.get("notes") or ""),
                         },
                     }

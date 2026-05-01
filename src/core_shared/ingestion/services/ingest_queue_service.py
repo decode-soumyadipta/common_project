@@ -97,25 +97,25 @@ class IngestQueueService:
             try:
                 # Expand user path and resolve to absolute path
                 resolved_path = Path(path).expanduser().resolve()
-                
+
                 # Validate that the file exists
                 if not resolved_path.exists():
                     LOGGER.warning("Skipping non-existent file: %s", path)
                     continue
-                    
+
                 # Validate that it's a file (not a directory)
                 if not resolved_path.is_file():
                     LOGGER.warning("Skipping non-file path: %s", path)
                     continue
-                    
+
                 cleaned.append(str(resolved_path))
             except (OSError, ValueError) as e:
                 LOGGER.warning("Skipping invalid path %s: %s", path, e)
                 continue
-        
+
         if not cleaned:
             raise ValueError("No valid ingest paths provided after validation")
-        
+
         LOGGER.info("Enqueuing %d validated file paths for ingestion", len(cleaned))
 
         schema_refreshed = False
@@ -123,10 +123,18 @@ class IngestQueueService:
             try:
                 with self._session_factory() as session:
                     repo = IngestJobRepository(session)
-                    LOGGER.debug("Creating ingest job for %d files (attempt %d)", len(cleaned), attempt)
+                    LOGGER.debug(
+                        "Creating ingest job for %d files (attempt %d)",
+                        len(cleaned),
+                        attempt,
+                    )
                     job = repo.create_job(cleaned)
                     view = _job_to_view(job)
-                    LOGGER.info("Successfully created ingest job %s with %d items", job.id, len(cleaned))
+                    LOGGER.info(
+                        "Successfully created ingest job %s with %d items",
+                        job.id,
+                        len(cleaned),
+                    )
                 break
             except (OperationalError, ProgrammingError) as exc:
                 message = str(exc).lower()
@@ -140,7 +148,9 @@ class IngestQueueService:
                         "has no column",
                     )
                 )
-                db_locked = "database is locked" in message or "disk i/o error" in message
+                db_locked = (
+                    "database is locked" in message or "disk i/o error" in message
+                )
                 db_readonly = "readonly" in message
                 db_busy = "database is busy" in message
 
@@ -171,8 +181,11 @@ class IngestQueueService:
             except Exception as exc:
                 # Catch-all for other database/session issues (like SQLAlchemy refresh errors)
                 LOGGER.error(
-                    "Unexpected error creating ingest job (attempt %d/%d): %s", 
-                    attempt, 3, exc, exc_info=True
+                    "Unexpected error creating ingest job (attempt %d/%d): %s",
+                    attempt,
+                    3,
+                    exc,
+                    exc_info=True,
                 )
                 if attempt >= 3:
                     raise RuntimeError(
@@ -313,8 +326,10 @@ class IngestQueueService:
                 self._set_runtime_stage(job_id, stage_name)
 
             try:
-                from core_shared.ingestion.services.ingest_service import register_raster
-                
+                from core_shared.ingestion.services.ingest_service import (
+                    register_raster,
+                )
+
                 with self._session_factory() as session:
                     result = register_raster(
                         Path(item.file_path),

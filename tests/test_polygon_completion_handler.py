@@ -1,4 +1,5 @@
 """Test for Task 3.7: Polygon completion handler for measurement context."""
+
 from __future__ import annotations
 
 from unittest.mock import Mock, patch
@@ -81,13 +82,13 @@ def test_finish_polygon_triggers_polygon_area_measurement(controller):
     controller._polygon_area_mode_enabled = True
     controller._volume_mode_enabled = False
     controller._slope_aspect_mode_enabled = False
-    
+
     # Mock the measurement method
     controller._toolbar_measure_polygon_area = Mock()
-    
+
     # Act: Finish the polygon
     controller.finish_search_polygon()
-    
+
     # Assert: Polygon area measurement was triggered
     controller._toolbar_measure_polygon_area.assert_called_once()
     assert controller._polygon_drawing_context == "none"
@@ -100,13 +101,13 @@ def test_finish_polygon_triggers_volume_measurement(controller):
     controller._polygon_area_mode_enabled = False
     controller._volume_mode_enabled = True
     controller._slope_aspect_mode_enabled = False
-    
+
     # Mock the measurement method
     controller._toolbar_measure_volume = Mock()
-    
+
     # Act: Finish the polygon
     controller.finish_search_polygon()
-    
+
     # Assert: Volume measurement was triggered
     controller._toolbar_measure_volume.assert_called_once()
     assert controller._polygon_drawing_context == "none"
@@ -119,13 +120,13 @@ def test_finish_polygon_triggers_slope_aspect_measurement(controller):
     controller._polygon_area_mode_enabled = False
     controller._volume_mode_enabled = False
     controller._slope_aspect_mode_enabled = True
-    
+
     # Mock the measurement method
     controller._toolbar_measure_slope_aspect = Mock()
-    
+
     # Act: Finish the polygon
     controller.finish_search_polygon()
-    
+
     # Assert: Slope/aspect measurement was triggered
     controller._toolbar_measure_slope_aspect.assert_called_once()
     assert controller._polygon_drawing_context == "none"
@@ -136,13 +137,13 @@ def test_finish_polygon_does_not_trigger_measurement_for_search_context(controll
     # Setup: Set search context (not measurement)
     controller._polygon_drawing_context = "search"
     controller._polygon_area_mode_enabled = True
-    
+
     # Mock the measurement method
     controller._toolbar_measure_polygon_area = Mock()
-    
+
     # Act: Finish the polygon
     controller.finish_search_polygon()
-    
+
     # Assert: Measurement was NOT triggered
     controller._toolbar_measure_polygon_area.assert_not_called()
     # Context should remain "search" (not reset to "none")

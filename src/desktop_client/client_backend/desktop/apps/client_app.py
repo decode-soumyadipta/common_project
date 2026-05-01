@@ -67,6 +67,7 @@ def main() -> int:
         # On Windows with NVIDIA, use hardware OpenGL (ANGLE/D3D11) for full GPU acceleration.
         # Only fall back to software if explicitly requested or if no GPU is detected.
         import platform
+
         _system = platform.system()
         if _system == "Windows":
             # Let Qt pick the best backend — ANGLE (D3D11) on Windows gives full GPU.
