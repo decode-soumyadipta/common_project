@@ -2362,9 +2362,6 @@ class ControlPanel(QWidget):
             # Force table update to apply all changes
             table.viewport().update()
             
-            # CRITICAL: Force text color refresh after table operations
-            self._force_table_text_colors(table)
-            
             print(f"DEBUG: Extracted {len(reordered_layers)} layers")
             
             if len(reordered_layers) == 0:
@@ -2501,19 +2498,6 @@ class ControlPanel(QWidget):
             visibility_button.setText("👁" if is_visible else "👁‍🗨")
             visibility_button.setProperty("is_visible", is_visible)
             visibility_button.setProperty("file_path", row_data["file_path"])
-
-    def _force_table_text_colors(self, table: QTableWidget) -> None:
-        """Force black text colors on all table items to prevent visibility issues after drag operations."""
-        try:
-            for row in range(table.rowCount()):
-                for col in range(table.columnCount() - 1):  # Skip last column (visibility button)
-                    item = table.item(row, col)
-                    if item:
-                        # Force black text color
-                        item.setForeground(QBrush(QColor(0, 0, 0)))
-                        item.setData(Qt.ItemDataRole.ForegroundRole, QBrush(QColor(0, 0, 0)))
-        except Exception as e:
-            print(f"WARNING: Failed to force table text colors: {e}")
 
     def _process_pending_reorder(self) -> None:
         """Process the pending reorder operation after debounce delay."""

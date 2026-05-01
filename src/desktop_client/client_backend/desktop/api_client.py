@@ -101,6 +101,17 @@ class DesktopApiClient:
         response.raise_for_status()
         return response.json()
 
+    def delete_asset(self, asset_id: str) -> bool:
+        """Delete an asset from the catalog and database."""
+        try:
+            response = httpx.delete(
+                f"{self._base_url}/search/assets/{asset_id}", timeout=30.0
+            )
+            response.raise_for_status()
+            return True
+        except httpx.HTTPError:
+            return False
+
     def extract_profile(
         self,
         path: str,

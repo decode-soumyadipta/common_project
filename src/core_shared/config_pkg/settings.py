@@ -25,6 +25,13 @@ class Settings(BaseSettings):
     cog_overview_resampling: str = "average"
     titiler_base_url: str = "http://127.0.0.1:8081"
     titiler_tile_matrix_set_id: str = "WebMercatorQuad"
+    
+    # Output file organization
+    ingest_organize_outputs: bool = True
+    """Organize processed files (COG, MBTiles) in timestamped directories"""
+    
+    ingest_output_base_dir: str = "processed_outputs"
+    """Base directory name for organized outputs (relative to data_root)"""
 
     model_config = SettingsConfigDict(
         env_file=".env",

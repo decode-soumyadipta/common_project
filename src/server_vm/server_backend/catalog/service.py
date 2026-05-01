@@ -20,6 +20,19 @@ class CatalogService:
     def list_assets(self) -> list[dict[str, Any]]:
         return [self._serialize_asset(asset) for asset in self._repo.list_assets()]
 
+    def delete_asset(self, asset_id: str) -> bool:
+        """Delete an asset from the catalog."""
+        try:
+            success = self._repo.delete_asset(asset_id)
+            if success:
+                LOGGER.info(f"Asset deleted: {asset_id}")
+            else:
+                LOGGER.warning(f"Asset not found for deletion: {asset_id}")
+            return success
+        except Exception as e:
+            LOGGER.error(f"Failed to delete asset {asset_id}: {e}")
+            return False
+
     def search_by_point(self, lon: float, lat: float) -> list[dict[str, Any]]:
         assets = self._repo.search_assets_by_point(lon, lat)
         return [self._serialize_asset(asset) for asset in assets]

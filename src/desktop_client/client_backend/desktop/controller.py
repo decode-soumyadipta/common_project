@@ -99,6 +99,7 @@ class DesktopController:
         self._dem_asset_kind_cache: dict[str, bool] = {}
         self._search_result_assets_by_path: dict[str, dict] = {}
         self._search_layer_visibility: dict[str, bool] = {}
+        self._last_synced_visibility: dict[str, bool] = {}  # Track last synced state to avoid unnecessary JS calls
         self._loaded_search_layer_keys: set[str] = set()
         self._active_dem_search_layer_key: str | None = None
         self._last_visible_focus_signature: tuple[float, float, float, float] | None = (
@@ -368,18 +369,29 @@ class DesktopController:
             return body[:300]
 
     def _connect_signals(self) -> None:
+        # File selection buttons
         self._connect_button(
-            self.panel.browse_btn.clicked, "Browse Folder", self.browse_folder
+            self.panel.browse_files_btn.clicked, "Browse Files", self.browse_files
         )
         self._connect_button(
-            self.panel.ingest_btn.clicked, "Ingest Folder", self.enqueue_selected_path
+            self.panel.clear_selection_btn.clicked, "Clear Selection", self.clear_file_selection
         )
+        self._connect_button(
+            self.panel.ingest_btn.clicked, "Ingest Files", self.enqueue_selected_files
+        )
+        
+        # Asset management
         self._connect_button(
             self.panel.refresh_assets_btn.clicked, "Refresh Assets", self.refresh_assets
         )
         self._connect_button(
             self.panel.add_layer_btn.clicked, "Add Layer", self.add_selected_layer
         )
+        
+        # Asset deletion
+        self.panel.asset_delete_requested.connect(self.delete_asset)
+        
+        # Display controls
         self.panel.brightness_slider.valueChanged.connect(
             self._on_visual_slider_changed
         )
@@ -481,49 +493,118 @@ class DesktopController:
             self._logger.exception("UI button failed: %s", label)
 
     def preview_selected_uploaded_asset(self) -> None:
+        """Load and flyto the selected asset from uploaded assets table."""
         row = self.panel.uploaded_assets_list.currentRow()
         if row < 0:
             return
-        item = self.panel.uploaded_assets_list.item(row, 1)
-        if item is None:
-            item = self.panel.uploaded_assets_list.item(row, 0)
+        
+        # Get asset data from the first column (serial number column)
+        item = self.panel.uploaded_assets_list.item(row, 0)
         if item is None:
             return
+        
         asset = item.data(Qt.ItemDataRole.UserRole)
         if not isinstance(asset, dict):
             return
 
         file_path = str(asset.get("file_path") or "")
+        file_name = str(asset.get("file_name") or "Unknown")
+        kind = str(asset.get("kind") or "Unknown").upper()
+        
         if not file_path:
             return
 
+        # Cache the asset
         self._asset_cache[file_path] = asset
         self.state.selected_asset = asset
-        self._select_asset_in_combo(file_path)
+        
+        # Load the asset layer
         loaded_asset = self._load_asset_layer(asset)
         if not loaded_asset:
+            self.panel.log(f"Failed to load asset: {file_name}")
             return
-        self.panel.log(f"Layer added: {loaded_asset['file_name']}")
+        
+        self.panel.log(f"Loading {kind}: {file_name}")
+        
+        # Smooth flyto the asset region
+        self._flyto_asset_bounds(asset, kind)
+        
         self._logger.info(
-            "Layer add requested from uploaded assets name=%s kind=%s url=%s",
-            loaded_asset["file_name"],
-            loaded_asset["kind"],
-            loaded_asset["tile_url"],
+            "Asset loaded and camera moved: name=%s kind=%s",
+            file_name,
+            kind,
         )
-
-    def enqueue_selected_path(self) -> None:
-        if not self._require_offline_endpoints("Ingest folder"):
-            return
-        if not self.api.api_ready():
-            self.panel.log(
-                f"API unavailable at {self.api.base_url}. Start API/server desktop, then retry 'Ingest folder'."
+    
+    def _flyto_asset_bounds(self, asset: dict, kind: str) -> None:
+        """Smooth camera flyto for the asset bounds with smart 2D/3D rendering."""
+        try:
+            # Get asset bounds
+            bounds = asset.get("bounds")
+            if not bounds or len(bounds) != 4:
+                self.panel.log("Asset bounds not available for flyto")
+                return
+            
+            west, south, east, north = bounds
+            
+            # Calculate center and appropriate camera height
+            center_lon = (west + east) / 2
+            center_lat = (south + north) / 2
+            
+            # Calculate diagonal distance for camera height
+            import math
+            lat_diff = north - south
+            lon_diff = east - west
+            diagonal = math.sqrt(lat_diff**2 + lon_diff**2)
+            
+            # Camera height based on asset size (in degrees to meters approximation)
+            # 1 degree ≈ 111km, we want to see the whole asset
+            camera_height = diagonal * 111000 * 1.5  # 1.5x for padding
+            camera_height = max(1000, min(camera_height, 50000000))  # Clamp between 1km and 50,000km
+            
+            # Determine rendering mode based on asset type
+            is_dem = kind in ["DEM", "ELEVATION"]
+            
+            # Smart camera positioning
+            if is_dem:
+                # For DEM: 3D view with tilt for terrain visualization
+                pitch_degrees = -45  # Look down at 45 degrees
+                heading_degrees = 0
+                self.panel.log(f"Flying to DEM (3D view): {asset.get('file_name')}")
+            else:
+                # For imagery: 2D top-down view
+                pitch_degrees = -90  # Straight down
+                heading_degrees = 0
+                self.panel.log(f"Flying to imagery (2D view): {asset.get('file_name')}")
+            
+            # Execute smooth flyto
+            self._run_js_call(
+                "flyToLocation",
+                {
+                    "longitude": center_lon,
+                    "latitude": center_lat,
+                    "height": camera_height,
+                    "heading": heading_degrees,
+                    "pitch": pitch_degrees,
+                    "roll": 0,
+                    "duration": 2.0,  # 2 second smooth animation
+                }
             )
-            return
-        path = self.panel.path_edit.text().strip()
-        if not path:
-            self.panel.log("Select a folder path first.")
-            return
-        folder_path = Path(path)
+            
+            self._logger.info(
+                "Camera flyto: lon=%.4f lat=%.4f height=%.0f pitch=%d (mode=%s)",
+                center_lon, center_lat, camera_height, pitch_degrees,
+                "3D" if is_dem else "2D"
+            )
+            
+        except Exception as e:
+            self._logger.error("Flyto failed: %s", e, exc_info=True)
+            self.panel.log(f"Camera movement failed: {e}")
+
+    # DEPRECATED: This method has been replaced by enqueue_selected_files
+    # The new UI uses file selection instead of path text input
+    def enqueue_selected_path(self) -> None:
+        self.panel.log("This method is deprecated. Use the new file selection interface.")
+        return
         if not folder_path.exists():
             self.panel.log(f"Path does not exist: {path}")
             return
@@ -1009,56 +1090,112 @@ class DesktopController:
         return asset
 
     def toggle_search_result_visibility(self, file_path: str, visible: bool) -> None:
+        """Toggle visibility of a search result layer with debug logging."""
+        print(f"\n{'='*80}")
+        print(f"DEBUG: toggle_search_result_visibility called")
+        print(f"  file_path: {file_path}")
+        print(f"  visible (requested): {visible}")
+        print(f"  Current visibility map: {self._search_layer_visibility}")
+        print(f"{'='*80}\n")
+        
         normalized_path = str(file_path or "").strip().replace("\\", "/")
         if not normalized_path:
+            print("DEBUG: Visibility toggle ignored: missing asset path")
             self.panel.log("Visibility toggle ignored: missing asset path.")
             return
 
         asset = self._search_result_assets_by_path.get(normalized_path)
         if not isinstance(asset, dict):
+            print(f"DEBUG: Visibility toggle ignored: asset not in search results for path={normalized_path}")
+            print(f"DEBUG: Available paths in search results: {list(self._search_result_assets_by_path.keys())}")
             self.panel.log(
                 "Visibility toggle ignored: asset is no longer in current search results."
             )
             return
 
         next_visible = bool(visible)
+        print(f"DEBUG: Asset found: {asset.get('file_name')}, kind={asset.get('kind')}, next_visible={next_visible}")
+        
         if next_visible and self._is_dem_asset(asset):
+            print("DEBUG: Showing DEM - hiding other DEM layers")
             for path, candidate in self._search_result_assets_by_path.items():
                 if path != normalized_path and self._is_dem_asset(candidate):
                     self._search_layer_visibility[path] = False
+                    print(f"DEBUG: Hiding other DEM: {candidate.get('file_name')}")
 
         self._search_layer_visibility[normalized_path] = next_visible
+        print(f"DEBUG: Updated visibility map: {normalized_path} = {next_visible}")
+        print(f"DEBUG: Full visibility map after update: {self._search_layer_visibility}")
+        
         self._sync_search_visibility_layers()
 
         if self._search_layer_visibility.get(normalized_path, False):
             self.panel.log(f"Shown on map: {asset.get('file_name', 'asset')}")
+            print(f"DEBUG: Layer shown: {asset.get('file_name')}")
         else:
             self.panel.log(f"Hidden from map: {asset.get('file_name', 'asset')}")
+            print(f"DEBUG: Layer hidden: {asset.get('file_name')}")
 
         self._focus_visible_search_assets(force=False)
+        
+        print(f"DEBUG: Calling panel.update_search_results to refresh UI")
         self.panel.update_search_results(
             list(self._search_result_assets_by_path.values()),
             self._search_layer_visibility,
         )
+        print(f"DEBUG: toggle_search_result_visibility completed\n")
 
     def _sync_search_visibility_layers(self) -> None:
+        """Sync layer visibility between UI and globe with debug logging - optimized to only update changed layers."""
+        print(f"\n{'='*80}")
+        print(f"DEBUG: _sync_search_visibility_layers called")
+        print(f"  Current visibility map: {self._search_layer_visibility}")
+        print(f"  Last synced visibility: {self._last_synced_visibility}")
+        print(f"  Loaded layer keys: {self._loaded_search_layer_keys}")
+        print(f"  Active DEM layer key: {self._active_dem_search_layer_key}")
+        print(f"{'='*80}\n")
+        
         for file_path, asset in self._search_result_assets_by_path.items():
             should_show = bool(self._search_layer_visibility.get(file_path, False))
+            last_synced = self._last_synced_visibility.get(file_path, None)
             is_dem_asset = self._is_dem_asset(asset)
+            file_name = asset.get('file_name', 'unknown')
+            is_loaded = file_path in self._loaded_search_layer_keys
+            
+            print(f"DEBUG: Processing layer: {file_name}")
+            print(f"  file_path: {file_path}")
+            print(f"  should_show: {should_show}")
+            print(f"  last_synced: {last_synced}")
+            print(f"  is_dem: {is_dem_asset}")
+            print(f"  is_loaded: {is_loaded}")
 
-            if not should_show:
-                self._run_js_call("setLayerVisibility", file_path, False)
-                if is_dem_asset and self._active_dem_search_layer_key == file_path:
-                    self.state.active_layer_is_dem = False
-                    self._active_dem_search_layer_key = None
-                    self._apply_display_control_mode()
+            # OPTIMIZATION: Skip if visibility hasn't changed since last sync
+            if last_synced is not None and last_synced == should_show and is_loaded:
+                print(f"  SKIP: Visibility unchanged (already {'visible' if should_show else 'hidden'})")
                 continue
 
-            if is_dem_asset and file_path in self._loaded_search_layer_keys:
+            if not should_show:
+                if is_loaded:  # Only hide if it's actually loaded
+                    print(f"  ACTION: Hiding layer via setLayerVisibility")
+                    self._run_js_call("setLayerVisibility", file_path, False)
+                    self._last_synced_visibility[file_path] = False
+                    if is_dem_asset and self._active_dem_search_layer_key == file_path:
+                        self.state.active_layer_is_dem = False
+                        self._active_dem_search_layer_key = None
+                        self._apply_display_control_mode()
+                        print(f"  DEM deactivated")
+                else:
+                    print(f"  SKIP: Layer not loaded, no need to hide")
+                continue
+
+            if is_dem_asset and is_loaded:
+                print(f"  ACTION: Showing DEM layer via setLayerVisibility")
                 self._run_js_call("setLayerVisibility", file_path, True)
+                self._last_synced_visibility[file_path] = True
                 self.state.active_layer_is_dem = True
                 self._active_dem_search_layer_key = file_path
                 self._apply_display_control_mode()
+                print(f"  DEM activated")
                 continue
 
             if (
@@ -1066,32 +1203,44 @@ class DesktopController:
                 and self._active_dem_search_layer_key
                 and self._active_dem_search_layer_key != file_path
             ):
+                print(f"  ACTION: Hiding DEM (another DEM is active)")
                 self._search_layer_visibility[file_path] = False
-                self._run_js_call("setLayerVisibility", file_path, False)
+                if is_loaded:
+                    self._run_js_call("setLayerVisibility", file_path, False)
+                    self._last_synced_visibility[file_path] = False
                 continue
 
             if is_dem_asset and self._active_dem_search_layer_key == file_path:
+                print(f"  SKIP: DEM already active")
                 continue
 
-            if (not is_dem_asset) and file_path in self._loaded_search_layer_keys:
+            if (not is_dem_asset) and is_loaded:
+                print(f"  ACTION: Showing imagery layer via setLayerVisibility")
                 self._run_js_call("setLayerVisibility", file_path, True)
+                self._last_synced_visibility[file_path] = True
                 continue
 
-            loaded = self._load_asset_layer(
-                asset,
-                replace_existing=False,
-                layer_key=file_path,
-                auto_fly_to=False,
-                apply_scene_mode=False,
-                show_loading=False,
-            )
-            if not loaded:
-                self._search_layer_visibility[file_path] = False
-                continue
+            if not is_loaded:
+                print(f"  ACTION: Loading new layer")
+                loaded = self._load_asset_layer(
+                    asset,
+                    replace_existing=False,
+                    layer_key=file_path,
+                    auto_fly_to=False,
+                    apply_scene_mode=False,
+                    show_loading=False,
+                )
+                if not loaded:
+                    print(f"  ERROR: Failed to load layer")
+                    self._search_layer_visibility[file_path] = False
+                    continue
 
-            self._loaded_search_layer_keys.add(file_path)
+                self._loaded_search_layer_keys.add(file_path)
+                self._last_synced_visibility[file_path] = True
+                print(f"  SUCCESS: Layer loaded and added to loaded keys")
 
         self._apply_display_control_mode()
+        print(f"DEBUG: _sync_search_visibility_layers completed\n")
 
     def _focus_visible_search_assets(self, *, force: bool) -> None:
         visible_assets = [
@@ -1139,34 +1288,85 @@ class DesktopController:
 
     def reorder_search_result_layers(self, reordered_layers: list[dict]) -> None:
         """Handle drag-and-drop reordering of search result layers with real-time globe updates."""
+        print(f"\n{'='*80}")
+        print(f"DEBUG: reorder_search_result_layers called in controller!")
+        print(f"  reordered_layers: {reordered_layers}")
+        print(f"{'='*80}\n")
         try:
             if not reordered_layers:
+                print("DEBUG: No reordered layers, returning")
                 return
+            
+            print(f"DEBUG: Processing {len(reordered_layers)} layers")
             
             # Track performance for event-driven architecture
             import time
             start_time = time.time()
             
-            # Create a mapping of file names to their new display order
-            layer_order_map = {}
-            for i, layer_info in enumerate(reordered_layers):
-                file_name = layer_info.get("file_name", "")
-                if file_name:
-                    layer_order_map[file_name] = i
-            
-            # Find corresponding assets and reorder them
+            # Find corresponding assets using file_path (not file_name, to handle duplicates)
             reordered_assets = []
             for layer_info in reordered_layers:
-                file_name = layer_info.get("file_name", "")
-                # Find the asset with matching file name
-                for file_path, asset in self._search_result_assets_by_path.items():
-                    if asset.get("file_name") == file_name:
-                        reordered_assets.append(asset)
-                        break
+                file_path = layer_info.get("file_path", "")
+                if not file_path:
+                    print(f"WARNING: Layer info missing file_path: {layer_info}")
+                    continue
+                
+                # Normalize path for lookup
+                normalized_path = file_path.replace("\\", "/")
+                
+                # Find the asset with matching file path
+                if normalized_path in self._search_result_assets_by_path:
+                    asset = self._search_result_assets_by_path[normalized_path]
+                    # Add visibility info from the layer_info
+                    asset_with_visibility = asset.copy()
+                    asset_with_visibility["is_visible"] = layer_info.get("is_visible", True)
+                    reordered_assets.append(asset_with_visibility)
+                    print(f"  Matched asset: {asset.get('file_name', 'Unknown')} at {normalized_path} (visible={layer_info.get('is_visible', True)})")
+                else:
+                    print(f"  WARNING: No asset found for path: {normalized_path}")
             
             if not reordered_assets:
                 self.panel.log("Layer reordering failed: No matching assets found")
+                print("ERROR: No matching assets found in _search_result_assets_by_path")
+                print(f"DEBUG: Available asset paths: {list(self._search_result_assets_by_path.keys())}")
+                print(f"DEBUG: Requested paths: {[layer_info.get('file_path', '') for layer_info in reordered_layers]}")
                 return
+            
+            print(f"DEBUG: Found {len(reordered_assets)} matching assets")
+            
+            # CRITICAL FIX: Ensure all layers are actually loaded before reordering
+            # Sometimes the reorder happens before layers are fully loaded
+            missing_layers = []
+            for asset in reordered_assets:
+                file_path = str(asset.get("file_path", "")).replace("\\", "/")
+                if file_path not in self._loaded_search_layer_keys:
+                    missing_layers.append(asset)
+            
+            if missing_layers:
+                print(f"WARNING: {len(missing_layers)} layers not yet loaded, attempting to load them first")
+                for asset in missing_layers:
+                    file_path = str(asset.get("file_path", "")).replace("\\", "/")
+                    print(f"  Loading missing layer: {asset.get('file_name', 'Unknown')} - {file_path}")
+                    
+                    # Try to load the layer
+                    loaded = self._load_asset_layer_event_driven(
+                        asset,
+                        replace_existing=False,
+                        layer_key=file_path,
+                        auto_fly_to=False,
+                        apply_scene_mode=False,
+                        show_loading=False,
+                    )
+                    
+                    if loaded:
+                        self._loaded_search_layer_keys.add(file_path)
+                        print(f"  Successfully loaded missing layer: {file_path}")
+                    else:
+                        print(f"  Failed to load missing layer: {file_path}")
+                
+                # Small delay to allow layers to initialize
+                import time
+                time.sleep(0.1)
             
             # Update the Cesium layer stack order using event-driven approach
             if self._event_driven_enabled:
@@ -1192,24 +1392,39 @@ class DesktopController:
             self._logger.error("Failed to reorder search result layers: %s", e, exc_info=True)
 
     def _reorder_layers_event_driven(self, reordered_assets: list[dict]) -> None:
-        """Reorder layers using event-driven approach for optimal performance."""
+        """Reorder layers using event-driven approach for optimal performance.
+        
+        CRITICAL: We reorder ALL layers that are loaded, regardless of current visibility.
+        The visibility state is managed separately by the toggle buttons.
+        """
         try:
+            print(f"\n{'='*80}")
+            print(f"DEBUG: _reorder_layers_event_driven called with {len(reordered_assets)} assets")
+            print(f"DEBUG: Current _loaded_search_layer_keys: {self._loaded_search_layer_keys}")
+            print(f"DEBUG: Current _search_result_assets_by_path keys: {list(self._search_result_assets_by_path.keys())}")
+            print(f"{'='*80}\n")
+            
             # Build layer reorder commands for the JavaScript bridge
             layer_commands = []
             for i, asset in enumerate(reordered_assets):
                 file_path = str(asset.get("file_path", "")).replace("\\", "/")
                 if not file_path:
+                    print(f"  WARNING: Asset {i} has no file_path")
                     continue
                 
-                # Check if this layer is currently visible and loaded
-                is_visible = self._search_layer_visibility.get(file_path, False)
-                is_loaded = file_path in self._loaded_search_layer_keys
+                print(f"  Processing asset {i}: {asset.get('file_name', 'Unknown')} - {file_path}")
                 
-                if not (is_visible and is_loaded):
-                    self._logger.debug("Skipping layer reorder for %s: visible=%s loaded=%s", 
-                                     asset.get("file_name", ""), is_visible, is_loaded)
+                # Check if this layer is actually loaded on the map
+                if file_path not in self._loaded_search_layer_keys:
+                    print(f"  SKIP: Layer not in _loaded_search_layer_keys: {file_path}")
+                    self._logger.debug("Skipping layer reorder for %s: not loaded on map", 
+                                     asset.get("file_name", ""))
                     continue
                 
+                print(f"  INCLUDE: Layer found in _loaded_search_layer_keys: {file_path}")
+                
+                # Include the layer in reordering regardless of visibility state
+                # The visibility is controlled by the toggle button, not by reordering
                 layer_commands.append({
                     "layer_key": file_path,
                     "file_name": asset.get("file_name", ""),
@@ -1218,44 +1433,65 @@ class DesktopController:
                     "is_dem": self._is_dem_asset(asset)
                 })
             
+            print(f"DEBUG: Built {len(layer_commands)} layer commands")
+            
             if layer_commands:
                 # Log the reordering plan for debugging
-                self._logger.info("Event-driven layer reordering plan:")
+                print(f"DEBUG: EVENT_DRIVEN Layer reordering plan:")
                 for cmd in layer_commands:
-                    self._logger.info("  Order %d: %s (%s)", cmd["new_order"], cmd["file_name"], cmd["kind"])
+                    print(f"  Order {cmd['new_order']}: {cmd['file_name']} ({cmd['kind']}) - key={cmd['layer_key']}")
                 
                 # Send batch reorder command to Cesium
+                print(f"DEBUG: Sending reorderLayersEventDriven command to JavaScript")
                 self._run_js_call("reorderLayersEventDriven", layer_commands)
-                self._logger.debug("Event-driven layer reordering: %d commands sent", len(layer_commands))
+                self._logger.info("EVENT_DRIVEN: Sent %d layer reorder commands", len(layer_commands))
                 
                 # Force additional render after reordering
                 self._run_js_call("requestSceneRender")
+                print(f"DEBUG: Reorder commands sent successfully")
             else:
-                self._logger.debug("Event-driven layer reordering: No visible layers to reorder")
-                self.panel.log("Layer reordering: No visible layers found to reorder")
+                print(f"WARNING: No loaded layers found to reorder")
+                self._logger.warning("EVENT_DRIVEN: No loaded layers found to reorder")
+                self.panel.log("Layer reordering: No loaded layers found on map")
+                
+                # Debug: Show what layers we have vs what we're looking for
+                print(f"DEBUG: Available loaded layer keys: {self._loaded_search_layer_keys}")
+                print(f"DEBUG: Requested asset paths: {[asset.get('file_path', '') for asset in reordered_assets]}")
                 
         except Exception as e:
+            print(f"ERROR: Event-driven layer reordering failed: {e}")
+            import traceback
+            traceback.print_exc()
             self._logger.warning("Event-driven layer reordering failed, falling back to standard: %s", e)
             self.panel.log(f"Layer reordering: Event-driven approach failed, using fallback")
             self._reorder_layers_standard(reordered_assets)
 
     def _reorder_layers_standard(self, reordered_assets: list[dict]) -> None:
-        """Reorder layers using standard approach."""
+        """Reorder layers using standard approach.
+        
+        CRITICAL: Reorder ALL loaded layers, not just visible ones.
+        """
         try:
             # For standard approach, we need to manipulate the Cesium layer stack
             # by raising/lowering layers to achieve the desired order
-            visible_layers = []
+            loaded_layers = []
             for asset in reordered_assets:
                 file_path = str(asset.get("file_path", "")).replace("\\", "/")
                 if not file_path:
                     continue
                 
-                is_visible = self._search_layer_visibility.get(file_path, False)
-                if is_visible and file_path in self._loaded_search_layer_keys:
-                    visible_layers.append(file_path)
+                # Check if layer is loaded (not just visible)
+                if file_path in self._loaded_search_layer_keys:
+                    loaded_layers.append(file_path)
+                    self._logger.debug("STANDARD: Including layer for reorder: %s", asset.get("file_name", ""))
             
-            # Reorder visible layers from bottom to top (reverse order)
-            for layer_key in reversed(visible_layers):
+            if not loaded_layers:
+                self._logger.warning("STANDARD: No loaded layers found to reorder")
+                return
+            
+            # Reorder loaded layers from bottom to top (reverse order)
+            self._logger.info("STANDARD: Reordering %d layers", len(loaded_layers))
+            for layer_key in reversed(loaded_layers):
                 self._run_js_call("raiseLayerToTop", layer_key)
                 
         except Exception as e:
@@ -1289,117 +1525,184 @@ class DesktopController:
         self.panel.search_coord_lon.setValue(center_lon)
         self.panel.search_coord_lat.setValue(center_lat)
 
-    def browse_folder(self) -> None:
-        folder = QFileDialog.getExistingDirectory(
-            self.panel,
-            "Select folder containing rasters",
-            "",
-            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
-        )
-        if not folder:
-            return
-        self.panel.path_edit.setText(folder)
+    def browse_files(self) -> None:
+        """Browse and select multiple raster files based on selected format."""
+        from qtpy.QtWidgets import QFileDialog
         
-        # Use intelligent file grouping to analyze folder contents
-        folder_path = Path(folder)
+        # Get selected format from dropdown
+        format_index = self.panel.format_combo.currentIndex()
+        
+        # Define file filters based on format
+        if format_index == 0:  # GeoTIFF
+            file_filter = "GeoTIFF and world files (*.tif *.tiff *.tfw *.tifw);;All Files (*)"
+            dialog_title = "Select GeoTIFF files and optional .tfw world files"
+        elif format_index == 1:  # JPEG2000 + PRJ
+            # Include world files (.j2w, .jgw) in the filter
+            file_filter = "JPEG2000 and auxiliary files (*.jp2 *.j2k *.prj *.j2w *.jgw);;All Files (*)"
+            dialog_title = "Select JPEG2000 files and their .prj/.j2w files"
+        elif format_index == 2:  # MBTiles
+            file_filter = "MBTiles (*.mbtiles);;All Files (*)"
+            dialog_title = "Select MBTiles files"
+        else:
+            file_filter = "Raster Files (*.tif *.tiff *.jp2 *.j2k *.mbtiles);;All Files (*)"
+            dialog_title = "Select raster files"
+        
+        files, _ = QFileDialog.getOpenFileNames(
+            self.panel,
+            dialog_title,
+            "",
+            file_filter
+        )
+        
+        if files:
+            self.panel.add_selected_files(files)
+            
+            # Count valid files after validation
+            valid_count = self.panel.selected_files_list.count()
+            
+            if valid_count > 0:
+                self.panel.log(f"Selected {valid_count} valid file(s) for ingestion")
+                
+                # Log file details (first 5)
+                for i in range(min(5, valid_count)):
+                    item = self.panel.selected_files_list.item(i)
+                    if item:
+                        self.panel.log(f"  - {item.text()}")
+                
+                if valid_count > 5:
+                    self.panel.log(f"  ... and {valid_count - 5} more files")
+            else:
+                self.panel.log("No valid files selected after validation")
+    
+    def clear_file_selection(self) -> None:
+        """Clear the current file selection."""
+        self.panel.clear_selected_files()
+        self.panel.log("File selection cleared")
+    
+    def enqueue_selected_files(self) -> None:
+        """Enqueue the selected files for ingestion."""
+        if not self._require_offline_endpoints("Ingest files"):
+            return
+        if not self.api.api_ready():
+            self.panel.log(
+                f"API unavailable at {self.api.base_url}. Start API/server desktop, then retry 'Ingest files'."
+            )
+            return
+        
+        selected_files = self.panel.get_selected_files()
+        if not selected_files:
+            self.panel.log("No files selected. Use 'Select Files' or 'Select Folder' first.")
+            return
+        
+        # Validate files exist
+        from pathlib import Path
+        valid_files = []
+        for file_path in selected_files:
+            path_obj = Path(file_path)
+            if not path_obj.exists():
+                self.panel.log(f"File not found: {path_obj.name}")
+                continue
+            if not path_obj.is_file():
+                self.panel.log(f"Not a file: {path_obj.name}")
+                continue
+            valid_files.append(file_path)
+        
+        if not valid_files:
+            self.panel.log("No valid files to ingest")
+            return
         
         try:
-            from core_shared.ingestion.services.file_grouping_service import FileGroupingService
+            self.panel.log(f"Starting ingestion of {len(valid_files)} file(s)...")
+            # Set progress bar to 0% initially (not infinite loading)
+            self.panel.ingest_progress_bar.setRange(0, 100)
+            self.panel.ingest_progress_bar.setValue(0)
+            self.panel.ingest_status_value.setText("QUEUING")
+            self.panel.ingest_step_value.setText("Submitting files for ingestion")
             
-            self.panel.log(f"Selected folder: {folder}")
-            self.panel.log("Analyzing folder structure with intelligent grouping...")
+            # Submit to ingestion queue
+            job_response = self.api.enqueue_ingest_job(valid_files)
+            job_id = job_response.get("id")
             
-            # Analyze folder with intelligent grouping
-            grouping_service = FileGroupingService()
-            file_groups = grouping_service.group_files_in_folder(
-                folder_path=folder_path,
-                recursive=True,
-                max_groups=None
-            )
-            
-            if not file_groups:
-                self.panel.log("No geospatial file groups found")
-                self.panel.log("Supported formats: .tif, .tiff, .jp2, .j2k with optional auxiliary files")
-                return
-            
-            # Calculate statistics
-            total_files = sum(1 + len(group.auxiliary_files) for group in file_groups)
-            high_confidence_groups = [g for g in file_groups if g.confidence_score >= 0.5]
-            
-            # Group by confidence levels
-            confidence_stats = {
-                "high (≥0.8)": len([g for g in file_groups if g.confidence_score >= 0.8]),
-                "medium (0.5-0.8)": len([g for g in file_groups if 0.5 <= g.confidence_score < 0.8]),
-                "low (<0.5)": len([g for g in file_groups if g.confidence_score < 0.5])
-            }
-            
-            # Group by methods
-            method_stats = {}
-            for group in file_groups:
-                method_stats[group.grouping_method] = method_stats.get(group.grouping_method, 0) + 1
-            
-            # Report results
-            self.panel.log(f"Intelligent analysis completed:")
-            self.panel.log(f"  - Total file groups: {len(file_groups)} ({total_files} files)")
-            self.panel.log(f"  - High-confidence groups: {len(high_confidence_groups)} (will be processed)")
-            
-            # Show confidence distribution
-            conf_details = [f"{level}: {count}" for level, count in confidence_stats.items() if count > 0]
-            if conf_details:
-                self.panel.log(f"  - Confidence distribution: {', '.join(conf_details)}")
-            
-            # Show grouping methods
-            method_details = [f"{method}: {count}" for method, count in method_stats.items()]
-            if method_details:
-                self.panel.log(f"  - Grouping methods: {', '.join(method_details)}")
-            
-            # Show sample groups
-            if high_confidence_groups:
-                self.panel.log("Sample high-confidence groups:")
-                for i, group in enumerate(high_confidence_groups[:3]):
-                    aux_info = f" + {len(group.auxiliary_files)} aux files" if group.auxiliary_files else ""
-                    size_mb = group.file_size_bytes / (1024 * 1024) if group.file_size_bytes > 0 else 0
-                    self.panel.log(f"  {i+1}. {group.scene_name} (conf: {group.confidence_score:.2f}, {size_mb:.1f}MB){aux_info}")
+            if job_id:
+                self.panel.log(f"Ingestion job queued: {job_id}")
+                self.panel.log(f"Processing {len(valid_files)} file(s) in background...")
                 
-                if len(high_confidence_groups) > 3:
-                    self.panel.log(f"  ... and {len(high_confidence_groups) - 3} more groups")
-            
-            # Show warnings for low-confidence groups
-            low_confidence_groups = [g for g in file_groups if g.confidence_score < 0.5]
-            if low_confidence_groups:
-                self.panel.log(f"Note: {len(low_confidence_groups)} low-confidence groups will be skipped")
-                if len(low_confidence_groups) <= 3:
-                    for group in low_confidence_groups:
-                        self.panel.log(f"  - {group.scene_name} (conf: {group.confidence_score:.2f}, method: {group.grouping_method})")
-            
-            self._logger.info(
-                "Folder analysis: %s - %d groups (%d high-confidence, %d total files)", 
-                folder, len(file_groups), len(high_confidence_groups), total_files
-            )
-            
-        except Exception as e:
-            self._logger.error("Intelligent folder analysis failed: %s", e, exc_info=True)
-            self.panel.log(f"Folder analysis failed: {e}")
-            self.panel.log("Falling back to simple file counting...")
-            
-            # Fallback to simple file counting
-            raster_extensions = {'.tif', '.tiff', '.jp2', '.j2k'}
-            all_files = list(folder_path.iterdir())
-            raster_files = [
-                f for f in all_files
-                if f.is_file() and f.suffix.lower() in raster_extensions
-            ]
-            
-            file_count = len(raster_files)
-            self.panel.log(f"Selected folder: {folder}")
-            if file_count > 0:
-                self.panel.log(f"Found {file_count} raster file(s): {', '.join(f.name for f in raster_files)}")
+                # Start monitoring the job
+                self._start_ingest_monitoring(job_id)
+                
+                # Clear selection after successful submission
+                self.panel.clear_selected_files()
+                self.panel.validation_status_label.clear()
             else:
-                self.panel.log(f"No raster files found (supported: .tif, .tiff, .jp2, .j2k - excluding .mbtiles)")
-                self.panel.log(f"Found {len(all_files)} other file(s) in folder")
+                self.panel.log("Failed to queue ingestion job")
+                self.panel.ingest_progress_bar.setRange(0, 100)
+                self.panel.ingest_progress_bar.setValue(0)
+                self.panel.ingest_status_value.setText("FAILED")
+                
+        except Exception as e:
+            self._logger.error("Failed to enqueue files for ingestion: %s", e, exc_info=True)
+            self.panel.log(f"Ingestion failed: {e}")
+            self.panel.ingest_progress_bar.setRange(0, 100)
+            self.panel.ingest_progress_bar.setValue(0)
+            self.panel.ingest_status_value.setText("FAILED")
+    
+    def _start_ingest_monitoring(self, job_id: str) -> None:
+        """Start monitoring an ingestion job by setting up the polling timer."""
+        # Set the active job ID in state
+        self.state.active_ingest_job_id = str(job_id)
+        
+        # Record polling start time for timeout tracking
+        self._ingest_poll_start_time = dt.datetime.now(dt.timezone.utc)
+        
+        # Start the polling timer (polls every 500ms)
+        self._ingest_poll_timer.start()
+        
+        self._logger.info("Started monitoring ingestion job: %s", job_id)
+    
+    def delete_asset(self, asset_data: dict) -> None:
+        """Delete an asset from the database and catalog."""
+        if not self._require_offline_endpoints("Delete asset"):
+            return
+        if not self.api.api_ready():
+            self.panel.log(
+                f"API unavailable at {self.api.base_url}. Start API/server desktop, then retry."
+            )
+            return
+        
+        asset_id = asset_data.get('id')
+        filename = asset_data.get('file_name', 'Unknown')
+        
+        if not asset_id:
+            self.panel.log(f"Cannot delete asset: missing ID for {filename}")
+            return
+        
+        try:
+            self.panel.log(f"Deleting asset: {filename}...")
             
-            self._logger.info("Selected folder path: %s (files: %d)", folder, file_count)
-
+            # Call delete API endpoint
+            success = self.api.delete_asset(asset_id)
+            
+            if success:
+                self.panel.log(f"Asset deleted successfully: {filename}")
+                
+                # Clear caches and refresh the assets list
+                self._clear_asset_caches()
+                
+                # Refresh the uploaded assets list to reflect the deletion
+                if self.app_mode == DesktopAppMode.SERVER:
+                    from qtpy.QtCore import QTimer
+                    QTimer.singleShot(100, self.panel.refresh_uploaded_assets)
+                
+                # Also refresh the main assets combo if in unified/client mode
+                if self.app_mode in [DesktopAppMode.UNIFIED, DesktopAppMode.CLIENT]:
+                    QTimer.singleShot(200, self.refresh_assets)
+                    
+            else:
+                self.panel.log(f"Failed to delete asset: {filename}")
+                
+        except Exception as e:
+            self._logger.error("Failed to delete asset %s: %s", filename, e, exc_info=True)
+            self.panel.log(f"Delete failed: {e}")
     def refresh_assets(self) -> None:
         if not self._require_offline_endpoints("Catalog refresh"):
             return
@@ -1541,10 +1844,6 @@ class DesktopController:
                     self.state.active_ingest_job_id = None
                     self._ingest_poll_start_time = None
                     
-                    # Try to visualize if auto-visualization is enabled
-                    if self.state.auto_visualize_ingest_result:
-                        self._try_visualize_ingested_asset()
-                    
                     # Auto-refresh the uploaded assets table when ingestion completes
                     if self.app_mode == DesktopAppMode.SERVER:
                         from qtpy.QtCore import QTimer
@@ -1571,11 +1870,6 @@ class DesktopController:
             self._ingest_poll_timer.stop()
             self.state.active_ingest_job_id = None
             self._ingest_poll_start_time = None
-            if (
-                status in {"completed", "partial"}
-                and self.state.auto_visualize_ingest_result
-            ):
-                self._try_visualize_ingested_asset()
             
             # Auto-refresh the uploaded assets table when ingestion completes
             if self.app_mode == DesktopAppMode.SERVER and status in {"completed", "partial"}:
@@ -3373,22 +3667,22 @@ class DesktopController:
             self._run_js_call("setSceneModeControlEnabled", True)
             self._apply_display_control_mode()
 
-        mode = str(self.panel.rgb_view_mode_combo.currentData() or "3d").lower()
-        if mode not in {"2d", "3d"}:
-            mode = "3d"
+        # CRITICAL FIX: Do NOT force scene mode from Python backend
+        # JavaScript will automatically switch to 2D for imagery, 3D for DEM
+        # Forcing mode here creates conflicts and unnecessary morphing
         
         self._logger.info(
-            "Event-driven layer render request name=%s kind=%s is_dem=%s mode=%s replace_existing=%s apply_scene_mode=%s",
+            "Event-driven layer render request name=%s kind=%s is_dem=%s replace_existing=%s apply_scene_mode=%s",
             asset.get("file_name"),
             asset.get("kind"),
             False,
-            mode,
             replace_existing,
             apply_scene_mode,
         )
         
-        if apply_scene_mode:
-            self._run_js_call("setSceneMode", mode)
+        # Removed: Python-side setSceneMode call that conflicts with JavaScript auto-switching
+        # JavaScript addTileLayer() will automatically call setSceneModeInternal("2d")
+        # JavaScript addDemLayer() will automatically call setSceneModeInternal("3d")
         
         # Event-driven imagery loading with server optimization
         self._run_js_call(
@@ -3462,27 +3756,81 @@ class DesktopController:
             )
 
     def _is_dem_asset(self, asset: dict) -> bool:
+        """Detect if asset is DEM or RGB imagery using robust band count + data type analysis.
+        
+        CRITICAL: Single-band imagery (like JP2 aerials) must NOT be detected as DEM.
+        DEM detection requires BOTH single-band AND elevation-like data type/range.
+        """
         file_path = str(asset.get("file_path") or "")
         if file_path and file_path in self._dem_asset_kind_cache:
             return self._dem_asset_kind_cache[file_path]
 
+        # Step 1: Check explicit kind or filename hints
         kind = str(asset.get("kind", "")).lower()
         file_name = str(asset.get("file_name", "")).lower()
-        if kind == "dem" or "dem" in file_name:
+        
+        # Explicit DEM markers
+        if kind == "dem" or kind == "elevation":
             if file_path:
                 self._dem_asset_kind_cache[file_path] = True
             return True
+        
+        # Explicit imagery markers (JP2, RGB, etc.) - NOT DEM
+        imagery_extensions = ('.jp2', '.jpeg', '.jpg', '.png', '.tif', '.tiff')
+        imagery_keywords = ('rgb', 'aerial', 'ortho', 'satellite', 'imagery', 'photo')
+        
+        if any(file_name.endswith(ext) for ext in imagery_extensions):
+            # Check if filename contains imagery keywords
+            if any(keyword in file_name for keyword in imagery_keywords):
+                if file_path:
+                    self._dem_asset_kind_cache[file_path] = False
+                return False
+        
+        # Step 2: Analyze raster metadata (band count + data type)
         try:
             info = self.api.get_cog_info(asset["file_path"])
         except (httpx.HTTPError, KeyError, TypeError):
             if file_path:
                 self._dem_asset_kind_cache[file_path] = False
             return False
+        
         try:
-            is_dem = int(info.get("count", 0) or 0) == 1
+            band_count = int(info.get("count", 0) or 0)
+            dtype = str(info.get("dtype", "")).lower()
+            
+            # Multi-band = RGB imagery (NOT DEM)
+            if band_count >= 3:
+                if file_path:
+                    self._dem_asset_kind_cache[file_path] = False
+                return False
+            
+            # Single-band: Check data type to distinguish DEM from grayscale imagery
+            # DEM typically uses float32/float64 or int16/int32 for elevation values
+            # Grayscale imagery typically uses uint8/uint16 for pixel values
+            if band_count == 1:
+                # Float types = likely DEM (elevation values)
+                if 'float' in dtype:
+                    if file_path:
+                        self._dem_asset_kind_cache[file_path] = True
+                    return True
+                
+                # Signed integer types = likely DEM (elevation can be negative)
+                if 'int16' in dtype or 'int32' in dtype:
+                    if file_path:
+                        self._dem_asset_kind_cache[file_path] = True
+                    return True
+                
+                # Unsigned integer types = likely grayscale imagery (NOT DEM)
+                if 'uint' in dtype:
+                    if file_path:
+                        self._dem_asset_kind_cache[file_path] = False
+                    return False
+            
+            # Default: single-band with unknown dtype = assume imagery (safer default)
             if file_path:
-                self._dem_asset_kind_cache[file_path] = is_dem
-            return is_dem
+                self._dem_asset_kind_cache[file_path] = False
+            return False
+            
         except (TypeError, ValueError):
             if file_path:
                 self._dem_asset_kind_cache[file_path] = False

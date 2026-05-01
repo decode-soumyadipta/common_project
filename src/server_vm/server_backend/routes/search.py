@@ -23,6 +23,14 @@ def list_assets(session: Session = Depends(get_session)) -> list[dict[str, Any]]
     return service.list_assets()
 
 
+@router.delete("/assets/{asset_id}")
+def delete_asset(asset_id: str, session: Session = Depends(get_session)) -> dict[str, Any]:
+    """Delete an asset from the catalog and database."""
+    service = CatalogService(CatalogRepository(session))
+    success = service.delete_asset(asset_id)
+    return {"success": success, "asset_id": asset_id}
+
+
 @router.post("/point")
 def search_by_point(
     request: CoordinateSearchRequest, session: Session = Depends(get_session)

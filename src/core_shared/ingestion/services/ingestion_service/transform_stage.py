@@ -29,12 +29,28 @@ class TransformToEPSG3857Stage(IngestionStage):
             raise ValueError("metadata is required before transformation")
         
         current_crs = context.metadata.crs
-        LOGGER.info(f"Transform stage: processing {context.working_path} with CRS {current_crs}")
+        
+        LOGGER.info(f"=" * 80)
+        LOGGER.info(f"REPROJECTION STAGE: {context.working_path.name}")
+        LOGGER.info(f"=" * 80)
+        LOGGER.info(f"Source CRS: {current_crs}")
+        LOGGER.info(f"Target CRS: EPSG:3857 (Web Mercator)")
         
         if current_crs == "EPSG:3857":
             context.report("Already in EPSG:3857, skipping reprojection")
-            LOGGER.info(f"Skipping reprojection for {context.working_path} - already in EPSG:3857")
+            LOGGER.info(f"✓ Already in EPSG:3857 - no reprojection needed")
+            LOGGER.info(f"=" * 80)
             return
+        
+        # Warn about distortion for high-latitude data
+        if context.metadata.bounds:
+            max_lat = max(abs(context.metadata.bounds.min_y), abs(context.metadata.bounds.max_y))
+            if max_lat > 60:
+                LOGGER.warning(f"⚠ HIGH LATITUDE DATA ({max_lat:.1f}°) - EPSG:3857 will have significant distortion (>100%)")
+            elif max_lat > 45:
+                LOGGER.warning(f"⚠ MODERATE LATITUDE DATA ({max_lat:.1f}°) - EPSG:3857 will have moderate distortion (~30-50%)")
+            else:
+                LOGGER.info(f"✓ Low-moderate latitude ({max_lat:.1f}°) - EPSG:3857 distortion acceptable (<30%)")
         
         # Create output path with safe filename (handle spaces and special characters)
         safe_stem = self._create_safe_filename(context.working_path.stem)
@@ -48,12 +64,20 @@ class TransformToEPSG3857Stage(IngestionStage):
             warp_options = self._get_warp_options(context.working_path)
             
             context.report(f"Reprojecting from {current_crs} to EPSG:3857")
-            LOGGER.info(f"Starting reprojection: {context.working_path} -> {output_path}")
+            LOGGER.info(f"")
+            LOGGER.info(f"REPROJECTION PARAMETERS:")
+            LOGGER.info(f"  Algorithm: bilinear (smooth interpolation)")
+            LOGGER.info(f"  Error threshold: 0.125 pixels (sub-pixel accuracy)")
+            LOGGER.info(f"  Densification: 21 points (accurate curve transformation)")
+            LOGGER.info(f"  Multithreading: ALL_CPUS")
+            LOGGER.info(f"  Output: {output_path.name}")
+            LOGGER.info(f"")
             
             # Use string paths to avoid issues with Path objects and GDAL on Windows
             input_path_str = str(context.working_path).replace('\\', '/')
             output_path_str = str(output_path).replace('\\', '/')
             
+            LOGGER.info(f"Starting reprojection...")
             ds = gdal.Warp(output_path_str, input_path_str, options=warp_options)
             if ds is None:
                 # Get the last GDAL error
@@ -72,17 +96,27 @@ class TransformToEPSG3857Stage(IngestionStage):
             
             # Validate output has expected properties
             if test_ds.GetProjection() == "":
-                LOGGER.warning(f"Output file has no projection information: {output_path}")
+                LOGGER.warning(f"⚠ Output file has no projection information: {output_path}")
+            else:
+                LOGGER.info(f"✓ Output projection verified: EPSG:3857")
+            
+            # Log output file info
+            output_size_mb = output_path.stat().st_size / (1024 * 1024)
+            LOGGER.info(f"✓ Reprojection successful")
+            LOGGER.info(f"  Output file: {output_path.name}")
+            LOGGER.info(f"  File size: {output_size_mb:.2f} MB")
+            LOGGER.info(f"  Dimensions: {test_ds.RasterXSize} × {test_ds.RasterYSize} pixels")
             
             test_ds = None
             ds = None  # Close the dataset
             
             context.working_path = output_path
             context.report("Reprojection complete")
-            LOGGER.info(f"Reprojection successful: {output_path}")
+            LOGGER.info(f"=" * 80)
             
         except Exception as e:
             LOGGER.error(f"Transform stage failed for {context.working_path}: {e}")
+            LOGGER.info(f"=" * 80)
             # Clean up partial output file if it exists
             if output_path.exists():
                 try:

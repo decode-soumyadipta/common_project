@@ -223,6 +223,12 @@ class MapOverlayControls(QWidget):
         self.scene_mode_combo.currentTextChanged.connect(self._on_scene_mode_changed)
         self.layout_main.addWidget(self.scene_mode_combo)
 
+        # Basemap Visibility Toggle
+        self.basemap_visibility_combo = QComboBox()
+        self.basemap_visibility_combo.addItems(["Hide Map", "Show Map"])  # Default to "Hide Map" for faster startup
+        self.basemap_visibility_combo.currentTextChanged.connect(self._on_basemap_visibility_changed)
+        self.layout_main.addWidget(self.basemap_visibility_combo)
+
         # Polygon Visibility (hidden by default, shown only when polygon exists)
         self.polygon_visibility_checkbox = QCheckBox("Show Search AOI Polygon")
         self.polygon_visibility_checkbox.setChecked(True)
@@ -275,6 +281,13 @@ class MapOverlayControls(QWidget):
         mode = "2d" if "2D" in text else "3d"
         self.controller.web_view.page().runJavaScript(
             f"window.offlineGIS.setSceneMode('{mode}');"
+        )
+
+    def _on_basemap_visibility_changed(self, text: str) -> None:
+        """Toggle OSM basemap visibility without resetting camera."""
+        visible = "Show" in text  # "Show Map" = True, "Hide Map" = False
+        self.controller.web_view.page().runJavaScript(
+            f"window.offlineGIS.setBasemapVisibility({str(visible).lower()});"
         )
 
     def _on_polygon_visibility_toggled(self, checked: bool) -> None:

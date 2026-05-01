@@ -64,6 +64,21 @@ class CatalogRepository:
         stmt = select(RasterAsset).order_by(RasterAsset.created_at.desc())
         return list(self._session.scalars(stmt))
 
+    def delete_asset(self, asset_id: str) -> bool:
+        """Delete an asset by ID."""
+        try:
+            stmt = select(RasterAsset).where(RasterAsset.id == asset_id)
+            asset = self._session.scalar(stmt)
+            
+            if asset:
+                self._session.delete(asset)
+                self._session.commit()
+                return True
+            return False
+        except Exception as e:
+            self._session.rollback()
+            raise RuntimeError(f"Failed to delete asset: {e}") from e
+
     def search_assets_by_point(self, lon: float, lat: float) -> list[RasterAsset]:
         """Find assets that intersect a point."""
         if self._is_postgresql():

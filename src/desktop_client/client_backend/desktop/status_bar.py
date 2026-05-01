@@ -181,8 +181,7 @@ class GISStatusBar(QStatusBar):
         
         self._lon_box = _coord_box("Lon: —", "Longitude (WGS-84)", 140)
         self._lat_box = _coord_box("Lat: —", "Latitude (WGS-84)", 140)
-        self._utm_box = _coord_box("UTM: —", "UTM coordinates", 160)
-        self._elev_box = _coord_box("Elev: —", "Elevation above sea level", 120)
+        self._utm_box = _coord_box("UTM: —", "UTM coordinates (meters)", 180)
         self._crs_box = _coord_box("EPSG:4326", "Coordinate Reference System", 100)
         self._crs_box.setStyleSheet("""
             QFrame#coordBox {
@@ -219,8 +218,6 @@ class GISStatusBar(QStatusBar):
         row.addWidget(_make_separator())
         row.addWidget(self._utm_box)
         row.addWidget(_make_separator())
-        row.addWidget(self._elev_box)
-        row.addWidget(_make_separator())
         row.addWidget(self._crs_box)
 
         self.addPermanentWidget(container, 1)
@@ -245,7 +242,7 @@ class GISStatusBar(QStatusBar):
         Args:
             lon: Longitude in degrees.
             lat: Latitude in degrees.
-            elevation_m: Elevation in meters (-9999 if no DEM available).
+            elevation_m: Elevation in meters (unused, elevation display removed).
         """
         # Check if coordinates are valid
         if not (math.isfinite(lon) and math.isfinite(lat)):
@@ -264,7 +261,7 @@ class GISStatusBar(QStatusBar):
         lat_str = f"{lat:.{precision}f}°"
         self._lat_box.label.setText(f"Lat: {lat_str}")
 
-        # UTM with zone information for better context
+        # UTM with zone information and meters display
         utm_text = self._format_utm_coordinates(lon, lat)
         self._utm_box.label.setText(f"UTM: {utm_text}")
 
@@ -274,21 +271,6 @@ class GISStatusBar(QStatusBar):
         hemisphere = "N" if lat >= 0 else "S"
         self._crs_box.label.setText(f"UTM {utm_zone}{hemisphere}")
         self._crs_box.setToolTip(f"EPSG:{utm_epsg} (UTM Zone {utm_zone}{hemisphere})")
-
-        # Elevation - enhanced display with better formatting
-        # -9999 indicates no DEM terrain is loaded
-        if math.isfinite(elevation_m) and elevation_m > -9000.0:
-            # Format elevation with appropriate precision based on magnitude
-            if abs(elevation_m) >= 1000:
-                elev_text = f"{elevation_m:,.{max(0, self._elev_decimal_places-1)}f} m"
-            elif abs(elevation_m) >= 100:
-                elev_text = f"{elevation_m:.{self._elev_decimal_places}f} m"
-            else:
-                elev_text = f"{elevation_m:.{self._elev_decimal_places+1}f} m"
-            self._elev_box.label.setText(f"Elev: {elev_text}")
-        else:
-            # No DEM available - keep box visible but show dash
-            self._elev_box.label.setText("Elev: —")
 
     @Slot(float, float)
     def on_camera_changed(self, scale_denominator: float, heading_deg: float) -> None:
@@ -420,21 +402,20 @@ class GISStatusBar(QStatusBar):
         self._lon_box.label.setText("Lon: —")
         self._lat_box.label.setText("Lat: —")
         self._utm_box.label.setText("UTM: —")
-        self._elev_box.label.setText("Elev: —")
 
     # ------------------------------------------------------------------
     # Private
     # ------------------------------------------------------------------
 
     def _format_utm_coordinates(self, lon: float, lat: float) -> str:
-        """Format coordinates as UTM string.
+        """Format coordinates as UTM string with meters.
         
         Args:
             lon: Longitude in degrees.
             lat: Latitude in degrees.
             
         Returns:
-            Formatted UTM coordinate string (e.g., "32N 500000 mE").
+            Formatted UTM coordinate string with meters (e.g., "32N 500000 mE 4500000 mN").
         """
         epsg = _utm_epsg_for_lon_lat(lon, lat)
         transformer = self._utm_transformers.get(epsg)
@@ -445,4 +426,4 @@ class GISStatusBar(QStatusBar):
         easting, northing = transformer.transform(lon, lat)
         zone = epsg % 100
         hemisphere = "N" if lat >= 0 else "S"
-        return f"{zone}{hemisphere} {easting:,.0f} mE"
+        return f"{zone}{hemisphere} {easting:,.0f} mE {northing:,.0f} mN"
