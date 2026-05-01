@@ -500,9 +500,7 @@ class ControlPanel(QWidget):
         search_layout.addWidget(self.search_results_summary)
 
         self.search_results_table = QTableWidget(0, 6)  # Added one more column for drag handle
-        self.search_results_table.setHorizontalHeaderLabels(
-            ["⋮⋮", "File", "Kind", "CRS", "Added", "View"]  # Added drag handle column
-        )
+        self._ensure_search_results_header()
         
         # Configure drag and drop for layer reordering with smooth animations
         self.search_results_table.setDragDropMode(QAbstractItemView.InternalMove)
@@ -980,6 +978,7 @@ class ControlPanel(QWidget):
         
         self.search_results_table.setRowCount(0)
         self.search_results_table.setSortingEnabled(False)
+        self._ensure_search_results_header()
         visibility_map = visibility_by_path or {}
 
         # Sort assets: Imagery first (top of list), DEM last (bottom of list)
@@ -991,8 +990,41 @@ class ControlPanel(QWidget):
             # Within each group, sort by date (newest first)
             is_dem = 1 if kind == "dem" else 0
             return (is_dem, -created_at)  # Negative for reverse date order
-        
-        sorted_assets = sorted(assets, key=sort_key)
+
+        default_sorted_assets = sorted(assets, key=sort_key)
+        assets_by_path = {
+            str(asset.get("file_path") or "").replace("\\", "/"): asset
+            for asset in default_sorted_assets
+        }
+        ordered_paths = []
+        if self._layer_order_registry:
+            ordered_paths = [
+                path
+                for path, entry in sorted(
+                    self._layer_order_registry.items(),
+                    key=lambda item: item[1].get("order", 0),
+                )
+                if path in assets_by_path
+            ]
+        remaining_assets = [
+            asset
+            for asset in default_sorted_assets
+            if str(asset.get("file_path") or "").replace("\\", "/") not in ordered_paths
+        ]
+        sorted_assets = [assets_by_path[path] for path in ordered_paths] + remaining_assets
+        self._layer_order_registry = {}
+        for idx, asset in enumerate(sorted_assets):
+            path = str(asset.get("file_path") or "").replace("\\", "/")
+            if not path:
+                continue
+            self._layer_order_registry[path] = {
+                "file_name": str(asset.get("file_name") or "-"),
+                "kind": str(asset.get("kind") or "-"),
+                "crs": str(asset.get("crs") or "-"),
+                "created_at": self._format_search_created_at(asset.get("created_at")),
+                "is_visible": visibility_map.get(path, True),
+                "order": idx,
+            }
         
         print(f"DEBUG: Sorted assets order:")
         for i, asset in enumerate(sorted_assets):
@@ -1165,6 +1197,13 @@ class ControlPanel(QWidget):
         )
         self.search_results_table.setMinimumHeight(total_height)
         self.search_results_table.setMaximumHeight(total_height)
+
+    def _ensure_search_results_header(self) -> None:
+        labels = ["⋮⋮", "File", "Kind", "CRS", "Added", "View"]
+        if self.search_results_table.columnCount() != len(labels):
+            self.search_results_table.setColumnCount(len(labels))
+        self.search_results_table.setHorizontalHeaderLabels(labels)
+        self.search_results_table.horizontalHeader().setVisible(True)
 
     @staticmethod
     def _format_search_created_at(value: object) -> str:
@@ -2140,6 +2179,7 @@ class ControlPanel(QWidget):
         
         # Store captured data at class level so it persists across events
         self._drag_captured_data = []
+        self._drag_source_row = None
         
         def custom_start_drag(supported_actions):
             """Capture data when drag STARTS (earliest possible moment).
@@ -2199,6 +2239,13 @@ class ControlPanel(QWidget):
             
             print(f"DEBUG: Captured {len(self._drag_captured_data)} rows at START DRAG")
             print(f"{'='*80}\n")
+
+            selected_rows = table.selectionModel().selectedRows() if table.selectionModel() else []
+            if selected_rows:
+                self._drag_source_row = selected_rows[0].row()
+            else:
+                self._drag_source_row = table.currentRow()
+            print(f"DEBUG: Drag source row = {self._drag_source_row}")
             
             # Call original handler to start the drag
             original_start_drag(supported_actions)
@@ -2216,18 +2263,41 @@ class ControlPanel(QWidget):
             print(f"\n{'='*80}")
             print(f"DEBUG: Drop event - using {len(self._drag_captured_data)} pre-captured rows")
             print(f"{'='*80}\n")
-            
-            # Call the original drop event to perform the actual row move
-            original_drop_event(event)
-            
-            # After the drop, trigger our reorder handler with the captured data
-            print(f"DEBUG: Drop completed, triggering reorder handler")
-            
-            # Pass the captured data directly to the reorder handler
-            if self._drag_captured_data:
-                self._on_search_results_reordered_with_data(self._drag_captured_data)
-            else:
+
+            if not self._drag_captured_data:
                 print("ERROR: No captured data available for reordering!")
+                original_drop_event(event)
+                return
+
+            drop_index = table.indexAt(event.pos())
+            drop_row = drop_index.row() if drop_index.isValid() else table.rowCount()
+            indicator_pos = table.dropIndicatorPosition()
+            if indicator_pos == QAbstractItemView.DropIndicatorPosition.BelowItem:
+                drop_row += 1
+            elif indicator_pos == QAbstractItemView.DropIndicatorPosition.OnViewport:
+                drop_row = table.rowCount()
+
+            source_row = self._drag_source_row
+            if source_row is None or source_row < 0 or source_row >= len(self._drag_captured_data):
+                source_row = table.currentRow()
+            if source_row is None or source_row < 0 or source_row >= len(self._drag_captured_data):
+                source_row = 0
+
+            print(f"DEBUG: Drop target row = {drop_row} (indicator={indicator_pos}), source row = {source_row}")
+
+            reordered = list(self._drag_captured_data)
+            moved = reordered.pop(source_row)
+            if drop_row > source_row:
+                drop_row -= 1
+            if drop_row < 0:
+                drop_row = 0
+            if drop_row > len(reordered):
+                drop_row = len(reordered)
+            reordered.insert(drop_row, moved)
+
+            event.acceptProposedAction()
+            print(f"DEBUG: Drop completed, triggering reorder handler")
+            self._on_search_results_reordered_with_data(self._drag_captured_data, forced_order=reordered)
         
         # Install all custom handlers
         table.startDrag = custom_start_drag  # CRITICAL: Capture at drag start
@@ -2236,7 +2306,9 @@ class ControlPanel(QWidget):
         
         return custom_drop_event
 
-    def _on_search_results_reordered_with_data(self, pre_drop_row_data: list[dict]) -> None:
+    def _on_search_results_reordered_with_data(
+        self, pre_drop_row_data: list[dict], forced_order: list[dict] | None = None
+    ) -> None:
         """Handle drag-and-drop reordering using pre-captured data.
         
         CRITICAL: Qt's drag-and-drop corrupts table item data during the operation.
@@ -2256,6 +2328,50 @@ class ControlPanel(QWidget):
             
             if not pre_drop_row_data:
                 print("ERROR: No pre-drop data provided! Cannot reconstruct layer order.")
+                return
+
+            if forced_order is not None:
+                print(f"DEBUG: Using forced order with {len(forced_order)} rows")
+                table.setRowCount(0)
+                table.setRowCount(len(forced_order))
+                reordered_layers = []
+                for i, row_data in enumerate(forced_order):
+                    self._create_table_row(table, i, row_data)
+                    reordered_layers.append({
+                        "file_name": row_data["file_name"],
+                        "file_path": row_data["file_path"],
+                        "kind": row_data["kind"],
+                        "crs": row_data["crs"],
+                        "is_visible": row_data.get("is_visible", True),
+                        "display_order": i,
+                    })
+                    print(
+                        f"  Row {i} rebuilt: {row_data['file_name']} ({row_data['kind']}) visible={row_data.get('is_visible', True)}"
+                    )
+                table.viewport().update()
+                self._force_table_text_colors(table)
+                print(f"DEBUG: Extracted {len(reordered_layers)} layers")
+
+                if len(reordered_layers) == 0:
+                    print("ERROR: No layers extracted! Cannot proceed with reordering.")
+                    return
+
+                self._pending_reorder_data = reordered_layers
+                self._layer_order_registry = {
+                    str(layer.get("file_path") or "").replace("\\", "/"): {
+                        "file_name": str(layer.get("file_name") or "-"),
+                        "kind": str(layer.get("kind") or "-"),
+                        "crs": str(layer.get("crs") or "-"),
+                        "created_at": str(layer.get("created_at") or "-"),
+                        "is_visible": bool(layer.get("is_visible", True)),
+                        "order": int(layer.get("display_order", 0)),
+                    }
+                    for layer in reordered_layers
+                    if layer.get("file_path")
+                }
+                print(f"DEBUG: Starting debounce timer (150ms)")
+                self._reorder_debounce_timer.start(150)
+                print(f"DEBUG: _on_search_results_reordered_with_data completed\n")
                 return
             
             # Build a map of file_path -> full row data (use file_path as key for uniqueness)
@@ -2371,8 +2487,20 @@ class ControlPanel(QWidget):
                 print("ERROR: No layers extracted! Cannot proceed with reordering.")
                 return
             
-            # Store the reorder data and start debounce timer
+            # Store the reorder data and update the local order registry
             self._pending_reorder_data = reordered_layers
+            self._layer_order_registry = {
+                str(layer.get("file_path") or "").replace("\\", "/"): {
+                    "file_name": str(layer.get("file_name") or "-"),
+                    "kind": str(layer.get("kind") or "-"),
+                    "crs": str(layer.get("crs") or "-"),
+                    "created_at": str(layer.get("created_at") or "-"),
+                    "is_visible": bool(layer.get("is_visible", True)),
+                    "order": int(layer.get("display_order", 0)),
+                }
+                for layer in reordered_layers
+                if layer.get("file_path")
+            }
             print(f"DEBUG: Starting debounce timer (150ms)")
             self._reorder_debounce_timer.start(150)  # 150ms debounce
             print(f"DEBUG: _on_search_results_reordered_with_data completed\n")

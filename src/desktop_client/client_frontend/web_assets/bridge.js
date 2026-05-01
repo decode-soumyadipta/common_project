@@ -187,6 +187,8 @@
   const DEFAULT_STARTUP_HEIGHT_M = 6000000.0;   // ~6000 km — shows full India + surrounding region (better for tile visibility)
   const DEFAULT_STARTUP_HEADING = Cesium.Math.toRadians(0.0);
   const DEFAULT_STARTUP_PITCH = Cesium.Math.toRadians(-89.0);
+  const WEB_MERCATOR_SAFE_EDGE_LAT_DEGREES = 85.05112878;
+  const COUNTRY_BOUNDARY_GEOJSON_URL = "./data/countries.geojson";
   const AUTO_ATTACH_TERRAIN_RGB_PACK = false;
   const SHOW_COUNTRY_BOUNDARY_OVERLAY = false;
   const terrainTileCache = new Map();
@@ -1549,6 +1551,8 @@
     setTimeout(_forceResizeAll, 600);
     setTimeout(_forceResizeAll, 1200);
 
+    comparatorLeftViewer = comparatorViewers[0] || null;
+    comparatorRightViewer = comparatorViewers[1] || null;
     bindComparatorPaneSelectionHandlers();
   }
 
@@ -2274,9 +2278,18 @@
       console.log(`DEBUG: Found imagery layer for ${layerKey}, setting show=${shouldShow}`);
       imageryLayer.show = shouldShow;
       if (shouldShow) {
-        console.log(`DEBUG: Raising imagery layer to top: ${layerKey}`);
-        viewer.imageryLayers.raiseToTop(imageryLayer);
         activeImageryLayer = imageryLayer;
+      } else if (activeImageryLayer === imageryLayer) {
+        activeImageryLayer = null;
+      }
+      const anyVisible = Array.from(layerVisibilityState.values()).some(Boolean);
+      if (!anyVisible) {
+        if (activeDemDrapeLayer) {
+          activeDemDrapeLayer.show = false;
+        }
+        if (activeDemHillshadeLayer) {
+          activeDemHillshadeLayer.show = false;
+        }
       }
       applySwipeComparatorSplit();
       if (comparatorModeEnabled) {
@@ -2323,6 +2336,15 @@
         log("info", "DEM layer hidden key=" + layerKey);
         if (viewer.terrainProvider !== baseTerrainProvider) {
           _swapTerrainProviderLocked(baseTerrainProvider);
+        }
+      }
+      const anyVisible = Array.from(layerVisibilityState.values()).some(Boolean);
+      if (!anyVisible) {
+        if (activeDemDrapeLayer) {
+          activeDemDrapeLayer.show = false;
+        }
+        if (activeDemHillshadeLayer) {
+          activeDemHillshadeLayer.show = false;
         }
       }
       if (comparatorModeEnabled) {
@@ -2620,6 +2642,48 @@
     controller.enableRotate = true;
     controller.enableTilt = true;
     controller.enableLook = false;  // Disabled for GIS navigation
+
+    if (Cesium && Cesium.CameraEventType) {
+      if (is2d) {
+        controller.rotateEventTypes = [];
+        controller.tiltEventTypes = [];
+        controller.translateEventTypes = [
+          Cesium.CameraEventType.LEFT_DRAG,
+          Cesium.CameraEventType.MIDDLE_DRAG,
+          Cesium.CameraEventType.RIGHT_DRAG,
+        ];
+      } else {
+        if (panModeActive) {
+          controller.rotateEventTypes = [];
+          controller.translateEventTypes = [
+            Cesium.CameraEventType.LEFT_DRAG,
+            Cesium.CameraEventType.MIDDLE_DRAG,
+            Cesium.CameraEventType.RIGHT_DRAG,
+          ];
+        } else {
+          controller.rotateEventTypes = [Cesium.CameraEventType.LEFT_DRAG];
+          controller.translateEventTypes = [
+            Cesium.CameraEventType.MIDDLE_DRAG,
+            Cesium.CameraEventType.RIGHT_DRAG,
+          ];
+        }
+        if (Cesium.KeyboardEventModifier) {
+          controller.tiltEventTypes = [
+            {
+              eventType: Cesium.CameraEventType.LEFT_DRAG,
+              modifier: Cesium.KeyboardEventModifier.SHIFT,
+            },
+          ];
+        } else {
+          controller.tiltEventTypes = [];
+        }
+      }
+      controller.lookEventTypes = [];
+      log(
+        "info",
+        "Camera input mapping: left=rotate, right/middle=pan, shift+left=tilt"
+      );
+    }
     
     // OPTIMIZED: Smooth inertia for natural feel
     // Higher values = more inertia = smoother feel
@@ -3389,10 +3453,10 @@
   const MAX_CONCURRENT_TERRAIN_DECODES = 4;
   let activeTerrainDecodes = 0;
   const terrainDecodeQueue = [];
-  terrainDecodeCanvas = document.createElement("canvas");
+  const terrainDecodeCanvas = document.createElement("canvas");
   terrainDecodeCanvas.width = TERRAIN_SAMPLE_SIZE;
   terrainDecodeCanvas.height = TERRAIN_SAMPLE_SIZE;
-  terrainDecodeCtx = terrainDecodeCanvas.getContext("2d", { willReadFrequently: true });
+  const terrainDecodeCtx = terrainDecodeCanvas.getContext("2d", { willReadFrequently: true });
 
   function processTerrainDecodeQueue() {
     while (terrainDecodeQueue.length > 0 && activeTerrainDecodes < MAX_CONCURRENT_TERRAIN_DECODES) {
@@ -6310,9 +6374,6 @@
       
       log("info", "Basemap visibility set to " + (shouldShow ? "SHOW (OSM at index 0)" : "HIDE (default Earth at index 0)"));
     },
-    flyThroughBounds: function (west, south, east, north) {
-      startFlyThroughBounds(west, south, east, north);
-    },
     setDemProperties: function (exaggeration, hillshadeAlpha) {
       const nextExaggeration = Math.max(0.1, Number(exaggeration) || 1.0);
       const nextHillshadeAlpha = Math.max(0.0, Math.min(1.0, Number(hillshadeAlpha) || 0.0));
@@ -7245,7 +7306,8 @@
       try {
         const imageryLayers = viewer.imageryLayers;
         const layerMap = new Map();
-        const reorderedLayers = [];
+        const expandedOrder = [];
+        const layersToMove = new Set();
         
         // Build a map of current layers by key and log all available layers
         log("debug", "EVENT_DRIVEN: Available layers in viewer:");
@@ -7264,95 +7326,123 @@
           log("debug", "  Request: key=" + command.layer_key + " name=" + command.file_name + " order=" + command.new_order);
         }
         
-        // Validate that all requested layers exist and log their current state
-        for (const command of layerCommands) {
+        const requestedKeys = new Set(
+          layerCommands.map(function (cmd) {
+            return String(cmd && cmd.layer_key ? cmd.layer_key : "");
+          })
+        );
+        const sortedCommands = layerCommands.slice().sort((a, b) => a.new_order - b.new_order);
+        const orderedGroups = [];
+        for (const command of sortedCommands) {
           const layer = layerMap.get(command.layer_key);
+          const kind = String(command.kind || "");
+          const isDem = Boolean(command.is_dem) || kind.toLowerCase() === "dem";
+          const hillshadeKey = command.layer_key + ":hillshade";
+          const hillshadeLayer = layerMap.get(hillshadeKey);
+          log(
+            "info",
+            "EVENT_DRIVEN: reorder candidate key=" +
+              command.layer_key +
+              " name=" +
+              command.file_name +
+              " kind=" +
+              kind +
+              " is_dem=" +
+              String(isDem) +
+              " hillshadeKey=" +
+              hillshadeKey +
+              " hillshadeFound=" +
+              String(Boolean(hillshadeLayer))
+          );
+          const groupLayers = [];
           if (layer) {
             const currentIndex = imageryLayers.indexOf(layer);
-            log("debug", "EVENT_DRIVEN: Found layer for reordering: " + command.file_name + 
+            log("debug", "EVENT_DRIVEN: Found layer for reordering: " + command.file_name +
                 " currentIndex=" + currentIndex + " targetOrder=" + command.new_order);
-            reorderedLayers.push({
-              layer: layer,
-              command: command
-            });
+            expandedOrder.push({ layer: layer, label: command.file_name });
+            layersToMove.add(layer);
+            groupLayers.push({ layer: layer, label: command.file_name });
           } else {
-            log("warn", "EVENT_DRIVEN: Layer not found for reordering: " + command.layer_key + 
+            log("warn", "EVENT_DRIVEN: Layer not found for reordering: " + command.layer_key +
                 " (" + command.file_name + ")");
+          }
+          if (hillshadeLayer && !requestedKeys.has(hillshadeKey) && !layersToMove.has(hillshadeLayer)) {
+            expandedOrder.push({ layer: hillshadeLayer, label: command.file_name + " (Hillshade)" });
+            layersToMove.add(hillshadeLayer);
+            groupLayers.push({ layer: hillshadeLayer, label: command.file_name + " (Hillshade)" });
+            log("info", "EVENT_DRIVEN: Included hillshade for " + command.file_name);
+          } else if (hillshadeLayer && (requestedKeys.has(hillshadeKey) || layersToMove.has(hillshadeLayer))) {
+            log("debug", "EVENT_DRIVEN: Skipping duplicate hillshade for " + command.file_name);
+          }
+          if (groupLayers.length > 0) {
+            orderedGroups.push(groupLayers);
           }
         }
         
-        if (reorderedLayers.length === 0) {
+        if (expandedOrder.length === 0) {
           log("warn", "EVENT_DRIVEN: No valid layers found for reordering");
           log("debug", "EVENT_DRIVEN: Available layer keys: " + Array.from(layerMap.keys()).join(", "));
           log("debug", "EVENT_DRIVEN: Requested layer keys: " + layerCommands.map(c => c.layer_key).join(", "));
           return;
         }
         
-        // Sort by desired order (bottom to top)
-        reorderedLayers.sort((a, b) => a.command.new_order - b.command.new_order);
-        
-        // Log the reordering plan
         log("debug", "EVENT_DRIVEN: Reordering plan:");
-        for (let i = 0; i < reorderedLayers.length; i++) {
-          const item = reorderedLayers[i];
-          log("debug", "  " + i + ": " + item.command.file_name + " (order=" + item.command.new_order + ")");
+        for (let i = 0; i < expandedOrder.length; i++) {
+          log("debug", "  " + i + ": " + expandedOrder[i].label);
         }
         
-        // Batch reorder operations for better performance
-        const layersToMove = [];
-        for (const item of reorderedLayers) {
-          layersToMove.push(item.layer);
-        }
-        
-        // Remove all layers that need reordering (in reverse order to maintain indices)
-        for (let i = layersToMove.length - 1; i >= 0; i--) {
-          const layer = layersToMove[i];
-          const currentIndex = imageryLayers.indexOf(layer);
-          if (currentIndex >= 0) {
+        for (let i = imageryLayers.length - 1; i >= 0; i--) {
+          const layer = imageryLayers.get(i);
+          if (layersToMove.has(layer)) {
             imageryLayers.remove(layer, false);
-            log("debug", "EVENT_DRIVEN: Removed layer from index " + currentIndex);
+            log("debug", "EVENT_DRIVEN: Removed layer from index " + i);
           }
         }
         
-        // Re-add layers in the correct order, accounting for basemap at index 0
-        // All user layers should be added AFTER the basemap
-        const basemapCount = 1; // Always 1 basemap layer at index 0
-        
-        for (let i = 0; i < reorderedLayers.length; i++) {
-          const item = reorderedLayers[i];
-          try {
-            // Add at position: basemap + user layer order
-            const targetPosition = basemapCount + item.command.new_order;
-            imageryLayers.add(item.layer, targetPosition);
-            const newIndex = imageryLayers.indexOf(item.layer);
-            log("debug", "EVENT_DRIVEN: Added layer " + item.command.file_name + 
-                " at position " + targetPosition + " (actual index=" + newIndex + ")");
-          } catch (addError) {
-            // Fallback: add at the end if specific position fails
+        const applyReorderVisibility = function (layer) {
+          if (!layer) {
+            return;
+          }
+          if (layer === activeDemDrapeLayer) {
+            layer.show = activeDemContext ? activeDemContext.visible !== false : layer.show;
+            return;
+          }
+          if (layer === activeDemHillshadeLayer) {
+            layer.show = activeDemContext
+              ? activeDemContext.visible !== false && layer.alpha > 0.01
+              : layer.show;
+            return;
+          }
+          const key = layer._layerKey;
+          if (key && layerVisibilityState.has(key)) {
+            layer.show = Boolean(layerVisibilityState.get(key));
+          }
+        };
+
+        for (let g = orderedGroups.length - 1; g >= 0; g--) {
+          const group = orderedGroups[g];
+          for (let i = 0; i < group.length; i++) {
+            const item = group[i];
             imageryLayers.add(item.layer);
-            const fallbackIndex = imageryLayers.indexOf(item.layer);
-            log("warn", "EVENT_DRIVEN: Fallback add for layer " + item.command.file_name + 
-                " at index " + fallbackIndex + " (error: " + String(addError) + ")");
+            applyReorderVisibility(item.layer);
+            const newIndex = imageryLayers.indexOf(item.layer);
+            log("debug", "EVENT_DRIVEN: Added layer " + item.label + " at index " + newIndex);
           }
         }
         
-        // CRITICAL FIX: Ensure DEM hillshade layers are above their drape layers
-        // This maintains proper DEM rendering after reordering
-        for (const item of reorderedLayers) {
-          const layerKey = item.command.layer_key;
-          
-          // If this is a DEM drape layer, ensure its hillshade is above it
-          if (layerKey === activeDemContext?.layerKey && activeDemDrapeLayer && activeDemHillshadeLayer) {
-            const drapeIndex = imageryLayers.indexOf(activeDemDrapeLayer);
-            const hillshadeIndex = imageryLayers.indexOf(activeDemHillshadeLayer);
-            
-            // If hillshade is below drape, move it above
-            if (hillshadeIndex >= 0 && drapeIndex >= 0 && hillshadeIndex <= drapeIndex) {
-              imageryLayers.remove(activeDemHillshadeLayer, false);
-              imageryLayers.add(activeDemHillshadeLayer, drapeIndex + 1);
-              log("debug", "EVENT_DRIVEN: Adjusted DEM hillshade position above drape");
-            }
-          }
+        if (osmBasemapLayer && osmBasemapLayer.show && imageryLayers.indexOf(osmBasemapLayer) >= 0) {
+          imageryLayers.lowerToBottom(osmBasemapLayer);
+        } else if (defaultEarthLayer && imageryLayers.indexOf(defaultEarthLayer) >= 0) {
+          imageryLayers.lowerToBottom(defaultEarthLayer);
+        }
+
+        log("info", "EVENT_DRIVEN: Final layer stack (bottom to top):");
+        for (let i = 0; i < imageryLayers.length; i++) {
+          const layer = imageryLayers.get(i);
+          const key = layer && layer._layerKey ? layer._layerKey : "basemap";
+          const name = layer && layer._layerName ? layer._layerName : "basemap";
+          const show = layer && layer.show === false ? "hidden" : "visible";
+          log("info", "  [" + i + "] " + name + " key=" + key + " " + show);
         }
         
         // Force render to show changes
@@ -7365,7 +7455,7 @@
           }
         }, 100);
         
-        log("info", "EVENT_DRIVEN: Layer reordering completed successfully (" + reorderedLayers.length + " layers)");
+        log("info", "EVENT_DRIVEN: Layer reordering completed successfully (" + expandedOrder.length + " layers)");
         
       } catch (error) {
         log("error", "EVENT_DRIVEN: Layer reordering failed - " + String(error));
