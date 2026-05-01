@@ -464,8 +464,21 @@ class MainWindow(QMainWindow):
             from qtpy.QtWebEngineWidgets import QWebEngineProfile
             profile = self.web_view.page().profile()
             profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.NoCache)
-        except Exception:
-            pass
+            
+            # Set up proper cache directory to avoid permission errors
+            import tempfile
+            from pathlib import Path
+            cache_dir = Path(tempfile.gettempdir()) / "offline_gis_webengine"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            profile.setCachePath(str(cache_dir))
+            profile.setPersistentStoragePath(str(cache_dir / "storage"))
+            
+            # Disable problematic cache features
+            profile.setHttpCacheMaximumSize(0)  # No HTTP cache
+            
+        except Exception as e:
+            # Log the error but don't fail - cache issues are not critical
+            logging.getLogger("desktop").warning("WebEngine cache setup failed: %s", e)
 
         # ── Elevation profile panel (hidden until first profile) ──────────
         # It sits ONLY under the map column (web_view), not the full window.

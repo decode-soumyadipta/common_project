@@ -941,13 +941,27 @@ class DesktopController:
             for path in self._search_result_assets_by_path
         }
 
+        # CRITICAL FIX: Always force 3D mode when search results are found
+        if assets:
+            self._logger.info("Search results found - forcing 3D mode for consistency")
+            self._run_js_call("setSceneMode", "3d")
+            # Update the RGB view mode combo to reflect 3D mode
+            self.panel.rgb_view_mode_combo.setCurrentIndex(0)  # 0 = "3D Terrain Scene"
+            self._apply_display_control_mode()  # This will enable/disable pitch slider based on mode
+            self.panel.log("Search results displayed in 3D mode")
+
         # Event-driven layer synchronization
         if event_driven:
             self._sync_search_visibility_layers_event_driven()
         else:
             self._sync_search_visibility_layers()
         
-        self._focus_visible_search_assets(force=not had_visible_assets)
+        # Enhanced focus behavior: force focus on first search, fit all assets for multiple results
+        self._focus_visible_search_assets_with_enhanced_behavior(
+            force=not had_visible_assets, 
+            is_first_search=not had_visible_assets,
+            asset_count=len(assets)
+        )
 
         self.panel.update_search_results(assets, self._search_layer_visibility)
         
@@ -1136,7 +1150,11 @@ class DesktopController:
             self.panel.log(f"Hidden from map: {asset.get('file_name', 'asset')}")
             print(f"DEBUG: Layer hidden: {asset.get('file_name')}")
 
-        self._focus_visible_search_assets(force=False)
+        self._focus_visible_search_assets_with_enhanced_behavior(
+            force=False, 
+            is_first_search=False,  # This is a toggle, not a first search
+            asset_count=len([p for p, v in self._search_layer_visibility.items() if v])
+        )
         
         print(f"DEBUG: Calling panel.update_search_results to refresh UI")
         self.panel.update_search_results(
@@ -1243,6 +1261,17 @@ class DesktopController:
         print(f"DEBUG: _sync_search_visibility_layers completed\n")
 
     def _focus_visible_search_assets(self, *, force: bool) -> None:
+        """Legacy focus function - delegates to enhanced version."""
+        self._focus_visible_search_assets_with_enhanced_behavior(
+            force=force, 
+            is_first_search=force,
+            asset_count=len(self._search_result_assets_by_path)
+        )
+
+    def _focus_visible_search_assets_with_enhanced_behavior(
+        self, *, force: bool, is_first_search: bool, asset_count: int
+    ) -> None:
+        """Enhanced focus function with improved multi-asset handling and first-search auto-flyto."""
         visible_assets = [
             asset
             for path, asset in self._search_result_assets_by_path.items()
@@ -1275,15 +1304,38 @@ class DesktopController:
             if not force and self._last_visible_focus_signature == signature:
                 return
             self._last_visible_focus_signature = signature
-            self._run_js_call(
-                "focusBounds",
-                union_bounds["west"],
-                union_bounds["south"],
-                union_bounds["east"],
-                union_bounds["north"],
-            )
+            
+            # Enhanced behavior for multiple assets and first search
+            if is_first_search:
+                if len(visible_assets) == 1:
+                    # Single asset: fly to it with appropriate zoom
+                    self._logger.info("First search: Flying to single asset")
+                    self._fly_to_asset(visible_assets[0])
+                    self.panel.log(f"Focused on search result: {visible_assets[0].get('file_name', 'asset')}")
+                else:
+                    # Multiple assets: fit all in view with padding
+                    self._logger.info(f"First search: Fitting {len(visible_assets)} assets in view")
+                    self._run_js_call(
+                        "focusBoundsWithPadding",
+                        union_bounds["west"],
+                        union_bounds["south"],
+                        union_bounds["east"],
+                        union_bounds["north"],
+                        1.5  # 50% padding to ensure all assets are visible
+                    )
+                    self.panel.log(f"Focused on {len(visible_assets)} search results")
+            else:
+                # Subsequent searches: use standard focus without animation
+                self._run_js_call(
+                    "focusBounds",
+                    union_bounds["west"],
+                    union_bounds["south"],
+                    union_bounds["east"],
+                    union_bounds["north"],
+                )
             return
 
+        # Fallback: focus on first visible asset
         self._fly_to_asset(visible_assets[0])
 
     def reorder_search_result_layers(self, reordered_layers: list[dict]) -> None:
@@ -3726,15 +3778,46 @@ class DesktopController:
         ):
             widget.setEnabled(imagery_visible)
 
+        # CRITICAL FIX: Determine current scene mode from RGB view mode combo
+        current_scene_mode = str(self.panel.rgb_view_mode_combo.currentData() or "3d").lower()
+        is_2d_mode = current_scene_mode == "2d"
+        
+        # DEM controls: enabled when DEM is visible
         for widget in (
             self.panel.dem_exaggeration_slider,
             self.panel.dem_hillshade_slider,
             self.panel.dem_color_mode_combo,
-            self.panel.pitch_slider,
+        ):
+            widget.setEnabled(dem_visible)
+
+        # Camera controls: pitch slider disabled in 2D mode, rotation always enabled with DEM
+        self.panel.pitch_slider.setEnabled(dem_visible and not is_2d_mode)
+        for widget in (
             self.panel.rotate_left_btn,
             self.panel.rotate_right_btn,
         ):
             widget.setEnabled(dem_visible)
+
+        # Visual feedback for disabled pitch slider in 2D mode
+        if is_2d_mode and dem_visible:
+            self.panel.pitch_slider.setStyleSheet("""
+                QSlider {
+                    color: #888888;
+                    background-color: #f0f0f0;
+                }
+                QSlider::handle:horizontal {
+                    background: #cccccc;
+                    border: 1px solid #999999;
+                }
+                QSlider::groove:horizontal {
+                    background: #e0e0e0;
+                }
+            """)
+            self.panel.pitch_slider.setToolTip("Pitch control is disabled in 2D mode")
+        else:
+            # Reset to default style when enabled
+            self.panel.pitch_slider.setStyleSheet("")
+            self.panel.pitch_slider.setToolTip("Adjust camera pitch angle")
 
         if self._toolbar_context_callback is not None:
             if dem_visible and imagery_visible:

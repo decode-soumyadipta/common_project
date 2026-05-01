@@ -5876,6 +5876,42 @@
       requestSceneRender();
       log("debug", "Focus bounds (fit) west=" + west + " south=" + south + " east=" + east + " north=" + north);
     },
+    focusBoundsWithPadding: function (west, south, east, north, paddingFactor) {
+      if (!viewer) return;
+      // Use custom padding factor (e.g., 1.5 = 50% padding)
+      const padFactor = Number(paddingFactor) || 1.1; // Default to 10% if not specified
+      const padLon = (east - west) * (padFactor - 1.0) * 0.5;
+      const padLat = (north - south) * (padFactor - 1.0) * 0.5;
+      const paddedWest  = Math.max(-180, west  - padLon);
+      const paddedEast  = Math.min( 180, east  + padLon);
+      const paddedSouth = Math.max( -90, south - padLat);
+      const paddedNorth = Math.min(  90, north + padLat);
+      setActiveTileBounds({ west: west, south: south, east: east, north: north });
+      const rect = Cesium.Rectangle.fromDegrees(paddedWest, paddedSouth, paddedEast, paddedNorth);
+      // On Windows/QtWebEngine, continuous rendering during flight is more reliable
+      const wasRequestRenderMode = viewer.scene.requestRenderMode;
+      viewer.scene.requestRenderMode = false;
+      
+      viewer.camera.flyTo({
+        destination: rect,
+        orientation: { heading: 0.0, pitch: Cesium.Math.toRadians(-90), roll: 0.0 },
+        duration: 1.8, // Slightly longer duration for multi-asset focus
+        complete: function() {
+          if (viewer && viewer.scene) {
+            viewer.scene.requestRenderMode = wasRequestRenderMode;
+            viewer.scene.requestRender();
+          }
+        },
+        cancel: function() {
+          if (viewer && viewer.scene) {
+            viewer.scene.requestRenderMode = wasRequestRenderMode;
+            viewer.scene.requestRender();
+          }
+        }
+      });
+      requestSceneRender();
+      log("info", "Focus bounds with padding=" + padFactor + " west=" + west + " south=" + south + " east=" + east + " north=" + north);
+    },
     flyThroughBounds: function (west, south, east, north) {
       startFlyThroughBounds(west, south, east, north);
     },
@@ -5992,9 +6028,32 @@
       }
       attachTileErrorHandler(provider, name);
       
+      // Add layer at proper index to ensure basemap stays at bottom
+      // Calculate insertion index: basemap layers should always be at index 0
+      let insertionIndex = viewer.imageryLayers.length;
       
-      activeImageryLayer = viewer.imageryLayers.addImageryProvider(provider);
+      // If we have basemap layers, ensure user layers start from index 1+
+      if (osmBasemapLayer || defaultEarthLayer) {
+        // Find the highest basemap index
+        let basemapIndex = -1;
+        if (osmBasemapLayer) {
+          basemapIndex = Math.max(basemapIndex, viewer.imageryLayers.indexOf(osmBasemapLayer));
+        }
+        if (defaultEarthLayer) {
+          basemapIndex = Math.max(basemapIndex, viewer.imageryLayers.indexOf(defaultEarthLayer));
+        }
+        
+        // Insert user layers after basemap layers
+        if (basemapIndex >= 0) {
+          insertionIndex = basemapIndex + 1;
+        }
+      }
+      
+      activeImageryLayer = viewer.imageryLayers.addImageryProvider(provider, insertionIndex);
       managedImageryLayers.set(layerKey, activeImageryLayer);
+      
+      log("debug", "Layer added at index " + viewer.imageryLayers.indexOf(activeImageryLayer) + 
+          " (requested index: " + insertionIndex + ")");
       
       // Tag the layer with its key for reordering functionality
       activeImageryLayer._layerKey = layerKey;
@@ -6020,10 +6079,9 @@
       // CRITICAL: Hide DEM colorbar when showing regular imagery
       hideDemColorbar();
       
-      // CRITICAL: Auto-switch to 2D scene mode for imagery layers
-      // Imagery layers should always display in 2D view for optimal performance
-      setSceneModeInternal("2d");
-      log("info", "Auto-switched to 2D scene mode for imagery layer: " + name);
+      // REMOVED: Auto-switch to 2D mode - let search results control the scene mode
+      // This allows search results to properly force 3D mode when needed
+      log("debug", "Imagery layer loaded without forcing scene mode: " + name);
       
       // Debug layer state after addition
       log("debug", "Layer added: " + name + " at index " + viewer.imageryLayers.indexOf(activeImageryLayer) + " (top)");
@@ -6378,6 +6436,8 @@
       const nextExaggeration = Math.max(0.1, Number(exaggeration) || 1.0);
       const nextHillshadeAlpha = Math.max(0.0, Math.min(1.0, Number(hillshadeAlpha) || 0.0));
 
+      log("info", "setDemProperties called: exaggeration=" + nextExaggeration.toFixed(2) + " hillshadeAlpha=" + nextHillshadeAlpha.toFixed(2));
+
       if (comparatorModeEnabled) {
         if (comparatorDemRefreshTimer !== null) {
           window.clearTimeout(comparatorDemRefreshTimer);
@@ -6403,6 +6463,7 @@
         }
         
         requestSceneRender();
+        log("info", "setDemProperties applied to comparator pane");
         return;
       }
 
@@ -6412,16 +6473,18 @@
       
       if (activeDemHillshadeLayer) {
         activeDemHillshadeLayer.alpha = demVisual.hillshadeAlpha;
+        log("info", "setDemProperties: Updated hillshade layer alpha=" + demVisual.hillshadeAlpha.toFixed(2));
       }
 
       if (exaggerationChanged && viewer && viewer.scene && viewer.scene.globe) {
         // Cesium 1.78: globe.terrainExaggeration scales terrain heights in-place.
         // No terrain provider rebuild needed — zero camera jump, instant visual update.
         viewer.scene.globe.terrainExaggeration = Math.max(0.1, nextExaggeration);
-        log("debug", "DEM exaggeration applied in-place value=" + nextExaggeration.toFixed(2));
+        log("info", "setDemProperties: Applied terrain exaggeration=" + nextExaggeration.toFixed(2) + " (real-time update)");
       }
 
       requestSceneRender();
+      log("info", "setDemProperties completed successfully");
     },
     setImageryProperties: function (brightness, contrast) {
       if (!viewer) return;
@@ -6473,19 +6536,19 @@
       if (!viewer) return;
       // Camera rotation is not applicable in 2D mode
       if (currentSceneMode === "2d") {
-        log("debug", "rotateCamera: ignored in 2D mode");
+        log("info", "rotateCamera: ignored in 2D mode");
         return;
       }
-      log("debug", "rotateCamera: degrees=" + degrees + " comparatorMode=" + comparatorModeEnabled);
+      log("info", "rotateCamera called: degrees=" + degrees + " comparatorMode=" + comparatorModeEnabled);
       const targetBounds = cameraOrbitBounds || activeTileBounds || lastLoadedBounds;
       if (targetBounds) {
-        log("debug", "rotateCamera: targetBounds found, syncing orbit");
+        log("info", "rotateCamera: targetBounds found, syncing orbit");
         syncOrbitFromCurrentCamera(targetBounds);
         cameraOrbitHeading += Cesium.Math.toRadians(degrees);
-        log("debug", "rotateCamera: cameraOrbitHeading updated, calling applyCameraOrbitTarget");
+        log("info", "rotateCamera: cameraOrbitHeading updated, calling applyCameraOrbitTarget");
         applyCameraOrbitTarget();
       } else {
-        log("debug", "rotateCamera: no targetBounds, rotating main viewer directly");
+        log("info", "rotateCamera: no targetBounds, rotating main viewer directly");
         viewer.camera.rotateRight(Cesium.Math.toRadians(degrees));
       }
       // Apply to all active comparator DEM panes (skip 2D imagery panes)
@@ -6521,26 +6584,26 @@
         });
       }
       requestSceneRender();
-      log("debug", "Rotate camera degrees=" + degrees);
+      log("info", "rotateCamera completed: degrees=" + degrees);
     },
     setPitch: function (degrees) {
       if (!viewer) return;
       // Pitch tilt is not applicable in 2D mode
       if (currentSceneMode === "2d") {
-        log("debug", "setPitch: ignored in 2D mode");
+        log("info", "setPitch: ignored in 2D mode");
         return;
       }
-      log("debug", "setPitch: degrees=" + degrees);
+      log("info", "setPitch called: degrees=" + degrees);
       const targetBounds = cameraOrbitBounds || activeTileBounds || lastLoadedBounds;
       if (targetBounds) {
-        log("debug", "setPitch: targetBounds found, syncing orbit");
+        log("info", "setPitch: targetBounds found, syncing orbit");
         syncOrbitFromCurrentCamera(targetBounds);
       }
       cameraOrbitPitch = Cesium.Math.toRadians(degrees);
-      log("debug", "setPitch: cameraOrbitPitch set to radians=" + cameraOrbitPitch);
+      log("info", "setPitch: cameraOrbitPitch set to radians=" + cameraOrbitPitch);
       
       if (!applyCameraOrbitTarget()) {
-        log("debug", "setPitch: applyCameraOrbitTarget returned false, setting main viewer camera");
+        log("info", "setPitch: applyCameraOrbitTarget returned false, setting main viewer camera");
         const camera = viewer.camera;
         const orientation = {
             heading: camera.heading,
@@ -6579,7 +6642,7 @@
       }
 
       requestSceneRender();
-      log("debug", "Set pitch degrees=" + degrees);
+      log("info", "setPitch completed: degrees=" + degrees);
     },
     addAnnotation: function (text, lon, lat) {
       if (!viewer) return;
@@ -7430,10 +7493,23 @@
           }
         }
         
-        if (osmBasemapLayer && osmBasemapLayer.show && imageryLayers.indexOf(osmBasemapLayer) >= 0) {
+        // Ensure basemap layers are always at the bottom (index 0)
+        // This prevents user layers from mixing with basemap layers
+        if (osmBasemapLayer && imageryLayers.indexOf(osmBasemapLayer) >= 0) {
           imageryLayers.lowerToBottom(osmBasemapLayer);
-        } else if (defaultEarthLayer && imageryLayers.indexOf(defaultEarthLayer) >= 0) {
+          log("debug", "EVENT_DRIVEN: Moved OSM basemap to bottom (index 0)");
+        }
+        if (defaultEarthLayer && imageryLayers.indexOf(defaultEarthLayer) >= 0) {
           imageryLayers.lowerToBottom(defaultEarthLayer);
+          log("debug", "EVENT_DRIVEN: Moved Default Earth basemap to bottom (index 0)");
+        }
+        
+        // Verify basemap is at index 0 and user layers start from index 1+
+        const basemapAtBottom = imageryLayers.get(0);
+        if (basemapAtBottom && (basemapAtBottom === osmBasemapLayer || basemapAtBottom === defaultEarthLayer)) {
+          log("info", "EVENT_DRIVEN: Basemap correctly positioned at index 0, user layers start from index 1");
+        } else {
+          log("warn", "EVENT_DRIVEN: Basemap positioning may be incorrect");
         }
 
         log("info", "EVENT_DRIVEN: Final layer stack (bottom to top):");

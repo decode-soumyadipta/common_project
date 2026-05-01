@@ -59,6 +59,16 @@ def run(
     # Also increase V8 heap size for CesiumJS (4.3MB file needs more heap during parsing).
     import os
     import platform
+    import tempfile
+
+    # Set up a clean cache directory to avoid permission issues
+    cache_dir = Path(tempfile.gettempdir()) / "offline_gis_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    os.environ["QTWEBENGINE_CACHE_DIR"] = str(cache_dir)
+    
+    # Suppress QtWebEngine error messages
+    os.environ["QT_LOGGING_RULES"] = "qt.webenginecontext.debug=false"
+    os.environ["QTWEBENGINE_DISABLE_SANDBOX"] = "1"
 
     existing_flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
     # Core flags applied on all platforms
@@ -70,6 +80,13 @@ def run(
         "--enable-gpu",
         "--gpu-no-context-lost",
         "--js-flags=--max-old-space-size=4096",  # 4 GB V8 heap for large COG metadata
+        "--disable-gpu-sandbox",  # Prevent GPU cache permission issues
+        "--disable-software-rasterizer",  # Force hardware acceleration
+        "--disable-dev-shm-usage",  # Avoid shared memory issues
+        "--no-sandbox",  # Prevent cache access issues
+        "--disable-web-security",  # Allow local file access
+        "--allow-running-insecure-content",  # Allow mixed content
+        "--disable-features=VizDisplayCompositor",  # Reduce GPU cache usage
     ]
 
     system = platform.system()

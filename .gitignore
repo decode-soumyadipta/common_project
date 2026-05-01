@@ -47,6 +47,10 @@ offline_gis.db
 # OS files
 .DS_Store
 
+# QtWebEngine cache directories (temporary cache to avoid permission errors)
+offline_gis_cache/
+offline_gis_webengine/
+
 # Generated Cesium runtime bundle (recreate via setup script)
 src/offline_gis_app/client_frontend/web_assets/cesium/
 

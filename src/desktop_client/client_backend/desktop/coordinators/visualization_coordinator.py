@@ -11,9 +11,17 @@ class VisualizationCoordinator:
         c = self._controller
         mode = str(c.panel.rgb_view_mode_combo.currentData() or "3d")
         c._run_js_call("setSceneMode", mode)
-        c._apply_display_control_mode()
+        c._apply_display_control_mode()  # This will handle pitch slider enable/disable
         mode_label = "2D map" if mode == "2d" else "3D terrain"
         c.panel.log(f"RGB view mode applied: {mode_label}")
+        
+        # Log pitch slider state for debugging
+        is_2d_mode = mode == "2d"
+        pitch_enabled = c.panel.pitch_slider.isEnabled()
+        c._logger.info(
+            "Scene mode changed: mode=%s pitch_slider_enabled=%s", 
+            mode, pitch_enabled
+        )
 
     def on_visual_slider_changed(self, _value: int) -> None:
         self.apply_visual_settings(log_to_panel=False)
@@ -49,6 +57,13 @@ class VisualizationCoordinator:
         c = self._controller
         exaggeration = c.panel.dem_exaggeration_slider.value() / 100.0
         hillshade_strength = c.panel.dem_hillshade_slider.value() / 100.0
+        
+        # Add debug logging
+        c._logger.info(
+            "apply_dem_settings called: exaggeration=%.2f hillshade=%.2f log_to_panel=%s",
+            exaggeration, hillshade_strength, log_to_panel
+        )
+        
         c._run_js_call("setDemProperties", exaggeration, hillshade_strength)
         if log_to_panel:
             c.panel.log(
@@ -84,7 +99,9 @@ class VisualizationCoordinator:
         c._logger.debug("Live DEM style=%s", color_mode)
 
     def rotate_camera(self, degrees: float) -> None:
+        self._controller._logger.info("rotate_camera called: degrees=%.1f", degrees)
         self._controller._run_js_call("rotateCamera", degrees)
 
     def set_pitch(self, degrees: int) -> None:
+        self._controller._logger.info("set_pitch called: degrees=%d", degrees)
         self._controller._run_js_call("setPitch", float(degrees))
