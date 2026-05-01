@@ -156,7 +156,16 @@ class ElevationProfileCoordinator:
             self._c.panel.log("Profile extraction returned no values.")
             return
 
-        self._c._last_profile_values = [float(v) for v in values]
+        self._c._last_profile_values = [float(v) for v in values if v is not None]
+        if len(self._c._last_profile_values) < len(values):
+            self._logger.warning(
+                "Profile contained %d None values (filtered out), kept %d samples",
+                len(values) - len(self._c._last_profile_values),
+                len(self._c._last_profile_values),
+            )
+        if not self._c._last_profile_values:
+            self._c.panel.log("Profile extraction returned only null values — check DEM nodata settings.")
+            return
         distance_m = self._geodesic_distance_m(lon1, lat1, lon2, lat2)
 
         # Draw the profile line on the Cesium globe (clears any previous line)

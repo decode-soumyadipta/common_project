@@ -3790,16 +3790,18 @@ class DesktopController:
         ):
             widget.setEnabled(dem_visible)
 
-        # Camera controls: pitch slider disabled in 2D mode, rotation always enabled with DEM
-        self.panel.pitch_slider.setEnabled(dem_visible and not is_2d_mode)
+        # Camera controls: pitch slider enabled in ALL 3D modes with any layer
+        # Rotation works in both 2D and 3D (heading rotation valid in 2D Cesium)
+        any_layer_visible = dem_visible or imagery_visible
+        self.panel.pitch_slider.setEnabled(any_layer_visible and not is_2d_mode)
         for widget in (
             self.panel.rotate_left_btn,
             self.panel.rotate_right_btn,
         ):
-            widget.setEnabled(dem_visible)
+            widget.setEnabled(any_layer_visible)  # Rotation works in both 2D/3D
 
         # Visual feedback for disabled pitch slider in 2D mode
-        if is_2d_mode and dem_visible:
+        if is_2d_mode and any_layer_visible:
             self.panel.pitch_slider.setStyleSheet("""
                 QSlider {
                     color: #888888;

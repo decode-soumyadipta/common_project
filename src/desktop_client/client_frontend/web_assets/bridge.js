@@ -175,6 +175,9 @@
   const COMPARATOR_DEM_DEFAULT_PITCH = Cesium.Math.toRadians(-35.0);
   const COMPARATOR_DEM_MIN_PITCH = Cesium.Math.toRadians(-80.0);
   const COMPARATOR_DEM_MAX_PITCH = Cesium.Math.toRadians(-15.0);
+  // 3D mode pitch constraints: clear separation from 2D (which is always -90°)
+  const MIN_3D_PITCH_RAD = Cesium.Math.toRadians(-80.0);   // never flatter than -80° in 3D
+  const DEFAULT_3D_PITCH_RAD = Cesium.Math.toRadians(-35.0); // default oblique view for DEM
   const layerDefinitions = new Map();
   const layerVisibilityState = new Map();
   const tileErrorSeen = new Set();
@@ -2510,6 +2513,10 @@
     
     // CRITICAL: Terabyte-scale DEM rendering optimizations with anti-flickering
     viewer.scene.globe.terrainExaggeration = Math.max(0.1, demVisual.exaggeration);
+    // Also set verticalExaggeration for Cesium 1.90+ compatibility
+    if (typeof viewer.scene.verticalExaggeration !== "undefined") {
+      viewer.scene.verticalExaggeration = Math.max(0.1, demVisual.exaggeration);
+    }
     
     // Disable all expensive visual effects for ultra-high resolution DEM (3-4cm/pixel)
     viewer.scene.globe.enableLighting = false;  // No lighting - major performance gain
@@ -3670,8 +3677,28 @@
         updateDemColorbar(range.min, range.max, activeDemContext.options);
       }
     } else {
-      // No active drape layer yet — do a full apply
-      applyDemLayer();
+      // No active drape layer yet — do a full apply with camera lock
+      // CRITICAL FIX (Bug 4): Prevent applyDemLayer from resetting camera
+      // when changing style dropdown
+      if (viewer && viewer.camera) {
+        var savedPos = viewer.camera.position.clone();
+        var savedHdg = viewer.camera.heading;
+        var savedPitch = viewer.camera.pitch;
+        var savedRoll = viewer.camera.roll;
+        applyDemLayer();
+        // Lock camera for 5 frames to absorb async resets from layer changes
+        var framesLeft = 5;
+        var lockHandle = viewer.scene.postRender.addEventListener(function () {
+          viewer.camera.setView({
+            destination: savedPos,
+            orientation: { heading: savedHdg, pitch: savedPitch, roll: savedRoll },
+          });
+          framesLeft -= 1;
+          if (framesLeft <= 0) lockHandle();
+        });
+      } else {
+        applyDemLayer();
+      }
     }
   }
 
@@ -4626,6 +4653,10 @@
         const target = Math.max(0.1, demVisual.exaggeration);
         if (Math.abs(viewer.scene.globe.terrainExaggeration - target) > 0.001) {
           viewer.scene.globe.terrainExaggeration = target;
+        }
+        // Also persist verticalExaggeration for Cesium 1.90+
+        if (typeof viewer.scene.verticalExaggeration !== "undefined" && Math.abs(viewer.scene.verticalExaggeration - target) > 0.001) {
+          viewer.scene.verticalExaggeration = target;
         }
       }
 
@@ -5726,6 +5757,13 @@
     }
     updateBasemapBlendForCurrentMode();
 
+    // CRITICAL FIX (Bug 1+2): Ensure 3D always has perspective pitch.
+    // Clamp pitch so 3D never looks like 2D (top-down).  Default to -35°.
+    if (cameraOrbitPitch < MIN_3D_PITCH_RAD || Math.abs(cameraOrbitPitch - Cesium.Math.toRadians(-90.0)) < Cesium.Math.toRadians(5.0)) {
+      cameraOrbitPitch = DEFAULT_3D_PITCH_RAD;
+      sceneDebug("setSceneModeInternal: clamped pitch to default 3D pitch " + Cesium.Math.toDegrees(cameraOrbitPitch).toFixed(1) + "°");
+    }
+
     // After morphTo3D, re-attach terrain provider and focus on active asset.
     // morphTo3D(0) resets the terrain provider — we must restore it.
     window.requestAnimationFrame(function () {
@@ -5734,8 +5772,12 @@
           _swapTerrainProviderLocked(activeDemTerrainProvider);
         }
         viewer.scene.globe.terrainExaggeration = Math.max(0.1, demVisual.exaggeration);
+        // Also set verticalExaggeration for Cesium 1.90+ compatibility
+        if (typeof viewer.scene.verticalExaggeration !== "undefined") {
+          viewer.scene.verticalExaggeration = Math.max(0.1, demVisual.exaggeration);
+        }
       }
-      // Focus on active asset after morph
+      // Focus on active asset after morph with 3D pitch
       const bounds = activeTileBounds || lastLoadedBounds;
       if (bounds) {
         schedule3DFocusAfterMorph(1.0);
@@ -5834,15 +5876,39 @@
     flyToBounds: function (west, south, east, north) {
       if (!viewer) return;
       setActiveTileBounds({ west: west, south: south, east: east, north: north });
+      // SEARCH FIX: Fly to 3D oblique view (-40° pitch) so results look like a globe, not a flat map
       const rect = Cesium.Rectangle.fromDegrees(west, south, east, north);
-      viewer.camera.flyTo({
-        destination: rect,
+      const sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, 0.0);
+      const range = Math.max(compute3DFocusRange({ west, south, east, north }), sphere.radius * 1.5, 300.0);
+      const wasRequestRenderMode = viewer.scene.requestRenderMode;
+      viewer.scene.requestRenderMode = false;
+      viewer.camera.cancelFlight();
+      viewer.camera.flyToBoundingSphere(sphere, {
+        offset: new Cesium.HeadingPitchRange(
+          Cesium.Math.toRadians(0.0),
+          Cesium.Math.toRadians(-40.0),  // 40° oblique — clear 3D globe perspective
+          range
+        ),
         duration: 2.2,
+        complete: function() {
+          if (viewer && viewer.scene) {
+            viewer.scene.requestRenderMode = wasRequestRenderMode;
+            viewer.scene.requestRender();
+          }
+        },
+        cancel: function() {
+          if (viewer && viewer.scene) {
+            viewer.scene.requestRenderMode = wasRequestRenderMode;
+            viewer.scene.requestRender();
+          }
+        }
       });
-      log("info", "Fly-to bounds west=" + west + " south=" + south + " east=" + east + " north=" + north);
+      requestSceneRender();
+      log("info", "Fly-to bounds (3D oblique) west=" + west + " south=" + south + " east=" + east + " north=" + north);
     },
     focusBounds: function (west, south, east, north) {
       if (!viewer) return;
+      setActiveTileBounds({ west: west, south: south, east: east, north: north });
       // Add 10% padding so assets don't touch the viewport edges
       const padLon = (east - west) * 0.10;
       const padLat = (north - south) * 0.10;
@@ -5850,15 +5916,19 @@
       const paddedEast  = Math.min( 180, east  + padLon);
       const paddedSouth = Math.max( -90, south - padLat);
       const paddedNorth = Math.min(  90, north + padLat);
-      setActiveTileBounds({ west: west, south: south, east: east, north: north });
+      // SEARCH FIX: Use 3D oblique view (-40° pitch) so results appear on the globe
       const rect = Cesium.Rectangle.fromDegrees(paddedWest, paddedSouth, paddedEast, paddedNorth);
-      // On Windows/QtWebEngine, continuous rendering during flight is more reliable
+      const sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, 0.0);
+      const range = Math.max(compute3DFocusRange({ west: paddedWest, south: paddedSouth, east: paddedEast, north: paddedNorth }), sphere.radius * 1.5, 300.0);
       const wasRequestRenderMode = viewer.scene.requestRenderMode;
       viewer.scene.requestRenderMode = false;
-      
-      viewer.camera.flyTo({
-        destination: rect,
-        orientation: { heading: 0.0, pitch: Cesium.Math.toRadians(-90), roll: 0.0 },
+      viewer.camera.cancelFlight();
+      viewer.camera.flyToBoundingSphere(sphere, {
+        offset: new Cesium.HeadingPitchRange(
+          Cesium.Math.toRadians(0.0),
+          Cesium.Math.toRadians(-40.0),  // 40° oblique — clear 3D globe perspective
+          range
+        ),
         duration: 1.2,
         complete: function() {
           if (viewer && viewer.scene) {
@@ -5874,7 +5944,7 @@
         }
       });
       requestSceneRender();
-      log("debug", "Focus bounds (fit) west=" + west + " south=" + south + " east=" + east + " north=" + north);
+      log("debug", "Focus bounds (3D oblique) west=" + west + " south=" + south + " east=" + east + " north=" + north);
     },
     focusBoundsWithPadding: function (west, south, east, north, paddingFactor) {
       if (!viewer) return;
@@ -5887,14 +5957,19 @@
       const paddedSouth = Math.max( -90, south - padLat);
       const paddedNorth = Math.min(  90, north + padLat);
       setActiveTileBounds({ west: west, south: south, east: east, north: north });
+      // SEARCH FIX: Use 3D oblique view (-40° pitch) so search results appear on the globe
       const rect = Cesium.Rectangle.fromDegrees(paddedWest, paddedSouth, paddedEast, paddedNorth);
-      // On Windows/QtWebEngine, continuous rendering during flight is more reliable
+      const sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, 0.0);
+      const range = Math.max(compute3DFocusRange({ west: paddedWest, south: paddedSouth, east: paddedEast, north: paddedNorth }), sphere.radius * 1.5, 300.0);
       const wasRequestRenderMode = viewer.scene.requestRenderMode;
       viewer.scene.requestRenderMode = false;
-      
-      viewer.camera.flyTo({
-        destination: rect,
-        orientation: { heading: 0.0, pitch: Cesium.Math.toRadians(-90), roll: 0.0 },
+      viewer.camera.cancelFlight();
+      viewer.camera.flyToBoundingSphere(sphere, {
+        offset: new Cesium.HeadingPitchRange(
+          Cesium.Math.toRadians(0.0),
+          Cesium.Math.toRadians(-40.0),  // 40° oblique — clear 3D globe perspective
+          range
+        ),
         duration: 1.8, // Slightly longer duration for multi-asset focus
         complete: function() {
           if (viewer && viewer.scene) {
@@ -5910,7 +5985,7 @@
         }
       });
       requestSceneRender();
-      log("info", "Focus bounds with padding=" + padFactor + " west=" + west + " south=" + south + " east=" + east + " north=" + north);
+      log("info", "Focus bounds with padding=" + padFactor + " (3D oblique) west=" + west + " south=" + south + " east=" + east + " north=" + north);
     },
     flyThroughBounds: function (west, south, east, north) {
       startFlyThroughBounds(west, south, east, north);
@@ -6477,10 +6552,54 @@
       }
 
       if (exaggerationChanged && viewer && viewer.scene && viewer.scene.globe) {
-        // Cesium 1.78: globe.terrainExaggeration scales terrain heights in-place.
-        // No terrain provider rebuild needed — zero camera jump, instant visual update.
+        // CRITICAL FIX (Bug 6): Apply exaggeration via ALL available Cesium APIs
+        // Cesium 1.78: globe.terrainExaggeration
+        // Cesium 1.90+: scene.verticalExaggeration (replaces the above)
         viewer.scene.globe.terrainExaggeration = Math.max(0.1, nextExaggeration);
+        if (typeof viewer.scene.verticalExaggeration !== "undefined") {
+          viewer.scene.verticalExaggeration = Math.max(0.1, nextExaggeration);
+        }
         log("info", "setDemProperties: Applied terrain exaggeration=" + nextExaggeration.toFixed(2) + " (real-time update)");
+        
+        // Rebuild hillshade with new z_exaggeration parameter for visual accuracy
+        if (activeDemContext && activeDemContext.xyzUrl && activeDemHillshadeLayer) {
+          const rasterQuery = activeDemContext.options && activeDemContext.options.query ? activeDemContext.options.query : {};
+          const hillshadeQuery = {
+            algorithm: "hillshade",
+            azimuth: DEM_HILLSHADE_AZIMUTH,
+            angle_altitude: DEM_HILLSHADE_ALTITUDE,
+            z_exaggeration: nextExaggeration,
+            buffer: 4,
+          };
+          if (Object.prototype.hasOwnProperty.call(rasterQuery, "nodata")) {
+            hillshadeQuery.nodata = rasterQuery.nodata;
+          }
+          const newHillshadeUrl = buildUrlWithQuery(activeDemContext.xyzUrl, hillshadeQuery);
+          if (newHillshadeUrl !== activeDemHillshadeUrl) {
+            // Swap hillshade layer in-place
+            const bounds = activeDemContext.options && activeDemContext.options.bounds ? activeDemContext.options.bounds : null;
+            const rectangle = createRectangle(bounds);
+            const minLevel = activeDemContext.options && Number.isInteger(activeDemContext.options.minzoom) ? activeDemContext.options.minzoom : 0;
+            const maxLevel = activeDemContext.options && Number.isInteger(activeDemContext.options.maxzoom) ? activeDemContext.options.maxzoom : 19;
+            viewer.imageryLayers.remove(activeDemHillshadeLayer, false);
+            const hsProvider = new Cesium.UrlTemplateImageryProvider({
+              url: newHillshadeUrl,
+              maximumLevel: maxLevel,
+              minimumLevel: minLevel,
+              tilingScheme: new Cesium.WebMercatorTilingScheme(),
+              enablePickFeatures: false,
+              rectangle: rectangle,
+            });
+            activeDemHillshadeLayer = viewer.imageryLayers.addImageryProvider(hsProvider);
+            activeDemHillshadeLayer.alpha = demVisual.hillshadeAlpha;
+            activeDemHillshadeLayer.show = activeDemContext.visible !== false;
+            activeDemHillshadeUrl = newHillshadeUrl;
+            log("info", "setDemProperties: Rebuilt hillshade with z_exaggeration=" + nextExaggeration.toFixed(2));
+          }
+        }
+        
+        // Force terrain tile cache clear so tiles reload with new exaggeration
+        terrainTileCache.clear();
       }
 
       requestSceneRender();
@@ -6534,11 +6653,7 @@
     },
     rotateCamera: function (degrees) {
       if (!viewer) return;
-      // Camera rotation is not applicable in 2D mode
-      if (currentSceneMode === "2d") {
-        log("info", "rotateCamera: ignored in 2D mode");
-        return;
-      }
+      // Rotation (heading change) works in both 2D and 3D modes
       log("info", "rotateCamera called: degrees=" + degrees + " comparatorMode=" + comparatorModeEnabled);
       const targetBounds = cameraOrbitBounds || activeTileBounds || lastLoadedBounds;
       if (targetBounds) {
@@ -6594,27 +6709,31 @@
         return;
       }
       log("info", "setPitch called: degrees=" + degrees);
-      const targetBounds = cameraOrbitBounds || activeTileBounds || lastLoadedBounds;
-      if (targetBounds) {
-        log("info", "setPitch: targetBounds found, syncing orbit");
-        syncOrbitFromCurrentCamera(targetBounds);
-      }
-      cameraOrbitPitch = Cesium.Math.toRadians(degrees);
-      log("info", "setPitch: cameraOrbitPitch set to radians=" + cameraOrbitPitch);
       
-      if (!applyCameraOrbitTarget()) {
-        log("info", "setPitch: applyCameraOrbitTarget returned false, setting main viewer camera");
-        const camera = viewer.camera;
-        const orientation = {
-            heading: camera.heading,
-            pitch: cameraOrbitPitch,
-            roll: camera.roll,
-        };
-        camera.setView({
-          destination: camera.position,
-          orientation: orientation,
-        });
+      // CRITICAL FIX (Bug 5): Do NOT call syncOrbitFromCurrentCamera here.
+      // That re-reads the camera range which can be wildly unstable after
+      // morph transitions, causing sudden zoom jumps.
+      // Instead, only update the pitch component and use camera.setView
+      // to preserve the current position and heading exactly.
+      cameraOrbitPitch = Cesium.Math.toRadians(degrees);
+      
+      // Clamp pitch so 3D never becomes flat like 2D
+      if (cameraOrbitPitch < MIN_3D_PITCH_RAD) {
+        cameraOrbitPitch = MIN_3D_PITCH_RAD;
       }
+      
+      log("info", "setPitch: cameraOrbitPitch set to degrees=" + Cesium.Math.toDegrees(cameraOrbitPitch).toFixed(1));
+      
+      // Simply change pitch on the main viewer without changing position or range
+      const camera = viewer.camera;
+      camera.setView({
+        destination: camera.position.clone(),
+        orientation: {
+          heading: camera.heading,
+          pitch: cameraOrbitPitch,
+          roll: camera.roll,
+        },
+      });
 
       // Apply pitch to all active comparator DEM panes via lookAt so it works on Windows/ANGLE
       if (comparatorModeEnabled && Array.isArray(comparatorViewers)) {
