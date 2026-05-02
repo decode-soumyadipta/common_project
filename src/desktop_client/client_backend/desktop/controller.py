@@ -1025,7 +1025,26 @@ class DesktopController:
         else:
             self._sync_search_visibility_layers()
 
-        # Enhanced focus behavior: force focus on first search, fit all assets for multiple results
+        # FIX 1 — Layer order: enforce display order matching the UI list.
+        # UI display sort: imagery (non-DEM) at row 0 = visually ON TOP in Cesium.
+        # IMPORTANT: sort imagery before DEM so JS raises imagery to the top correctly.
+        # (Previously we used dict insertion order which was API order = DEM first → wrong.)
+        ordered_keys = sorted(
+            [
+                p.replace("\\", "/")
+                for p in self._search_result_assets_by_path.keys()
+                if self._search_layer_visibility.get(p, True)
+            ],
+            key=lambda p: (
+                1 if self._is_dem_asset(self._search_result_assets_by_path.get(p, {})) else 0,
+                p,  # stable tie-break by path
+            ),
+        )
+        if ordered_keys:
+            self._run_js_call("enforceLayerDisplayOrder", ordered_keys)
+
+        # FIX 2 — Fly-to: single controlled fly-to AFTER layers+order are set,
+        # so the globe is never blank during flight.
         self._focus_visible_search_assets_with_enhanced_behavior(
             force=not had_visible_assets,
             is_first_search=not had_visible_assets,
@@ -2686,7 +2705,27 @@ class DesktopController:
         self._viz.rotate_camera(degrees)
 
     def set_pitch(self, degrees: int) -> None:
-        self._viz.set_pitch(degrees)
+        # Debounce: buffer rapid slider events, only fire after 80ms of silence.
+        # Without this, the log shows 30-50 queued setPitch calls that all execute
+        # on the JS thread AFTER the user has stopped — causing camera jumps.
+        self._pending_pitch_degrees = int(degrees)
+        if not hasattr(self, "_pitch_debounce_timer"):
+            from PyQt5.QtCore import QTimer
+            self._pitch_debounce_timer = QTimer()
+            self._pitch_debounce_timer.setSingleShot(True)
+            self._pitch_debounce_timer.timeout.connect(self._flush_pitch)
+        self._pitch_debounce_timer.stop()
+        self._pitch_debounce_timer.start(80)
+        import logging
+        logging.getLogger("desktop.controller").info(
+            "set_pitch called: degrees=%d", degrees
+        )
+
+    def _flush_pitch(self) -> None:
+        deg = getattr(self, "_pending_pitch_degrees", None)
+        if deg is not None:
+            self._viz.set_pitch(deg)
+
 
     def on_map_click(self, lon: float, lat: float) -> None:
         self.state.clicked_points.append((lon, lat))

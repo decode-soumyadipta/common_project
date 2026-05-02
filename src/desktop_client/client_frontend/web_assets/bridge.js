@@ -16,6 +16,14 @@
   let activeDemTerrainProvider = null;
   let activeDemDrapeUrl = null;
   let activeDemHillshadeUrl = null;
+  // Stores original DEM rescale range from server (before any color mode switch)
+  let _demOriginalRescale = null;
+  // Stores the last UI display order for layers (set by enforceLayerDisplayOrder OR reorderLayersEventDriven)
+  // so it can be re-applied after any drape swap without a Python round-trip.
+  let _lastKnownLayerOrder = null;
+  // Stable camera range used for pitch/rotate so rapid slider events don't compute
+  // a live distance from a mid-flight camera position (which causes jump artifacts).
+  let _cameraOrbitRange = null;
   const managedImageryLayers = new Map();
   let northPolarCapLayer = null;
   let southPolarCapLayer = null;
@@ -3068,6 +3076,13 @@
     
     const bounds = activeDemContext.options && activeDemContext.options.bounds ? activeDemContext.options.bounds : null;
     const rasterQuery = activeDemContext.options && activeDemContext.options.query ? activeDemContext.options.query : {};
+
+    // Snapshot the original server rescale on FIRST load (before any user color-mode changes).
+    // When user returns to gray/terrain we restore this so colors exactly match the colorbar.
+    if (!_demOriginalRescale && typeof rasterQuery.rescale === "string" && rasterQuery.rescale.includes(",")) {
+      _demOriginalRescale = rasterQuery.rescale;
+      log("info", "DEM_RENDER: Captured original rescale range: " + _demOriginalRescale);
+    }
     const minLevel = activeDemContext.options && Number.isInteger(activeDemContext.options.minzoom) ? activeDemContext.options.minzoom : 0;
     const maxLevelRaw = activeDemContext.options && Number.isInteger(activeDemContext.options.maxzoom) ? activeDemContext.options.maxzoom : 19;
     const imageryMaxLevel = Math.max(minLevel, maxLevelRaw);
@@ -3361,56 +3376,11 @@
     
     log("info", "DEM_RENDER: ========== applyDemLayer END ==========");
     
-    // Auto-focus on DEM bounds with improved positioning logic
-    if (demVisible && activeDemContext && activeDemContext.options && activeDemContext.options.bounds) {
-      const bounds = activeDemContext.options.bounds;
-      const currentCameraPos = viewer.camera.positionCartographic;
-      let shouldFocus = true;
-      
-      if (currentCameraPos) {
-        const currentLon = Cesium.Math.toDegrees(currentCameraPos.longitude);
-        const currentLat = Cesium.Math.toDegrees(currentCameraPos.latitude);
-        const currentHeight = currentCameraPos.height;
-        
-        // Check if camera is positioned over the DEM bounds
-        const isOverData = currentLon >= bounds.west && currentLon <= bounds.east &&
-                         currentLat >= bounds.south && currentLat <= bounds.north;
-        
-        // Calculate appropriate viewing height for DEM visualization
-        const boundsWidth = bounds.east - bounds.west;
-        const boundsHeight = bounds.north - bounds.south;
-        const maxDimension = Math.max(boundsWidth, boundsHeight);
-        const appropriateHeight = maxDimension * 111320 * 1.5; // Convert degrees to meters for DEM viewing
-        
-        // For DEM, we want a closer view to see terrain details
-        shouldFocus = !isOverData || currentHeight > appropriateHeight * 2;
-        
-        log("debug", "DEM_CAMERA_DEBUG: Current position lon=" + currentLon.toFixed(6) + 
-            " lat=" + currentLat.toFixed(6) + " height=" + currentHeight.toFixed(0) + 
-            " isOverData=" + isOverData + " shouldFocus=" + shouldFocus);
-      }
-      
-      if (shouldFocus) {
-        log("info", "DEM_DEBUG: Auto-focusing on DEM layer bounds for optimal terrain viewing");
-        
-        // Use delayed focus to ensure DEM layers are ready
-        setTimeout(function() {
-          if (window.offlineGIS && window.offlineGIS.focusBounds) {
-            window.offlineGIS.focusBounds(bounds.west, bounds.south, bounds.east, bounds.north);
-            
-            // Additional render requests after DEM camera positioning
-            setTimeout(function() {
-              if (viewer && viewer.scene) {
-                viewer.scene.requestRender();
-                log("debug", "DEM_CAMERA_DEBUG: Post-focus render requested for terrain visibility");
-              }
-            }, 300);
-          }
-        }, 200);
-      } else {
-        log("debug", "DEM_DEBUG: Camera already well-positioned for DEM visualization");
-      }
-    }
+    // BUG-FIX: Do NOT auto-focus here. Python calls focusBoundsWithPadding after ALL layers
+    // load (DEM + imagery), giving one smooth fly-to with tiles visible. An internal
+    // setTimeout(focusBounds, 200) inside applyDemLayer raced with the Python fly-to,
+    // causing black-screen flicker and erratic camera jumps.
+    log("info", "DEM_RENDER: Skipping internal auto-focus — Python controls single fly-to after all layers load.");
     
     logLayerStack();
     if (comparatorModeEnabled) {
@@ -3571,11 +3541,15 @@
       query.rescale = "0,90";
     } else if (normalized === "aspect") {
       query.algorithm = "aspect";
-      query.colormap_name = "turbo";
+      query.colormap_name = "hsv";  // HSV gives full 0-360° hue cycle for aspect direction
       query.rescale = "0,360";
     } else {
+      // Returning to gray/terrain: restore original server rescale so colors match the colorbar
       delete query.algorithm;
       query.colormap_name = normalized;
+      if (_demOriginalRescale) {
+        query.rescale = _demOriginalRescale;  // restore original min,max from server
+      }
     }
 
     // In-place URL swap — no terrain rebuild, no camera jump.
@@ -3612,11 +3586,23 @@
         activeDemDrapeLayer.show = activeDemContext.visible !== false;
         activeDemDrapeUrl = newDrapeUrl;
 
-        // Raise hillshade and managed layers above the new drape
-        if (activeDemHillshadeLayer) viewer.imageryLayers.raiseToTop(activeDemHillshadeLayer);
-        for (const layer of managedImageryLayers.values()) {
-          if (layer && layer.show && viewer.imageryLayers.indexOf(layer) >= 0) {
-            viewer.imageryLayers.raiseToTop(layer);
+        // Re-apply the last known layer display order so imagery stays on top (or below)
+        // without requiring a Python round-trip. This prevents color-mode changes from
+        // breaking the layer stack the user explicitly arranged.
+        if (_lastKnownLayerOrder && _lastKnownLayerOrder.length > 0) {
+          // Small defer so the new provider settles before reordering
+          setTimeout(function() {
+            if (window.offlineGIS && window.offlineGIS.enforceLayerDisplayOrder) {
+              window.offlineGIS.enforceLayerDisplayOrder(_lastKnownLayerOrder);
+            }
+          }, 0);
+        } else {
+          // Fallback: raise hillshade and managed imagery layers above new drape
+          if (activeDemHillshadeLayer) viewer.imageryLayers.raiseToTop(activeDemHillshadeLayer);
+          for (const layer of managedImageryLayers.values()) {
+            if (layer && layer.show && viewer.imageryLayers.indexOf(layer) >= 0) {
+              viewer.imageryLayers.raiseToTop(layer);
+            }
           }
         }
 
@@ -5777,29 +5763,35 @@
     flyToBounds: function (west, south, east, north) {
       if (!viewer) return;
       setActiveTileBounds({ west: west, south: south, east: east, north: north });
-      // SEARCH FIX: Fly to 3D oblique view (-40° pitch) so results look like a globe, not a flat map
       const rect = Cesium.Rectangle.fromDegrees(west, south, east, north);
       const sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, 0.0);
       const range = Math.max(compute3DFocusRange({ west, south, east, north }), sphere.radius * 1.5, 300.0);
-      const wasRequestRenderMode = viewer.scene.requestRenderMode;
+      // Persist range so pitch slider can orbit without recomputing live distance
+      _cameraOrbitRange = range;
+      // Keep rendering active during AND after flight so tiles stream in with no blank globe
       viewer.scene.requestRenderMode = false;
       viewer.camera.cancelFlight();
       viewer.camera.flyToBoundingSphere(sphere, {
         offset: new Cesium.HeadingPitchRange(
           Cesium.Math.toRadians(0.0),
-          Cesium.Math.toRadians(-40.0),  // 40° oblique — clear 3D globe perspective
+          Cesium.Math.toRadians(-40.0),
           range
         ),
-        duration: 2.2,
+        duration: 2.0,
         complete: function() {
-          if (viewer && viewer.scene) {
-            viewer.scene.requestRenderMode = wasRequestRenderMode;
+          if (!viewer || !viewer.scene) return;
+          // Hold continuous render for 1.5s post-flight so tiles finish loading
+          var t = 0;
+          var iv = setInterval(function() {
+            if (!viewer || !viewer.scene) { clearInterval(iv); return; }
             viewer.scene.requestRender();
-          }
+            t += 100;
+            if (t >= 1500) { clearInterval(iv); viewer.scene.requestRenderMode = true; }
+          }, 100);
         },
         cancel: function() {
           if (viewer && viewer.scene) {
-            viewer.scene.requestRenderMode = wasRequestRenderMode;
+            viewer.scene.requestRenderMode = true;
             viewer.scene.requestRender();
           }
         }
@@ -5810,36 +5802,39 @@
     focusBounds: function (west, south, east, north) {
       if (!viewer) return;
       setActiveTileBounds({ west: west, south: south, east: east, north: north });
-      // Add 10% padding so assets don't touch the viewport edges
       const padLon = (east - west) * 0.10;
       const padLat = (north - south) * 0.10;
       const paddedWest  = Math.max(-180, west  - padLon);
       const paddedEast  = Math.min( 180, east  + padLon);
       const paddedSouth = Math.max( -90, south - padLat);
       const paddedNorth = Math.min(  90, north + padLat);
-      // SEARCH FIX: Use 3D oblique view (-40° pitch) so results appear on the globe
       const rect = Cesium.Rectangle.fromDegrees(paddedWest, paddedSouth, paddedEast, paddedNorth);
       const sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, 0.0);
       const range = Math.max(compute3DFocusRange({ west: paddedWest, south: paddedSouth, east: paddedEast, north: paddedNorth }), sphere.radius * 1.5, 300.0);
-      const wasRequestRenderMode = viewer.scene.requestRenderMode;
+      // Persist range so pitch slider can orbit without recomputing live distance
+      _cameraOrbitRange = range;
       viewer.scene.requestRenderMode = false;
       viewer.camera.cancelFlight();
       viewer.camera.flyToBoundingSphere(sphere, {
         offset: new Cesium.HeadingPitchRange(
           Cesium.Math.toRadians(0.0),
-          Cesium.Math.toRadians(-40.0),  // 40° oblique — clear 3D globe perspective
+          Cesium.Math.toRadians(-40.0),
           range
         ),
         duration: 1.2,
         complete: function() {
-          if (viewer && viewer.scene) {
-            viewer.scene.requestRenderMode = wasRequestRenderMode;
+          if (!viewer || !viewer.scene) return;
+          var t = 0;
+          var iv = setInterval(function() {
+            if (!viewer || !viewer.scene) { clearInterval(iv); return; }
             viewer.scene.requestRender();
-          }
+            t += 100;
+            if (t >= 1500) { clearInterval(iv); viewer.scene.requestRenderMode = true; }
+          }, 100);
         },
         cancel: function() {
           if (viewer && viewer.scene) {
-            viewer.scene.requestRenderMode = wasRequestRenderMode;
+            viewer.scene.requestRenderMode = true;
             viewer.scene.requestRender();
           }
         }
@@ -6063,59 +6058,10 @@
       log("debug", "Layer added: " + name + " at index " + viewer.imageryLayers.indexOf(activeImageryLayer) + " (top)");
       log("debug", "DEM colorbar hidden (regular imagery layer)");
       
-      // Enhanced camera positioning debug and auto-focus with improved tile visibility
-      if (normalizedBounds) {
-        const currentCameraPos = viewer.camera.positionCartographic;
-        let shouldFocus = true;
-        
-        if (currentCameraPos) {
-          const currentLon = Cesium.Math.toDegrees(currentCameraPos.longitude);
-          const currentLat = Cesium.Math.toDegrees(currentCameraPos.latitude);
-          const currentHeight = currentCameraPos.height;
-          
-          // Check if camera is positioned over the data bounds with appropriate height
-          const isOverData = currentLon >= normalizedBounds.west && currentLon <= normalizedBounds.east &&
-                           currentLat >= normalizedBounds.south && currentLat <= normalizedBounds.north;
-          
-          // Calculate appropriate viewing height for the bounds
-          const boundsWidth = normalizedBounds.east - normalizedBounds.west;
-          const boundsHeight = normalizedBounds.north - normalizedBounds.south;
-          const maxDimension = Math.max(boundsWidth, boundsHeight);
-          const appropriateHeight = maxDimension * 111320 * 2; // Convert degrees to meters, add buffer
-          
-          // Only skip auto-focus if camera is over data AND at reasonable height
-          shouldFocus = !isOverData || currentHeight > appropriateHeight * 3;
-          
-          log("debug", "CAMERA_DEBUG: Current position lon=" + currentLon.toFixed(6) + 
-              " lat=" + currentLat.toFixed(6) + " height=" + currentHeight.toFixed(0) + 
-              " isOverData=" + isOverData + " shouldFocus=" + shouldFocus);
-        }
-        
-        if (shouldFocus) {
-          log("info", "Auto-focusing on loaded layer bounds for better tile visibility");
-          
-          // Use a delayed focus to ensure tiles have time to initialize
-          setTimeout(function() {
-            if (window.offlineGIS && window.offlineGIS.focusBounds) {
-              window.offlineGIS.focusBounds(
-                normalizedBounds.west, 
-                normalizedBounds.south, 
-                normalizedBounds.east, 
-                normalizedBounds.north
-              );
-              
-              // Additional render requests after camera movement
-              setTimeout(function() {
-                if (viewer && viewer.scene) {
-                  viewer.scene.requestRender();
-                }
-              }, 200);
-            }
-          }, 100);
-        } else {
-          log("debug", "Camera already well-positioned for tile visibility");
-        }
-      }
+      // BUG-FIX: Do NOT auto-focus here. Python calls flyToBounds/focusBoundsWithPadding
+      // after ALL layers are loaded, giving a single smooth fly-to with tiles visible.
+      // An internal setTimeout(focusBounds, 100) here raced with the Python fly and caused
+      // black-screen flicker as the two flights fought each other.
       
       // Force multiple render requests with improved timing for tile loading
       if (viewer.scene) {
@@ -6453,14 +6399,17 @@
       }
 
       if (exaggerationChanged && viewer && viewer.scene && viewer.scene.globe) {
-        // CRITICAL FIX (Bug 6): Apply exaggeration via ALL available Cesium APIs
-        // Cesium 1.78: globe.terrainExaggeration
-        // Cesium 1.90+: scene.verticalExaggeration (replaces the above)
-        viewer.scene.globe.terrainExaggeration = Math.max(0.1, nextExaggeration);
+        // Apply exaggeration via scene.verticalExaggeration (Cesium 1.90+).
+        // This is the ONLY API that works with imagery-only DEM rendering (no real terrain mesh).
+        // globe.terrainExaggeration is for Cesium World Terrain / quantized-mesh providers only.
         if (typeof viewer.scene.verticalExaggeration !== "undefined") {
           viewer.scene.verticalExaggeration = Math.max(0.1, nextExaggeration);
+          log("info", "setDemProperties: Applied scene.verticalExaggeration=" + nextExaggeration.toFixed(2));
+        } else {
+          // Fallback for older Cesium builds with real terrain provider
+          viewer.scene.globe.terrainExaggeration = Math.max(0.1, nextExaggeration);
+          log("info", "setDemProperties: Applied globe.terrainExaggeration=" + nextExaggeration.toFixed(2));
         }
-        log("info", "setDemProperties: Applied terrain exaggeration=" + nextExaggeration.toFixed(2) + " (real-time update)");
         
         // Rebuild hillshade with new z_exaggeration parameter for visual accuracy
         if (activeDemContext && activeDemContext.xyzUrl && activeDemHillshadeLayer) {
@@ -6604,55 +6553,60 @@
     },
     setPitch: function (degrees) {
       if (!viewer) return;
-      // Pitch tilt is not applicable in 2D mode
       if (currentSceneMode === "2d") {
         log("info", "setPitch: ignored in 2D mode");
         return;
       }
       log("info", "setPitch called: degrees=" + degrees);
-      
-      // CRITICAL FIX (Bug 5): Do NOT call syncOrbitFromCurrentCamera here.
-      // That re-reads the camera range which can be wildly unstable after
-      // morph transitions, causing sudden zoom jumps.
-      // Instead, only update the pitch component and use camera.setView
-      // to preserve the current position and heading exactly.
+
       cameraOrbitPitch = Cesium.Math.toRadians(degrees);
-      
-      // Clamp pitch so 3D never becomes flat like 2D
       if (cameraOrbitPitch < MIN_3D_PITCH_RAD) {
         cameraOrbitPitch = MIN_3D_PITCH_RAD;
       }
-      
       log("info", "setPitch: cameraOrbitPitch set to degrees=" + Cesium.Math.toDegrees(cameraOrbitPitch).toFixed(1));
-      
-      // Simply change pitch on the main viewer without changing position or range
-      const camera = viewer.camera;
-      camera.setView({
-        destination: camera.position.clone(),
-        orientation: {
-          heading: camera.heading,
-          pitch: cameraOrbitPitch,
-          roll: camera.roll,
-        },
-      });
 
-      // Apply pitch to all active comparator DEM panes via lookAt so it works on Windows/ANGLE
+      // Use lookAt around the active asset center.
+      // Crucially, use the STABLE stored _cameraOrbitRange so rapid slider events
+      // don't recompute distance from a mid-flight camera (which caused random jumps).
+      const bounds = activeTileBounds || lastLoadedBounds;
+      if (bounds) {
+        const rect = Cesium.Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north);
+        const sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, 0.0);
+        // Use stored range from last flyTo; only fall back to live distance if no stored range
+        const range = _cameraOrbitRange ||
+          Math.max(Cesium.Cartesian3.distance(viewer.camera.position, sphere.center), sphere.radius * 1.2, 300.0);
+        try {
+          viewer.camera.lookAt(
+            sphere.center,
+            new Cesium.HeadingPitchRange(viewer.camera.heading, cameraOrbitPitch, range)
+          );
+          viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+        } catch (e) {
+          log("warn", "setPitch: lookAt failed, falling back to setView: " + e);
+          viewer.camera.setView({
+            destination: viewer.camera.position.clone(),
+            orientation: { heading: viewer.camera.heading, pitch: cameraOrbitPitch, roll: viewer.camera.roll },
+          });
+        }
+      } else {
+        viewer.camera.setView({
+          destination: viewer.camera.position.clone(),
+          orientation: { heading: viewer.camera.heading, pitch: cameraOrbitPitch, roll: viewer.camera.roll },
+        });
+      }
+
+      // Apply to comparator DEM panes
       if (comparatorModeEnabled && Array.isArray(comparatorViewers)) {
         comparatorViewers.forEach(function(cv, ci) {
           if (!cv || !cv.scene) return;
-          // Only apply to 3D panes (DEM panes) — imagery panes stay in 2D
-          if (cv.scene.mode !== Cesium.SceneMode.SCENE3D) {
-            log("debug", "setPitch: skipping comparatorViewer[" + ci + "] — not SCENE3D (imagery pane)");
-            return;
-          }
-          var bounds = activeTileBounds || lastLoadedBounds;
-          if (!bounds) return;
-          var rect = Cesium.Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north);
-          var sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, 0.0);
-          var range = Math.max(sphere.radius * 1.9, 900.0);
-          log("debug", "setPitch: applying to comparatorViewer[" + ci + "] pitch=" + degrees + "° range=" + range.toFixed(0));
+          if (cv.scene.mode !== Cesium.SceneMode.SCENE3D) return;
+          var b = activeTileBounds || lastLoadedBounds;
+          if (!b) return;
+          var r = Cesium.Rectangle.fromDegrees(b.west, b.south, b.east, b.north);
+          var s = Cesium.BoundingSphere.fromRectangle3D(r, Cesium.Ellipsoid.WGS84, 0.0);
+          var rng = _cameraOrbitRange || Math.max(s.radius * 1.9, 900.0);
           try {
-            cv.camera.lookAt(sphere.center, new Cesium.HeadingPitchRange(cv.camera.heading, cameraOrbitPitch, range));
+            cv.camera.lookAt(s.center, new Cesium.HeadingPitchRange(cv.camera.heading, cameraOrbitPitch, rng));
             cv.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
           } catch(e) {
             log("warn", "setPitch: comparatorViewer[" + ci + "] lookAt failed: " + e);
@@ -7552,6 +7506,16 @@
         }, 100);
         
         log("info", "EVENT_DRIVEN: Layer reordering completed successfully (" + expandedOrder.length + " layers)");
+
+        // FIX: Update _lastKnownLayerOrder so color-mode drape swaps restore THIS order
+        // (not the stale initial Python order from when layers first loaded).
+        // Build the order as [topmost-layer-key, ..., bottommost-layer-key]:
+        // sortedCommands[0] = new_order 0 = user's row 0 = should end on top.
+        var newOrderKeys = sortedCommands.map(function(cmd) { return String(cmd.layer_key); });
+        if (newOrderKeys.length > 0) {
+          _lastKnownLayerOrder = newOrderKeys;
+          log("info", "EVENT_DRIVEN: _lastKnownLayerOrder updated to [" + newOrderKeys.join(", ") + "]");
+        }
         
       } catch (error) {
         log("error", "EVENT_DRIVEN: Layer reordering failed - " + String(error));
@@ -7581,10 +7545,90 @@
           }
         }
         
-        log("warn", "Layer not found for raising to top: " + layerKey);
+      log("warn", "Layer not found for raising to top: " + layerKey);
         
       } catch (error) {
         log("error", "Failed to raise layer to top: " + String(error));
+      }
+    },
+
+    // ── Enforce correct visual layer order after all search layers load ──
+    // orderedKeys[0] = top of UI list = must end at HIGHEST Cesium index (drawn last = on top)
+    // orderedKeys[last] = bottom of UI list = lowest Cesium index above basemap
+    //
+    // DEM draping rule:
+    //   If any imagery key is above a DEM key in the list → hide DEM drape (grayscale),
+    //   keep terrain provider active so imagery drapes over 3D elevation automatically.
+    //   If DEM is on top (or no imagery above it) → show DEM drape normally.
+    enforceLayerDisplayOrder: function (orderedKeys) {
+      if (!viewer || !viewer.imageryLayers || !Array.isArray(orderedKeys) || orderedKeys.length === 0) return;
+      // Persist order so color-mode drape swaps can re-apply it without Python round-trip
+      _lastKnownLayerOrder = orderedKeys.slice();
+      try {
+        const imageryLayers = viewer.imageryLayers;
+
+        // ── Step 1: Determine if imagery is above DEM in the ordered list ──
+        // orderedKeys[0] = top of UI list row 0 = visually on top.
+        // imageryIsOnTop = DEM is NOT the first (topmost) entry in the list.
+        // We only suppress DEM drape when imagery is literally on top of DEM in the stack.
+        const demKey = activeDemContext ? activeDemContext.layerKey : null;
+        const topKey = orderedKeys[0];
+        // DEM drape should be hidden ONLY if imagery is above DEM in the ordered list.
+        // orderedKeys[0] is the TOP layer; if it's NOT the DEM, then imagery is on top.
+        const imageryIsOnTop = !!(demKey && topKey !== demKey);
+
+        // ── Step 2: Raise layers in reverse UI order so orderedKeys[0] wins the top spot ──
+        for (let k = orderedKeys.length - 1; k >= 0; k--) {
+          const key = orderedKeys[k];
+          var subLayers = [];
+          for (let i = 0; i < imageryLayers.length; i++) {
+            const layer = imageryLayers.get(i);
+            if (layer && (layer._layerKey === key || layer._layerKey === key + ":hillshade")) {
+              subLayers.push(layer);
+            }
+          }
+          // Raise drape first, hillshade last (hillshade stays on top of its DEM block)
+          for (var s = 0; s < subLayers.length; s++) {
+            imageryLayers.raiseToTop(subLayers[s]);
+          }
+        }
+
+        // ── Step 3: Always pin basemap to the bottom ──
+        if (osmBasemapLayer && imageryLayers.indexOf(osmBasemapLayer) >= 0) {
+          imageryLayers.lowerToBottom(osmBasemapLayer);
+        }
+        if (defaultEarthLayer && imageryLayers.indexOf(defaultEarthLayer) >= 0) {
+          imageryLayers.lowerToBottom(defaultEarthLayer);
+        }
+
+        // ── Step 4: DEM drape visibility rule ──
+        // When imagery is on top: hide DEM grayscale drape (terrain elevation 3D shape stays active).
+        // When DEM is on top: show DEM drape normally.
+        if (activeDemDrapeLayer) {
+          if (imageryIsOnTop) {
+            activeDemDrapeLayer.show = false;
+            log("info", "enforceLayerDisplayOrder: DEM drape hidden (imagery is on top)");
+          } else {
+            activeDemDrapeLayer.show = (activeDemContext && activeDemContext.visible !== false);
+            log("info", "enforceLayerDisplayOrder: DEM drape shown (DEM is on top)");
+          }
+        }
+        // Hillshade: same rule. Use layer.alpha directly (demVisual is module-private, not in scope here).
+        if (activeDemHillshadeLayer) {
+          if (imageryIsOnTop) {
+            activeDemHillshadeLayer.show = false;
+          } else {
+            activeDemHillshadeLayer.show = (
+              activeDemContext && activeDemContext.visible !== false &&
+              activeDemHillshadeLayer.alpha > 0.01
+            );
+          }
+        }
+
+        viewer.scene.requestRender();
+        log("info", "enforceLayerDisplayOrder: order=[" + orderedKeys.join(", ") + "] imageryOnTop=" + imageryIsOnTop);
+      } catch (e) {
+        log("error", "enforceLayerDisplayOrder failed: " + e);
       }
     },
     
