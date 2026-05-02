@@ -3900,33 +3900,6 @@
     viewer.camera.percentageChanged = 0.001;
     
     // ═══════════════════════════════════════════════════════════════════════════
-    // MOUSE EVENT DEBUG LOGGING: Comprehensive diagnostic logging for all mouse events
-    // Logs all mouse button events (left, right, middle) and wheel events with full details
-    // ═══════════════════════════════════════════════════════════════════════════
-    
-    if (viewer && viewer.canvas) {
-      const canvas = viewer.canvas;
-      
-      ['mousedown', 'mouseup', 'click', 'contextmenu', 'wheel'].forEach(eventType => {
-        canvas.addEventListener(eventType, function(event) {
-          const timestamp = new Date().toISOString();
-          const button = event.button !== undefined ? event.button : 'N/A';
-          const buttonName = button === 0 ? 'LEFT' : button === 1 ? 'MIDDLE' : button === 2 ? 'RIGHT' : button;
-          const coords = `(${event.clientX}, ${event.clientY})`;
-          const prevented = event.defaultPrevented ? 'PREVENTED' : 'ALLOWED';
-          
-          log("debug", `[${timestamp}] Mouse ${eventType}: button=${buttonName}, coords=${coords}, propagation=${prevented}`);
-          
-          if (eventType === 'wheel') {
-            log("debug", `[${timestamp}] Wheel delta: ${event.deltaY}`);
-          }
-        }, { passive: true, capture: false });
-      });
-      
-      log("info", "Mouse event debug logging enabled for all buttons (left, right, middle, wheel)");
-    }
-    
-    // ═══════════════════════════════════════════════════════════════════════════
     // CAMERA CONTROLS: Use Cesium's Default Behavior (Like Standard 3D Software)
     // Removed custom wheel zoom handler - let Cesium handle all mouse controls naturally
     // ═══════════════════════════════════════════════════════════════════════════
