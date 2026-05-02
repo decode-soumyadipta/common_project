@@ -405,7 +405,6 @@
   let cameraOrbitPitch = Cesium.Math.toRadians(-35.0);
   let cameraOrbitRange = 1200.0;
   let lastEdgeScaleUpdateMs = 0;
-  let has2DWheelZoomFallback = false;
   const EDGE_SCALE_UPDATE_INTERVAL_MS = 120;
   const ANNOTATION_EDIT_ICON_IMAGE =
     "data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2720%27 height=%2720%27 viewBox=%270 0 20 20%27%3E%3Ccircle cx=%2710%27 cy=%2710%27 r=%279%27 fill=%27rgba(255%2C255%2C255%2C0.92)%27 stroke=%27rgba(0%2C0%2C0%2C0.38)%27 stroke-width=%271.1%27/%3E%3Cpath d=%27M6.1 12.9l.5-2.2L11.8 5.5a1.3 1.3 0 011.8 0l.8.8a1.3 1.3 0 010 1.8L9.1 13.3l-2.2.5a.6.6 0 01-.8-.7z%27 fill=%27%23282f39%27/%3E%3Cpath d=%27M10.9 6.4l2.7 2.7%27 stroke=%27%23ffffff%27 stroke-width=%271%27 stroke-linecap=%27round%27/%3E%3C/svg%3E";
@@ -742,7 +741,7 @@
     }
 
     // DEM pane → use global 2D/3D toggle so user controls perspective.
-    const desiredMode = currentSceneMode === "2d" ? Cesium.SceneMode.SCENE2D : Cesium.SceneMode.SCENE3D;
+      const desiredMode = currentSceneMode === "2d" ? Cesium.SceneMode.SCENE2D : Cesium.SceneMode.SCENE3D; // Adjusted for user preference
     const currentMode = targetViewer.scene.mode;
     if (currentMode !== desiredMode) {
       if (desiredMode === Cesium.SceneMode.SCENE2D) {
@@ -876,7 +875,7 @@
 
   function syncViewerCamera(sourceViewer, targetViewer) {
     if (comparatorModeEnabled) {
-      log("debug", "Comparator camera sync is disabled; syncViewerCamera ignored");
+        log("debug", "Comparator camera sync is disabled; syncViewerCamera ignored"); // Logging for debugging
       if (sourceViewer) {
         updateComparatorCenterReadout(sourceViewer);
       }
@@ -2536,15 +2535,11 @@
     controller.minimumTiltAngle = Cesium.Math.toRadians(-90.0);
     controller.maximumTiltAngle = Cesium.Math.toRadians(90.0);
     
-    // CRITICAL: Ultra-slow, precise zoom with scroll wheel
-    // Higher zoomFactor = slower zoom = smaller increments per scroll
-    controller.zoomFactor = 20.0;  // Ultra-slow, precise zoom (was 10.0, now 2x slower)
+    // Reduced wheel zoom sensitivity for finer control on touchpads
+    controller.zoomFactor = 0.4;
     
-    // CRITICAL: Enable zoom to mouse pointer position (zoom where you point)
-    // This makes zoom intuitive - it zooms toward the location under your mouse cursor
     if (viewer.scene && viewer.scene.screenSpaceCameraController) {
       viewer.scene.screenSpaceCameraController.enableInputs = true;
-      // Cesium's default behavior zooms to mouse position when this is enabled
       viewer.scene.screenSpaceCameraController.enableZoom = true;
     }
     
@@ -2553,6 +2548,19 @@
     let cameraBoundsCheckActive = true;
     viewer.camera.changed.addEventListener(function() {
       if (!cameraBoundsCheckActive) return;
+
+      const bounds = activeTileBounds || lastLoadedBounds;
+      if (bounds && viewer.camera.positionWC) {
+        const rect = Cesium.Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north);
+        const sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, 0.0);
+        if (sphere && sphere.center) {
+          const distance = Cesium.Cartesian3.distance(viewer.camera.positionWC, sphere.center);
+          if (Number.isFinite(distance) && distance > 1.0) {
+            cameraOrbitRange = distance;
+            _cameraOrbitRange = distance;
+          }
+        }
+      }
       
       const cameraHeight = viewer.camera.positionCartographic.height;
       const earthRadius = 6371000; // meters
@@ -2601,8 +2609,8 @@
     });
     
     configureCameraControllerForMode(currentSceneMode);
-    
-    log("info", "Camera controls: Ultra-slow zoom (20.0x), zoom-to-pointer enabled, collision ON, min height 10m");
+
+    log("info", "Camera controls: Reduced zoom sensitivity (0.4x), zoom-to-pointer enabled, collision ON, min height 10m");
   }
 
   function configureCameraControllerForMode(mode) {
@@ -2612,65 +2620,22 @@
     const controller = viewer.scene.screenSpaceCameraController;
     const is2d = String(mode || "3d").toLowerCase() === "2d";
     
-    // Enable all inputs EXCEPT zoom (we have custom zoom handler)
+    // Use Cesium default input mapping
     controller.enableInputs = true;
     controller.enableTranslate = true;
-    controller.enableZoom = false;  // CRITICAL: Disabled - custom handler takes over
+    controller.enableZoom = true;
     controller.enableRotate = true;
     controller.enableTilt = true;
-    controller.enableLook = false;  // Disabled for GIS navigation
-
-    if (Cesium && Cesium.CameraEventType) {
-      if (is2d) {
-        controller.rotateEventTypes = [];
-        controller.tiltEventTypes = [];
-        controller.translateEventTypes = [
-          Cesium.CameraEventType.LEFT_DRAG,
-          Cesium.CameraEventType.MIDDLE_DRAG,
-          Cesium.CameraEventType.RIGHT_DRAG,
-        ];
-      } else {
-        if (panModeActive) {
-          controller.rotateEventTypes = [];
-          controller.translateEventTypes = [
-            Cesium.CameraEventType.LEFT_DRAG,
-            Cesium.CameraEventType.MIDDLE_DRAG,
-            Cesium.CameraEventType.RIGHT_DRAG,
-          ];
-        } else {
-          controller.rotateEventTypes = [Cesium.CameraEventType.LEFT_DRAG];
-          controller.translateEventTypes = [
-            Cesium.CameraEventType.MIDDLE_DRAG,
-            Cesium.CameraEventType.RIGHT_DRAG,
-          ];
-        }
-        if (Cesium.KeyboardEventModifier) {
-          controller.tiltEventTypes = [
-            {
-              eventType: Cesium.CameraEventType.LEFT_DRAG,
-              modifier: Cesium.KeyboardEventModifier.SHIFT,
-            },
-          ];
-        } else {
-          controller.tiltEventTypes = [];
-        }
-      }
-      controller.lookEventTypes = [];
-      log(
-        "info",
-        "Camera input mapping: left=rotate, right/middle=pan, shift+left=tilt"
-      );
-    }
+    controller.enableLook = true;
     
     // OPTIMIZED: Smooth inertia for natural feel
     // Higher values = more inertia = smoother feel
     controller.inertiaSpin = 0.90;  // Smooth rotation
     controller.inertiaTranslate = 0.90;  // Smooth panning
     controller.inertiaZoom = 0.75;  // Reduced inertia for more precise, responsive zoom
-    
-    // CRITICAL: Ultra-slow zoom for precise control
-    // Higher zoomFactor = slower zoom = smaller increments per scroll
-    controller.zoomFactor = 20.0;  // Ultra-slow, precise zoom (was 10.0, now 2x slower)
+
+    // Reduced zoom sensitivity for more precise user control
+    controller.zoomFactor = 0.4;
     
     // OPTIMIZED: Moderate sensitivity for precise control
     if (controller.rotateSpeed !== undefined) {
@@ -2686,7 +2651,7 @@
     controller.minimumCollisionTerrainHeight = 15000.0;
     controller.minimumZoomDistance = 10.0;  // 10 meters minimum
     
-    log("debug", "Camera sensitivity: rotation=1.5x, translation=1.5x, zoom=DISABLED (custom handler), inertia=0.90");
+    log("debug", "Camera sensitivity: rotation=1.5x, translation=1.5x, zoom=default, inertia=0.90");
   }
 
   function rectangleToBounds(rectangle) {
@@ -3899,68 +3864,7 @@
     // Set camera sensitivity for smooth performance (from smooth implementation)
     viewer.camera.percentageChanged = 0.001;
     
-    // ═══════════════════════════════════════════════════════════════════════════
-    // MOUSE EVENT DEBUG LOGGING: Comprehensive diagnostic logging for all mouse events
-    // Logs all mouse button events (left, right, middle) and wheel events with full details
-    // ═══════════════════════════════════════════════════════════════════════════
-    
-    if (viewer && viewer.canvas) {
-      const canvas = viewer.canvas;
-      
-      ['mousedown', 'mouseup', 'click', 'contextmenu', 'wheel'].forEach(eventType => {
-        canvas.addEventListener(eventType, function(event) {
-          const timestamp = new Date().toISOString();
-          const button = event.button !== undefined ? event.button : 'N/A';
-          const buttonName = button === 0 ? 'LEFT' : button === 1 ? 'MIDDLE' : button === 2 ? 'RIGHT' : button;
-          const coords = `(${event.clientX}, ${event.clientY})`;
-          const prevented = event.defaultPrevented ? 'PREVENTED' : 'ALLOWED';
-          
-          log("debug", `[${timestamp}] Mouse ${eventType}: button=${buttonName}, coords=${coords}, propagation=${prevented}`);
-          
-          if (eventType === 'wheel') {
-            log("debug", `[${timestamp}] Wheel delta: ${event.deltaY}`);
-          }
-        }, { passive: true, capture: false });
-      });
-      
-      log("info", "Mouse event debug logging enabled for all buttons (left, right, middle, wheel)");
-    }
-    
-    // ═══════════════════════════════════════════════════════════════════════════
-    // CAMERA CONTROLS: Use Cesium's Default Behavior (Like Standard 3D Software)
-    // Removed custom wheel zoom handler - let Cesium handle all mouse controls naturally
-    // ═══════════════════════════════════════════════════════════════════════════
-    
-    if (viewer && viewer.scene && viewer.scene.screenSpaceCameraController) {
-      const controller = viewer.scene.screenSpaceCameraController;
-      
-      // Enable all default Cesium camera controls
-      controller.enableInputs = true;
-      controller.enableZoom = true;      // Mouse wheel zoom
-      controller.enableRotate = true;    // Right-click drag to rotate
-      controller.enableTilt = true;      // Middle-click drag to tilt
-      controller.enableLook = true;      // Free look mode
-      controller.enableTranslate = true; // Pan mode
-      
-      // Remove minimum zoom distance constraint (was 10m, now can zoom very close)
-      controller.minimumZoomDistance = 0.1;  // 10cm minimum (effectively no limit)
-      
-      // Increase zoom sensitivity for faster zooming (default is ~1.0)
-      // Higher value = faster zoom per scroll
-      controller.zoomEventTypes = [
-        Cesium.CameraEventType.WHEEL,
-        Cesium.CameraEventType.PINCH
-      ];
-      
-      // Adjust zoom rate - multiply default by 2.5x for noticeably faster zoom
-      // This makes each scroll wheel tick zoom ~2.5x more than default
-      if (controller._zoomFactor !== undefined) {
-        controller._zoomFactor = 2.5;  // Increase from default 1.0
-      }
-      
-      log("info", "Cesium default camera controls enabled: Natural zoom, rotate, tilt, pan (like Blender/Maya)");
-      log("info", "Zoom sensitivity increased 2.5x, minimum zoom distance: 0.1m (no practical limit)");
-    }
+    log("info", "Cesium default camera controls enabled");
     
     // ═══════════════════════════════════════════════════════════════════════════
     // CRITICAL: WebGL Context Loss Recovery for Desktop Application
@@ -4100,7 +4004,6 @@
       log("error", "Unhandled promise rejection: " + reason);
     });
 
-    setup2DWheelZoomFallback();
     baseTerrainReadyPromise = attachOfflineTerrainPack();
     if (SHOW_COUNTRY_BOUNDARY_OVERLAY) {
       void attachCountryBoundaryOverlay();
@@ -4157,22 +4060,21 @@
       }
       if (pendingFocusAfterMorph) {
         pendingFocusAfterMorph = false;
-        if (pendingTerrainSceneAfterMorph) {
-          pendingTerrainSceneAfterMorph = false;
-          sceneDebug("morphComplete dispatching deferred 3D focus");
-          schedule3DFocusAfterMorph(1.0);
-        } else {
-          sceneDebug("morphComplete dispatching 2D focus");
-          focusPreferredRegion(0.8);
-        }
+        const bounds = pendingFocusBounds;
         pendingFocusBounds = null;
+        if (bounds) {
+          focusBoundsWithPadding(bounds, 1.2);
+        } else if (pendingTerrainSceneAfterMorph) {
+          focusPreferredRegion3D(1.0);
+        }
       }
+      pendingTerrainSceneAfterMorph = false;
     });
     viewer.scene.postRender.addEventListener(updateEdgeScaleWidgets);
     wireClickHandlers();
     wireStatusBarListeners();
     installSmoothInteractionManager(viewer);
-    
+
     // Force a few initial renders to ensure the globe paints
     viewer.scene.requestRender();
     window.requestAnimationFrame(function () {
@@ -4183,41 +4085,6 @@
     });
     setStatus("Offline Cesium initialized.");
     log("info", "Viewer initialized with local offline basemap pipeline");
-  }
-
-  function setup2DWheelZoomFallback() {
-    if (!viewer || !viewer.canvas || has2DWheelZoomFallback) {
-      return;
-    }
-    viewer.canvas.addEventListener(
-      "wheel",
-      function (event) {
-        if (!viewer || currentSceneMode !== "2d") {
-          return;
-        }
-        const delta = Number(event.deltaY);
-        if (!Number.isFinite(delta) || delta === 0) {
-          return;
-        }
-        event.preventDefault();
-        const cartographic = viewer.camera.positionCartographic;
-        const currentHeight = cartographic && Number.isFinite(cartographic.height) ? cartographic.height : 5000000.0;
-        
-        // CRITICAL: Ultra-slow zoom for 2D mode (10x slower than before)
-        // Was: currentHeight * 0.18 (too fast)
-        // Now: currentHeight * 0.018 (10x slower, more controllable)
-        const zoomAmount = Math.max(100.0, currentHeight * 0.018);
-        
-        if (delta > 0) {
-          viewer.camera.zoomOut(zoomAmount);
-        } else {
-          viewer.camera.zoomIn(zoomAmount);
-        }
-        viewer.scene.requestRender();
-      },
-      { passive: false }
-    );
-    has2DWheelZoomFallback = true;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -5393,31 +5260,38 @@
     }
     const camera = viewer.camera;
     
-    // CRITICAL FIX: Preserve camera orientation during zoom
-    // Store current heading, pitch, and roll before zoom operation
-    const savedHeading = camera.heading;
-    const savedPitch = camera.pitch;
-    const savedRoll = camera.roll;
+    // Get current altitude
+    const cartographic = Cesium.Cartographic.fromCartesian(camera.positionWC);
+    const altitude = cartographic.height;
     
-    const altitude = Cesium.Cartographic.fromCartesian(camera.positionWC).height;
-    const amount = Math.max(5.0, Math.abs(altitude * (factor - 1.0)));
+    // Calculate new altitude based on factor
+    // factor < 1.0 means zoom in, factor > 1.0 means zoom out
+    const newAltitude = altitude * factor;
     
-    if (factor < 1.0) {
-      camera.zoomIn(amount);
-    } else {
-      camera.zoomOut(amount);
-    }
+    // Clamp to reasonable bounds
+    const clampedAltitude = Math.max(10, Math.min(newAltitude, 100000000));
     
-    // CRITICAL FIX: Restore camera orientation after zoom
-    // This prevents the camera from resetting to random views after pitch/rotation changes
-    // Use setView with current position but restored orientation
+    log("debug", `zoomBy: factor=${factor.toFixed(4)} currentAlt=${altitude.toFixed(1)}m newAlt=${clampedAltitude.toFixed(1)}m ${factor < 1.0 ? "ZOOM_IN" : "ZOOM_OUT"}`);
+    
+    // Get current camera position in cartesian
+    const currentPos = camera.position.clone();
+    
+    // Update position with new altitude while preserving lon/lat
+    const newPosition = Cesium.Cartesian3.fromRadians(
+      cartographic.longitude,
+      cartographic.latitude,
+      clampedAltitude
+    );
+    
+    // Smooth camera movement with new altitude
     camera.setView({
-      destination: camera.position.clone(),
+      destination: newPosition,
       orientation: {
-        heading: savedHeading,
-        pitch: savedPitch,
-        roll: savedRoll
-      }
+        heading: camera.heading,
+        pitch: camera.pitch,
+        roll: camera.roll
+      },
+      duration: 0.1
     });
     
     requestSceneRender();
@@ -6708,12 +6582,14 @@
       requestSceneRender();
     },
     zoomIn: function () {
-      zoomBy(0.7);
-      log("debug", "Zoom in");
+      log("debug", "=== ZOOM IN BUTTON PRESSED ===");
+      zoomBy(0.98);
+      log("debug", "Zoom in button completed");
     },
     zoomOut: function () {
-      zoomBy(1.3);
-      log("debug", "Zoom out");
+      log("debug", "=== ZOOM OUT BUTTON PRESSED ===");
+      zoomBy(1.02);
+      log("debug", "Zoom out button completed");
     },
     zoomToExtent: function () {
       zoomToExtent();

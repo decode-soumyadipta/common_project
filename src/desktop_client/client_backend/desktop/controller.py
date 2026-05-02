@@ -5,6 +5,7 @@ import ipaddress
 import json
 import logging
 import math
+import re
 from pathlib import Path
 from typing import Callable
 from urllib.parse import urlparse
@@ -958,6 +959,7 @@ class DesktopController:
         self, assets: list[dict], label: str, event_driven: bool = False
     ) -> None:
         """Internal method to apply search results with optional event-driven optimization."""
+        assets = self._dedupe_assets_prefer_cog(assets)
         self.panel.assets_combo.clear()
         self._asset_cache = {}
         previous_assets = self._search_result_assets_by_path
@@ -1110,6 +1112,41 @@ class DesktopController:
             "Preprocessed %d assets for terabyte-scale performance", len(processed)
         )
         return processed
+
+    @staticmethod
+    def _asset_identity_key(asset: dict) -> str:
+        file_name = str(asset.get("file_name") or asset.get("file_path") or "")
+        base = file_name.replace("\\", "/").split("/")[-1].lower()
+        base = re.sub(r"_3857\.cog\.(tif|tiff)$", ".tif", base)
+        base = re.sub(r"\.cog\.(tif|tiff)$", ".tif", base)
+        base = re.sub(r"_3857\.(tif|tiff)$", ".tif", base)
+        base = re.sub(r"\.(tif|tiff|jp2|j2k|mbtiles)$", "", base)
+        kind = str(asset.get("kind") or "").lower()
+        return f"{kind}:{base}"
+
+    @staticmethod
+    def _is_preferred_cog_asset(asset: dict) -> bool:
+        name = str(asset.get("file_name") or asset.get("file_path") or "").lower()
+        return ".cog." in name or name.endswith(".cog.tif") or name.endswith(".cog.tiff")
+
+    def _dedupe_assets_prefer_cog(self, assets: list[dict]) -> list[dict]:
+        if not assets:
+            return assets
+        deduped: list[dict] = []
+        index_by_key: dict[str, int] = {}
+        for asset in assets:
+            key = self._asset_identity_key(asset)
+            if key in index_by_key:
+                existing_idx = index_by_key[key]
+                existing = deduped[existing_idx]
+                if self._is_preferred_cog_asset(asset) and not self._is_preferred_cog_asset(existing):
+                    deduped[existing_idx] = asset
+                continue
+            index_by_key[key] = len(deduped)
+            deduped.append(asset)
+        if len(deduped) != len(assets):
+            self._logger.info("Deduped assets: %d -> %d (COG preferred)", len(assets), len(deduped))
+        return deduped
 
     def _sync_search_visibility_layers_event_driven(self) -> None:
         """Synchronize search visibility layers with event-driven optimization."""
@@ -1948,6 +1985,7 @@ class DesktopController:
         try:
             # Force a fresh API call without any caching
             assets = self.api.list_assets()
+            assets = self._dedupe_assets_prefer_cog(assets)
 
             # Log the API response for debugging
             self._logger.info(f"API returned {len(assets) if assets else 0} assets")
