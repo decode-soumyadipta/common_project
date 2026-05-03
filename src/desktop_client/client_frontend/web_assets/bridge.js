@@ -553,11 +553,9 @@
       targetViewer.canvas.clientHeight * 0.5,
     );
     var lonLat = getLonLatFromViewer(targetViewer, center);
-    var text = lonLat
-      ? "lon: " + lonLat.lon.toFixed(6) + ", lat: " + lonLat.lat.toFixed(6)
-      : "lon: ---, lat: ---";
-    var coords = document.getElementById("comparatorCoords" + (idx >= 0 ? idx : 0));
-    if (coords) coords.textContent = text;
+    if (lonLat) {
+      emitMouseCoordinates(lonLat.lon, lonLat.lat);
+    }
   }
 
   function sceneToWindowCoordinates(targetScene, worldCartesian) {
@@ -735,12 +733,18 @@
     }
 
     const isDem = String(layerType || "").toLowerCase() === "dem";
+    const layerKey = targetViewer.__comparatorLayerKey || null;
+    const definition = layerKey ? layerDefinitions.get(layerKey) : null;
+    const focusRect = definition ? rectangleFromBounds(definition.bounds || null) : null;
 
     if (!isDem) {
       // Imagery-only pane → force strict 2D flat map view.
       // Morphing to SCENE2D prevents pitch/tilt altogether.
       if (targetViewer.scene.mode !== Cesium.SceneMode.SCENE2D) {
         targetViewer.scene.morphTo2D(0.0);
+      }
+      if (focusRect) {
+        focusComparatorViewerToRectangle(targetViewer, layerType, focusRect);
       }
       return;
     }
@@ -754,6 +758,9 @@
       } else {
         targetViewer.scene.morphTo3D(0.0);
       }
+    }
+    if (focusRect) {
+      focusComparatorViewerToRectangle(targetViewer, layerType, focusRect);
     }
   }
 
@@ -939,7 +946,6 @@
           for (var _pi = 0; _pi < _total; _pi++) {
             var targetV = comparatorViewers[_pi];
             var crosshair = document.querySelector("#comparatorPane" + _pi + " .comparatorCrosshair");
-            var coords = document.getElementById("comparatorCoords" + _pi);
             if (!crosshair) continue;
 
             var screenPos;
@@ -952,12 +958,10 @@
             }
 
             applyCrosshairScreenPosition(crosshair, targetV, screenPos);
+          }
 
-            if (coords) {
-              coords.textContent = srcLonLat
-                ? "lon: " + srcLonLat.lon.toFixed(6) + ", lat: " + srcLonLat.lat.toFixed(6)
-                : "lon: ---, lat: ---";
-            }
+          if (srcLonLat) {
+            emitMouseCoordinates(srcLonLat.lon, srcLonLat.lat);
           }
         });
       })(_bi);
