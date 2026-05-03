@@ -4324,50 +4324,15 @@
   // ═══════════════════════════════════════════════════════════════════════════
 
   // ── Status-bar bridge emitters (QGIS-style) ──────────────────────────────
-  function emitMouseCoordinates(lon, lat, screenPosition) {
+  function emitMouseCoordinates(lon, lat) {
     if (!bridge || !bridge.on_mouse_coordinates) return;
     const now = Date.now();
-    const throttleMs = isInteracting ? 120 : (currentSceneMode === "2d" ? 120 : _SB_COORD_THROTTLE_MS);
+    const throttleMs = isInteracting ? 16 : (currentSceneMode === "2d" ? 60 : _SB_COORD_THROTTLE_MS);
     if (now - _sbLastCoordEmitMs < throttleMs) return;
     _sbLastCoordEmitMs = now;
-    
-    // CRITICAL: Only sample elevation when DEM is active AND cursor is over DEM terrain
-    // Elevation should be blank (-9999) when:
-    // 1. No DEM layer is loaded (activeDemContext is null)
-    // 2. Cursor is not over actual DEM terrain surface
-    let elevM = -9999;
-    
-    // Check if DEM is actually active
-    const isDemActive = activeDemContext && activeDemContext.visible;
-    
-    if (isDemActive && currentSceneMode !== "2d") {
-      try {
-        if (viewer && viewer.scene && viewer.scene.globe && viewer.terrainProvider && screenPosition) {
-          // Check if we have actual DEM terrain (not just ellipsoid)
-          const hasRealTerrain = viewer.terrainProvider && 
-                                 viewer.terrainProvider.constructor.name !== 'EllipsoidTerrainProvider' &&
-                                 !(viewer.terrainProvider instanceof Cesium.EllipsoidTerrainProvider);
-          
-          if (hasRealTerrain) {
-            // Use scene.globe.pick to check if cursor is actually over terrain surface
-            const ray = viewer.camera.getPickRay(screenPosition);
-            if (ray) {
-              const pickedPosition = viewer.scene.globe.pick(ray, viewer.scene);
-              // Only sample elevation if we actually picked the globe surface (not ellipsoid fallback)
-              if (pickedPosition) {
-                const carto = Cesium.Cartographic.fromDegrees(lon, lat);
-                const sampled = viewer.scene.globe.getHeight(carto);
-                if (typeof sampled === "number" && Number.isFinite(sampled)) {
-                  elevM = sampled;
-                }
-              }
-            }
-          }
-        }
-      } catch (_) {}
-    }
-    
-    bridge.on_mouse_coordinates(lon, lat, elevM);
+
+    // Elevation field has been removed from the UI; emit lon/lat only.
+    bridge.on_mouse_coordinates(lon, lat);
   }
 
   function emitCameraChanged() {
@@ -4714,11 +4679,27 @@
     }, Cesium.ScreenSpaceEventType.LEFT_UP);
 
     handler.setInputAction(function (movement) {
+      let statusCoordEmitted = false;
       if (movement && movement.endPosition) {
         if (window.OfflineGISCursorControls) {
           window.OfflineGISCursorControls.lastSearchCursorScreenPosition = movement.endPosition;
         }
         updateAnnotationHover(movement.endPosition);
+
+        // Keep status-bar lon/lat responsive during drag using a cheap ellipsoid pick.
+        let fastLonLat = null;
+        if (isInteracting) {
+          const ellipsoidCart = viewer.camera.pickEllipsoid(movement.endPosition, viewer.scene.globe.ellipsoid);
+          if (ellipsoidCart) {
+            fastLonLat = cartesianToLonLat(ellipsoidCart);
+          }
+        } else {
+          fastLonLat = getLonLatFromScreen(movement.endPosition);
+        }
+        if (fastLonLat) {
+          emitMouseCoordinates(fastLonLat.lon, fastLonLat.lat);
+          statusCoordEmitted = true;
+        }
       }
       if (
         isInteracting &&
@@ -4760,8 +4741,8 @@
       
       // Always emit mouse coordinates for status bar (not just during polygon drawing)
       const lonLat = getLonLatFromScreen(movement.endPosition);
-      if (lonLat) {
-        emitMouseCoordinates(lonLat.lon, lonLat.lat, movement.endPosition);
+      if (lonLat && !statusCoordEmitted) {
+        emitMouseCoordinates(lonLat.lon, lonLat.lat);
       }
 
       // Live rubber-band line for elevation profile mode — mirrors distance tool approach
@@ -4880,7 +4861,7 @@
       }
       // Clear status bar coordinates when cursor leaves the map
       if (bridge && bridge.on_mouse_coordinates) {
-        bridge.on_mouse_coordinates(0, 0, -9999);
+        bridge.on_mouse_coordinates(0, 0);
       }
     });
   }

@@ -15,8 +15,7 @@ class WebBridge(QObject):
     # ── Status-bar signals ───────────────────────────────────────────────
     # Emitted continuously as the user moves the cursor over the globe.
     # lon / lat are in decimal degrees (WGS-84 / EPSG:4326).
-    # elevation_m is terrain height in metres; -9999 when not available.
-    mouseCoordinates = Signal(float, float, float)
+    mouseCoordinates = Signal(float, float)
 
     # Emitted on every camera move: approximate scale denominator + heading + pitch.
     cameraChanged = Signal(float, float, float)
@@ -75,9 +74,9 @@ class WebBridge(QObject):
     def on_comparator_pane_state(self, payload_json: str) -> None:
         self.comparatorPaneStateChanged.emit(payload_json)
 
-    @Slot(float, float, float)
-    def on_mouse_coordinates(self, lon: float, lat: float, elevation_m: float) -> None:
-        self.mouseCoordinates.emit(lon, lat, elevation_m)
+    @Slot(float, float)
+    def on_mouse_coordinates(self, lon: float, lat: float) -> None:
+        self.mouseCoordinates.emit(lon, lat)
 
     @Slot(float, float, float)
     def on_camera_changed(self, scale_denominator: float, heading_deg: float, pitch_deg: float) -> None:

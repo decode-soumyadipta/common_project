@@ -5,11 +5,11 @@ Clean, minimal status bar for the Offline 3-D GIS desktop application.
 
 Layout:
   ┌──────────────────────────────────────────────────────────────────────────┐
-  │ [Progress Bar] │ Lon: 87.231456° │ Lat: 23.710234° │ UTM: 45N 500000 mE │ Elev: 312.45 m │ EPSG:4326 │
+    │ [Progress Bar] │ Lon: 87.231456° │ Lat: 23.710234° │ UTM: 45N 500000 mE │ EPSG:4326 │
   └──────────────────────────────────────────────────────────────────────────┘
 
 Signals consumed (from WebBridge via the QWebChannel pipe):
-  - mouseCoordinates(lon: float, lat: float, elevation_m: float)
+    - mouseCoordinates(lon: float, lat: float)
   - cameraChanged(scale_denominator: float, heading_deg: float)
   - loadingProgress(percent: int, message: str)
 """
@@ -226,8 +226,6 @@ class GISStatusBar(QStatusBar):
 
         # ── Coordinate precision ──────────────────────────────────────────
         self._coord_decimal_places = 6
-        self._elev_decimal_places = 2
-
         # ── Progress priority tracking ────────────────────────────────────
         # Computation progress (fill volume, slope, etc.) takes priority over
         # tile-loading progress so the two don't fight each other.
@@ -237,14 +235,13 @@ class GISStatusBar(QStatusBar):
     # Slots wired to WebBridge signals
     # ------------------------------------------------------------------
 
-    @Slot(float, float, float)
-    def on_mouse_coordinates(self, lon: float, lat: float, elevation_m: float) -> None:
+    @Slot(float, float)
+    def on_mouse_coordinates(self, lon: float, lat: float) -> None:
         """Receive live mouse coordinates from the CesiumJS bridge.
 
         Args:
             lon: Longitude in degrees.
             lat: Latitude in degrees.
-            elevation_m: Elevation in meters (unused, elevation display removed).
         """
         # Check if coordinates are valid
         if not (math.isfinite(lon) and math.isfinite(lat)):
@@ -391,14 +388,6 @@ class GISStatusBar(QStatusBar):
             decimal_places: Number of decimal places (1-10).
         """
         self._coord_decimal_places = max(1, min(10, decimal_places))
-
-    def set_elevation_precision(self, decimal_places: int) -> None:
-        """Set the number of decimal places for elevation display.
-
-        Args:
-            decimal_places: Number of decimal places (0-4).
-        """
-        self._elev_decimal_places = max(0, min(4, decimal_places))
 
     def clear_coordinates(self) -> None:
         """Reset coord display when cursor leaves the map."""
