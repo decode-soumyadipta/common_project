@@ -560,6 +560,7 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self.gis_status_bar)
         self.bridge.mouseCoordinates.connect(self.gis_status_bar.on_mouse_coordinates)
         self.bridge.cameraChanged.connect(self.gis_status_bar.on_camera_changed)
+        self.bridge.cameraChanged.connect(self.panel.update_camera_info)
         self.bridge.loadingProgress.connect(self.gis_status_bar.on_loading_progress)
         self.bridge.renderBusy.connect(self.gis_status_bar.on_render_busy)
         self.bridge.measureCursorChanged.connect(self._on_measure_cursor_changed)

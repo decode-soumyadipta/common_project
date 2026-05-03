@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from qtpy.QtCore import Qt, Signal, QTimer
+from qtpy.QtCore import Qt, Signal, QTimer, Slot
 from qtpy.QtGui import QColor, QBrush, QPalette
 from qtpy.QtWidgets import (
     QApplication,
@@ -383,12 +383,11 @@ class ControlPanel(QWidget):
 
         self.assets_combo = QComboBox()
         self.refresh_assets_btn = QPushButton("Refresh")
-        self.add_layer_btn = QPushButton("Load Selected")
+        # add_layer_btn removed per user request
 
         self.assets_combo.setToolTip(
             "Catalog entries are metadata records. Raw data stays on storage."
         )
-        self.add_layer_btn.setToolTip("Render selected raster as imagery overlay.")
         self.refresh_assets_btn.setToolTip("Refresh asset list from catalog.")
 
         self.layer_load_status = QLabel("Status: idle")
@@ -406,7 +405,6 @@ class ControlPanel(QWidget):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
         btn_row.addWidget(self.refresh_assets_btn)
-        btn_row.addWidget(self.add_layer_btn)
         assets_layout.addLayout(btn_row)
 
         assets_layout.addWidget(self.layer_load_status)
@@ -704,17 +702,9 @@ class ControlPanel(QWidget):
         self.pitch_value.setMinimumWidth(64)
         self.rotate_left_btn = QPushButton("Rotate Left")
         self.rotate_right_btn = QPushButton("Rotate Right")
-        self.dem_exaggeration_slider = QSlider(Qt.Orientation.Horizontal)
-        self.dem_exaggeration_slider.setRange(50, 800)
-        self.dem_exaggeration_slider.setValue(150)
-        self.dem_exaggeration_value = QLabel()
-        self.dem_exaggeration_value.setAlignment(
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-        )
-        self.dem_exaggeration_value.setMinimumWidth(64)
         self.dem_hillshade_slider = QSlider(Qt.Orientation.Horizontal)
         self.dem_hillshade_slider.setRange(0, 100)
-        self.dem_hillshade_slider.setValue(75)
+        self.dem_hillshade_slider.setValue(0)
         self.dem_hillshade_value = QLabel()
         self.dem_hillshade_value.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
@@ -724,7 +714,6 @@ class ControlPanel(QWidget):
         self.dem_color_mode_combo.addItem("White relief", "gray")
         self.dem_color_mode_combo.addItem("Color relief", "terrain")
         self.dem_color_mode_combo.addItem("Slope map (deg)", "slope")
-        self.dem_color_mode_combo.addItem("Aspect map (deg)", "aspect")
         self.dem_color_mode_combo.setCurrentIndex(0)
         self.rgb_view_mode_combo = QComboBox()
         self.rgb_view_mode_combo.addItem("3D Terrain Scene", "3d")
@@ -779,11 +768,6 @@ class ControlPanel(QWidget):
         # DEM-specific controls (initially hidden)
         dem_label = QLabel("<b>Terrain</b>")
         view_layout.addWidget(dem_label)
-        exagg_layout = QHBoxLayout()
-        exagg_layout.addWidget(QLabel("Exaggeration:"))
-        exagg_layout.addWidget(self.dem_exaggeration_slider, 1)
-        exagg_layout.addWidget(self.dem_exaggeration_value)
-        view_layout.addLayout(exagg_layout)
         hillshade_layout = QHBoxLayout()
         hillshade_layout.addWidget(QLabel("Hillshade:"))
         hillshade_layout.addWidget(self.dem_hillshade_slider, 1)
@@ -800,7 +784,6 @@ class ControlPanel(QWidget):
             self.brightness_slider,
             self.contrast_slider,
             self.pitch_slider,
-            self.dem_exaggeration_slider,
             self.dem_hillshade_slider,
         ):
             slider.valueChanged.connect(self._update_display_value_labels)
@@ -810,21 +793,40 @@ class ControlPanel(QWidget):
         self.measure_label = QLabel("N/A")
         self.status_box = QTextEdit()
         self.status_box.setReadOnly(True)
-        self.status_box.setMaximumHeight(120)
+        self.status_box.setAcceptRichText(True)
+        self.status_box.setMinimumHeight(180)
+        self.status_box.setStyleSheet("""
+            QTextEdit {
+                background: #0d1117;
+                border: 1px solid #30363d;
+                border-radius: 6px;
+                font-family: 'Consolas', 'Cascadia Code', 'Monaco', monospace;
+                font-size: 11px;
+                color: #c9d1d9;
+                padding: 6px;
+            }
+            QScrollBar:vertical {
+                background: #161b22;
+                width: 8px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:vertical {
+                background: #30363d;
+                border-radius: 4px;
+                min-height: 20px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #484f58;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+        """)
 
         self.log_box = QGroupBox("Activity Log")
         log_layout = QVBoxLayout(self.log_box)
-        log_layout.setSpacing(8)
-        log_layout.setContentsMargins(10, 10, 10, 10)
-        click_row = QHBoxLayout()
-        click_row.addWidget(QLabel("Last Click:"))
-        click_row.addWidget(self.click_label, 1)
-        log_layout.addLayout(click_row)
-        measure_row = QHBoxLayout()
-        measure_row.addWidget(QLabel("Distance:"))
-        measure_row.addWidget(self.measure_label, 1)
-        log_layout.addLayout(measure_row)
-        log_layout.addWidget(QLabel("Messages:"))
+        log_layout.setSpacing(0)
+        log_layout.setContentsMargins(8, 8, 8, 8)
         log_layout.addWidget(self.status_box, 1)
 
         self.measurement_results_box = QGroupBox("Measurement Results")
@@ -875,7 +877,7 @@ class ControlPanel(QWidget):
         analysis_layout = QVBoxLayout(self.analysis_section)
         analysis_layout.setContentsMargins(8, 8, 8, 8)
         analysis_layout.setSpacing(10)
-        analysis_layout.addWidget(self.measurement_results_box)
+        # Removed measurement_results_box per user request: "remove all.just keep a scrollable thing where logs are shown"
         analysis_layout.addWidget(self.log_box, 1)
 
         self.sections.addItem(self.data_section, "Data")
@@ -1057,19 +1059,31 @@ class ControlPanel(QWidget):
         sorted_assets = [
             assets_by_path[path] for path in ordered_paths
         ] + remaining_assets
-        self._layer_order_registry = {}
+        # Preserve existing metadata and visibility while updating orders
+        new_registry = {}
         for idx, asset in enumerate(sorted_assets):
             path = str(asset.get("file_path") or "").replace("\\", "/")
             if not path:
                 continue
-            self._layer_order_registry[path] = {
-                "file_name": str(asset.get("file_name") or "-"),
-                "kind": str(asset.get("kind") or "-"),
-                "crs": str(asset.get("crs") or "-"),
-                "created_at": self._format_search_created_at(asset.get("created_at")),
-                "is_visible": visibility_map.get(path, True),
-                "order": idx,
-            }
+
+            if path in self._layer_order_registry:
+                # Existing entry: preserve its metadata and specific visibility unless overridden
+                entry = self._layer_order_registry[path].copy()
+                entry["order"] = idx
+                if path in visibility_map:
+                    entry["is_visible"] = visibility_map[path]
+                new_registry[path] = entry
+            else:
+                # New entry: use provided visibility or default to True
+                new_registry[path] = {
+                    "file_name": str(asset.get("file_name") or "-"),
+                    "kind": str(asset.get("kind") or "-"),
+                    "crs": str(asset.get("crs") or "-"),
+                    "created_at": self._format_search_created_at(asset.get("created_at")),
+                    "is_visible": visibility_map.get(path, True),
+                    "order": idx,
+                }
+        self._layer_order_registry = new_registry
 
         print(f"DEBUG: Sorted assets order:")
         for i, asset in enumerate(sorted_assets):
@@ -1378,17 +1392,41 @@ class ControlPanel(QWidget):
         brightness_scale = self.brightness_slider.value() / 100.0
         contrast_scale = self.contrast_slider.value() / 100.0
         pitch_degrees = int(self.pitch_slider.value())
-        exaggeration_scale = self.dem_exaggeration_slider.value() / 100.0
         hillshade_percent = int(self.dem_hillshade_slider.value())
 
         self.brightness_value.setText(f"{brightness_scale:.2f}x")
         self.contrast_value.setText(f"{contrast_scale:.2f}x")
         self.pitch_value.setText(f"{pitch_degrees} deg")
-        self.dem_exaggeration_value.setText(f"{exaggeration_scale:.2f}x")
         self.dem_hillshade_value.setText(f"{hillshade_percent}%")
 
     def log(self, message: str) -> None:
-        self.status_box.append(message)
+        """Append a message to the Activity Log with coloured tags for warnings/errors."""
+        import html as _html
+        from datetime import datetime as _dt
+        ts = _dt.now().strftime("%H:%M:%S")
+        msg_lower = message.lower()
+        safe_msg = _html.escape(message)
+        if "error" in msg_lower or "failed" in msg_lower or "exception" in msg_lower:
+            line = (
+                f'<span style="color:#6e7681">[{ts}]</span> '
+                f'<span style="background:#3d0c0c;color:#ff7b7b;border-radius:3px;padding:1px 5px;font-weight:bold;">ERR</span> '
+                f'<span style="color:#ffa6a6">{safe_msg}</span>'
+            )
+        elif "warn" in msg_lower:
+            line = (
+                f'<span style="color:#6e7681">[{ts}]</span> '
+                f'<span style="background:#3d2a00;color:#f0b429;border-radius:3px;padding:1px 5px;font-weight:bold;">WRN</span> '
+                f'<span style="color:#f0d080">{safe_msg}</span>'
+            )
+        else:
+            line = (
+                f'<span style="color:#6e7681">[{ts}]</span> '
+                f'<span style="color:#c9d1d9">{safe_msg}</span>'
+            )
+        self.status_box.append(line)
+        # Auto-scroll to bottom
+        sb = self.status_box.verticalScrollBar()
+        sb.setValue(sb.maximum())
 
     def add_measurement_result_entry(self, message: str) -> None:
         item = QListWidgetItem(message)
@@ -1402,6 +1440,27 @@ class ControlPanel(QWidget):
     def remove_measurement_result_row(self, row: int) -> None:
         if 0 <= row < self.measurement_results_list.count():
             self.measurement_results_list.takeItem(row)
+
+    @Slot(float, float, float)
+    def update_camera_info(self, scale_denominator: float, heading_deg: float, pitch_deg: float) -> None:
+        """Update the pitch slider from live camera telemetry without triggering a bounce-back."""
+        if not self.pitch_slider.isEnabled():
+            return
+            
+        # Pitch from Cesium is roughly -90 (looking straight down) to 0 (looking horizontal)
+        # Or it might be positive depending on the coordinate frame, but usually negative in the slider.
+        # Clamp it to the slider range and set the value.
+        pitch_val = int(pitch_deg)
+        if pitch_val > self.pitch_slider.maximum():
+            pitch_val = self.pitch_slider.maximum()
+        elif pitch_val < self.pitch_slider.minimum():
+            pitch_val = self.pitch_slider.minimum()
+            
+        # Set value silently so we don't emit valueChanged and cause an infinite loop
+        self.pitch_slider.blockSignals(True)
+        self.pitch_slider.setValue(pitch_val)
+        self.pitch_slider.blockSignals(False)
+        self._update_display_value_labels()
 
     def add_selected_files(self, file_paths: list[str]) -> None:
         """Add files to the selection list with format-specific validation."""
@@ -2272,7 +2331,6 @@ class ControlPanel(QWidget):
             self.ingest_btn,
             self.assets_refresh_btn,
             self.refresh_assets_btn,
-            self.add_layer_btn,
             self.rotate_left_btn,
             self.rotate_right_btn,
         ):

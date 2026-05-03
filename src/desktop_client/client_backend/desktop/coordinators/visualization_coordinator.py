@@ -54,32 +54,27 @@ class VisualizationCoordinator:
         self, _checked: bool | None = None, log_to_panel: bool = True
     ) -> None:
         c = self._controller
-        exaggeration = c.panel.dem_exaggeration_slider.value() / 100.0
         hillshade_strength = c.panel.dem_hillshade_slider.value() / 100.0
 
         # Add debug logging
         c._logger.info(
-            "apply_dem_settings called: exaggeration=%.2f hillshade=%.2f log_to_panel=%s",
-            exaggeration,
+            "apply_dem_settings called: hillshade=%.2f log_to_panel=%s",
             hillshade_strength,
             log_to_panel,
         )
 
-        c._run_js_call("setDemProperties", exaggeration, hillshade_strength)
+        c._run_js_call("setDemProperties", hillshade_strength)
         if log_to_panel:
             c.panel.log(
-                "Applied DEM settings "
-                f"exaggeration={exaggeration:.2f}, hillshade={hillshade_strength:.2f}"
+                f"Applied DEM settings hillshade={hillshade_strength:.2f}"
             )
             c._logger.info(
-                "Applied DEM settings exaggeration=%.2f hillshade=%.2f",
-                exaggeration,
+                "Applied DEM settings hillshade=%.2f",
                 hillshade_strength,
             )
             return
         c._logger.debug(
-            "Live DEM settings exaggeration=%.2f hillshade=%.2f",
-            exaggeration,
+            "Live DEM settings hillshade=%.2f",
             hillshade_strength,
         )
 
@@ -92,7 +87,6 @@ class VisualizationCoordinator:
                 "gray": "White relief",
                 "terrain": "Color relief",
                 "slope": "Slope map (deg)",
-                "aspect": "Aspect map (deg)",
             }.get(color_mode, color_mode)
             c.panel.log(f"Applied DEM style: {label}")
             c._logger.info("Applied DEM style=%s", color_mode)

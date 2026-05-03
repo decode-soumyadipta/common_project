@@ -275,12 +275,15 @@ class DesktopController:
         return summary
 
     def _clear_asset_caches(self) -> None:
-        """Clear all asset caches to ensure fresh data."""
+        """Clear asset catalog caches to ensure fresh data on next fetch.
+
+        NOTE: _search_result_assets_by_path and _search_layer_visibility are
+        intentionally NOT cleared here – those belong to the user's active
+        search session and must survive catalog refreshes.
+        """
         self._asset_cache.clear()
         self._dem_asset_kind_cache.clear()
-        self._search_result_assets_by_path.clear()
-        self._search_layer_visibility.clear()
-        self._loaded_search_layer_keys.clear()
+        # Do NOT clear _search_result_assets_by_path or _search_layer_visibility
 
         # Clear additional state variables that might cache data
         self._active_dem_search_layer_key = None
@@ -298,17 +301,12 @@ class DesktopController:
         if hasattr(self.api, "_cache"):
             self.api._cache.clear()
 
-        # Clear the assets combo box completely
+        # Clear only the assets combo box - this is necessary as it's the main catalog selector
         self.panel.assets_combo.clear()
 
-        # Clear the uploaded assets table completely
-        self.panel.uploaded_assets_list.clear()
-        self.panel.uploaded_assets_list.setRowCount(0)
-
-        # Clear search results table
-        if hasattr(self.panel, "search_results_table"):
-            self.panel.search_results_table.clear()
-            self.panel.search_results_table.setRowCount(0)
+        # NOTE: We no longer clear search_results_table or uploaded_assets_list here.
+        # This ensures that clicking 'Refresh' doesn't wipe the user's current view.
+        # The tables will be updated naturally when fresh data arrives.
 
         # Reset state variables
         self.state.selected_asset = None
@@ -405,9 +403,7 @@ class DesktopController:
         self._connect_button(
             self.panel.refresh_assets_btn.clicked, "Refresh Assets", self.refresh_assets
         )
-        self._connect_button(
-            self.panel.add_layer_btn.clicked, "Add Layer", self.add_selected_layer
-        )
+        # add_layer_btn was removed; no connection needed
 
         # Asset deletion
         self.panel.asset_delete_requested.connect(self.delete_asset)
@@ -417,9 +413,6 @@ class DesktopController:
             self._on_visual_slider_changed
         )
         self.panel.contrast_slider.valueChanged.connect(self._on_visual_slider_changed)
-        self.panel.dem_exaggeration_slider.valueChanged.connect(
-            self._on_dem_slider_changed
-        )
         self.panel.dem_hillshade_slider.valueChanged.connect(
             self._on_dem_slider_changed
         )
@@ -623,205 +616,6 @@ class DesktopController:
             self._logger.error("Flyto failed: %s", e, exc_info=True)
             self.panel.log(f"Camera movement failed: {e}")
 
-    # DEPRECATED: This method has been replaced by enqueue_selected_files
-    # The new UI uses file selection instead of path text input
-    def enqueue_selected_path(self) -> None:
-        self.panel.log(
-            "This method is deprecated. Use the new file selection interface."
-        )
-        return
-        if not folder_path.exists():
-            self.panel.log(f"Path does not exist: {path}")
-            return
-        if not folder_path.is_dir():
-            self.panel.log(f"Path is not a folder: {path}")
-            return
-
-        # Use intelligent file grouping for robust multi-file ingestion
-        try:
-            from core_shared.ingestion.services.file_grouping_service import (
-                FileGroupingService,
-            )
-
-            self.panel.log("Analyzing folder structure and grouping related files...")
-            self.panel.ingest_progress_bar.setRange(0, 0)
-            self.panel.ingest_status_value.setText("ANALYZING")
-            self.panel.ingest_step_value.setText(
-                "Intelligent file grouping in progress"
-            )
-            self.panel.ingest_item_value.setText(f"Scanning: {folder_path.name}")
-
-            # Group files intelligently
-            grouping_service = FileGroupingService()
-            file_groups = grouping_service.group_files_in_folder(
-                folder_path=folder_path,
-                recursive=True,  # Enable recursive scanning
-                max_groups=None,  # Process all groups
-            )
-
-            # Filter groups by confidence score (only process high-confidence groups)
-            high_confidence_groups = [
-                group
-                for group in file_groups
-                if group.confidence_score >= 0.5  # Minimum confidence threshold
-            ]
-
-            if not high_confidence_groups:
-                self.panel.log(
-                    f"No suitable geospatial file groups found in folder: {path}"
-                )
-                self.panel.log(
-                    "Supported formats: .tif, .tiff, .jp2, .j2k with optional auxiliary files (.prj, .tfw, .aux.xml)"
-                )
-                self.panel.log(
-                    f"Found {len(file_groups)} total groups, but none met confidence threshold (≥0.5)"
-                )
-
-                # Show details about what was found
-                if file_groups:
-                    self.panel.log("Low-confidence groups found:")
-                    for group in file_groups[:3]:  # Show first 3
-                        self.panel.log(
-                            f"  - {group.scene_name} (confidence: {group.confidence_score:.2f}, method: {group.grouping_method})"
-                        )
-
-                self.panel.ingest_progress_bar.setRange(0, 100)
-                self.panel.ingest_progress_bar.setValue(0)
-                self.panel.ingest_status_value.setText("NO_FILES")
-                self.panel.ingest_step_value.setText("No suitable files found")
-                return
-
-            # Extract primary raster files for ingestion
-            raster_files = [str(group.primary_file) for group in high_confidence_groups]
-            total_files = sum(
-                1 + len(group.auxiliary_files) for group in high_confidence_groups
-            )
-
-            self._logger.info(
-                "Intelligent grouping: Found %d file groups (%d primary rasters, %d total files) in %s",
-                len(high_confidence_groups),
-                len(raster_files),
-                total_files,
-                path,
-            )
-
-            # Log grouping statistics
-            method_counts = {}
-            for group in high_confidence_groups:
-                method_counts[group.grouping_method] = (
-                    method_counts.get(group.grouping_method, 0) + 1
-                )
-
-            self.panel.log(f"Intelligent file grouping completed:")
-            self.panel.log(
-                f"  - Found {len(high_confidence_groups)} file groups ({total_files} total files)"
-            )
-            self.panel.log(
-                f"  - Grouping methods: {', '.join(f'{method}: {count}' for method, count in method_counts.items())}"
-            )
-            self.panel.log(
-                f"  - Average confidence: {sum(g.confidence_score for g in high_confidence_groups) / len(high_confidence_groups):.2f}"
-            )
-
-            # Show sample groups
-            self.panel.log("Sample groups:")
-            for i, group in enumerate(high_confidence_groups[:3]):
-                aux_count = len(group.auxiliary_files)
-                aux_info = f" + {aux_count} auxiliary files" if aux_count > 0 else ""
-                self.panel.log(
-                    f"  {i + 1}. {group.scene_name} (confidence: {group.confidence_score:.2f}){aux_info}"
-                )
-
-            if len(high_confidence_groups) > 3:
-                self.panel.log(
-                    f"  ... and {len(high_confidence_groups) - 3} more groups"
-                )
-
-        except Exception as e:
-            self._logger.error("Intelligent file grouping failed: %s", e, exc_info=True)
-            self.panel.log(f"File grouping failed: {e}")
-            self.panel.log("Falling back to simple file scanning...")
-
-            # Fallback to simple file collection
-            raster_extensions = {".tif", ".tiff", ".jp2", ".j2k"}
-            all_files = list(folder_path.iterdir())
-            raster_files = [
-                str(f)
-                for f in all_files
-                if f.is_file() and f.suffix.lower() in raster_extensions
-            ]
-
-            if not raster_files:
-                self.panel.log(f"No raster files found in folder: {path}")
-                self.panel.log(
-                    f"Supported formats: .tif, .tiff, .jp2, .j2k (excluding .mbtiles - already processed)"
-                )
-                self.panel.log(
-                    f"Found {len(all_files)} other file(s) - check file extensions"
-                )
-                return
-
-        # Show immediate queueing state
-        self.panel.ingest_progress_bar.setRange(0, 0)
-        self.panel.ingest_status_value.setText("QUEUING")
-        self.panel.ingest_step_value.setText("Sending grouped files to ingest queue")
-        self.panel.ingest_item_value.setText(f"Current: {folder_path.name}")
-        self.panel.ingest_counts_value.setText(
-            f"Processed: 0/{len(raster_files)} | Failed: 0"
-        )
-        self.panel.ingest_elapsed_value.setText("Elapsed: 00:00")
-        self.panel.append_ingest_detail(
-            f"[00:00] QUEUING - Sending {len(raster_files)} grouped file(s) to ingest queue"
-        )
-
-        try:
-            # Track asset count before ingestion for comparison
-            try:
-                self._pre_ingest_asset_count = len(self.api.list_assets())
-            except Exception:
-                self._pre_ingest_asset_count = 0
-
-            job = self.api.enqueue_ingest_job(raster_files)
-
-            # Log details about what was queued
-            self._logger.info(
-                "Enqueued ingest job: %s files, job_id=%s, total_items=%s",
-                len(raster_files),
-                job.get("id"),
-                job.get("total_items"),
-            )
-
-            # Log sample file paths for debugging
-            sample_files = raster_files[:3]
-            self._logger.info("Sample queued files: %s", sample_files)
-            if len(raster_files) > 3:
-                self._logger.info("... and %d more files", len(raster_files) - 3)
-
-        except httpx.HTTPError as exc:
-            self.panel.ingest_progress_bar.setRange(0, 100)
-            self.panel.ingest_progress_bar.setValue(0)
-            self.panel.ingest_status_value.setText("FAILED")
-            self.panel.ingest_step_value.setText("Queue request failed")
-            self._handle_api_error("Queue ingest", exc)
-            return
-
-        self.panel.ingest_progress_bar.setRange(0, 100)
-        self.state.active_ingest_job_id = str(job.get("id"))
-        self.state.pending_ingest_source_path = path
-        self.state.auto_visualize_ingest_result = (
-            True  # Enable auto-visualization for folder ingests
-        )
-        self.panel.log(
-            f"Folder queued for ingestion: {len(raster_files)} grouped file(s)"
-        )
-        self.panel.log(
-            f"Job ID: {job.get('id')} | Status: {job.get('status')} | Total: {job.get('total_items')}"
-        )
-        self._update_ingest_progress_ui(job, emit_detail=True)
-
-        # Record polling start time and start polling
-        self._ingest_poll_start_time = dt.datetime.now(dt.timezone.utc)
-        self._ingest_poll_timer.start()
 
     def search_assets_by_coordinate(self) -> None:
         """Search assets by coordinate using server-side metadata processing."""
@@ -911,7 +705,6 @@ class DesktopController:
         blockers = [
             QSignalBlocker(self.panel.brightness_slider),
             QSignalBlocker(self.panel.contrast_slider),
-            QSignalBlocker(self.panel.dem_exaggeration_slider),
             QSignalBlocker(self.panel.dem_hillshade_slider),
             QSignalBlocker(self.panel.dem_color_mode_combo),
         ]
@@ -921,9 +714,6 @@ class DesktopController:
             )
             self._set_slider_from_float_value(
                 self.panel.contrast_slider, imagery.get("contrast"), scale=100.0
-            )
-            self._set_slider_from_float_value(
-                self.panel.dem_exaggeration_slider, dem.get("exaggeration"), scale=100.0
             )
             self._set_slider_from_float_value(
                 self.panel.dem_hillshade_slider, dem.get("hillshade_alpha"), scale=100.0
@@ -959,7 +749,7 @@ class DesktopController:
         self, assets: list[dict], label: str, event_driven: bool = False
     ) -> None:
         """Internal method to apply search results with optional event-driven optimization."""
-        assets = self._dedupe_assets_prefer_cog(assets)
+        assets = self._dedupe_assets(assets)
         self.panel.assets_combo.clear()
         self._asset_cache = {}
         previous_assets = self._search_result_assets_by_path
@@ -1121,15 +911,16 @@ class DesktopController:
         base = re.sub(r"\.cog\.(tif|tiff)$", ".tif", base)
         base = re.sub(r"_3857\.(tif|tiff)$", ".tif", base)
         base = re.sub(r"\.(tif|tiff|jp2|j2k|mbtiles)$", "", base)
+        base = base.replace(" ", "_").replace("-", "_")
         kind = str(asset.get("kind") or "").lower()
         return f"{kind}:{base}"
 
     @staticmethod
-    def _is_preferred_cog_asset(asset: dict) -> bool:
+    def _is_cog_asset(asset: dict) -> bool:
         name = str(asset.get("file_name") or asset.get("file_path") or "").lower()
         return ".cog." in name or name.endswith(".cog.tif") or name.endswith(".cog.tiff")
 
-    def _dedupe_assets_prefer_cog(self, assets: list[dict]) -> list[dict]:
+    def _dedupe_assets(self, assets: list[dict]) -> list[dict]:
         if not assets:
             return assets
         deduped: list[dict] = []
@@ -1139,13 +930,45 @@ class DesktopController:
             if key in index_by_key:
                 existing_idx = index_by_key[key]
                 existing = deduped[existing_idx]
-                if self._is_preferred_cog_asset(asset) and not self._is_preferred_cog_asset(existing):
+                if not self._is_cog_asset(asset) and self._is_cog_asset(existing):
                     deduped[existing_idx] = asset
                 continue
             index_by_key[key] = len(deduped)
             deduped.append(asset)
+            
+        for asset in deduped:
+            if self._is_cog_asset(asset):
+                file_path = str(asset.get("file_path", ""))
+                if file_path:
+                    candidates = []
+                    cand1 = re.sub(r"_3857\.cog\.(tif|tiff)$", r".\1", file_path, flags=re.IGNORECASE)
+                    if cand1 != file_path:
+                        candidates.append(cand1)
+                    cand2 = re.sub(r"\.cog\.(tif|tiff)$", r".\1", file_path, flags=re.IGNORECASE)
+                    if cand2 != file_path:
+                        candidates.append(cand2)
+                    cand3 = re.sub(r"\.cog\.(tif|tiff)$", r".\1", cand1, flags=re.IGNORECASE)
+                    if cand3 != cand1 and cand3 != file_path:
+                        candidates.append(cand3)
+                        
+                    for cand in candidates:
+                        try:
+                            if Path(cand).exists():
+                                asset["file_path"] = cand
+                                asset["file_name"] = Path(cand).name
+                                if "tile_url" in asset:
+                                    try:
+                                        from core_shared.ingestion.services.tile_url_builder import build_xyz_url
+                                        asset["tile_url"] = build_xyz_url(cand)
+                                    except Exception as e:
+                                        self._logger.error("Failed to build tile_url for reverted asset: %s", e)
+                                self._logger.info("Reverted isolated COG asset to original path: %s", cand)
+                                break
+                        except Exception:
+                            pass
+                            
         if len(deduped) != len(assets):
-            self._logger.info("Deduped assets: %d -> %d (COG preferred)", len(assets), len(deduped))
+            self._logger.info("Deduped assets: %d -> %d (Original non-COG preferred)", len(assets), len(deduped))
         return deduped
 
     def _sync_search_visibility_layers_event_driven(self) -> None:
@@ -1291,12 +1114,6 @@ class DesktopController:
         else:
             self.panel.log(f"Hidden from map: {asset.get('file_name', 'asset')}")
             print(f"DEBUG: Layer hidden: {asset.get('file_name')}")
-
-        self._focus_visible_search_assets_with_enhanced_behavior(
-            force=False,
-            is_first_search=False,  # This is a toggle, not a first search
-            asset_count=len([p for p, v in self._search_layer_visibility.items() if v]),
-        )
 
         print(f"DEBUG: Calling panel.update_search_results to refresh UI")
         self.panel.update_search_results(
@@ -1985,7 +1802,7 @@ class DesktopController:
         try:
             # Force a fresh API call without any caching
             assets = self.api.list_assets()
-            assets = self._dedupe_assets_prefer_cog(assets)
+            assets = self._dedupe_assets(assets)
 
             # Log the API response for debugging
             self._logger.info(f"API returned {len(assets) if assets else 0} assets")
@@ -1994,12 +1811,13 @@ class DesktopController:
             self._handle_api_error("Catalog refresh", exc)
             return
 
-        # Clear all asset caches to ensure fresh data after database operations
+        # Clear only asset-catalog caches — do NOT touch search layer state
         self.panel.assets_combo.clear()
         self._asset_cache.clear()
         self._dem_asset_kind_cache.clear()
-        self._search_result_assets_by_path.clear()
-        self._search_layer_visibility.clear()
+        # NOTE: _search_result_assets_by_path and _search_layer_visibility are
+        # intentionally preserved so that the Search Results table is unaffected
+        # by a catalog refresh.
 
         # Check if assets is empty or None
         if not assets:
@@ -2726,7 +2544,7 @@ class DesktopController:
         self._viz.on_dem_slider_changed(_value)
 
     def _on_dem_color_mode_changed(self, _index: int) -> None:
-        self._viz.on_dem_color_mode_changed(_index)
+        self._viz.apply_dem_color_mode(log_to_panel=True)
 
     def apply_visual_settings(self, log_to_panel: bool = True) -> None:
         self._viz.apply_visual_settings(log_to_panel=log_to_panel)
@@ -4159,7 +3977,6 @@ class DesktopController:
 
         # DEM controls: enabled when DEM is visible
         for widget in (
-            self.panel.dem_exaggeration_slider,
             self.panel.dem_hillshade_slider,
             self.panel.dem_color_mode_combo,
         ):
@@ -4333,9 +4150,8 @@ class DesktopController:
                 f"Multi-band imagery detected for {file_name}: {band_count} bands, adding bidx=[1,2,3]"
             )
             query["bidx"] = [1, 2, 3]
-            # nearest resampling avoids interpolated reads that fail on non-COG
-            # GeoTIFFs on Windows (GDAL "Read failed" error)
-            query["resampling"] = "nearest"
+            # Use bilinear resampling for high fidelity rendering instead of nearest neighbor
+            query["resampling"] = "bilinear"
             # Set nodata=0 to prevent GDAL "INIT_DEST NO_DATA without defined nodata"
             # error on Windows when the file has no nodata value defined.
             if "nodata" not in query:
@@ -4360,12 +4176,6 @@ class DesktopController:
                 query["colormap_name"] = "viridis"
                 query["rescale"] = "0,90"
                 self._logger.debug(f"DEM slope mode for {file_name}: {query}")
-                return query
-            if color_mode == "aspect":
-                query["algorithm"] = "aspect"
-                query["colormap_name"] = "turbo"
-                query["rescale"] = "0,360"
-                self._logger.debug(f"DEM aspect mode for {file_name}: {query}")
                 return query
 
             query["colormap_name"] = color_mode
@@ -4399,23 +4209,32 @@ class DesktopController:
             return query
 
         if band_count >= 3 and not is_dem:
-            lows = []
-            highs = []
+            # FIX: Apply QGIS-style per-band Cumulative Count Cut (2% - 98%)
+            # This fixes both the pitch-black 16-bit rendering and the bluish tint.
+            # Passing a list of rescales allows TiTiler to stretch each band independently.
+            rescales = []
+            valid = True
             for i in range(1, min(3, band_count) + 1):
                 stat = stats.get(f"b{i}")
                 if not isinstance(stat, dict):
-                    continue
+                    valid = False
+                    break
                 low = stat.get("percentile_2", stat.get("min"))
                 high = stat.get("percentile_98", stat.get("max"))
-                if low is None or high is None:
-                    continue
-                lows.append(float(low))
-                highs.append(float(high))
-            if len(lows) == 3 and max(highs) > min(lows):
-                query["rescale"] = f"{min(lows)},{max(highs)}"
-            self._logger.debug(
-                f"Final multi-band raster query for {asset.get('file_name', '')}: {query}"
-            )
+                if low is None or high is None or float(low) >= float(high):
+                    valid = False
+                    break
+                rescales.append(f"{float(low)},{float(high)}")
+            
+            if valid and len(rescales) == 3:
+                query["rescale"] = rescales
+                self._logger.debug(
+                    f"Applied QGIS-style per-band true color correction: {query}"
+                )
+            else:
+                self._logger.debug(
+                    f"Skipped true color correction (missing stats), rendering raw."
+                )
             return query
 
         first_band = (

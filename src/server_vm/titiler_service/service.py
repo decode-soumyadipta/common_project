@@ -8,7 +8,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from titiler.application.main import app as titiler_app
 
-
 class _WindowsEncodedPathFixMiddleware(BaseHTTPMiddleware):
     """Normalize Windows drive-letter URLs passed via encoded query params."""
 

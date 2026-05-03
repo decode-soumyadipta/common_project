@@ -274,13 +274,14 @@ class GISStatusBar(QStatusBar):
         self._crs_box.label.setText(f"UTM {utm_zone}{hemisphere}")
         self._crs_box.setToolTip(f"EPSG:{utm_epsg} (UTM Zone {utm_zone}{hemisphere})")
 
-    @Slot(float, float)
-    def on_camera_changed(self, scale_denominator: float, heading_deg: float) -> None:
+    @Slot(float, float, float)
+    def on_camera_changed(self, scale_denominator: float, heading_deg: float, pitch_deg: float) -> None:
         """Receive camera scale and heading from the CesiumJS bridge.
 
         Args:
             scale_denominator: Map scale denominator (e.g., 25000 for 1:25000).
             heading_deg: Camera heading in degrees (0° = North).
+            pitch_deg: Camera pitch in degrees.
         """
         # Camera info not displayed in minimal status bar
         pass

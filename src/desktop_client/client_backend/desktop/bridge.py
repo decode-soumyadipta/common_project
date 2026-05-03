@@ -18,8 +18,8 @@ class WebBridge(QObject):
     # elevation_m is terrain height in metres; -9999 when not available.
     mouseCoordinates = Signal(float, float, float)
 
-    # Emitted on every camera move: approximate scale denominator + heading.
-    cameraChanged = Signal(float, float)
+    # Emitted on every camera move: approximate scale denominator + heading + pitch.
+    cameraChanged = Signal(float, float, float)
 
     # Emitted when the renderer starts/stops a frame batch.
     renderBusy = Signal(bool)
@@ -79,9 +79,9 @@ class WebBridge(QObject):
     def on_mouse_coordinates(self, lon: float, lat: float, elevation_m: float) -> None:
         self.mouseCoordinates.emit(lon, lat, elevation_m)
 
-    @Slot(float, float)
-    def on_camera_changed(self, scale_denominator: float, heading_deg: float) -> None:
-        self.cameraChanged.emit(scale_denominator, heading_deg)
+    @Slot(float, float, float)
+    def on_camera_changed(self, scale_denominator: float, heading_deg: float, pitch_deg: float) -> None:
+        self.cameraChanged.emit(scale_denominator, heading_deg, pitch_deg)
 
     @Slot(bool)
     def on_render_busy(self, busy: bool) -> None:
