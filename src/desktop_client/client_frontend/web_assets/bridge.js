@@ -66,6 +66,12 @@
   let comparatorActiveInputReleaseTimer = null;
   let comparatorDemRefreshTimer = null;
   const COMPARATOR_DEM_REFRESH_DEBOUNCE_MS = 120;
+  let flyThroughModeEnabled = false;
+  const flyThroughPoints = [];
+  let flyThroughPreviewLineEntity = null;
+  let flyThroughPathEntity = null;
+  let flyThroughStartButtonEntity = null;
+  let flyThroughIsPlaying = false;
   const runtime = (window.OfflineGISRuntime = window.OfflineGISRuntime || {});
   const bridgeUtils = window.OfflineGISUtils || {};
   const log = bridgeUtils.log || function (level, message) {
@@ -141,6 +147,196 @@
     }
     return { min: parts[0], max: parts[1] };
   };
+
+  function updateFlyThroughPreview(mousePos) {
+    if (!flyThroughModeEnabled) return;
+    if (flyThroughPreviewLineEntity) {
+      viewer.entities.remove(flyThroughPreviewLineEntity);
+      flyThroughPreviewLineEntity = null;
+    }
+    const points = [...flyThroughPoints];
+    if (mousePos) {
+      const mouseCart = viewer.camera.pickEllipsoid(mousePos, viewer.scene.globe.ellipsoid);
+      if (mouseCart) points.push(mouseCart);
+    }
+    if (points.length < 2) return;
+    flyThroughPreviewLineEntity = viewer.entities.add({
+      polyline: {
+        positions: points,
+        width: 3,
+        material: Cesium.Color.YELLOW.withAlpha(0.6),
+        clampToGround: true,
+      }
+    });
+  }
+
+  function finishFlyThroughPath() {
+    if (flyThroughPoints.length < 2) {
+      setStatus("Draw at least 2 points for a fly through.");
+      return;
+    }
+    if (flyThroughPreviewLineEntity) {
+      viewer.entities.remove(flyThroughPreviewLineEntity);
+      flyThroughPreviewLineEntity = null;
+    }
+    if (flyThroughPathEntity) viewer.entities.remove(flyThroughPathEntity);
+    if (flyThroughStartButtonEntity) viewer.entities.remove(flyThroughStartButtonEntity);
+
+    flyThroughPathEntity = viewer.entities.add({
+      polyline: {
+        positions: flyThroughPoints,
+        width: 4,
+        material: Cesium.Color.YELLOW,
+        clampToGround: true,
+      }
+    });
+
+    flyThroughStartButtonEntity = viewer.entities.add({
+      position: flyThroughPoints[0],
+      label: {
+        text: "\u25b6 START FLY THROUGH",
+        font: "bold 14px sans-serif",
+        fillColor: Cesium.Color.WHITE,
+        outlineColor: Cesium.Color.BLACK,
+        outlineWidth: 2,
+        showBackground: true,
+        backgroundColor: Cesium.Color.DARKGREEN,
+        pixelOffset: new Cesium.Cartesian2(0, -30),
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        heightReference: Cesium.HeightReference.RELATIVE_TO_GROUND
+      }
+    });
+    flyThroughStartButtonEntity.isFlyThroughStart = true;
+    
+    setStatus("Path complete. Click the 'START FLY THROUGH' label on the map.");
+  }
+
+  function startFlyThroughAnimation() {
+    if (flyThroughPoints.length < 2 || flyThroughIsPlaying) return;
+    flyThroughIsPlaying = true;
+    
+    // Disable drawing mode once flight starts
+    flyThroughModeEnabled = false;
+    
+    const originalView = {
+      destination: viewer.camera.position.clone(),
+      orientation: {
+        heading: viewer.camera.heading,
+        pitch: viewer.camera.pitch,
+        roll: viewer.camera.roll
+      },
+      fov: viewer.camera.frustum.fov
+    };
+
+    let currentIndex = 0;
+    viewer.scene.screenSpaceCameraController.enableInputs = false;
+    
+    // Greater Field of View for cinematic feel (approx 80 degrees)
+    viewer.camera.frustum.fov = Cesium.Math.toRadians(80.0);
+    
+    // Remove the Start button and temporary preview entities immediately
+    if (flyThroughStartButtonEntity) {
+      viewer.entities.remove(flyThroughStartButtonEntity);
+      flyThroughStartButtonEntity = null;
+    }
+    if (flyThroughPreviewLineEntity) {
+      viewer.entities.remove(flyThroughPreviewLineEntity);
+      flyThroughPreviewLineEntity = null;
+    }
+
+    function nextSegment() {
+      if (currentIndex >= flyThroughPoints.length - 1) {
+        setStatus("Fly through ending. Returning to original view...");
+        setTimeout(() => {
+          viewer.camera.flyTo({
+            destination: originalView.destination,
+            orientation: originalView.orientation,
+            duration: 2.5, // Faster return
+            complete: () => {
+              viewer.scene.screenSpaceCameraController.enableInputs = true;
+              viewer.camera.frustum.fov = originalView.fov; // Restore FOV
+              flyThroughIsPlaying = false;
+              
+              // Clear points so no more drawing can happen on this path
+              flyThroughPoints.length = 0;
+              if (flyThroughPathEntity) {
+                viewer.entities.remove(flyThroughPathEntity);
+                flyThroughPathEntity = null;
+              }
+              
+              setStatus("Fly through complete.");
+            }
+          });
+        }, 1000);
+        return;
+      }
+
+      const p1 = flyThroughPoints[currentIndex];
+      const p2 = flyThroughPoints[currentIndex + 1];
+      
+      const carto1 = Cesium.Cartographic.fromCartesian(p1);
+      const carto2 = Cesium.Cartographic.fromCartesian(p2);
+      
+      // Calculate destination: 600m above p2 for safe high-speed travel
+      const destPos = Cesium.Cartesian3.fromRadians(
+        carto2.longitude,
+        carto2.latitude,
+        carto2.height + 600
+      );
+
+      const geodesic = new Cesium.EllipsoidGeodesic(carto1, carto2);
+      const heading = geodesic.startHeading;
+      
+      // Calculate duration: Turbo-speed traverse at 150m/s (540 km/h)
+      const distance = Cesium.Cartesian3.distance(p1, p2);
+      const duration = Math.max(0.5, distance / 150);
+
+      viewer.camera.flyTo({
+        destination: destPos,
+        orientation: {
+          heading: heading,
+          pitch: Cesium.Math.toRadians(-40.0), // Steeper pitch for ground awareness at turbo speed
+          roll: 0.0
+        },
+        duration: duration,
+        easingFunction: Cesium.EasingFunction.QUADRATIC_IN_OUT,
+        maximumHeight: carto2.height + 800, 
+        complete: () => {
+          currentIndex++;
+          nextSegment();
+        }
+      });
+    }
+
+    setStatus("Starting fly through...");
+    const startCarto = Cesium.Cartographic.fromCartesian(flyThroughPoints[0]);
+    const startPos = Cesium.Cartesian3.fromRadians(
+      startCarto.longitude,
+      startCarto.latitude,
+      startCarto.height + 600
+    );
+    
+    viewer.camera.flyTo({
+      destination: startPos,
+      orientation: {
+        pitch: Cesium.Math.toRadians(-40.0),
+        roll: 0.0
+      },
+      duration: 2, 
+      complete: nextSegment
+    });
+  }
+
+  // Hook into left click to detect Start Button
+  function handleFlyThroughClick(movement) {
+    if (!viewer) return false;
+    const picked = viewer.scene.pick(movement.position);
+    if (Cesium.defined(picked) && picked.id && picked.id.isFlyThroughStart) {
+      startFlyThroughAnimation();
+      return true;
+    }
+    return false;
+  }
 
   // Debounce timers for visual properties
   let _demPropertiesDebounceTimer = null;
@@ -4709,6 +4905,8 @@
       mouseDownPosition = null;
       
       // Process as click
+      if (handleFlyThroughClick(movement)) return;
+      
       const picked = movement && movement.position ? viewer.scene.pick(movement.position) : null;
       if (picked && picked.id && picked.id._annotationRole === "edit") {
         if (renameAnnotationFromEditIcon(picked.id)) {
@@ -4819,6 +5017,14 @@
       
       const lon = lonLat.lon;
       const lat = lonLat.lat;
+
+      // Fly Through draw
+      if (flyThroughModeEnabled) {
+        flyThroughPoints.push(clickCartesian);
+        updateFlyThroughPreview();
+        setStatus("Fly Through: added point " + flyThroughPoints.length + ". Right-click to finish.");
+        return;
+      }
 
       // Polygon draw — always fires if in polygon mode (doesn't block annotation placement below)
       if (searchDrawMode === "polygon") {
@@ -5085,11 +5291,19 @@
         searchCursorPoint = { lon: lonLat.lon, lat: lonLat.lat };
         updateSearchPolygonPreview();
       }
+      // Fly Through preview
+      if (flyThroughModeEnabled && flyThroughPoints.length > 0) {
+        updateFlyThroughPreview(movement.endPosition);
+      }
     }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
     handler.setInputAction(function () {
       if (searchDrawMode === "polygon") {
         window.offlineGIS.finishSearchPolygon();
+        return;
+      }
+      if (flyThroughModeEnabled) {
+        finishFlyThroughPath();
         return;
       }
       if (distanceMeasureModeEnabled) {
@@ -6929,6 +7143,19 @@
     setComparatorPosition: function (fraction) {
       setSwipePosition(Number(fraction));
       log("debug", "Comparator position=" + String(fraction));
+    },
+    setFlyThroughMode: function (enabled) {
+      flyThroughModeEnabled = Boolean(enabled);
+      if (!flyThroughModeEnabled) {
+        flyThroughPoints.length = 0;
+        if (flyThroughPreviewLineEntity) {
+          viewer.entities.remove(flyThroughPreviewLineEntity);
+          flyThroughPreviewLineEntity = null;
+        }
+      }
+    },
+    setComparatorMode: function (enabled) {
+      setSwipeComparatorEnabled(Boolean(enabled));
     },
     setDistanceMeasureMode: function (enabled) {
       setDistanceMeasureMode(Boolean(enabled));

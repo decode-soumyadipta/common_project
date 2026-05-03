@@ -23,6 +23,7 @@ class ToolbarActionCoordinator:
             "Clear Last": c._toolbar_clear_last,
             "Add Point": c._toolbar_toggle_add_point_mode,
             "Add Polygon": c._toolbar_add_polygon_annotation,
+            "Fly Through": c._toolbar_fly_through,
             "Pan": c._toolbar_set_pan_mode,
             "Zoom In": lambda: c._run_js_call("zoomIn"),
             "Zoom Out": lambda: c._run_js_call("zoomOut"),
@@ -52,6 +53,8 @@ class ToolbarActionCoordinator:
                 return c._toolbar_toggle_add_point_mode(enabled=checked)
             if action_label == "Add Polygon":
                 return c._toolbar_add_polygon_annotation(enabled=checked)
+            if action_label == "Fly Through":
+                return c._toolbar_fly_through(enabled=checked)
             handler()
         except Exception:  # pragma: no cover - runtime defensive branch
             c.panel.log(f"Toolbar action failed: {action_label}")

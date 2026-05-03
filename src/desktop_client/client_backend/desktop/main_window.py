@@ -362,6 +362,7 @@ class MainWindow(QMainWindow):
         "Pan",
         "Add Point",
         "Add Polygon",
+        "Fly Through",
     }
     TOOLBAR_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         (
@@ -369,6 +370,7 @@ class MainWindow(QMainWindow):
             (
                 ("Layer Compositor", "layer_compositor"),
                 ("Comparator", "comparator"),
+                ("Fly Through", "fly_through"),
             ),
         ),
         (
@@ -823,6 +825,30 @@ class MainWindow(QMainWindow):
 
         if action_label == "Export":
             self._show_export_dropdown()
+            return
+
+        if (action_label == "Fly Through"):
+            action = self.toolbar_actions.get(action_label)
+            if action is None:
+                return
+            if checked:
+                # Disable and uncheck other visualization tools
+                for other in ["Comparator", "Layer Compositor"]:
+                    other_action = self.toolbar_actions.get(other)
+                    if other_action:
+                        if other_action.isChecked():
+                            other_action.setChecked(False)
+                            self.controller.handle_toolbar_action(other, False)
+                        other_action.setEnabled(False)
+                self.controller.handle_toolbar_action(action_label, True)
+                return
+            
+            # Re-enable other visualization tools
+            for other in ["Comparator", "Layer Compositor"]:
+                other_action = self.toolbar_actions.get(other)
+                if other_action:
+                    other_action.setEnabled(True)
+            self.controller.handle_toolbar_action(action_label, False)
             return
 
         if action_label in ("Add Vector", "Add Raster Layer"):

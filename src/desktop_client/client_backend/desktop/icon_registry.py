@@ -23,6 +23,7 @@ ICON_MANIFEST: dict[str, str] = {
     "layer_compositor": "mActionShowAllLayers.svg",
     "comparator": "mActionSplitFeatures.svg",
     "swipe_comparator": "mActionSplitFeatures.svg",
+    "fly_through": "mActionMapTips.svg",
     # Measurement tools
     "measure_distance": "mActionMeasure.svg",
     "measure_polygon_area": "mActionMeasureArea.svg",

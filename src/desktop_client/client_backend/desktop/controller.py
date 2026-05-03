@@ -129,6 +129,7 @@ class DesktopController:
         self._polygon_area_mode_enabled = False
         self._volume_mode_enabled = False
         self._viewshed_mode_enabled = False
+        self._fly_through_mode_enabled = False
         self._polygon_drawing_context = "none"  # "none", "search", "measurement"
         self._explicit_imagery_layer_visible = False
         self._explicit_dem_layer_visible = False
@@ -2881,6 +2882,26 @@ class DesktopController:
 
         self.panel.log("Layer compositor settings applied.")
         return True
+
+    def _toolbar_fly_through(self, enabled: bool | None = None) -> bool:
+        """Toggle fly-through path drawing mode."""
+        next_state = (
+            (not self._fly_through_mode_enabled) if enabled is None else bool(enabled)
+        )
+        self._fly_through_mode_enabled = next_state
+        if next_state:
+            # Disable other visualization modes in JS
+            self._run_js_call("setComparatorMode", False)
+            self._run_js_call("setFlyThroughMode", True)
+            self._set_measurement_cursor_enabled(True)
+            self.panel.log(
+                "Fly Through mode enabled. Click to draw a path, Right-Click to finish."
+            )
+        else:
+            self._run_js_call("setFlyThroughMode", False)
+            self._set_measurement_cursor_enabled(False)
+            self.panel.log("Fly Through mode disabled.")
+        return next_state
 
     def _toolbar_measure_distance(self, enabled: bool | None = None) -> bool:
         self._distance_measure_mode_enabled = (
