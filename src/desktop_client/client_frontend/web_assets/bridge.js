@@ -35,11 +35,17 @@
   const annotationEntities = [];
   let hoveredAnnotationEditEntity = null;
   let lastMapClickCartesian = null;
+  window._currentBasemapVisibility = false; // Match Python backend default
+
   let annotationCounter = 0;
   let measurementLineEntity = null;
   let measurementLabelEntity = null;
+  let measurementPointEntities = [];
   let measurementPreviewLineEntity = null;
+  let measurementAnchorDotEntity = null;
   let measurementPreviewLabelEntity = null;
+  let measurementPreviewStart = null;
+  let measurementPreviewEnd = null;
   let distanceMeasureModeEnabled = false;
   let distanceMeasureAnchor = null;
   let swipeComparatorEnabled = false;
@@ -482,6 +488,7 @@
     return {
       lon: Cesium.Math.toDegrees(cartographic.longitude),
       lat: Cesium.Math.toDegrees(cartographic.latitude),
+      height: cartographic.height
     };
   }
 
@@ -697,15 +704,24 @@
   }
 
   function syncComparatorTerrainProviders() {
-    const terrainProvider = viewer && viewer.terrainProvider ? viewer.terrainProvider : null;
-    if (!terrainProvider) {
-      return;
-    }
-    if (comparatorLeftViewer && comparatorLeftLayerType === "dem" && comparatorLeftViewer.terrainProvider !== terrainProvider) {
-      comparatorLeftViewer.terrainProvider = terrainProvider;
-    }
-    if (comparatorRightViewer && comparatorRightLayerType === "dem" && comparatorRightViewer.terrainProvider !== terrainProvider) {
-      comparatorRightViewer.terrainProvider = terrainProvider;
+    if (typeof comparatorViewers !== "undefined" && Array.isArray(comparatorViewers)) {
+      comparatorViewers.forEach(targetViewer => {
+        if (!targetViewer) return;
+        const layerKey = targetViewer.__comparatorLayerKey || null;
+        const definition = layerKey ? layerDefinitions.get(layerKey) : null;
+        const layerType = definition ? (definition.layerType || definition.type) : null;
+        const isDem = String(layerType || "").toLowerCase() === "dem";
+        
+        if (isDem) {
+           if (activeDemTerrainProvider && targetViewer.terrainProvider !== activeDemTerrainProvider) {
+             targetViewer.terrainProvider = activeDemTerrainProvider;
+           }
+        } else {
+           if (targetViewer.terrainProvider && targetViewer.terrainProvider.constructor && targetViewer.terrainProvider.constructor.name !== "EllipsoidTerrainProvider") {
+             targetViewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+           }
+        }
+      });
     }
   }
 
@@ -732,9 +748,10 @@
       return;
     }
 
-    const isDem = String(layerType || "").toLowerCase() === "dem";
     const layerKey = targetViewer.__comparatorLayerKey || null;
     const definition = layerKey ? layerDefinitions.get(layerKey) : null;
+    const resolvedLayerType = layerType || (definition ? (definition.layerType || definition.type) : null);
+    const isDem = String(resolvedLayerType || "").toLowerCase() === "dem";
     const focusRect = definition ? rectangleFromBounds(definition.bounds || null) : null;
 
     if (!isDem) {
@@ -1302,6 +1319,9 @@
     }
     for (let idx = targetViewer.imageryLayers.length - 1; idx >= 0; idx -= 1) {
       const layer = targetViewer.imageryLayers.get(idx);
+      if (layer === targetViewer.__osmBasemapLayer || layer === targetViewer.__defaultEarthLayer) {
+        continue;
+      }
       targetViewer.imageryLayers.remove(layer, false);
     }
   }
@@ -1364,6 +1384,10 @@
 
     syncComparatorTerrainProviders();
     setSelectedComparatorPane(comparatorSelectedPane, true);
+    
+    if (typeof window._currentBasemapVisibility !== 'undefined') {
+      window.offlineGIS.setBasemapVisibility(window._currentBasemapVisibility);
+    }
   }
 
   function scheduleComparatorDemRefresh(paneKey) {
@@ -4620,12 +4644,28 @@
           emitMapClick(lon, lat);
           log("info", "Distance mode click lon=" + lon.toFixed(6) + " lat=" + lat.toFixed(6));
           if (!distanceMeasureAnchor) {
-            // First click: set anchor
-            distanceMeasureAnchor = { lon: lon, lat: lat };
+            // First click: set anchor and draw a visible dot
+            distanceMeasureAnchor = { lon: lon, lat: lat, height: lonLat.height || 0 };
             clickedPoints.length = 0;
             clickedPoints.push([lon, lat]);
-            clearMeasurementEntities();
             clearMeasurementPreviewEntities();
+            // Add a visible anchor dot at the first click point
+            const anchorHeight = distanceMeasureAnchor.height;
+            const anchorPos = Cesium.Cartesian3.fromDegrees(lon, lat, anchorHeight);
+            if (measurementAnchorDotEntity) {
+              try { viewer.entities.remove(measurementAnchorDotEntity); } catch(_) {}
+            }
+            measurementAnchorDotEntity = viewer.entities.add({
+              position: anchorPos,
+              point: {
+                pixelSize: 11,
+                color: Cesium.Color.fromCssColorString("#00e5ff"),
+                outlineColor: Cesium.Color.WHITE,
+                outlineWidth: 2,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY,
+              },
+            });
+            requestSceneRender();
             setStatus("Distance tool: move cursor and click second point to finalize.");
             return;
           }
@@ -4644,7 +4684,9 @@
             lon,
             lat,
             geodesic.surfaceDistance,
-            azDegrees
+            azDegrees,
+            distanceMeasureAnchor.height,
+            lonLat.height || 0
           );
           distanceMeasureAnchor = null;  // reset so next click starts fresh
           const _dist = geodesic.surfaceDistance;
@@ -4844,8 +4886,12 @@
         return;
       }
       if (distanceMeasureModeEnabled) {
-        setDistanceMeasureMode(false);
-        log("info", "Distance measure mode ended by right-click");
+        if (distanceMeasureAnchor) {
+            distanceMeasureAnchor = null;
+            clearMeasurementPreviewEntities();
+            setStatus("Measurement cancelled. Click to start a new measurement.");
+        }
+        return;
       }
     }, Cesium.ScreenSpaceEventType.RIGHT_CLICK);
 
@@ -4948,15 +4994,9 @@
       return;
     }
     try {
-      if (measurementLineEntity) {
-        viewer.entities.remove(measurementLineEntity);
-        measurementLineEntity = null;
-      }
-    } catch (e) {}
-    try {
-      if (measurementLabelEntity) {
-        viewer.entities.remove(measurementLabelEntity);
-        measurementLabelEntity = null;
+      while (measurementPointEntities.length > 0) {
+        const ent = measurementPointEntities.pop();
+        if (ent) viewer.entities.remove(ent);
       }
     } catch (e) {}
     clearMeasurementPreviewEntities();
@@ -4973,6 +5013,12 @@
         viewer.entities.remove(measurementPreviewLineEntity);
         measurementPreviewLineEntity = null;
       }
+      if (measurementAnchorDotEntity) {
+        viewer.entities.remove(measurementAnchorDotEntity);
+        measurementAnchorDotEntity = null;
+      }
+      measurementPreviewStart = null;
+      measurementPreviewEnd = null;
     } catch (e) {}
     try {
       if (measurementPreviewLabelEntity) {
@@ -5080,72 +5126,8 @@
 
   let _scaleOverlayLastMs = 0;
   function updateDistanceScaleOverlay(startLon, startLat, endLon, endLat, meters, azimuth) {
-    const now = Date.now();
-    if (now - _scaleOverlayLastMs < 33) return;  // max 30fps
-    _scaleOverlayLastMs = now;
-    ensureDistanceScaleOverlay();
-    if (!distanceScaleOverlay || !viewer || !viewer.canvas) {
-      return;
-    }
-    const startCart = Cesium.Cartesian3.fromDegrees(startLon, startLat);
-    const endCart = Cesium.Cartesian3.fromDegrees(endLon, endLat);
-    const startScreen = sceneToWindowCoordinates(viewer.scene, startCart);
-    const endScreen = sceneToWindowCoordinates(viewer.scene, endCart);
-    if (!startScreen || !endScreen || !Number.isFinite(startScreen.x) || !Number.isFinite(endScreen.x)) {
-      distanceScaleOverlay.style.display = "none";
-      _hideScaleLabels();
-      return;
-    }
-    const canvasRect = viewer.canvas.getBoundingClientRect();
-    const sx = canvasRect.left + startScreen.x;
-    const sy = canvasRect.top + startScreen.y;
-    const ex = canvasRect.left + endScreen.x;
-    const ey = canvasRect.top + endScreen.y;
-    const dx = ex - sx;
-    const dy = ey - sy;
-    const pixelLen = Math.sqrt(dx * dx + dy * dy);
-    const angleDeg = Math.atan2(dy, dx) * (180.0 / Math.PI);
-
-    if (pixelLen < 4.0) {
-      distanceScaleOverlay.style.display = "none";
-      _hideScaleLabels();
-      return;
-    }
-
-    // Position the container at start point; rotate the bar wrap
-    distanceScaleOverlay.style.display = "block";
-    distanceScaleOverlay.style.left = sx.toFixed(1) + "px";
-    distanceScaleOverlay.style.top = sy.toFixed(1) + "px";
-
-    const barWrap = distanceScaleOverlay.querySelector(".distScaleBarWrap");
-    if (barWrap) {
-      barWrap.style.transform = "rotate(" + angleDeg.toFixed(2) + "deg)";
-    }
-    const bar = distanceScaleOverlay.querySelector(".distScaleBar");
-    if (bar) {
-      bar.style.width = Math.max(8, pixelLen).toFixed(1) + "px";
-    }
-
-    // Labels: always horizontal, positioned at screen midpoint
-    const midX = ((sx + ex) / 2).toFixed(1);
-    const midY = ((sy + ey) / 2).toFixed(1);
-
-    const distLabel = document.querySelector(".distScaleText");
-    if (distLabel) {
-      const distText = meters > 1000 ? (meters / 1000.0).toFixed(2) + " km" : meters.toFixed(1) + " m";
-      distLabel.textContent = "Dist: " + distText;
-      distLabel.style.left = midX + "px";
-      distLabel.style.top = midY + "px";
-      distLabel.style.display = "block";
-    }
-    const azLabel = document.querySelector(".distScaleAz");
-    if (azLabel) {
-      const azText = azimuth !== undefined ? "Az: " + azimuth.toFixed(1) + "°" : "";
-      azLabel.textContent = azText;
-      azLabel.style.left = midX + "px";
-      azLabel.style.top = midY + "px";
-      azLabel.style.display = azText ? "block" : "none";
-    }
+    // Disabled HTML overlay because 3D Entity lines now exist.
+    return;
   }
 
   function _hideScaleLabels() {
@@ -5156,19 +5138,7 @@
   }
 
   function clearDistanceScaleOverlay() {
-    // Hide immediately
-    if (distanceScaleOverlay) {
-      distanceScaleOverlay.style.display = "none";
-    }
-    _hideScaleLabels();
-    // Fully remove all DOM elements — use querySelectorAll to catch duplicates
-    const existing = document.getElementById("distanceScaleOverlay");
-    if (existing) existing.remove();
-    document.querySelectorAll(".distScaleText").forEach(function(el) { el.remove(); });
-    document.querySelectorAll(".distScaleAz").forEach(function(el) { el.remove(); });
-    distanceScaleOverlay = null;
-    // NOTE: do NOT call clearMeasurementEntities here — that would cause infinite recursion.
-    // clearMeasurementEntities already calls clearDistanceScaleOverlay, not the other way.
+    return;
   }
 
   function _clearFillVolumeEntities() {
@@ -5190,48 +5160,59 @@
   // Profile rubber-band preview — recreates entity on every mouse move (same as distance tool)
   function _updateProfilePreviewLine(startLon, startLat, endLon, endLat) {
     if (!viewer) return;
-    if (window._profilePreviewEntity) {
-      try { viewer.entities.remove(window._profilePreviewEntity); } catch (_) {}
-      window._profilePreviewEntity = null;
-    }
-    try {
+    // Update the shared positions every mouse move
+    window._profilePreviewStart = Cesium.Cartesian3.fromDegrees(startLon, startLat);
+    window._profilePreviewEnd = Cesium.Cartesian3.fromDegrees(endLon, endLat);
+
+    if (!window._profilePreviewEntity) {
+      // Create once with CallbackProperty(isConstant=false) — re-evaluated every frame
       window._profilePreviewEntity = viewer.entities.add({
         polyline: {
-          positions: [
-            Cesium.Cartesian3.fromDegrees(startLon, startLat),
-            Cesium.Cartesian3.fromDegrees(endLon, endLat),
-          ],
-          width: 1.5,
+          positions: new Cesium.CallbackProperty(function() {
+            if (window._profilePreviewStart && window._profilePreviewEnd) {
+              return [window._profilePreviewStart, window._profilePreviewEnd];
+            }
+            return [];
+          }, false),
+          width: 2,
           arcType: Cesium.ArcType.GEODESIC,
-          material: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.7),
-          depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.3),
+          material: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.85),
+          depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.85),
         },
       });
-      requestSceneRender();
-    } catch (_) {}
+    }
+    requestSceneRender();
   }
 
-  function updateMeasurementPreview(startLon, startLat, endLon, endLat, meters, azimuth) {
+  function updateMeasurementPreview(startLon, startLat, endLon, endLat, meters, azimuth, startHeightOpt, endHeightOpt) {
     if (!viewer) {
       return;
     }
     try {
-      clearMeasurementPreviewEntities();
-      const start = Cesium.Cartesian3.fromDegrees(startLon, startLat);
-      const end = Cesium.Cartesian3.fromDegrees(endLon, endLat);
+      let startHeight = startHeightOpt !== undefined ? startHeightOpt : (viewer.scene.globe.getHeight(Cesium.Cartographic.fromDegrees(startLon, startLat)) || 0);
+      let endHeight = endHeightOpt !== undefined ? endHeightOpt : (viewer.scene.globe.getHeight(Cesium.Cartographic.fromDegrees(endLon, endLat)) || 0);
 
-      measurementPreviewLineEntity = viewer.entities.add({
-        polyline: {
-          positions: [start, end],
-          width: 1.5,
-          arcType: Cesium.ArcType.GEODESIC,
-          material: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.7),
-          depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.3),
-        },
-      });
+      // Update shared mutable positions — the CallbackProperty reads these every frame
+      measurementPreviewStart = Cesium.Cartesian3.fromDegrees(startLon, startLat, startHeight);
+      measurementPreviewEnd = Cesium.Cartesian3.fromDegrees(endLon, endLat, endHeight);
 
-      // Update the screen-space scale bar overlay
-      updateDistanceScaleOverlay(startLon, startLat, endLon, endLat, meters, azimuth);
+      if (!measurementPreviewLineEntity) {
+        // Create ONCE with CallbackProperty(isConstant=false) — re-evaluated every frame
+        measurementPreviewLineEntity = viewer.entities.add({
+          polyline: {
+            positions: new Cesium.CallbackProperty(function() {
+              if (measurementPreviewStart && measurementPreviewEnd) {
+                return [measurementPreviewStart, measurementPreviewEnd];
+              }
+              return [];
+            }, false),
+            width: 2,
+            arcType: Cesium.ArcType.GEODESIC,
+            material: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.85),
+            depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.85),
+          },
+        });
+      }
       requestSceneRender();
     } catch (e) {
       // Silently ignore preview errors
@@ -5297,48 +5278,48 @@
     requestSceneRender();
   }
 
-  function updateMeasurementEntities(startLon, startLat, endLon, endLat, meters, azimuth) {
+  function updateMeasurementEntities(startLon, startLat, endLon, endLat, meters, azimuth, startHeightOpt, endHeightOpt) {
     if (!viewer) {
       return;
     }
-    try {
-      clearMeasurementEntities();
-    } catch (e) {
-      log("error", "clearMeasurementEntities failed: " + e.message);
-    }
     
     try {
-      const start = Cesium.Cartesian3.fromDegrees(startLon, startLat);
-      const end = Cesium.Cartesian3.fromDegrees(endLon, endLat);
+      let startHeight = startHeightOpt !== undefined ? startHeightOpt : (viewer.scene.globe.getHeight(Cesium.Cartographic.fromDegrees(startLon, startLat)) || 0);
+      let endHeight = endHeightOpt !== undefined ? endHeightOpt : (viewer.scene.globe.getHeight(Cesium.Cartographic.fromDegrees(endLon, endLat)) || 0);
+
+      const start = Cesium.Cartesian3.fromDegrees(startLon, startLat, startHeight);
+      const end = Cesium.Cartesian3.fromDegrees(endLon, endLat, endHeight);
+      
       const labelLon = (startLon + endLon) / 2.0;
       const labelLat = (startLat + endLat) / 2.0;
+      const labelHeight = (startHeight + endHeight) / 2.0;
 
       let distText = meters > 1000 ? (meters / 1000.0).toFixed(2) + " km" : meters.toFixed(1) + " m";
       let azText = azimuth !== undefined ? azimuth.toFixed(1) + "°" : "";
       const labelText = "Dist: " + distText + (azText ? "   Az: " + azText : "");
 
-      measurementLineEntity = viewer.entities.add({
+      const newLine = viewer.entities.add({
         polyline: {
           positions: [start, end],
-          width: 1.5,
+          width: 2.0,
           arcType: Cesium.ArcType.GEODESIC,
-          material: Cesium.Color.fromCssColorString("#00e5ff"),
-          depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.5),
+          material: Cesium.Color.fromCssColorString("#4da8da").withAlpha(0.9),
+          depthFailMaterial: Cesium.Color.fromCssColorString("#4da8da").withAlpha(0.9),
         },
       });
 
-      measurementLabelEntity = viewer.entities.add({
-        position: Cesium.Cartesian3.fromDegrees(labelLon, labelLat),
+      const newLabel = viewer.entities.add({
+        position: Cesium.Cartesian3.fromDegrees(labelLon, labelLat, labelHeight),
         label: {
           text: labelText,
           font: "bold 13px 'Segoe UI', 'Arial', sans-serif",
           style: Cesium.LabelStyle.FILL_AND_OUTLINE,
           fillColor: Cesium.Color.WHITE,
           outlineColor: Cesium.Color.BLACK,
-          outlineWidth: 2,
+          outlineWidth: 3,
           showBackground: true,
-          backgroundColor: Cesium.Color.fromCssColorString("#0a1929").withAlpha(0.82),
-          backgroundPadding: new Cesium.Cartesian2(8, 5),
+          backgroundColor: Cesium.Color.fromCssColorString("#08101c").withAlpha(0.7),
+          backgroundPadding: new Cesium.Cartesian2(7, 5),
           horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
           verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
           pixelOffset: new Cesium.Cartesian2(0, -14),
@@ -5346,6 +5327,29 @@
           scale: 1.0,
         },
       });
+      
+      const pt1 = viewer.entities.add({
+          position: start,
+          point: {
+              pixelSize: 10,
+              color: Cesium.Color.fromCssColorString("#4da8da"),
+              outlineColor: Cesium.Color.WHITE,
+              outlineWidth: 2,
+              disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          }
+      });
+      const pt2 = viewer.entities.add({
+          position: end,
+          point: {
+              pixelSize: 10,
+              color: Cesium.Color.fromCssColorString("#4da8da"),
+              outlineColor: Cesium.Color.WHITE,
+              outlineWidth: 2,
+              disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          }
+      });
+
+      measurementPointEntities.push(newLine, newLabel, pt1, pt2);
       requestSceneRender();
     } catch (e) {
       log("error", "updateMeasurementEntities failed: " + e.message);
@@ -5570,9 +5574,8 @@
       currentSceneMode = "2d";
       applySceneModePerformanceHints("2d");
       syncSceneModeToggle("2d");
-      if (comparatorModeEnabled) {
-        setComparatorViewerModeByType(comparatorLeftViewer, comparatorLeftLayerType);
-        setComparatorViewerModeByType(comparatorRightViewer, comparatorRightLayerType);
+      if (comparatorModeEnabled && typeof comparatorViewers !== "undefined" && Array.isArray(comparatorViewers)) {
+        comparatorViewers.forEach(v => setComparatorViewerModeByType(v));
       }
       updateBasemapBlendForCurrentMode();
       // Force immediate re-render after instant morph
@@ -5588,9 +5591,8 @@
     currentSceneMode = "3d";
     applySceneModePerformanceHints("3d");
     syncSceneModeToggle("3d");
-    if (comparatorModeEnabled) {
-      setComparatorViewerModeByType(comparatorLeftViewer, comparatorLeftLayerType);
-      setComparatorViewerModeByType(comparatorRightViewer, comparatorRightLayerType);
+    if (comparatorModeEnabled && typeof comparatorViewers !== "undefined" && Array.isArray(comparatorViewers)) {
+      comparatorViewers.forEach(v => setComparatorViewerModeByType(v));
     }
     updateBasemapBlendForCurrentMode();
 
@@ -6184,11 +6186,6 @@
     },
     setBasemapVisibility: function (visible) {
       // Toggle OSM basemap visibility with lazy loading and smooth transition
-      // CRITICAL CHANGE: OSM REPLACES default Earth at index 0 when shown
-      // Layer order (bottom to top): OSM/Earth (0) > User assets (DEM/imagery) on top
-      // Assets are COMPLETELY SEPARATE - no wrapping/merging with basemap
-      // PERFORMANCE OPTIMIZED: Minimal layer reordering to prevent lag
-      
       if (!viewer || !viewer.imageryLayers) {
         log("warn", "Cannot toggle basemap visibility - viewer not ready");
         return;
@@ -6196,16 +6193,12 @@
       
       const shouldShow = Boolean(visible);
       
-      // CRITICAL: Debounce rapid toggling to prevent WebGL texture errors
-      // Clear any pending basemap toggle operation
       if (window._basemapToggleTimer) {
         clearTimeout(window._basemapToggleTimer);
         window._basemapToggleTimer = null;
       }
       
-      // Prevent concurrent basemap toggles
       if (window._basemapToggleInProgress) {
-        log("debug", "Basemap toggle already in progress - debouncing");
         window._basemapToggleTimer = setTimeout(() => {
           window.offlineGIS.setBasemapVisibility(visible);
         }, 150);
@@ -6213,92 +6206,70 @@
       }
       
       window._basemapToggleInProgress = true;
+      window._currentBasemapVisibility = shouldShow;
       
-      if (shouldShow) {
-        // ── SHOW MAP MODE: Replace default Earth with OSM at index 0 ──
-        
-        // Step 1: Hide default Earth layer
-        if (defaultEarthLayer) {
-          defaultEarthLayer.show = false;
-          log("info", "Default Earth layer hidden (replaced by OSM)");
-        }
-        
-        // Step 2: Create or show OSM layer
-        if (!osmBasemapLayer) {
-          // First time showing OSM - create the layer with optimized settings
-          log("info", "Lazy-loading OSM basemap tiles (first request)");
+      const applyBasemapToViewer = function(targetViewer, isMain) {
+          if (!targetViewer || !targetViewer.imageryLayers) return;
           
-          try {
-            const osmProvider = new Cesium.UrlTemplateImageryProvider({
-              url: `${LOCAL_SATELLITE_TILE_ROOT}/{z}/{x}/{y}.png`,
-              tilingScheme: new Cesium.WebMercatorTilingScheme(),
-              minimumLevel: 0,
-              maximumLevel: 10,  // OSM tiles available up to zoom level 10
-              credit: new Cesium.Credit("© OpenStreetMap contributors", false),
-              enablePickFeatures: false,
-              // PERFORMANCE: Reduce tile cache to prevent memory bloat
-              tileWidth: 256,
-              tileHeight: 256,
-            });
-            
-            // Suppress tile error logging for missing tiles (404s are expected)
-            osmProvider.errorEvent.addEventListener(function (error) {
-              error.retry = false;  // don't retry, just skip silently
-            });
-            
-            osmBasemapLayer = viewer.imageryLayers.addImageryProvider(osmProvider, 0);  // Add at index 0 directly
-            osmBasemapLayer.alpha = 1.0;
-            osmBasemapLayer.show = true;
-            
-            // CRITICAL: Ensure OSM basemap is completely flat (not affected by DEM terrain)
-            osmBasemapLayer.splitDirection = Cesium.ImagerySplitDirection.NONE;
-            osmBasemapLayer.cutoutRectangle = undefined;
-            osmBasemapLayer.colorToAlpha = undefined;
-            osmBasemapLayer.colorToAlphaThreshold = 0.0;
-            
-            log("info", "OSM basemap layer created at index 0");
-          } catch (e) {
-            log("error", "Failed to create OSM basemap layer: " + e.message);
-            window._basemapToggleInProgress = false;
-            return;
+          if (shouldShow) {
+              if (isMain && defaultEarthLayer) defaultEarthLayer.show = false;
+              if (targetViewer.__defaultEarthLayer) targetViewer.__defaultEarthLayer.show = false;
+              
+              if (!targetViewer.__osmBasemapLayer) {
+                  try {
+                      const osmProvider = new Cesium.UrlTemplateImageryProvider({
+                          url: `${LOCAL_SATELLITE_TILE_ROOT}/{z}/{x}/{y}.png`,
+                          tilingScheme: new Cesium.WebMercatorTilingScheme(),
+                          minimumLevel: 0,
+                          maximumLevel: 10,
+                          credit: new Cesium.Credit("© OpenStreetMap contributors", false),
+                          enablePickFeatures: false,
+                          tileWidth: 256,
+                          tileHeight: 256,
+                      });
+                      osmProvider.errorEvent.addEventListener(function (error) { error.retry = false; });
+                      targetViewer.__osmBasemapLayer = targetViewer.imageryLayers.addImageryProvider(osmProvider, 0);
+                      targetViewer.__osmBasemapLayer.alpha = 1.0;
+                      targetViewer.__osmBasemapLayer.show = true;
+                      targetViewer.__osmBasemapLayer.splitDirection = Cesium.ImagerySplitDirection.NONE;
+                      targetViewer.__osmBasemapLayer.cutoutRectangle = undefined;
+                      targetViewer.__osmBasemapLayer.colorToAlpha = undefined;
+                      targetViewer.__osmBasemapLayer.colorToAlphaThreshold = 0.0;
+                  } catch (e) {
+                      log("error", "Failed to create OSM basemap: " + e.message);
+                  }
+              } else {
+                  targetViewer.__osmBasemapLayer.show = true;
+                  if (targetViewer.imageryLayers.indexOf(targetViewer.__osmBasemapLayer) !== 0) {
+                      targetViewer.imageryLayers.lowerToBottom(targetViewer.__osmBasemapLayer);
+                  }
+              }
+              if (isMain) osmBasemapLayer = targetViewer.__osmBasemapLayer;
+          } else {
+              if (targetViewer.__osmBasemapLayer) targetViewer.__osmBasemapLayer.show = false;
+              if (isMain && defaultEarthLayer) {
+                  defaultEarthLayer.show = true;
+                  if (targetViewer.imageryLayers.indexOf(defaultEarthLayer) !== 0) {
+                      targetViewer.imageryLayers.lowerToBottom(defaultEarthLayer);
+                  }
+              }
+              if (targetViewer.__defaultEarthLayer) {
+                  targetViewer.__defaultEarthLayer.show = true;
+                  if (targetViewer.imageryLayers.indexOf(targetViewer.__defaultEarthLayer) !== 0) {
+                      targetViewer.imageryLayers.lowerToBottom(targetViewer.__defaultEarthLayer);
+                  }
+              }
           }
-        } else {
-          // OSM layer already exists - just show it and ensure it's at bottom
-          osmBasemapLayer.show = true;
-          // Only reorder if not already at index 0
-          if (viewer.imageryLayers.indexOf(osmBasemapLayer) !== 0) {
-            viewer.imageryLayers.lowerToBottom(osmBasemapLayer);
-          }
-          log("info", "OSM basemap layer shown at index 0");
-        }
-        
-        // PERFORMANCE OPTIMIZATION: Skip unnecessary layer reordering
-        // Layers are already in correct order from initial setup
-        // Only reorder if layers were added after OSM was created
-        log("info", "OSM basemap active at index 0");
-        
-      } else {
-        // ── HIDE MAP MODE: Hide OSM, show default Earth at index 0 ──
-        
-        // Step 1: Hide OSM layer (no reordering needed)
-        if (osmBasemapLayer) {
-          osmBasemapLayer.show = false;
-          log("info", "OSM basemap layer hidden");
-        }
-        
-        // Step 2: Show default Earth at index 0 (no reordering needed)
-        if (defaultEarthLayer) {
-          defaultEarthLayer.show = true;
-          // Only reorder if not already at index 0
-          if (viewer.imageryLayers.indexOf(defaultEarthLayer) !== 0) {
-            viewer.imageryLayers.lowerToBottom(defaultEarthLayer);
-          }
-          log("info", "Default Earth imagery visible at index 0");
-        }
-        
-        // PERFORMANCE OPTIMIZATION: Skip unnecessary layer reordering
-        // User assets remain in their current positions
+      };
+
+      if (osmBasemapLayer) viewer.__osmBasemapLayer = osmBasemapLayer;
+      applyBasemapToViewer(viewer, true);
+      
+      if (typeof comparatorViewers !== 'undefined' && Array.isArray(comparatorViewers)) {
+          comparatorViewers.forEach(v => applyBasemapToViewer(v, false));
       }
+
+      window._basemapToggleInProgress = false;
       
       // PERFORMANCE: Single render request instead of multiple
       if (viewer.scene) {

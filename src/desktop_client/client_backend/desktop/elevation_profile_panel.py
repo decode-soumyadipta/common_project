@@ -65,14 +65,14 @@ _SECTION_BG = QColor(245, 248, 252)
 _SECTION_FILL_TOP = QColor(80, 160, 220, 200)
 _SECTION_FILL_BOT = QColor(80, 160, 220, 40)
 
-_FONT_SMALL = QFont("Menlo", 9)
-_FONT_TITLE = QFont("Segoe UI", 10, QFont.Weight.Bold)
-_FONT_AXIS = QFont("Segoe UI", 9)
+_FONT_SMALL = QFont("Segoe UI", 8)
+_FONT_TITLE = QFont("Segoe UI", 9)
+_FONT_AXIS = QFont("Segoe UI", 8)
 
-_ML = 58  # margin left  (Y-axis labels)
-_MB = 44  # margin bottom (X-axis labels)
-_MT = 28  # margin top
-_MR = 14  # margin right
+_ML = 54  # margin left  (Y-axis labels)
+_MB = 38  # margin bottom (X-axis labels)
+_MT = 22  # margin top
+_MR = 12  # margin right
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -87,8 +87,8 @@ class _Profile2DWidget(_ChartBase):
         super().__init__(parent)
         self._values: list[float] = []
         self._distance_m: float = 0.0
-        self._cursor_frac: float | None = None  # 0–1 along the profile, None = hidden
-        self.setMinimumSize(300, 180)
+        self._cursor_frac: float | None = None
+        self.setMinimumSize(200, 120)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
     def set_data(self, values: list[float], distance_m: float) -> None:
@@ -108,32 +108,32 @@ class _Profile2DWidget(_ChartBase):
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         p.fillRect(0, 0, self.width(), self.height(), _BG)
         if len(self._values) >= 2:
-            self._draw(p, self.width(), self.height())
-        p.end()
+            self._draw(p, self.width(        # ── Grid ───────────────────────────────────────────────────────────
+        p.setFont(_FONT_SMALL)
+        fm = QFontMetrics(_FONT_SMALL)
+        n_y = 4
+        for i in range(n_y + 1):
+            frac = i / n_y
+            elev = vmin + frac * vrange
+            y = by - frac * ch
+            p.setPen(QPen(_GRID, 1, Qt.PenStyle.DashLine))
+            p.drawLine(lx, int(y), rx, int(y))
+            p.setPen(_TICK_LABEL)
+            lbl = f"{elev:.0f}m"
+            tw = fm.horizontalAdvance(lbl)
+            p.drawText(lx - tw - 3, int(y) + fm.ascent() // 2, lbl)
 
-    def _draw(self, p: QPainter, W: int, H: int) -> None:
-        vals = self._values
-        n = len(vals)
-        vmin = min(vals)
-        vmax = max(vals)
-        vrange = max(vmax - vmin, 1.0)
-        dist = self._distance_m
-
-        # Chart rectangle
-        lx = _ML
-        rx = W - _MR
-        ty = _MT
-        by = H - _MB
-        cw = max(rx - lx, 1)
-        ch = max(by - ty, 1)
-
-        def px(i: int) -> float:
-            return lx + (i / (n - 1)) * cw
-
-        def py(v: float) -> float:
-            return by - ((v - vmin) / vrange) * ch
-
-        # ── Grid ──────────────────────────────────────────────────────────
+        n_x = 4
+        for i in range(n_x + 1):
+            frac = i / n_x
+            d = frac * dist
+            x = lx + frac * cw
+            p.setPen(QPen(_GRID, 1, Qt.PenStyle.DashLine))
+            p.drawLine(int(x), ty, int(x), by)
+            p.setPen(_TICK_LABEL)
+            lbl = f"{d/1000:.1f}k" if d >= 1000 else f"{d:.0f}m"
+            tw = fm.horizontalAdvance(lbl)
+            p.drawText(int(x) - tw // 2, by + fm.height() + 1, lbl)────────
         p.setFont(_FONT_SMALL)
         fm = QFontMetrics(_FONT_SMALL)
         n_y = 5
@@ -293,15 +293,15 @@ class _Profile3DWidget(_ChartBase):
         self._values: list[float] = []
         self._distance_m: float = 0.0
         # View state
-        self._azimuth: float = 25.0  # degrees, horizontal rotation
-        self._tilt: float = 28.0  # degrees, vertical tilt
+        self._azimuth: float = 25.0
+        self._tilt: float = 28.0
         self._zoom: float = 1.0
-        self._pan_x: float = 0.0  # horizontal pan offset (normalised)
-        self._pan_y: float = 0.0  # vertical pan offset (normalised)
+        self._pan_x: float = 0.0
+        self._pan_y: float = 0.0
         self._drag_start = None
-        self._drag_mode: str = "rotate"  # "rotate" or "pan"
-        self._cursor_frac: float | None = None  # georeferenced cursor position
-        self.setMinimumSize(300, 180)
+        self._drag_mode: str = "rotate"
+        self._cursor_frac: float | None = None
+        self.setMinimumSize(200, 120)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMouseTracking(True)
         self.setCursor(Qt.CursorShape.OpenHandCursor)
@@ -601,9 +601,9 @@ class ElevationProfilePanel(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setMinimumHeight(220)
-        self.setMaximumHeight(340)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.setMinimumHeight(200)
+        self.setMaximumHeight(400)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         # ── Separator line at top ─────────────────────────────────────────
         sep = QFrame(self)
