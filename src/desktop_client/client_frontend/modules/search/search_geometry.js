@@ -2,10 +2,15 @@
   const root = (window.OfflineGISModules = window.OfflineGISModules || {});
   const search = (root.search = root.search || {});
 
-  function getSearchPreviewPoints(searchPolygonPoints, searchCursorPoint) {
-    return searchCursorPoint
-      ? searchPolygonPoints.concat([searchCursorPoint])
-      : searchPolygonPoints.slice();
+  function getSearchPreviewPoints(searchPolygonPoints, searchCursorPoint, shouldClose) {
+    if (!searchCursorPoint) {
+      return searchPolygonPoints.slice();
+    }
+    const points = searchPolygonPoints.concat([searchCursorPoint]);
+    if (shouldClose && searchPolygonPoints.length >= 2) {
+      points.push(searchPolygonPoints[0]);
+    }
+    return points;
   }
 
   function getSearchPreviewCartesianPoints(searchPolygonPoints, searchCursorPoint) {

@@ -27,6 +27,7 @@ from desktop_client.client_backend.desktop.coordinators import (
     ToolbarActionCoordinator,
     SearchCoordinator,
     VisualizationCoordinator,
+    ExportCoordinator,
 )
 from desktop_client.client_backend.desktop.coordinators.elevation_profile_coordinator import (
     ElevationProfileCoordinator,
@@ -165,6 +166,7 @@ class DesktopController:
         self._search = SearchCoordinator(self)
         self._comparator = ComparatorCoordinator(self)
         self._project_io = ProjectIoCoordinator(self)
+        self._export = ExportCoordinator(self)
         self._toolbar_actions = ToolbarActionCoordinator(self)
         self._viz = VisualizationCoordinator(self)
         self._measure = MeasurementCoordinator(self)
@@ -2944,6 +2946,7 @@ class DesktopController:
             self._viewshed_mode_enabled = False
             self._volume_mode_enabled = False
             self._pan_mode_enabled = False
+            self._run_js_call("setAnnotationDrawingMode", False)
 
             # Enable polygon drawing mode for measurement
             self._polygon_drawing_context = "measurement"
@@ -3509,6 +3512,9 @@ class DesktopController:
         polygon = self._current_polygon_lonlat()
         if not polygon:
             self._distance_measure_mode_enabled = False
+            # self._add_point_mode_enabled = False (Removed to allow coexistence)
+            self._set_annotation_overlay_visible(True)
+            self._run_js_call("setAnnotationDrawingMode", True)
             self._shadow_height_mode_enabled = False
             self._pan_mode_enabled = False
             self._run_js_call("setDistanceMeasureMode", False)
@@ -3547,7 +3553,13 @@ class DesktopController:
         self._project_io.export_annotations_geojson()
 
     def _toolbar_export_geopackage(self) -> None:
-        self._project_io.export_annotations_geopackage()
+        self._export.export_geopackage()
+
+    def _toolbar_export_pdf(self) -> None:
+        self._export.export_pdf()
+
+    def _toolbar_export_geotiff(self) -> None:
+        self._export.export_geotiff()
 
     def _toolbar_save_project(self) -> None:
         self._project_io.save_project()

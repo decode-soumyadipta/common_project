@@ -16,6 +16,9 @@ from desktop_client.client_backend.desktop.coordinators.toolbar_action_coordinat
 from desktop_client.client_backend.desktop.coordinators.visualization_coordinator import (
     VisualizationCoordinator,
 )
+from desktop_client.client_backend.desktop.coordinators.export_coordinator import (
+    ExportCoordinator,
+)
 
 __all__ = [
     "ComparatorCoordinator",
@@ -24,4 +27,5 @@ __all__ = [
     "SearchCoordinator",
     "ToolbarActionCoordinator",
     "VisualizationCoordinator",
+    "ExportCoordinator",
 ]

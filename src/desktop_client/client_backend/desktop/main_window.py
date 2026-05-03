@@ -845,8 +845,6 @@ class MainWindow(QMainWindow):
             "Distance / Azimuth",
             "Elevation Profile",
             "Fill Volume",
-            "Add Point",
-            "Add Polygon",
         }
         if action_label in interaction_toggles and bool(final_state):
             for other_label in interaction_toggles:
@@ -1122,19 +1120,25 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
         menu.setStyleSheet("""
             QMenu {
-                background: #f8fafc;
-                border: 1px solid #c9d3df;
-                border-radius: 6px;
-                padding: 4px 0px;
+                background: #ffffff;
+                border: 1px solid #d1d9e6;
+                border-radius: 10px;
+                padding: 8px;
             }
             QMenu::item {
-                padding: 7px 20px;
-                font-size: 12px;
-                color: #1a2a3a;
+                padding: 12px 40px 12px 16px;
+                font-size: 13px;
+                font-weight: 500;
+                color: #2d3748;
+                border-radius: 6px;
+                margin: 2px 0px;
             }
             QMenu::item:selected {
-                background: #e3edf8;
-                color: #1f6fd2;
+                background: #edf2f7;
+                color: #2b6cb0;
+            }
+            QMenu::icon {
+                padding-left: 10px;
             }
         """)
         gpkg_act = menu.addAction(
@@ -1142,9 +1146,6 @@ class MainWindow(QMainWindow):
         )
         pdf_act = menu.addAction(
             IconRegistry.get("print_layout", size=16), "Export PDF"
-        )
-        tiff_act = menu.addAction(
-            IconRegistry.get("export_geotiff", size=16), "Export as GeoTIFF"
         )
 
         pos = (
@@ -1157,9 +1158,7 @@ class MainWindow(QMainWindow):
         if chosen == gpkg_act:
             self.controller.handle_toolbar_action("Export GeoPackage")
         elif chosen == pdf_act:
-            self.panel.log("Export PDF: not yet implemented.")
-        elif chosen == tiff_act:
-            self.panel.log("Export GeoTIFF: not yet implemented.")
+            self.controller.handle_toolbar_action("Export PDF")
 
     def set_toolbar_layer_context(self, context: str) -> None:
         """Set the current layer context for toolbar action filtering.
@@ -1285,8 +1284,8 @@ class MainWindow(QMainWindow):
         p = QPainter(px)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # White halo for visibility on dark backgrounds
-        halo_pen = QPen(QColor(255, 255, 255, 200), 2.5)
+        # Black halo for visibility on light backgrounds
+        halo_pen = QPen(QColor(0, 0, 0, 180), 3.0)
         p.setPen(halo_pen)
         p.setBrush(Qt.BrushStyle.NoBrush)
         radius = 4
@@ -1298,9 +1297,9 @@ class MainWindow(QMainWindow):
         p.drawLine(hot - gap - arm, hot, hot - gap, hot)
         p.drawLine(hot + gap, hot, hot + gap + arm, hot)
 
-        # Black foreground on top
-        black_pen = QPen(QColor(0, 0, 0, 255), 1.2)
-        p.setPen(black_pen)
+        # White foreground on top for "white crosshair" feel
+        white_pen = QPen(QColor(255, 255, 255, 255), 1.4)
+        p.setPen(white_pen)
         p.drawEllipse(hot - radius, hot - radius, radius * 2, radius * 2)
         p.drawLine(hot, hot - gap - arm, hot, hot - gap)
         p.drawLine(hot, hot + gap, hot, hot + gap + arm)

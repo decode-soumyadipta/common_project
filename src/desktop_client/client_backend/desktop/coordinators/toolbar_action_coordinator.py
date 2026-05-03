@@ -32,6 +32,7 @@ class ToolbarActionCoordinator:
             "Save Project": c._toolbar_save_project,
             "Export": c._toolbar_export_geopackage,
             "Export GeoPackage": c._toolbar_export_geopackage,
+            "Export PDF": c._toolbar_export_pdf,
         }
         handler = handlers.get(action_label)
         if handler is None:

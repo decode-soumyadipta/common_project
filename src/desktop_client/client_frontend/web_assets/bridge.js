@@ -141,6 +141,11 @@
     }
     return { min: parts[0], max: parts[1] };
   };
+
+  // Debounce timers for visual properties
+  let _demPropertiesDebounceTimer = null;
+  let _imageryPropertiesDebounceTimer = null;
+  const VISUAL_UPDATE_DEBOUNCE_MS = 16; // ~1 frame at 60fps
   const buildUrlWithQuery = bridgeUtils.buildUrlWithQuery || function (url, extraQuery) {
     const splitIndex = url.indexOf("?");
     const base = splitIndex >= 0 ? url.slice(0, splitIndex) : url;
@@ -395,10 +400,19 @@
         getDrawnPolygonCounter: function () {
           return drawnPolygonCounter;
         },
+        getIsAnnotationDrawing: function () {
+          return isAnnotationDrawing;
+        },
+        emitSearchGeometry: function (type, payload) {
+          if (offlineGIS.on_search_geometry) {
+            offlineGIS.on_search_geometry(type, payload);
+          }
+        },
         setStatus: setStatus,
         log: log,
       })
     : null;
+  let isAnnotationDrawing = false;
   let annotationVisibilityEnabled = true;
   let sceneModeControlEnabled = true;
   let currentSceneMode = "3d";
@@ -3842,8 +3856,53 @@
       return;
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // CRITICAL PATCH: Handle statusCode 0 for local Assets (Windows/file://)
+    // ─────────────────────────────────────────────────────────────────────────
+    if (Cesium.Resource && Cesium.Resource.prototype && Cesium.Resource.prototype.fetchJson) {
+      const originalFetchJson = Cesium.Resource.prototype.fetchJson;
+      Cesium.Resource.prototype.fetchJson = function() {
+        const reqUrl = String(this.url || "");
+        
+        const handleRejection = function(error) {
+          if (error && error.statusCode === 0 && typeof error.response === "string") {
+            try {
+              return JSON.parse(error.response);
+            } catch (e) {
+              log("warn", "JSON.parse failed for local file (" + reqUrl + "): " + e.message);
+            }
+          }
+          if (Cesium.when && Cesium.when.reject) {
+            return Cesium.when.reject(error);
+          }
+          return Promise.reject(error);
+        };
+
+        const promise = originalFetchJson.apply(this, arguments);
+        if (promise && typeof promise.then === "function") {
+          return promise.then(undefined, handleRejection);
+        }
+        return promise;
+      };
+      log("info", "Cesium.Resource.fetchJson patched for local file compatibility.");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // CRITICAL BYPASS: Prevent approximateTerrainHeights.json fetch crash
+    // ─────────────────────────────────────────────────────────────────────────
+    // On Windows local file://, this 2.5MB asset often truncates or fails, causing a synchronous 
+    // renderer crash when clampToGround is first used (e.g., drawing AOI). By pre-initializing it 
+    // with an empty object and a resolved promise, Cesium skips the fetch entirely and safely falls 
+    // back to generic terrain bounds without crashing.
+    if (Cesium.ApproximateTerrainHeights) {
+      Cesium.ApproximateTerrainHeights._terrainHeights = {};
+      Cesium.ApproximateTerrainHeights._initPromise = (Cesium.when && Cesium.when.resolve) 
+        ? Cesium.when.resolve() 
+        : Promise.resolve();
+      log("info", "Bypassed approximateTerrainHeights.json fetch to prevent clampToGround crashes.");
+    }
+
     // Probe NaturalEarthII availability — on Windows the cesium/ symlink may not
-    // exist (symlinks require admin rights), causing a black globe.
     viewer = new Cesium.Viewer("cesiumContainer", {
       imageryProvider: false,  // No basemap - bare globe only
       baseLayerPicker: false,
@@ -3868,7 +3927,7 @@
           stencil: false,
           antialias: false,  // Disable antialiasing for performance
           powerPreference: "high-performance",  // Use discrete GPU (NVIDIA) if available
-          preserveDrawingBuffer: false,
+          preserveDrawingBuffer: true,
           failIfMajorPerformanceCaveat: false,
           desynchronized: false,
         },
@@ -3981,17 +4040,17 @@
       log("info", "[INIT MAX GPU CONFIG] NVIDIA/dedicated GPU detected — full quality enabled");
     } else {
       // ── SAFE CONFIG (Intel integrated / unknown) ──────────────────────────
-      MAX_CONCURRENT_TERRAIN_DECODES = 1;   // SINGLE terrain decode at a time
+      MAX_CONCURRENT_TERRAIN_DECODES = 2;   // Slightly more parallel decodes for modern Intel
       viewer.resolutionScale = 1.0;          // Full native resolution to maintain imagery quality
       viewer.scene.logarithmicDepthBuffer = true;
       viewer.scene.globe.depthTestAgainstTerrain = true; // Essential for true 3D fidelity
-      viewer.scene.globe.tileCacheSize = 80;  // Tiny cache — prevents RAM pressure
-      viewer.scene.globe.maximumScreenSpaceError = 2.0;  // High fidelity geometry like MAX CONFIG
-      viewer.scene.globe.preloadAncestors = false;
-      viewer.scene.globe.preloadSiblings = false;
-      viewer.scene.globe.loadingDescendantLimit = 1;  // One tile at a time
+      viewer.scene.globe.tileCacheSize = 400;  // Optimized cache for smoother panning on Windows
+      viewer.scene.globe.maximumScreenSpaceError = 3.5;  // Balanced performance/quality for Intel UHD
+      viewer.scene.globe.preloadAncestors = true; // Enabled for smoother zoom transitions
+      viewer.scene.globe.preloadSiblings = true;
+      viewer.scene.globe.loadingDescendantLimit = 2;  // Faster tile loading
       
-      log("info", "[INIT SAFE INTEL CONFIG] Integrated GPU detected — enforcing high fidelity visuals with memory safety (res=1.0 sse=2.0 depth=true)");
+      log("info", "[INIT SAFE INTEL CONFIG] Integrated GPU optimized for smooth performance (res=1.0 sse=3.5 cache=400)");
     }
 
     scenePerfDefaults = {
@@ -4155,6 +4214,78 @@
     if (SHOW_COUNTRY_BOUNDARY_OVERLAY) {
       void attachCountryBoundaryOverlay();
     }
+    let _renderErrorCount = 0;
+    let _renderErrorResetTimer = null;
+    let _lastRenderErrorTime = 0;
+    
+    viewer.scene.renderError.addEventListener(function (scene, error) {
+      const now = Date.now();
+      _renderErrorCount += 1;
+      
+      if (_renderErrorResetTimer) clearTimeout(_renderErrorResetTimer);
+      // Reset count after 10 seconds of stability
+      _renderErrorResetTimer = setTimeout(function () { _renderErrorCount = 0; }, 10000);
+      
+      let msg = "unknown render error";
+      if (error) {
+        if (typeof error === "string") {
+          msg = error;
+        } else if (error.stack) {
+          msg = error.stack;
+        } else if (error.message) {
+          msg = error.message;
+        } else {
+          // Robust inspection for RequestErrorEvent or other complex objects
+          msg = "Error: " + (error.name || "Object");
+          if (error.statusCode) msg += " (Status: " + error.statusCode + ")";
+          if (error.url) msg += " [URL: " + error.url + "]";
+          try { 
+            // Extract common non-enumerable properties before stringifying
+            const detailObj = {
+              message: error.message,
+              name: error.name,
+              stack: error.stack,
+              statusCode: error.statusCode,
+              response: (typeof error.response === "string" && error.response.length > 500) 
+                        ? error.response.substring(0, 500) + "... [truncated]" 
+                        : error.response
+            };
+            const stringified = JSON.stringify(detailObj); 
+            msg += " Details: " + stringified;
+          } catch (e) { 
+            msg += " (Non-stringifiable details)"; 
+          }
+        }
+      }
+
+      log("error", "Cesium render error (" + _renderErrorCount + "): " + msg);
+
+      // CRITICAL: Throttle recovery attempts. Stop at 8 errors.
+      if (_renderErrorCount > 8) {
+        if (_renderErrorCount === 9) {
+          log("error", "Render errors exceeded threshold — stopping recovery to prevent infinite loop.");
+          setStatus("3D engine encountered a critical error. Please refresh.");
+        }
+        viewer.useDefaultRenderLoop = false;
+        return;
+      }
+
+      // If we errored too quickly after the last error (within 50ms), skip this recovery step
+      if (now - _lastRenderErrorTime < 50) {
+        return;
+      }
+      _lastRenderErrorTime = now;
+
+      try {
+        viewer.useDefaultRenderLoop = true;
+        // Force a synchronous render to verify recovery
+        viewer.render();
+        log("info", "Render loop recovered successfully.");
+      } catch (recoveryErr) {
+        log("error", "Render recovery attempt failed: " + recoveryErr);
+      }
+    });
+
     viewer.imageryLayers.layerAdded.addEventListener(function (_layer, index) {
       log("info", "Imagery layer added at index " + index);
     });
@@ -5006,17 +5137,10 @@
 
   function updatePolygonPreviewVisibility() {
     const visible = polygonVisibilityEnabled && searchOverlayVisible;
+    // Note: show properties for preview entities are managed via CallbackProperty in the controller
+    // to ensure high-frequency updates during drawing. Static overrides here are avoided.
     if (searchCursorEntity) {
       searchCursorEntity.show = visible;
-    }
-    if (searchPreviewLineEntity && searchPreviewLineEntity.polyline) {
-      searchPreviewLineEntity.polyline.show = true && searchPolygonPoints.length >= 2;
-    }
-    if (searchPreviewPolygonEntity && searchPreviewPolygonEntity.polygon) {
-      searchPreviewPolygonEntity.polygon.show = true && searchPolygonPoints.length >= 3;
-    }
-    if (searchAreaLabelEntity && searchAreaLabelEntity.label) {
-      searchAreaLabelEntity.label.show = true && searchPolygonPoints.length >= 3;
     }
     if (searchPreviewLineEntity || searchPreviewPolygonEntity || searchAreaLabelEntity) {
       requestSceneRender();
@@ -5057,6 +5181,9 @@
       }
     }
     requestSceneRender();
+    if (window.bridge && window.bridge.on_aoi_stats_updated) {
+      window.bridge.on_aoi_stats_updated(0, "0 m\u00b2");
+    }
   }
 
   function setAnnotationVisibility(visible) {
@@ -6261,6 +6388,10 @@
     setPolygonVisibility: function (polyId, visible) {
       toggleDrawnPolygonVisibility(polyId, visible);
     },
+    setAnnotationDrawingMode: function (active) {
+      isAnnotationDrawing = Boolean(active);
+      log("info", "Annotation drawing mode set: " + isAnnotationDrawing);
+    },
     setSearchPolygonVisibility: function (visible) {
       polygonVisibilityEnabled = Boolean(visible);
       updatePolygonPreviewVisibility();
@@ -6368,82 +6499,83 @@
     setDemProperties: function (hillshadeAlpha) {
       const nextHillshadeAlpha = Math.max(0.0, Math.min(1.0, Number(hillshadeAlpha) || 0.0));
 
-      log("info", "setDemProperties called: hillshadeAlpha=" + nextHillshadeAlpha.toFixed(2));
+      if (_demPropertiesDebounceTimer) clearTimeout(_demPropertiesDebounceTimer);
+      _demPropertiesDebounceTimer = setTimeout(function () {
+        log("info", "setDemProperties (debounced): hillshadeAlpha=" + nextHillshadeAlpha.toFixed(2));
 
-      if (comparatorModeEnabled) {
-        const paneState = getComparatorPaneVisual(comparatorSelectedPane);
-        if (!paneState) return;
+        if (comparatorModeEnabled) {
+          const paneState = getComparatorPaneVisual(comparatorSelectedPane);
+          if (!paneState) return;
 
-        paneState.dem.hillshadeAlpha = nextHillshadeAlpha;
-        applyComparatorPaneVisualState(comparatorSelectedPane);
-        notifyComparatorPaneState(comparatorSelectedPane);
-        requestSceneRender();
-        log("info", "setDemProperties applied to comparator pane");
-        return;
-      }
+          paneState.dem.hillshadeAlpha = nextHillshadeAlpha;
+          applyComparatorPaneVisualState(comparatorSelectedPane);
+          notifyComparatorPaneState(comparatorSelectedPane);
+          requestSceneRender();
+          return;
+        }
 
-      demVisual.hillshadeAlpha = nextHillshadeAlpha;
+        demVisual.hillshadeAlpha = nextHillshadeAlpha;
 
-      // ── Hillshade alpha: apply directly to the imagery layer, force render ──
-      if (activeDemHillshadeLayer) {
-        activeDemHillshadeLayer.alpha = demVisual.hillshadeAlpha;
-        const demVisible = activeDemContext && activeDemContext.visible !== false;
-        activeDemHillshadeLayer.show = demVisible && demVisual.hillshadeAlpha > 0.01;
-        log("info", "setDemProperties: Updated hillshade layer alpha=" + demVisual.hillshadeAlpha.toFixed(2));
-      } else {
-        log("info", "setDemProperties: No active hillshade layer (alpha stored for next DEM load)");
-      }
+        if (activeDemHillshadeLayer) {
+          activeDemHillshadeLayer.alpha = demVisual.hillshadeAlpha;
+          const demVisible = activeDemContext && activeDemContext.visible !== false;
+          activeDemHillshadeLayer.show = demVisible && demVisual.hillshadeAlpha > 0.01;
+        }
 
-      if (viewer && viewer.scene) {
-        viewer.scene.requestRender();
-      }
-      log("info", "setDemProperties completed successfully");
+        if (viewer && viewer.scene) {
+          viewer.scene.requestRender();
+        }
+      }, VISUAL_UPDATE_DEBOUNCE_MS);
     },
     setImageryProperties: function (brightness, contrast) {
       if (!viewer) return;
       const nextBrightness = Math.max(0.2, brightness);
       const nextContrast = Math.max(0.1, contrast);
 
-      if (comparatorModeEnabled) {
-        const paneState = getComparatorPaneVisual(comparatorSelectedPane);
-        if (!paneState) {
+      if (_imageryPropertiesDebounceTimer) clearTimeout(_imageryPropertiesDebounceTimer);
+      _imageryPropertiesDebounceTimer = setTimeout(function () {
+        log("info", "setImageryProperties (debounced): brightness=" + nextBrightness.toFixed(2) + " contrast=" + nextContrast.toFixed(2));
+
+        if (comparatorModeEnabled) {
+          const paneState = getComparatorPaneVisual(comparatorSelectedPane);
+          if (!paneState) return;
+
+          paneState.imagery.brightness = nextBrightness;
+          paneState.imagery.contrast = nextContrast;
+          applyComparatorPaneVisualState(comparatorSelectedPane);
+          notifyComparatorPaneState(comparatorSelectedPane);
+          requestSceneRender();
           return;
         }
-        paneState.imagery.brightness = nextBrightness;
-        paneState.imagery.contrast = nextContrast;
-        applyComparatorPaneVisualState(comparatorSelectedPane);
-        notifyComparatorPaneState(comparatorSelectedPane);
-        log(
-          "debug",
-          "Comparator imagery properties pane=" +
-            comparatorSelectedPane +
-            " brightness=" +
-            nextBrightness +
-            " contrast=" +
-            nextContrast
-        );
-        requestSceneRender();
-        return;
-      }
 
-      imageryVisual.brightness = nextBrightness;
-      imageryVisual.contrast = nextContrast;
-      const visibleManagedLayers = Array.from(managedImageryLayers.values()).filter((layer) => layer && layer.show);
-      if (visibleManagedLayers.length > 0) {
-        for (const layer of visibleManagedLayers) {
+        imageryVisual.brightness = nextBrightness;
+        imageryVisual.contrast = nextContrast;
+
+        const visibleManagedLayers = Array.from(managedImageryLayers.values()).filter((layer) => layer && layer.show);
+        if (visibleManagedLayers.length > 0) {
+          for (const layer of visibleManagedLayers) {
+            layer.brightness = nextBrightness;
+            layer.contrast = nextContrast;
+          }
+        }
+        
+        if (osmBasemapLayer && osmBasemapLayer.show) {
+          osmBasemapLayer.brightness = nextBrightness;
+          osmBasemapLayer.contrast = nextContrast;
+        }
+        if (defaultEarthLayer && defaultEarthLayer.show) {
+          defaultEarthLayer.brightness = nextBrightness;
+          defaultEarthLayer.contrast = nextContrast;
+        }
+
+        const layer = activeImageryLayer || viewer.imageryLayers.get(0);
+        if (layer) {
           layer.brightness = nextBrightness;
           layer.contrast = nextContrast;
         }
-        log("debug", "Set imagery brightness=" + brightness + " contrast=" + contrast + " layers=" + visibleManagedLayers.length);
+
         requestSceneRender();
-        return;
-      }
-      const layer = activeImageryLayer || viewer.imageryLayers.get(0);
-      if (!layer) return;
-      layer.brightness = nextBrightness;
-      layer.contrast = nextContrast;
-      requestSceneRender();
-      log("debug", "Set imagery brightness=" + brightness + " contrast=" + contrast);
+      }, VISUAL_UPDATE_DEBOUNCE_MS);
     },
     rotateCamera: function (degrees) {
       if (!viewer) return;
@@ -7519,6 +7651,13 @@
         // Force render to show changes
         viewer.scene.requestRender();
         
+        // ── CRITICAL: Update persistent order state to prevent resets by other modules ──
+        const finalOrderKeys = sortedCommands.map(c => c.layer_key);
+        _lastKnownLayerOrder = finalOrderKeys.slice();
+        
+        // Unify with enforceLayerDisplayOrder to ensure hillshade/drape logic is consistent
+        this.enforceLayerDisplayOrder(finalOrderKeys);
+        
         // Additional render after a short delay to ensure visibility
         setTimeout(function() {
           if (viewer && viewer.scene) {
@@ -7668,10 +7807,47 @@
     requestSceneRender: function() {
       if (viewer && viewer.scene && typeof viewer.scene.requestRender === "function") {
         viewer.scene.requestRender();
-        log("debug", "Scene render requested");
-      } else {
-        log("warn", "Cannot request scene render - viewer or scene not available");
       }
+    },
+    captureSnapshot: function() {
+      if (!viewer || !viewer.canvas) return null;
+      viewer.render();
+      return viewer.canvas.toDataURL("image/png");
+    },
+    getSceneState: function() {
+      const getCameraInfo = function() {
+        if (!viewer) return null;
+        const cam = viewer.camera;
+        const carto = cam.positionCartographic;
+        if (!carto) return null;
+        return {
+          position: {
+            lon: Cesium.Math.toDegrees(carto.longitude),
+            lat: Cesium.Math.toDegrees(carto.latitude),
+            height: carto.height
+          },
+          heading: Cesium.Math.toDegrees(cam.heading),
+          pitch: Cesium.Math.toDegrees(cam.pitch),
+          roll: Cesium.Math.toDegrees(cam.roll)
+        };
+      };
+      
+      return {
+        mode: currentSceneMode,
+        camera: getCameraInfo(),
+        visibleLayers: Array.from(layerVisibilityState.entries())
+          .filter(([_, vis]) => vis)
+          .map(([key, _]) => key),
+        annotations: {
+          points: typeof annotationRecords !== 'undefined' ? annotationRecords : [],
+          lines: typeof annotationLineRecords !== 'undefined' ? annotationLineRecords : [],
+          polygons: typeof drawnPolygons !== 'undefined' ? drawnPolygons.map(p => ({
+            id: p.id,
+            label: p.label,
+            points: p.points
+          })) : []
+        }
+      };
     }
   };
 

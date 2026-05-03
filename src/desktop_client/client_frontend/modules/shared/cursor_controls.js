@@ -12,9 +12,9 @@
     element.style.removeProperty("cursor");
   };
 
-  const SEARCH_PENCIL_CURSOR_IMAGE =
-    "data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2220%22 height=%2220%22 viewBox=%220 0 24 24%22%3E%3Cpath fill=%22%23f4c430%22 stroke=%22%231a1a1a%22 stroke-width=%221.4%22 d=%22M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z%22/%3E%3Cpath fill=%22%231a1a1a%22 d=%22M20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83l3.75 3.75z%22/%3E%3C/svg%3E";
-  const SEARCH_PENCIL_CURSOR = `url("${SEARCH_PENCIL_CURSOR_IMAGE}") 2 18, crosshair`;
+  const SEARCH_CROSSHAIR_CURSOR_IMAGE =
+    "data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2224%22 height=%2224%22 viewBox=%220 0 24 24%22%3E%3Cpath fill=%22none%22 stroke=%22%23ffffff%22 stroke-width=%221.8%22 d=%22M12 2v20M2 12h20%22/%3E%3Ccircle cx=%2212%22 cy=%2212%22 r=%222.5%22 fill=%22none%22 stroke=%22%23ffffff%22 stroke-width=%221.2%22/%3E%3C/svg%3E";
+  const SEARCH_DRAW_CURSOR = `url("${SEARCH_CROSSHAIR_CURSOR_IMAGE}") 12 12, crosshair`;
 
   let searchCursorOverlay = null;
   let lastSearchCursorScreenPosition = null;
@@ -38,15 +38,15 @@
     overlay.style.position = "fixed";
     overlay.style.left = "0px";
     overlay.style.top = "0px";
-    overlay.style.width = "20px";
-    overlay.style.height = "20px";
+    overlay.style.width = "24px";
+    overlay.style.height = "24px";
     overlay.style.pointerEvents = "none";
     overlay.style.zIndex = "100000";
     overlay.style.display = "none";
     overlay.style.backgroundRepeat = "no-repeat";
-    overlay.style.backgroundSize = "20px 20px";
-    overlay.style.backgroundImage = `url("${SEARCH_PENCIL_CURSOR_IMAGE}")`;
-    overlay.style.transform = "translate(-2px, -18px)";
+    overlay.style.backgroundSize = "24px 24px";
+    overlay.style.backgroundImage = `url("${SEARCH_CROSSHAIR_CURSOR_IMAGE}")`;
+    overlay.style.transform = "translate(-12px, -12px)";
     document.body.appendChild(overlay);
     searchCursorOverlay = overlay;
   }
@@ -84,7 +84,7 @@
       return;
     }
     ensureSearchCursorOverlay();
-    const nextCursor = enabled ? (searchCursorOverlay ? "none" : SEARCH_PENCIL_CURSOR) : "";
+    const nextCursor = enabled ? (searchCursorOverlay ? "none" : SEARCH_DRAW_CURSOR) : "";
     applyCursorStyle(viewer.canvas, nextCursor);
     const mapElement = document.getElementById("cesiumContainer");
     if (mapElement) {

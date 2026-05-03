@@ -75,6 +75,14 @@ class SearchCoordinator:
             c.panel.set_search_busy(True, "Rendering results...", progress=80)
             c._apply_search_results(assets, label=f"Drawn {geometry_type} search")
             c.panel.set_search_busy(True, "Finalizing...", progress=97)
+
+            # Turn off drawing mode and pencil cursor, but keep polygon on map
+            c._run_js_call("setSearchDrawMode", "none")
+            c._set_search_draw_button_checked(False)
+            
+            # Clear Python payload so 'Add Polygon' doesn't auto-finalize with stale points
+            c.state.search_geometry_type = None
+            c.state.search_geometry_payload = None
         except (KeyError, ValueError, TypeError):
             c.panel.log("Invalid drawn geometry payload.")
             c._logger.exception("Invalid drawn geometry payload=%s", payload)
@@ -98,9 +106,9 @@ class SearchCoordinator:
         if c._distance_measure_mode_enabled:
             c._distance_measure_mode_enabled = False
             c._run_js_call("setDistanceMeasureMode", False)
-        if c._add_point_mode_enabled:
-            c._add_point_mode_enabled = False
-            c._set_annotation_overlay_visible(False)
+        # if c._add_point_mode_enabled:
+        #     c._add_point_mode_enabled = False
+        #     c._set_annotation_overlay_visible(False) (Removed to allow coexistence)
         if c._shadow_height_mode_enabled:
             c._shadow_height_mode_enabled = False
         c._pan_mode_enabled = False
@@ -288,6 +296,14 @@ class SearchCoordinator:
             )
 
             c.panel.set_search_busy(True, "Finalizing polygon search...", progress=95)
+
+            # Turn off drawing mode and pencil cursor, but keep polygon on map
+            c._run_js_call("setSearchDrawMode", "none")
+            c._set_search_draw_button_checked(False)
+            
+            # Clear Python payload so 'Add Polygon' doesn't auto-finalize with stale points
+            c.state.search_geometry_type = None
+            c.state.search_geometry_payload = None
 
             # Track performance
             search_time = time.time() - start_time
