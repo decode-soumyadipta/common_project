@@ -332,22 +332,29 @@
       }
       for (let i = 0; i < searchPolygonPoints.length; i += 1) {
         const point = searchPolygonPoints[i];
+        // Use the original picked Cartesian3 if stored (exact terrain position)
+        const pos = point.cartesian
+          ? cesium.Cartesian3.clone(point.cartesian)
+          : cesium.Cartesian3.fromDegrees(point.lon, point.lat, 0);
         if (i < searchVertexEntities.length) {
-          searchVertexEntities[i].position = cesium.Cartesian3.fromDegrees(point.lon, point.lat);
-          searchVertexEntities[i].show = getPolygonVisibilityEnabled() && getSearchOverlayVisible();
+          searchVertexEntities[i].position = pos;
+          searchVertexEntities[i].show = true;
         } else {
           const ve = viewer.entities.add({
-            position: cesium.Cartesian3.fromDegrees(point.lon, point.lat),
+            position: pos,
             point: {
               pixelSize: 9,
               color: cesium.Color.fromCssColorString("#f4c430"),
               outlineColor: cesium.Color.fromCssColorString("#1a1a1a"),
               outlineWidth: 1.5,
-              heightReference: cesium.HeightReference.CLAMP_TO_GROUND,
+              heightReference: point.cartesian
+                ? cesium.HeightReference.NONE
+                : cesium.HeightReference.CLAMP_TO_GROUND,
               disableDepthTestDistance: Number.POSITIVE_INFINITY,
             },
-            show: getPolygonVisibilityEnabled() && getSearchOverlayVisible(),
+            show: true,
           });
+          ve._isAnnotationVertex = true;
           searchVertexEntities.push(ve);
         }
       }
@@ -377,9 +384,12 @@
     }
 
     function toggleAllDrawnPolygonsVisibility(visible) {
+      // NOTE: Only toggles AOI/search polygons — NOT user annotation polygons.
+      // User annotation polygons (drawnPolygons with _isAnnotationPoly=true) remain always visible.
       const drawnPolygons = getDrawnPolygons();
       const isVisible = Boolean(visible);
       for (const poly of drawnPolygons) {
+        if (poly._isAnnotationPoly) continue; // Never hide user-drawn annotation polygons
         poly.visible = isVisible;
         if (poly.lineEntity) poly.lineEntity.show = isVisible;
         if (poly.polygonEntity) poly.polygonEntity.show = isVisible;
@@ -454,61 +464,222 @@
       }
     }
 
+    // Unique color palette for polygons
+    var POLYGON_COLORS = [
+      "#31d18d", "#4a90d9", "#e67e22", "#9b59b6",
+      "#e74c3c", "#1abc9c", "#f39c12", "#2ecc71",
+    ];
+    var EDIT_ICON = "data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2720%27 height=%2720%27 viewBox=%270 0 20 20%27%3E%3Ccircle cx=%2710%27 cy=%2710%27 r=%279%27 fill=%27rgba(255%2C255%2C255%2C0.92)%27 stroke=%27rgba(0%2C0%2C0%2C0.38)%27 stroke-width=%271.1%27/%3E%3Cpath d=%27M6.1 12.9l.5-2.2L11.8 5.5a1.3 1.3 0 011.8 0l.8.8a1.3 1.3 0 010 1.8L9.1 13.3l-2.2.5a.6.6 0 01-.8-.7z%27 fill=%27%23282f39%27/%3E%3Cpath d=%27M10.9 6.4l2.7 2.7%27 stroke=%27%23ffffff%27 stroke-width=%271%27 stroke-linecap=%27round%27/%3E%3C/svg%3E";
+    var DELETE_ICON = "data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2720%27 height=%2720%27 viewBox=%270 0 20 20%27%3E%3Ccircle cx=%2710%27 cy=%2710%27 r=%279%27 fill=%27rgba(220%2C50%2C50%2C0.92)%27 stroke=%27rgba(0%2C0%2C0%2C0.38)%27 stroke-width=%271.1%27/%3E%3Cpath d=%27M6 6L14 14M14 6L6 14%27 stroke=%27%23ffffff%27 stroke-width=%272%27 stroke-linecap=%27round%27/%3E%3C/svg%3E";
+
     function finalizeSearchPolygon() {
-      const cesium = getCesium();
-      const searchPolygonPoints = getSearchPolygonPoints();
+      var cesium = getCesium();
+      var viewer = getViewer();
+      var searchPolygonPoints = getSearchPolygonPoints();
       if (searchPolygonPoints.length < 3) {
         deps.log("warn", "Polygon draw requires at least 3 points");
         return;
       }
       setSearchCursorPoint(null);
-      const searchPreviewLineEntity = getSearchPreviewLineEntity();
-      if (searchPreviewLineEntity && searchPreviewLineEntity.polyline) {
-        searchPreviewLineEntity.polyline.material = cesium.Color.fromCssColorString("#31d18d");
-        searchPreviewLineEntity.polyline.show = true;
-        searchPreviewLineEntity.polyline.depthFailMaterial = cesium.Color.fromCssColorString("#31d18d").withAlpha(0.6);
-      }
-      const searchPreviewPolygonEntity = getSearchPreviewPolygonEntity();
-      if (searchPreviewPolygonEntity && searchPreviewPolygonEntity.polygon) {
-        searchPreviewPolygonEntity.polygon.material = cesium.Color.fromCssColorString("#31d18d").withAlpha(0.28);
-        searchPreviewPolygonEntity.polygon.show = true;
-      }
-      const searchAreaLabelEntity = getSearchAreaLabelEntity();
-      if (searchAreaLabelEntity && searchAreaLabelEntity.label) {
-        searchAreaLabelEntity.label.show = true;
-      }
-      for (const ve of getSearchVertexEntities()) {
-        if (ve) {
-          ve.show = true;
-        }
-      }
-      updateSearchPolygonPreview();
-
+      var frozenPoints = searchPolygonPoints.slice();
       deps.incrementDrawnPolygonCounter();
-      const polyRecord = {
-        id: deps.getDrawnPolygonCounter(),
-        label: "Polygon " + deps.getDrawnPolygonCounter(),
-        points: searchPolygonPoints.slice(),
-        lineEntity: searchPreviewLineEntity,
-        polygonEntity: searchPreviewPolygonEntity,
-        areaLabelEntity: searchAreaLabelEntity,
-        vertexEntities: getSearchVertexEntities().slice(),
+      var polyId = deps.getDrawnPolygonCounter();
+      var colorHex = POLYGON_COLORS[(polyId - 1) % POLYGON_COLORS.length];
+      var polyColor = cesium.Color.fromCssColorString(colorHex);
+
+      // --- Create STATIC entities (not tied to CallbackProperty) ---
+      // Polyline (closed)
+      var linePositions = frozenPoints.map(function (p) {
+        return cesium.Cartesian3.fromDegrees(p.lon, p.lat);
+      });
+      linePositions.push(linePositions[0]);
+      var lineEntity = viewer.entities.add({
+        polyline: {
+          positions: linePositions,
+          width: 2.5,
+          material: polyColor,
+          clampToGround: true,
+          depthFailMaterial: polyColor.withAlpha(0.6),
+        },
+      });
+
+      // Polygon fill
+      var fillPositions = frozenPoints.map(function (p) {
+        return cesium.Cartesian3.fromDegrees(p.lon, p.lat);
+      });
+      var polygonEntity = viewer.entities.add({
+        polygon: {
+          hierarchy: new cesium.PolygonHierarchy(fillPositions),
+          material: polyColor.withAlpha(0.2),
+          fill: true,
+          outline: false,
+          perPositionHeight: false,
+          classificationType: cesium.ClassificationType.TERRAIN,
+        },
+      });
+
+      // Vertex dots
+      var vertexEntities = [];
+      for (var i = 0; i < frozenPoints.length; i++) {
+        var pos = frozenPoints[i].cartesian
+          ? cesium.Cartesian3.clone(frozenPoints[i].cartesian)
+          : cesium.Cartesian3.fromDegrees(frozenPoints[i].lon, frozenPoints[i].lat, 0);
+        var ve = viewer.entities.add({
+          position: pos,
+          point: {
+            pixelSize: 9,
+            color: cesium.Color.fromCssColorString("#f4c430"),
+            outlineColor: cesium.Color.fromCssColorString("#1a1a1a"),
+            outlineWidth: 1.5,
+            heightReference: frozenPoints[i].cartesian
+              ? cesium.HeightReference.NONE
+              : cesium.HeightReference.CLAMP_TO_GROUND,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+          show: true,
+        });
+        vertexEntities.push(ve);
+      }
+
+      // Area label at centroid
+      var center = geometry.polygonLabelPosition(frozenPoints);
+      var areaM2 = geometry.computePolygonAreaSquareMeters
+        ? geometry.computePolygonAreaSquareMeters(frozenPoints)
+        : 0;
+      var areaText = areaM2 > 0
+        ? "Area " + (geometry.formatArea ? geometry.formatArea(areaM2) : areaM2.toFixed(0) + " m\u00b2")
+        : "";
+      var areaLabelEntity = null;
+      if (center) {
+        areaLabelEntity = viewer.entities.add({
+          position: cesium.Cartesian3.fromDegrees(center.lon, center.lat),
+          label: {
+            text: areaText,
+            font: "13px 'Segoe UI', sans-serif",
+            fillColor: cesium.Color.WHITE,
+            showBackground: true,
+            backgroundColor: cesium.Color.BLACK.withAlpha(0.82),
+            backgroundPadding: new cesium.Cartesian2(8, 4),
+            style: cesium.LabelStyle.FILL,
+            horizontalOrigin: cesium.HorizontalOrigin.CENTER,
+            verticalOrigin: cesium.VerticalOrigin.CENTER,
+            heightReference: cesium.HeightReference.CLAMP_TO_GROUND,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            scale: 0.8,
+          },
+        });
+      }
+
+      // Name label + edit + delete at first vertex
+      var anchorPos = vertexEntities.length > 0
+        ? vertexEntities[0].position.getValue(cesium.JulianDate.now())
+        : cesium.Cartesian3.fromDegrees(frozenPoints[0].lon, frozenPoints[0].lat);
+      var polyLabel = "Polygon " + polyId;
+      var nameLabelEntity = viewer.entities.add({
+        position: anchorPos,
+        label: {
+          text: polyLabel,
+          fillColor: cesium.Color.WHITE,
+          showBackground: true,
+          backgroundColor: cesium.Color.BLACK.withAlpha(0.62),
+          outlineColor: cesium.Color.BLACK.withAlpha(0.9),
+          outlineWidth: 2,
+          style: cesium.LabelStyle.FILL_AND_OUTLINE,
+          font: "500 12px 'Segoe UI', 'Helvetica Neue', sans-serif",
+          pixelOffset: new cesium.Cartesian2(12, -8),
+          horizontalOrigin: cesium.HorizontalOrigin.LEFT,
+          verticalOrigin: cesium.VerticalOrigin.BOTTOM,
+          scaleByDistance: new cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.45),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      });
+      nameLabelEntity._polyRecordId = polyId;
+      nameLabelEntity._polyRole = "label";
+
+      var editEntity = viewer.entities.add({
+        position: anchorPos,
+        billboard: {
+          image: EDIT_ICON,
+          width: 17, height: 17,
+          color: cesium.Color.WHITE.withAlpha(0.42),
+          pixelOffset: new cesium.Cartesian2(12, -26),
+          horizontalOrigin: cesium.HorizontalOrigin.LEFT,
+          verticalOrigin: cesium.VerticalOrigin.BOTTOM,
+          scaleByDistance: new cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      });
+      editEntity._polyRecordId = polyId;
+      editEntity._polyRole = "edit";
+
+      var deleteEntity = viewer.entities.add({
+        position: anchorPos,
+        billboard: {
+          image: DELETE_ICON,
+          width: 17, height: 17,
+          color: cesium.Color.WHITE.withAlpha(0.62),
+          pixelOffset: new cesium.Cartesian2(32, -26),
+          horizontalOrigin: cesium.HorizontalOrigin.LEFT,
+          verticalOrigin: cesium.VerticalOrigin.BOTTOM,
+          scaleByDistance: new cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      });
+      deleteEntity._polyRecordId = polyId;
+      deleteEntity._polyRole = "delete";
+
+      var polyRecord = {
+        id: polyId,
+        label: polyLabel,
+        points: frozenPoints,
+        lineEntity: lineEntity,
+        polygonEntity: polygonEntity,
+        areaLabelEntity: areaLabelEntity,
+        vertexEntities: vertexEntities,
+        nameLabelEntity: nameLabelEntity,
+        editEntity: editEntity,
+        deleteEntity: deleteEntity,
         visible: true,
+        _isAnnotationPoly: true,
       };
-      const drawnPolygons = getDrawnPolygons();
+      var drawnPolygons = getDrawnPolygons();
       drawnPolygons.push(polyRecord);
+
+      // --- Remove dynamic preview entities (they were used during drawing) ---
+      var previewLine = getSearchPreviewLineEntity();
+      if (previewLine) { viewer.entities.remove(previewLine); }
+      setSearchPreviewLineEntity(null);
+      var previewPoly = getSearchPreviewPolygonEntity();
+      if (previewPoly) { viewer.entities.remove(previewPoly); }
+      setSearchPreviewPolygonEntity(null);
+      var previewLabel = getSearchAreaLabelEntity();
+      if (previewLabel) { viewer.entities.remove(previewLabel); }
+      setSearchAreaLabelEntity(null);
+      if (deps.getSearchCursorEntity) {
+        var cursorEnt = deps.getSearchCursorEntity();
+        if (cursorEnt) { viewer.entities.remove(cursorEnt); }
+        deps.setSearchCursorEntity(null);
+      }
+      while (getSearchVertexEntities().length > 0) {
+        var oldVe = getSearchVertexEntities().pop();
+        if (oldVe) { viewer.entities.remove(oldVe); }
+      }
+
+      // Clear shared state for next polygon
+      searchPolygonPoints.length = 0;
+      setSearchCursorPoint(null);
+      setSearchDrawMode("none");
+      setSearchPolygonLocked(false);
+      setSearchOverlayVisible(true);
+      setSearchCursorEnabled(false);
 
       if (getComparatorModeEnabled()) {
         updateComparatorPolygons(true);
       }
 
-      const polygonPayload = { points: searchPolygonPoints.slice() };
-      setSearchDrawMode("none");
-      setSearchPolygonLocked(true);
-      setSearchOverlayVisible(true);
-      setSearchCursorEnabled(false);
-      updateAoiPanel(searchPolygonPoints);
-      deps.setStatus("Search polygon ready");
+      var polygonPayload = { points: frozenPoints };
+      updateAoiPanel(frozenPoints);
+      deps.setStatus("Polygon " + polyId + " saved.");
       window.requestAnimationFrame(function () {
         geometry.emitSearchGeometry("polygon", polygonPayload);
       });

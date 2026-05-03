@@ -327,3 +327,19 @@ body,
 .measure-distance-cursor-active * {
   cursor: crosshair !important;
 }
+
+.measure-profile-cursor-active,
+.measure-profile-cursor-active * {
+  cursor: crosshair !important;
+}
+
+/* Pan mode cursor */
+.pan-mode-active,
+.pan-mode-active * {
+  cursor: grab !important;
+}
+
+.pan-mode-active:active,
+.pan-mode-active:active * {
+  cursor: grabbing !important;
+}

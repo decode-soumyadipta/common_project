@@ -34,6 +34,7 @@
   const clickedPoints = [];
   const annotationEntities = [];
   let hoveredAnnotationEditEntity = null;
+    let hoveredAnnotationDeleteEntity = null;
   let lastMapClickCartesian = null;
   window._currentBasemapVisibility = false; // Match Python backend default
 
@@ -417,6 +418,7 @@
   let lastEdgeScaleUpdateMs = 0;
   const EDGE_SCALE_UPDATE_INTERVAL_MS = 120;
   const EDGE_SCALE_UPDATE_INTERVAL_2D_MS = 320;
+  const ANNOTATION_DELETE_ICON_IMAGE = "data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2720%27 height=%2720%27 viewBox=%270 0 20 20%27%3E%3Ccircle cx=%2710%27 cy=%2710%27 r=%279%27 fill=%27rgba(220%2C50%2C50%2C0.92)%27 stroke=%27rgba(0%2C0%2C0%2C0.38)%27 stroke-width=%271.1%27/%3E%3Cpath d=%27M6 6L14 14M14 6L6 14%27 stroke=%27%23ffffff%27 stroke-width=%272%27 stroke-linecap=%27round%27/%3E%3C/svg%3E";
   const ANNOTATION_EDIT_ICON_IMAGE =
     "data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2720%27 height=%2720%27 viewBox=%270 0 20 20%27%3E%3Ccircle cx=%2710%27 cy=%2710%27 r=%279%27 fill=%27rgba(255%2C255%2C255%2C0.92)%27 stroke=%27rgba(0%2C0%2C0%2C0.38)%27 stroke-width=%271.1%27/%3E%3Cpath d=%27M6.1 12.9l.5-2.2L11.8 5.5a1.3 1.3 0 011.8 0l.8.8a1.3 1.3 0 010 1.8L9.1 13.3l-2.2.5a.6.6 0 01-.8-.7z%27 fill=%27%23282f39%27/%3E%3Cpath d=%27M10.9 6.4l2.7 2.7%27 stroke=%27%23ffffff%27 stroke-width=%271%27 stroke-linecap=%27round%27/%3E%3C/svg%3E";
   const _SB_COORD_THROTTLE_MS = 50; // Faster coordinate updates (20 fps) - reduced from 100ms
@@ -2587,14 +2589,16 @@
     }
     const controller = viewer.scene.screenSpaceCameraController;
     const is2d = String(mode || "3d").toLowerCase() === "2d";
+    const isPan = panModeActive;
     
     // Use Cesium default input mapping
     controller.enableInputs = true;
     controller.enableTranslate = true;
-    controller.enableZoom = false; // Custom wheel handler takes over — Cesium's native zoom disabled to prevent asymmetric pick-distance jumps
+    controller.enableZoom = false;
+    // In pan mode keep rotate ON (required for 3D surface dragging) but disable tilt/look
     controller.enableRotate = !is2d;
-    controller.enableTilt = !is2d;
-    controller.enableLook = !is2d;
+    controller.enableTilt = !(is2d || isPan);
+    controller.enableLook = !(is2d || isPan);
 
     
     // Inertia — keep spin/translate smooth; zoom MUST be zero-inertia.
@@ -2639,7 +2643,7 @@
     if (!scenePerfDefaults) {
       return;
     }
-    const is2d = String(mode || "3d").toLowerCase() === "2d";
+    const is2d = String(mode || "3d").toLowerCase() === "2d" || panModeActive;
     if (is2d) {
       // Favor smooth panning in 2D without lowering imagery/terrain quality.
       viewer.scene.globe.tileCacheSize = Math.max(scenePerfDefaults.tileCacheSize, 1200);
@@ -4302,6 +4306,10 @@
     }
     editEntity.billboard.color = hovered ? Cesium.Color.WHITE.withAlpha(0.96) : Cesium.Color.WHITE.withAlpha(0.42);
   }
+  function setAnnotationDeleteIconHoverState(deleteEntity, hovered) {
+    if (!deleteEntity || !deleteEntity.billboard) return;
+    deleteEntity.billboard.color = hovered ? Cesium.Color.WHITE.withAlpha(0.96) : Cesium.Color.WHITE.withAlpha(0.62);
+  }
 
   function renameAnnotationFromEditIcon(editEntity) {
     if (!editEntity || editEntity._annotationRole !== "edit") {
@@ -4332,15 +4340,16 @@
     }
     const picked = viewer.scene.pick(screenPosition);
     const nextHover = picked && picked.id && picked.id._annotationRole === "edit" ? picked.id : null;
-    if (hoveredAnnotationEditEntity === nextHover) {
-      return;
+    if (hoveredAnnotationEditEntity !== nextHover) {
+      if (hoveredAnnotationEditEntity) setAnnotationEditIconHoverState(hoveredAnnotationEditEntity, false);
+      hoveredAnnotationEditEntity = nextHover;
+      if (hoveredAnnotationEditEntity) setAnnotationEditIconHoverState(hoveredAnnotationEditEntity, true);
     }
-    if (hoveredAnnotationEditEntity) {
-      setAnnotationEditIconHoverState(hoveredAnnotationEditEntity, false);
-    }
-    hoveredAnnotationEditEntity = nextHover;
-    if (hoveredAnnotationEditEntity) {
-      setAnnotationEditIconHoverState(hoveredAnnotationEditEntity, true);
+    const nextDelHover = picked && picked.id && picked.id._annotationRole === "delete" ? picked.id : null;
+    if (hoveredAnnotationDeleteEntity !== nextDelHover) {
+      if (hoveredAnnotationDeleteEntity) setAnnotationDeleteIconHoverState(hoveredAnnotationDeleteEntity, false);
+      hoveredAnnotationDeleteEntity = nextDelHover;
+      if (hoveredAnnotationDeleteEntity) setAnnotationDeleteIconHoverState(hoveredAnnotationDeleteEntity, true);
     }
     requestSceneRender();
   }
@@ -4575,6 +4584,59 @@
           return;
         }
       }
+      if (picked && picked.id && picked.id._annotationRole === "delete") {
+        var delE = picked.id;
+        var delTargets = [delE._annotationAnchorEntity, delE._annotationLabelEntity, delE._annotationEditEntity, delE];
+        for (var di = 0; di < delTargets.length; di++) {
+          var dIdx = annotationEntities.indexOf(delTargets[di]);
+          if (dIdx > -1) annotationEntities.splice(dIdx, 1);
+          if (delTargets[di]) viewer.entities.remove(delTargets[di]);
+        }
+        requestSceneRender();
+        log("info", "Deleted annotation id=" + (delE._annotationId || "?"));
+        return;
+      }
+      // Polygon edit (rename)
+      if (picked && picked.id && picked.id._polyRole === "edit") {
+        var polyId = picked.id._polyRecordId;
+        var polys = drawnPolygons;
+        for (var pi = 0; pi < polys.length; pi++) {
+          if (polys[pi].id === polyId && polys[pi].nameLabelEntity) {
+            var curName = polys[pi].label || "Polygon " + polyId;
+            var newName = prompt("Rename polygon:", curName);
+            if (newName && newName.trim()) {
+              polys[pi].label = newName.trim();
+              polys[pi].nameLabelEntity.label.text = newName.trim();
+              requestSceneRender();
+            }
+            break;
+          }
+        }
+        return;
+      }
+      // Polygon delete
+      if (picked && picked.id && picked.id._polyRole === "delete") {
+        var delPolyId = picked.id._polyRecordId;
+        for (var pj = drawnPolygons.length - 1; pj >= 0; pj--) {
+          if (drawnPolygons[pj].id === delPolyId) {
+            var rec = drawnPolygons[pj];
+            if (rec.lineEntity) viewer.entities.remove(rec.lineEntity);
+            if (rec.polygonEntity) viewer.entities.remove(rec.polygonEntity);
+            if (rec.areaLabelEntity) viewer.entities.remove(rec.areaLabelEntity);
+            if (rec.nameLabelEntity) viewer.entities.remove(rec.nameLabelEntity);
+            if (rec.editEntity) viewer.entities.remove(rec.editEntity);
+            if (rec.deleteEntity) viewer.entities.remove(rec.deleteEntity);
+            for (var vi = 0; vi < (rec.vertexEntities || []).length; vi++) {
+              if (rec.vertexEntities[vi]) viewer.entities.remove(rec.vertexEntities[vi]);
+            }
+            drawnPolygons.splice(pj, 1);
+            requestSceneRender();
+            log("info", "Deleted polygon id=" + delPolyId);
+            break;
+          }
+        }
+        return;
+      }
 
       // Try multiple picking strategies to guarantee a coordinate.
       // Strategy 1: scene.pickPosition (uses depth buffer, most accurate)
@@ -4627,16 +4689,18 @@
       const lon = lonLat.lon;
       const lat = lonLat.lat;
 
+      // Polygon draw — always fires if in polygon mode (doesn't block annotation placement below)
       if (searchDrawMode === "polygon") {
         if (searchPolygonLocked) {
           setStatus("Polygon restored. Clear geometry to start a new polygon.");
-          return;
+          // Don't return — annotation point can still be placed
+        } else {
+          searchPolygonPoints.push({ lon: lon, lat: lat, cartesian: clickCartesian ? Cesium.Cartesian3.clone(clickCartesian) : null });
+          searchCursorPoint = null;
+          updateSearchPolygonPreview();
+          setStatus("Polygon draw: continue points, right-click or Finish to close");
+          // Fall through — annotation point can also be placed simultaneously if annotationModeEnabled
         }
-        searchPolygonPoints.push({ lon: lon, lat: lat });
-        searchCursorPoint = null;
-        updateSearchPolygonPreview();
-        setStatus("Polygon draw: continue points, right-click or Finish to close");
-        return;
       }
 
       if (distanceMeasureModeEnabled) {
@@ -4794,6 +4858,18 @@
       // Live rubber-band line for elevation profile mode — mirrors distance tool approach
       if (window._profileModeActive && window._profileStartLon !== undefined) {
         try {
+          // Throttle profile preview updates for smooth performance (60fps max)
+          const now = Date.now();
+          if (!window._lastProfilePreviewUpdate) {
+            window._lastProfilePreviewUpdate = 0;
+          }
+          const timeSinceLastUpdate = now - window._lastProfilePreviewUpdate;
+          if (timeSinceLastUpdate < 16) {
+            // Skip this update - too soon after last one
+            return;
+          }
+          window._lastProfilePreviewUpdate = now;
+          
           let profileLonLat = getLonLatFromScreen(movement.endPosition);
           if (!profileLonLat && movement.endPosition) {
             const ellipsoidCart = viewer.camera.pickEllipsoid(movement.endPosition, viewer.scene.globe.ellipsoid);
@@ -4909,6 +4985,10 @@
         setAnnotationEditIconHoverState(hoveredAnnotationEditEntity, false);
         hoveredAnnotationEditEntity = null;
       }
+      if (hoveredAnnotationDeleteEntity) {
+        setAnnotationDeleteIconHoverState(hoveredAnnotationDeleteEntity, false);
+        hoveredAnnotationDeleteEntity = null;
+      }
       // Clear status bar coordinates when cursor leaves the map
       if (bridge && bridge.on_mouse_coordinates) {
         bridge.on_mouse_coordinates(0, 0);
@@ -4930,13 +5010,13 @@
       searchCursorEntity.show = visible;
     }
     if (searchPreviewLineEntity && searchPreviewLineEntity.polyline) {
-      searchPreviewLineEntity.polyline.show = visible && searchPolygonPoints.length >= 2;
+      searchPreviewLineEntity.polyline.show = true && searchPolygonPoints.length >= 2;
     }
     if (searchPreviewPolygonEntity && searchPreviewPolygonEntity.polygon) {
-      searchPreviewPolygonEntity.polygon.show = visible && searchPolygonPoints.length >= 3;
+      searchPreviewPolygonEntity.polygon.show = true && searchPolygonPoints.length >= 3;
     }
     if (searchAreaLabelEntity && searchAreaLabelEntity.label) {
-      searchAreaLabelEntity.label.show = visible && searchPolygonPoints.length >= 3;
+      searchAreaLabelEntity.label.show = true && searchPolygonPoints.length >= 3;
     }
     if (searchPreviewLineEntity || searchPreviewPolygonEntity || searchAreaLabelEntity) {
       requestSceneRender();
@@ -5177,9 +5257,10 @@
           width: 2,
           arcType: Cesium.ArcType.GEODESIC,
           material: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.85),
-          depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.85),
+          clampToGround: true,
         },
       });
+      log("debug", "Profile preview line entity created");
     }
     requestSceneRender();
   }
@@ -5209,7 +5290,7 @@
             width: 2,
             arcType: Cesium.ArcType.GEODESIC,
             material: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.85),
-            depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.85),
+            clampToGround: true,
           },
         });
       }
@@ -5254,6 +5335,7 @@
 
   function setPanMode(enabled) {
     panModeActive = Boolean(enabled);
+    const container = document.getElementById("cesiumContainer");
     if (panModeActive) {
       if (distanceMeasureModeEnabled) {
         setDistanceMeasureMode(false);
@@ -5265,11 +5347,13 @@
         updatePolygonPreviewVisibility();
       }
       clearDistanceScaleOverlay();
+      if (container) container.classList.add("pan-mode-active");
       // Force 2D-like flat drag: disable rotate/tilt/look
       configureCameraControllerForMode(currentSceneMode);
       setStatus("Pan mode enabled — drag to translate view.");
       log("info", "Pan mode activated (2D-like drag)");
     } else {
+      if (container) container.classList.remove("pan-mode-active");
       // Restore normal 3D interaction controls
       configureCameraControllerForMode(currentSceneMode);
       setStatus("Pan mode disabled — 3D navigation restored.");
@@ -6545,9 +6629,31 @@
       editEntity._annotationAnchorEntity = anchorEntity;
       editEntity._annotationLabelEntity = labelEntity;
 
+      const deleteEntity = viewer.entities.add({
+        position: anchorPosition,
+        billboard: {
+          image: ANNOTATION_DELETE_ICON_IMAGE,
+          width: 17,
+          height: 17,
+          color: Cesium.Color.WHITE.withAlpha(0.62),
+          pixelOffset: new Cesium.Cartesian2(32, -26),
+          horizontalOrigin: Cesium.HorizontalOrigin.LEFT,
+          verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+          scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      });
+      deleteEntity.show = annotationVisibilityEnabled;
+      deleteEntity._annotationId = annotationId;
+      deleteEntity._annotationRole = "delete";
+      deleteEntity._annotationAnchorEntity = anchorEntity;
+      deleteEntity._annotationLabelEntity = labelEntity;
+      deleteEntity._annotationEditEntity = editEntity;
+
       annotationEntities.push(anchorEntity);
       annotationEntities.push(labelEntity);
       annotationEntities.push(editEntity);
+      annotationEntities.push(deleteEntity);
       requestSceneRender();
       window.requestAnimationFrame(requestSceneRender);
       log("info", "Annotation added lon=" + lon + " lat=" + lat);
@@ -6592,14 +6698,54 @@
       log("info", "All overlays cleared");
       requestSceneRender();
     },
+    undoLastAction: function () {
+      let undid = false;
+      // Undo last annotation point
+      if (annotationEntities.length > 0) {
+        // Each annotation has 4 entities: anchor, label, edit, delete
+        const last = annotationEntities[annotationEntities.length - 1];
+        if (last && last._annotationRole) {
+          const targetId = last._annotationId;
+          const toRemove = [];
+          for (let i = annotationEntities.length - 1; i >= 0; i--) {
+            if (annotationEntities[i]._annotationId === targetId) {
+              toRemove.push(i);
+            }
+          }
+          for (let i = 0; i < toRemove.length; i++) {
+            const entity = annotationEntities.splice(toRemove[i], 1)[0];
+            if (entity) viewer.entities.remove(entity);
+          }
+          undid = true;
+          setStatus("Undo: removed last annotation.");
+          log("info", "Undo annotation id=" + targetId);
+        }
+      }
+      if (!undid && searchDrawMode === "polygon" && !searchPolygonLocked && searchPolygonPoints.length > 0) {
+        searchPolygonPoints.pop();
+        updateSearchPolygonPreview();
+        undid = true;
+        setStatus("Undo: removed last polygon point. " + searchPolygonPoints.length + " points remain.");
+        log("info", "Undo polygon point");
+      }
+      if (!undid && distanceMeasureModeEnabled && distanceMeasureAnchor) {
+        distanceMeasureAnchor = null;
+        clearMeasurementPreviewEntities();
+        undid = true;
+        setStatus("Undo: removed measurement start point.");
+        log("info", "Undo distance start");
+      }
+      requestSceneRender();
+      return undid;
+    },
     zoomIn: function () {
       log("debug", "=== ZOOM IN BUTTON PRESSED ===");
-      zoomBy(0.98);
+      zoomBy(0.65);
       log("debug", "Zoom in button completed");
     },
     zoomOut: function () {
       log("debug", "=== ZOOM OUT BUTTON PRESSED ===");
-      zoomBy(1.02);
+      zoomBy(1.35);
       log("debug", "Zoom out button completed");
     },
     zoomToExtent: function () {
@@ -6744,6 +6890,17 @@
       });
       window._profileCursorFrac = 0.5;
     },
+    setProfileCursorMode: function (enabled) {
+      const container = document.getElementById("cesiumContainer");
+      if (container) {
+        if (enabled) {
+          container.classList.add("measure-profile-cursor-active");
+        } else {
+          container.classList.remove("measure-profile-cursor-active");
+        }
+      }
+      log("debug", "Profile cursor mode=" + String(Boolean(enabled)));
+    },
     drawProfileStartMarker: function (lon, lat) {
       if (!viewer) return;
       // Remove previous start marker if any
@@ -6765,10 +6922,11 @@
         try { viewer.entities.remove(window._profileEndEntity); } catch (_) {}
         window._profileEndEntity = null;
       }
+      
       const cyan = Cesium.Color.fromCssColorString("#00e5ff");
       window._profileStartEntity = viewer.entities.add({
         position: Cesium.Cartesian3.fromDegrees(Number(lon), Number(lat)),
-        point: { pixelSize: 9, color: cyan, outlineColor: Cesium.Color.BLACK, outlineWidth: 1.5, disableDepthTestDistance: Number.POSITIVE_INFINITY },
+        point: { pixelSize: 9, color: cyan, outlineColor: Cesium.Color.BLACK, outlineWidth: 1.5, heightReference: Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: Number.POSITIVE_INFINITY },
         label: {
           text: "A",
           font: "bold 11px sans-serif",
@@ -6777,6 +6935,7 @@
           outlineColor: Cesium.Color.BLACK,
           outlineWidth: 2,
           pixelOffset: new Cesium.Cartesian2(10, -10),
+          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
@@ -6791,6 +6950,7 @@
       window._profileModeActive = false;
       window._profileStartLon = undefined;
       window._profileStartLat = undefined;
+      
       if (window._profilePreviewEntity) {
         try { viewer.entities.remove(window._profilePreviewEntity); } catch (_) {}
         window._profilePreviewEntity = null;
@@ -6809,6 +6969,7 @@
       window._profileLineLon2 = undefined;
       window._profileLineLat2 = undefined;
       window._profileCursorFrac = undefined;
+      
       for (const key of ["_profilePreviewEntity", "_profileStartEntity", "_profileEndEntity", "_profileLineEntity", "_profileCursorGlobeEntity"]) {
         if (window[key]) {
           try { viewer.entities.remove(window[key]); } catch (_) {}

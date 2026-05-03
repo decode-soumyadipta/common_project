@@ -52,7 +52,11 @@ class ElevationProfileCoordinator:
         self._c.state.clicked_points.clear()
         # Enable crosshair cursor and disable pan
         self._c._run_js_call("setPanMode", False)
-        self._c._set_measurement_cursor_enabled(True)
+        # Use only CSS-based cursor (not Qt-based) to avoid double cursors
+        self._c._run_js_call("setProfileCursorMode", True)
+        # Clear any existing profile state to ensure clean start
+        self._c._run_js_call("clearProfilePreview")
+        self._c._run_js_call("clearProfileLine")
         self._c.panel.log(
             "Elevation Profile: click START point on the DEM, then END point."
         )
@@ -63,7 +67,8 @@ class ElevationProfileCoordinator:
         """Cancel/stop elevation profile mode and clear all map overlays."""
         self._active = False
         self._clicks = []
-        self._c._set_measurement_cursor_enabled(False)
+        # Use only CSS-based cursor (not Qt-based) to avoid double cursors
+        self._c._run_js_call("setProfileCursorMode", False)
         self._c._run_js_call("clearProfilePreview")
         self._c._run_js_call("clearProfileLine")
         self._c._run_js_call("setPanMode", True)
@@ -95,7 +100,6 @@ class ElevationProfileCoordinator:
 
         if n >= 2:
             # Got both points — clear preview, run the profile
-            self._c._set_measurement_cursor_enabled(False)
             self._c._run_js_call("clearProfilePreview")
             self._c._run_js_call("setPanMode", True)
             self._run_profile()
@@ -105,7 +109,8 @@ class ElevationProfileCoordinator:
             self._clicks = []
             self._active = True
             self._c._run_js_call("setPanMode", False)
-            self._c._set_measurement_cursor_enabled(True)
+            # Keep CSS cursor active for next measurement
+            self._c._run_js_call("setProfileCursorMode", True)
             self._c.panel.log(
                 "Profile complete. Click a new START point to draw another line, "
                 "or click the toolbar button to stop."

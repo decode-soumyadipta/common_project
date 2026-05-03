@@ -20,12 +20,9 @@ class ToolbarActionCoordinator:
             "Polygon Area": c._toolbar_measure_polygon_area,
             "Elevation Profile": c._toolbar_elevation_profile,
             "Fill Volume": c._toolbar_measure_volume,
-            "Slope & Aspect": c._toolbar_measure_slope_aspect,
             "Clear Last": c._toolbar_clear_last,
-            "Clear All": c._toolbar_clear_all,
             "Add Point": c._toolbar_toggle_add_point_mode,
             "Add Polygon": c._toolbar_add_polygon_annotation,
-            "Save Annotations": c._toolbar_export_geopackage,
             "Pan": c._toolbar_set_pan_mode,
             "Zoom In": lambda: c._run_js_call("zoomIn"),
             "Zoom Out": lambda: c._run_js_call("zoomOut"),
@@ -54,8 +51,6 @@ class ToolbarActionCoordinator:
                 return c._toolbar_toggle_add_point_mode(enabled=checked)
             if action_label == "Add Polygon":
                 return c._toolbar_add_polygon_annotation(enabled=checked)
-            if action_label == "Slope & Aspect":
-                return c._toolbar_measure_slope_aspect(enabled=checked)
             handler()
         except Exception:  # pragma: no cover - runtime defensive branch
             c.panel.log(f"Toolbar action failed: {action_label}")

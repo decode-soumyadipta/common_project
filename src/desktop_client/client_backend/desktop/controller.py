@@ -127,8 +127,6 @@ class DesktopController:
         self._pan_mode_enabled = True
         self._polygon_area_mode_enabled = False
         self._volume_mode_enabled = False
-        self._slope_aspect_mode_enabled = False
-        self._slope_aspect_computing = False
         self._viewshed_mode_enabled = False
         self._polygon_drawing_context = "none"  # "none", "search", "measurement"
         self._explicit_imagery_layer_visible = False
@@ -2945,7 +2943,6 @@ class DesktopController:
             self._shadow_height_mode_enabled = False
             self._viewshed_mode_enabled = False
             self._volume_mode_enabled = False
-            self._slope_aspect_mode_enabled = False
             self._pan_mode_enabled = False
 
             # Enable polygon drawing mode for measurement
@@ -3024,7 +3021,6 @@ class DesktopController:
             self._shadow_height_mode_enabled = False
             self._viewshed_mode_enabled = False
             self._polygon_area_mode_enabled = False
-            self._slope_aspect_mode_enabled = False
             self._pan_mode_enabled = False
             self._polygon_drawing_context = "measurement"
             self._volume_mode_enabled = True
@@ -3212,25 +3208,6 @@ class DesktopController:
         except Exception:
             return None
 
-    def _toolbar_measure_slope_aspect(self, enabled: bool | None = None) -> bool:
-        if (
-            enabled is False
-            and not self._slope_aspect_mode_enabled
-            and not getattr(self, "_slope_aspect_computing", False)
-        ):
-            # Defensive: treat unchecked-while-idle as an activation request.
-            enabled = True
-
-        # Toggle off
-        if enabled is False:
-            self._slope_aspect_mode_enabled = False
-            self._slope_aspect_computing = False
-            self._polygon_drawing_context = "none"
-            self._set_measurement_cursor_enabled(False)
-            self._run_js_call("setSearchDrawMode", "none")
-            self.panel.log("Slope & Aspect: off")
-            return False
-
         # Guard while computing
         if getattr(self, "_slope_aspect_computing", False):
             self.panel.log("Slope & Aspect: analysis in progress, please wait")
@@ -3240,7 +3217,6 @@ class DesktopController:
         dem_path = self._selected_dem_path()
         if not dem_path:
             self.panel.log("Select or show a DEM layer first.")
-            self._slope_aspect_mode_enabled = False
             return False
 
         # Switch DEM colour mode to slope if not already slope/aspect
@@ -3272,7 +3248,6 @@ class DesktopController:
 
         # Polygon ready — run async
         self._slope_aspect_computing = True
-        self._slope_aspect_mode_enabled = False
         self._polygon_drawing_context = "none"
         self._set_measurement_cursor_enabled(False)
 
@@ -3308,7 +3283,6 @@ class DesktopController:
             )
 
         def on_done(name: str, result: object, error: str, fmt) -> None:
-            self._slope_aspect_computing = False
             self._active_slope_aspect_worker = None
             self._active_slope_aspect_pool = None
             self.bridge.loadingProgress.emit(100, "Slope & Aspect: Complete")
@@ -3350,7 +3324,6 @@ class DesktopController:
             self._shadow_height_mode_enabled = False
             self._polygon_area_mode_enabled = False
             self._volume_mode_enabled = False
-            self._slope_aspect_mode_enabled = False
             self._run_js_call("setSearchDrawMode", "none")
             self._polygon_drawing_context = "none"
             self._pan_mode_enabled = False
@@ -3449,15 +3422,16 @@ class DesktopController:
         )
         self._add_point_mode_enabled = next_state
         if not next_state:
-            self._set_annotation_overlay_visible(False)
+            # Don't hide placed annotations — they are persistent data
+            self._set_measurement_cursor_enabled(False)
             self.panel.log("Add Point tool disabled.")
             return False
 
+        # Disable conflicting modes (but NOT Add Polygon — they can coexist)
         self._distance_measure_mode_enabled = False
         self._shadow_height_mode_enabled = False
         self._pan_mode_enabled = False
         self._run_js_call("setDistanceMeasureMode", False)
-        self._run_js_call("setSearchDrawMode", "none")
         self._run_js_call("setPanMode", False)
         self._set_measurement_cursor_enabled(True)
         self._set_annotation_overlay_visible(True)
@@ -3467,8 +3441,9 @@ class DesktopController:
     def _toolbar_clear_last(self) -> None:
         if self.state.clicked_points:
             self.state.clicked_points = self.state.clicked_points[:-1]
-        self._run_js_call("clearMeasurements")
-        self.panel.log("Cleared last measurement click.")
+        # Tell JS to undo the last point without exiting the drawing mode
+        self._run_js_call("undoLastAction")
+        self.panel.log("Undid last drawn point/action.")
 
     def _toolbar_clear_all(self) -> None:
         self.state.clicked_points.clear()
@@ -3525,21 +3500,22 @@ class DesktopController:
 
     def _toolbar_add_polygon_annotation(self, enabled: bool | None = None) -> bool:
         if enabled is False:
-            self.clear_search_geometry()
+            # Just disable draw mode — polygons stay visible
+            self._run_js_call("setSearchDrawMode", "none")
+            self._set_measurement_cursor_enabled(False)
             self.panel.log("Polygon draw disabled.")
             return False
 
         polygon = self._current_polygon_lonlat()
         if not polygon:
             self._distance_measure_mode_enabled = False
-            self._add_point_mode_enabled = False
-            self._set_annotation_overlay_visible(False)
             self._shadow_height_mode_enabled = False
             self._pan_mode_enabled = False
             self._run_js_call("setDistanceMeasureMode", False)
+            self._run_js_call("setPanMode", False)
             self.set_search_draw_mode()
             self.panel.log(
-                "Polygon draw enabled. Finish polygon, then tap Add Polygon again to save annotation."
+                "Polygon draw enabled. Click points, right-click to finish."
             )
             return True
         area, perimeter, orientation = self._polygon_metrics_for_export(polygon)
@@ -3559,7 +3535,9 @@ class DesktopController:
             "Polygon annotation saved: "
             f"area={area:.2f} m2, perimeter={perimeter:.2f} m, orientation={orientation:.1f} deg"
         )
-        self.clear_search_geometry()
+        # Polygon stays visible — don't clear geometry
+        self._run_js_call("setSearchDrawMode", "none")
+        self._set_measurement_cursor_enabled(False)
         return False
 
     def _toolbar_export_profile_csv(self) -> None:

@@ -352,7 +352,6 @@ class MainWindow(QMainWindow):
     DEM_ONLY_ACTIONS: set[str] = {
         "Elevation Profile",
         "Fill Volume",
-        "Slope & Aspect",
     }
     TOGGLE_ACTIONS: set[str] = {
         "Layer Compositor",
@@ -360,7 +359,6 @@ class MainWindow(QMainWindow):
         "Distance / Azimuth",
         "Elevation Profile",
         "Fill Volume",
-        "Slope & Aspect",
         "Pan",
         "Add Point",
         "Add Polygon",
@@ -379,9 +377,7 @@ class MainWindow(QMainWindow):
                 ("Distance / Azimuth", "measure_distance"),
                 ("Elevation Profile", "elevation_profile"),
                 ("Fill Volume", "volume"),
-                ("Slope & Aspect", "slope_aspect"),
                 ("Clear Last", "clear_last"),
-                ("Clear All", "clear_all"),
             ),
         ),
         (
@@ -389,7 +385,6 @@ class MainWindow(QMainWindow):
             (
                 ("Add Point", "annotate_point"),
                 ("Add Polygon", "annotate_polygon"),
-                ("Save Annotations", "save_annotations"),
             ),
         ),
         (
@@ -582,8 +577,6 @@ class MainWindow(QMainWindow):
         self.controller._elevation_profile.set_panel(self.elevation_profile_panel)
         # Wire fill volume job completion → uncheck toolbar button
         self.controller._on_fill_volume_done = self._on_fill_volume_done
-        # Wire slope/aspect completion → uncheck toolbar button
-        self.controller._on_slope_aspect_done = self._on_slope_aspect_done
 
         for label, action in self.toolbar_actions.items():
             if action.isCheckable():
@@ -852,7 +845,6 @@ class MainWindow(QMainWindow):
             "Distance / Azimuth",
             "Elevation Profile",
             "Fill Volume",
-            "Slope & Aspect",
             "Add Point",
             "Add Polygon",
         }
@@ -866,7 +858,11 @@ class MainWindow(QMainWindow):
                     and other_action.isCheckable()
                     and other_action.isChecked()
                 ):
+                    other_action.blockSignals(True)
                     other_action.setChecked(False)
+                    other_action.blockSignals(False)
+                    # explicitly tell controller to turn it off
+                    self.controller.handle_toolbar_action(other_label, False)
 
     def _show_layer_compositor_overlay(self) -> None:
         """Show the layer compositor overlay for adjusting layer opacities."""
@@ -1271,13 +1267,6 @@ class MainWindow(QMainWindow):
             action.setChecked(False)
             action.blockSignals(False)
 
-    def _on_slope_aspect_done(self) -> None:
-        """Uncheck the Slope & Aspect toolbar button when the analysis job finishes."""
-        action = self.toolbar_actions.get("Slope & Aspect")
-        if action is not None:
-            action.blockSignals(True)
-            action.setChecked(False)
-            action.blockSignals(False)
 
     def _on_profile_cursor_moved(self, frac: float) -> None:
         """Forward cursor fraction to the profile panel for live crosshair update."""

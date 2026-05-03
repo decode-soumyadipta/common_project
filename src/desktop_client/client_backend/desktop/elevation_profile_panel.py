@@ -1,12 +1,12 @@
 """Elevation Profile Panel — embedded Qt widget, GPU-accelerated via QOpenGLWidget.
 
 Layout (embedded in main window vertical splitter):
-  ┌─────────────────────────────────────────────────────────────┐
-  │  ▌ Elevation Profile  ──────────────────────────  [✕ Close] │  ← header bar
-  ├──────────────────────────┬──────────────────────────────────┤
-  │   2D Profile Chart       │   3D Section Plane               │
-  │   (distance vs elev)     │   (oblique cut view)             │
-  └──────────────────────────┴──────────────────────────────────┘
+  
+     Elevation Profile    [ Close]   ← header bar
+  
+     2D Profile Chart          3D Section Plane               
+     (distance vs elev)        (oblique cut view)             
+  
 
 Uses QOpenGLWidget as base so Qt routes all QPainter calls through the GPU
 compositor on Windows/NVIDIA — smooth, hardware-accelerated rendering.
@@ -49,7 +49,7 @@ except ImportError:
         _ChartBase = QWidget  # CPU fallback — still works fine
 
 
-# ── Colour palette ────────────────────────────────────────────────────────────
+#  Colour palette 
 _BG = QColor(255, 255, 255)
 _GRID = QColor(215, 225, 240)
 _AXIS = QColor(50, 70, 100)
@@ -75,9 +75,9 @@ _MT = 22  # margin top
 _MR = 12  # margin right
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# 
 # 2D Profile Chart
-# ─────────────────────────────────────────────────────────────────────────────
+# 
 
 
 class _Profile2DWidget(_ChartBase):
@@ -106,36 +106,45 @@ class _Profile2DWidget(_ChartBase):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        if hasattr(QPainter.RenderHint, 'HighQualityAntialiasing'):
+            p.setRenderHint(QPainter.RenderHint.HighQualityAntialiasing)
         p.fillRect(0, 0, self.width(), self.height(), _BG)
         if len(self._values) >= 2:
-            self._draw(p, self.width(        # ── Grid ───────────────────────────────────────────────────────────
-        p.setFont(_FONT_SMALL)
-        fm = QFontMetrics(_FONT_SMALL)
-        n_y = 4
-        for i in range(n_y + 1):
-            frac = i / n_y
-            elev = vmin + frac * vrange
-            y = by - frac * ch
-            p.setPen(QPen(_GRID, 1, Qt.PenStyle.DashLine))
-            p.drawLine(lx, int(y), rx, int(y))
-            p.setPen(_TICK_LABEL)
-            lbl = f"{elev:.0f}m"
-            tw = fm.horizontalAdvance(lbl)
-            p.drawText(lx - tw - 3, int(y) + fm.ascent() // 2, lbl)
+            self._draw(p, self.width(), self.height())
 
-        n_x = 4
-        for i in range(n_x + 1):
-            frac = i / n_x
-            d = frac * dist
-            x = lx + frac * cw
-            p.setPen(QPen(_GRID, 1, Qt.PenStyle.DashLine))
-            p.drawLine(int(x), ty, int(x), by)
-            p.setPen(_TICK_LABEL)
-            lbl = f"{d/1000:.1f}k" if d >= 1000 else f"{d:.0f}m"
-            tw = fm.horizontalAdvance(lbl)
-            p.drawText(int(x) - tw // 2, by + fm.height() + 1, lbl)────────
+    def _draw(self, p: QPainter, W: int, H: int) -> None:
+        """Draw the 2D elevation profile chart."""
+        vals = self._values
+        n = len(vals)
+        dist = self._distance_m
+        
+        if n < 2:
+            return
+            
+        vmin = min(vals)
+        vmax = max(vals)
+        vrange = max(vmax - vmin, 1.0)
+
+        # Chart area bounds
+        lx = _ML
+        rx = W - _MR
+        ty = _MT
+        by = H - _MB
+        cw = rx - lx
+        ch = by - ty
+
+        # Coordinate transforms
+        def px(i: int) -> float:
+            return lx + (i / (n - 1)) * cw
+
+        def py(elev: float) -> float:
+            return by - ((elev - vmin) / vrange) * ch
+
+        # Grid
         p.setFont(_FONT_SMALL)
         fm = QFontMetrics(_FONT_SMALL)
+        
+        # Y-axis grid and labels
         n_y = 5
         for i in range(n_y + 1):
             frac = i / n_y
@@ -148,6 +157,7 @@ class _Profile2DWidget(_ChartBase):
             tw = fm.horizontalAdvance(lbl)
             p.drawText(lx - tw - 5, int(y) + fm.ascent() // 2, lbl)
 
+        # X-axis grid and labels
         n_x = 5
         for i in range(n_x + 1):
             frac = i / n_x
@@ -160,7 +170,7 @@ class _Profile2DWidget(_ChartBase):
             tw = fm.horizontalAdvance(lbl)
             p.drawText(int(x) - tw // 2, by + fm.height() + 3, lbl)
 
-        # ── Filled area ───────────────────────────────────────────────────
+        # Filled area
         path = QPainterPath()
         path.moveTo(QPointF(px(0), by))
         for i in range(n):
@@ -173,17 +183,17 @@ class _Profile2DWidget(_ChartBase):
         grad.setColorAt(1.0, _FILL_BOT)
         p.fillPath(path, grad)
 
-        # ── Profile line ──────────────────────────────────────────────────
+        # Profile line
         p.setPen(QPen(_LINE, 2))
         for i in range(1, n):
             p.drawLine(QPointF(px(i - 1), py(vals[i - 1])), QPointF(px(i), py(vals[i])))
 
-        # ── Axes ──────────────────────────────────────────────────────────
+        # Axes
         p.setPen(QPen(_AXIS, 1.5))
         p.drawLine(lx, ty, lx, by)
         p.drawLine(lx, by, rx, by)
 
-        # ── Axis labels ───────────────────────────────────────────────────
+        # Axis labels
         p.setFont(_FONT_AXIS)
         p.setPen(_TITLE)
         p.save()
@@ -193,20 +203,22 @@ class _Profile2DWidget(_ChartBase):
         p.restore()
         p.drawText((lx + rx) // 2 - 50, H - 3, "Distance along profile")
 
-        # ── Title + stats ─────────────────────────────────────────────────
+        # Title + stats
         p.setFont(_FONT_TITLE)
         p.setPen(_TITLE)
         p.drawText(lx, ty - 6, "2D Elevation Profile")
         p.setFont(_FONT_SMALL)
         p.setPen(_TICK_LABEL)
         dist_str = f"{dist / 1000:.2f} km" if dist >= 1000 else f"{dist:.0f} m"
-        p.drawText(
-            rx - 260,
-            ty - 6,
-            f"Min {vmin:.1f} m  Max {vmax:.1f} m  Δ {vmax - vmin:.1f} m  L {dist_str}",
-        )
+        stats_text = f"Min {vmin:.1f} m  Max {vmax:.1f} m  Δ {vmax - vmin:.1f} m  L {dist_str}"
+        tw_stats = fm.horizontalAdvance(stats_text)
+        
+        # Prevent overlap with title
+        title_width = QFontMetrics(_FONT_TITLE).horizontalAdvance("2D Elevation Profile")
+        stats_x = max(rx - tw_stats, lx + title_width + 10)
+        p.drawText(int(stats_x), ty - 6, stats_text)
 
-        # ── Georeferenced cursor crosshair ────────────────────────────────
+        # Georeferenced cursor crosshair
         if self._cursor_frac is not None and 0.0 <= self._cursor_frac <= 1.0:
             frac = self._cursor_frac
             # Interpolate elevation at cursor position
@@ -249,13 +261,13 @@ class _Profile2DWidget(_ChartBase):
             p.drawText(lbl_x, lbl_y, lbl)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# 
 # 3D Section Plane Widget
-# ─────────────────────────────────────────────────────────────────────────────
+# 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# 
 # 3D Section Plane Widget — interactive (drag to rotate, scroll to zoom)
-# ─────────────────────────────────────────────────────────────────────────────
+# 
 
 
 def _elev_to_color(frac: float) -> QColor:
@@ -317,7 +329,7 @@ class _Profile3DWidget(_ChartBase):
         self._cursor_frac = frac
         self.update()
 
-    # ── Mouse interaction ─────────────────────────────────────────────────────
+    #  Mouse interaction 
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.MouseButton.LeftButton:
@@ -377,12 +389,14 @@ class _Profile3DWidget(_ChartBase):
         self._zoom = max(0.2, min(6.0, self._zoom))
         self.update()
 
-    # ── Rendering ─────────────────────────────────────────────────────────────
+    #  Rendering 
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        if hasattr(QPainter.RenderHint, 'HighQualityAntialiasing'):
+            p.setRenderHint(QPainter.RenderHint.HighQualityAntialiasing)
         p.fillRect(0, 0, self.width(), self.height(), _BG)
         if len(self._values) >= 2:
             self._draw(p, self.width(), self.height())
@@ -440,7 +454,7 @@ class _Profile3DWidget(_ChartBase):
 
         depth = 0.15  # thickness of the section plane
 
-        # ── Back face ─────────────────────────────────────────────────────
+        #  Back face 
         bp = QPolygonF(
             [pt(i, depth) for i in range(n)]
             + [pt_base(i, depth) for i in range(n - 1, -1, -1)]
@@ -449,7 +463,7 @@ class _Profile3DWidget(_ChartBase):
         p.setPen(Qt.PenStyle.NoPen)
         p.drawPolygon(bp)
 
-        # ── Front face — coloured strips ──────────────────────────────────
+        #  Front face — coloured strips 
         for i in range(n - 1):
             frac_l = (vals[i] - vmin) / vrange
             frac_r = (vals[i + 1] - vmin) / vrange
@@ -467,7 +481,7 @@ class _Profile3DWidget(_ChartBase):
             p.setPen(Qt.PenStyle.NoPen)
             p.drawPolygon(quad)
 
-        # ── Top connecting face ───────────────────────────────────────────
+        #  Top connecting face 
         for i in range(n - 1):
             frac_m = ((vals[i] + vals[i + 1]) / 2 - vmin) / vrange
             col = _elev_to_color(frac_m)
@@ -477,7 +491,7 @@ class _Profile3DWidget(_ChartBase):
             p.setPen(Qt.PenStyle.NoPen)
             p.drawPolygon(quad)
 
-        # ── Side walls ────────────────────────────────────────────────────
+        #  Side walls 
         for side_i in [0, n - 1]:
             wall = QPolygonF(
                 [
@@ -491,20 +505,20 @@ class _Profile3DWidget(_ChartBase):
             p.setPen(QPen(_RIBBON_EDGE, 0.6))
             p.drawPolygon(wall)
 
-        # ── Profile edge line ─────────────────────────────────────────────
+        #  Profile edge line 
         p.setPen(QPen(QColor(20, 60, 120), 1.8))
         p.setBrush(Qt.BrushStyle.NoBrush)
         for i in range(1, n):
             p.drawLine(pt(i - 1, 0), pt(i, 0))
 
-        # ── Base lines ────────────────────────────────────────────────────
+        #  Base lines 
         p.setPen(QPen(_AXIS, 0.8))
         p.drawLine(pt_base(0, 0), pt_base(n - 1, 0))
         p.drawLine(pt_base(0, depth), pt_base(n - 1, depth))
         p.drawLine(pt_base(0, 0), pt_base(0, depth))
         p.drawLine(pt_base(n - 1, 0), pt_base(n - 1, depth))
 
-        # ── Y-axis ticks ──────────────────────────────────────────────────
+        #  Y-axis ticks 
         p.setFont(_FONT_SMALL)
         fm = QFontMetrics(_FONT_SMALL)
         p.setPen(_TICK_LABEL)
@@ -518,7 +532,7 @@ class _Profile3DWidget(_ChartBase):
             tw = fm.horizontalAdvance(lbl)
             p.drawText(int(sp.x()) - tw - 4, int(sp.y()) + fm.ascent() // 2, lbl)
 
-        # ── Title ─────────────────────────────────────────────────────────
+        #  Title 
         p.setFont(_FONT_TITLE)
         p.setPen(_TITLE)
         p.drawText(8, 18, "3D Cross-Section")
@@ -526,7 +540,7 @@ class _Profile3DWidget(_ChartBase):
         p.setPen(_TICK_LABEL)
         p.drawText(8, 30, "L-drag: rotate  R-drag: pan  Scroll: zoom  Dbl-click: reset")
 
-        # ── Colorbar ──────────────────────────────────────────────────────
+        #  Colorbar 
         cb_h = H - 60
         cb_y0 = 30
         n_stops = 64
@@ -559,7 +573,7 @@ class _Profile3DWidget(_ChartBase):
         p.drawText(-20, 0, "m")
         p.restore()
 
-        # ── Georeferenced cursor point on 3D section ──────────────────────
+        #  Georeferenced cursor point on 3D section 
         if self._cursor_frac is not None and 0.0 <= self._cursor_frac <= 1.0 and n >= 2:
             frac = self._cursor_frac
             idx_f = frac * (n - 1)
@@ -585,16 +599,16 @@ class _Profile3DWidget(_ChartBase):
             p.drawLine(sp, base_sp)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# 
 # Embedded panel (not a dialog — lives inside the main window splitter)
-# ─────────────────────────────────────────────────────────────────────────────
+# 
 
 
 class ElevationProfilePanel(QWidget):
     """Embedded elevation profile panel — docks below the map view.
 
     Signals:
-        close_requested: emitted when the user clicks the ✕ button.
+        close_requested: emitted when the user clicks the  button.
     """
 
     close_requested = Signal()
@@ -605,14 +619,14 @@ class ElevationProfilePanel(QWidget):
         self.setMaximumHeight(400)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-        # ── Separator line at top ─────────────────────────────────────────
+        #  Separator line at top 
         sep = QFrame(self)
         sep.setFrameShape(QFrame.Shape.HLine)
         sep.setFrameShadow(QFrame.Shadow.Plain)
         sep.setStyleSheet("QFrame { color: #c9d3df; margin: 0px; }")
         sep.setFixedHeight(1)
 
-        # ── Header bar ────────────────────────────────────────────────────
+        #  Header bar 
         header_bar = QWidget(self)
         header_bar.setFixedHeight(26)
         header_bar.setStyleSheet("QWidget { background: #eef2f7; }")
@@ -633,7 +647,7 @@ class ElevationProfilePanel(QWidget):
         )
         hbl.addWidget(self._info_label)
 
-        close_btn = QPushButton("✕", header_bar)
+        close_btn = QPushButton("", header_bar)
         close_btn.setFixedSize(20, 20)
         close_btn.setStyleSheet(
             "QPushButton { background: transparent; border: none; color: #6a7a8a; font-size: 12px; }"
@@ -642,7 +656,7 @@ class ElevationProfilePanel(QWidget):
         close_btn.clicked.connect(self.close_requested.emit)
         hbl.addWidget(close_btn)
 
-        # ── Charts ────────────────────────────────────────────────────────
+        #  Charts 
         self._chart_2d = _Profile2DWidget(self)
         self._chart_3d = _Profile3DWidget(self)
 
@@ -659,7 +673,7 @@ class ElevationProfilePanel(QWidget):
 
         charts_row.addWidget(self._chart_3d)
 
-        # ── Root layout ───────────────────────────────────────────────────
+        #  Root layout 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
