@@ -2870,8 +2870,8 @@ class DesktopController:
             )
             self._run_js_call(
                 "setSwipeComparatorLayers",
-                str(left_asset.get("file_name") or ""),
-                str(right_asset.get("file_name") or ""),
+                left_path,
+                right_path,
                 left_label,
                 right_label,
             )
@@ -4014,14 +4014,27 @@ class DesktopController:
             self.panel.pitch_slider.setToolTip("Adjust camera pitch angle")
 
         if self._toolbar_context_callback is not None:
-            if dem_visible and imagery_visible:
-                self._toolbar_context_callback("mixed")
-            elif dem_visible:
-                self._toolbar_context_callback("dem")
-            elif imagery_visible:
-                self._toolbar_context_callback("imagery")
-            else:
-                self._toolbar_context_callback("none")
+            # The toolbar callback is a bound MainWindow method; during
+            # controller initialization the MainWindow.controller attribute
+            # may not be set yet. Call defensively to avoid AttributeError in
+            # that race. If the callback fails, log and continue — the
+            # MainWindow will refresh toolbar state later.
+            try:
+                if dem_visible and imagery_visible:
+                    self._toolbar_context_callback("mixed")
+                elif dem_visible:
+                    self._toolbar_context_callback("dem")
+                elif imagery_visible:
+                    self._toolbar_context_callback("imagery")
+                else:
+                    self._toolbar_context_callback("none")
+            except Exception as exc:  # pragma: no cover - defensive
+                try:
+                    self._logger.debug(
+                        "Toolbar context callback deferred: %s", exc
+                    )
+                except Exception:
+                    pass
 
         if self._swipe_comparator_enabled and not self.can_enable_comparator():
             self._swipe_comparator_enabled = False

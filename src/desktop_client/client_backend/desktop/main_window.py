@@ -103,11 +103,10 @@ class LayerCompositorOverlay(QWidget):
     def update_layers(self) -> None:
         """Update the overlay with current active layers and their sliders.
 
-        Clears existing sliders and creates new ones for all visible layers.
+        Clears existing sliders and creates new ones for all searched layers.
         Each slider controls the opacity of its corresponding layer.
         """
         layers = self.controller.available_swipe_layer_options()
-        active_layers = [layer for layer in layers if layer.get("visible")]
 
         # Clear old sliders
         while self.sliders_layout.count():
@@ -123,14 +122,17 @@ class LayerCompositorOverlay(QWidget):
 
         self.sliders.clear()
 
-        if not active_layers:
-            no_layers_label = QLabel("No active layers.")
+        if not layers:
+            no_layers_label = QLabel("No layers found.")
             self.sliders_layout.addWidget(no_layers_label)
             return
 
-        for layer in active_layers:
+        for layer in layers:
             row = QHBoxLayout()
-            label = QLabel(layer["label"])
+            base_label = str(layer.get("label") or "Layer")
+            if not layer.get("visible"):
+                base_label += " (hidden)"
+            label = QLabel(base_label)
             label.setFixedWidth(120)
             row.addWidget(label)
 
@@ -873,9 +875,8 @@ class MainWindow(QMainWindow):
             return
 
         layers = self.controller.available_swipe_layer_options()
-        active_layers = [layer for layer in layers if layer.get("visible")]
-        if not active_layers:
-            self.panel.log("No active layers available for compositor.")
+        if not layers:
+            self.panel.log("No searched layers available for compositor.")
             action.setChecked(False)
             return
 
@@ -1225,6 +1226,21 @@ class MainWindow(QMainWindow):
                     action.setEnabled(False)
                     if action.isCheckable():
                         action.setChecked(False)
+
+        # Mutual exclusion guard: compositor on => comparator disabled (and vice-versa).
+        compositor_action = self.toolbar_actions.get("Layer Compositor")
+        comparator_action = self.toolbar_actions.get("Comparator")
+        if comparator_action is not None and compositor_action is not None:
+            if compositor_action.isChecked():
+                comparator_action.setEnabled(False)
+                comparator_action.setChecked(False)
+            elif comparator_action.isChecked():
+                compositor_action.setEnabled(False)
+                compositor_action.setChecked(False)
+            else:
+                if self.controller.can_attempt_enable_comparator():
+                    comparator_action.setEnabled(True)
+                compositor_action.setEnabled(True)
 
     def _on_elevation_profile_close(self) -> None:
         """Hide the profile panel, clear globe markers, uncheck toolbar button."""

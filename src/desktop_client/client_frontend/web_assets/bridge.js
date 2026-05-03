@@ -6648,7 +6648,16 @@
         layer.alpha = numAlpha;
       } else if (activeDemContext && activeDemContext.layerKey === layerKey) {
         if (activeDemDrapeLayer) {
-            activeDemDrapeLayer.alpha = numAlpha;
+          activeDemDrapeLayer.alpha = numAlpha;
+        }
+        if (activeDemHillshadeLayer) {
+          const scaledHillshade = Math.max(
+            0.0,
+            Math.min(1.0, demVisual.hillshadeAlpha * numAlpha)
+          );
+          activeDemHillshadeLayer.alpha = scaledHillshade;
+          activeDemHillshadeLayer.show =
+            (activeDemContext.visible !== false) && scaledHillshade > 0.01;
         }
       }
       requestSceneRender();
