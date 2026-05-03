@@ -2539,7 +2539,7 @@
       viewer.resolutionScale = 1.0;                       // Crisp native resolution
       viewer.scene.globe.depthTestAgainstTerrain = true;  // Proper layer sorting
       viewer.scene.logarithmicDepthBuffer = true;         // Smooth camera dragging
-      viewer.scene.globe.maximumScreenSpaceError = 1.5;   // Max quality geometry
+      viewer.scene.globe.maximumScreenSpaceError = 1.0;   // Original high quality fidelity (per user request)
       viewer.scene.globe.tileCacheSize = 800;             // Larger cache for smoother pans
       viewer.scene.globe.preloadAncestors = true;         // Smooth transitions
       viewer.scene.globe.preloadSiblings = true;
@@ -4021,15 +4021,15 @@
     
     if (window._isHighEndGpu) {
       // ── MAX CONFIG (NVIDIA / Quadro) ──────────────────────────────────────
-      MAX_CONCURRENT_TERRAIN_DECODES = 4;   // 4 parallel terrain decodes
+      MAX_CONCURRENT_TERRAIN_DECODES = 8;   // Parallel terrain decodes for workstation
       viewer.resolutionScale = 1.0;          // Full native resolution
       viewer.scene.logarithmicDepthBuffer = true;
       viewer.scene.globe.depthTestAgainstTerrain = true;
-      viewer.scene.globe.tileCacheSize = 400;
-      viewer.scene.globe.maximumScreenSpaceError = 2.0;
+      viewer.scene.globe.tileCacheSize = 1000; // Large cache for high-fidelity assets
+      viewer.scene.globe.maximumScreenSpaceError = 0.8; // Ultra fidelity for workstation
       viewer.scene.globe.preloadAncestors = true;
       viewer.scene.globe.preloadSiblings = true;
-      viewer.scene.globe.loadingDescendantLimit = 8;
+      viewer.scene.globe.loadingDescendantLimit = 16;
       
       // NVIDIA GL hint
       if (viewer.scene.context && viewer.scene.context._gl) {
@@ -4037,7 +4037,7 @@
         gl.hint(gl.GENERATE_MIPMAP_HINT, gl.FASTEST);
       }
       
-      log("info", "[INIT MAX GPU CONFIG] NVIDIA/dedicated GPU detected — full quality enabled");
+      log("info", "[INIT MAX GPU CONFIG] NVIDIA/Quadro workstation GPU detected — Extreme fidelity enabled");
     } else {
       // ── SAFE CONFIG (Intel integrated / unknown) ──────────────────────────
       MAX_CONCURRENT_TERRAIN_DECODES = 2;   // Slightly more parallel decodes for modern Intel
@@ -7333,7 +7333,7 @@
       // Event-driven optimization: Pre-configure for terabyte-scale performance
       if (options && options.server_optimized) {
         // Apply ultra-high performance settings for large datasets
-        viewer.scene.globe.maximumScreenSpaceError = 1.5; // High detail
+        viewer.scene.globe.maximumScreenSpaceError = 1.0; // Original high detail fidelity
         viewer.scene.globe.tileCacheSize = 2000; // Aggressive tile caching
         // FIX: requestRenderMode disabled to prevent auto-blurring and shaking
         viewer.scene.requestRenderMode = false;
@@ -7381,7 +7381,7 @@
         
         // Optimize terrain provider for large datasets
         if (viewer.terrainProvider && viewer.terrainProvider.requestTileGeometry) {
-          viewer.scene.globe.maximumScreenSpaceError = 1.5; // High fidelity terrain
+          viewer.scene.globe.maximumScreenSpaceError = 1.0; // Max fidelity terrain
         }
         
         log("info", "EVENT_DRIVEN: Applied DEM terabyte-scale optimizations");

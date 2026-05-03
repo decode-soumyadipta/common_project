@@ -148,10 +148,10 @@ class TiTilerManager:
         # Fix "INIT_DEST was set to NO_DATA, but a NoData value was not defined"
         # — a GDAL 3.x bug on Windows when tiling files without a nodata value.
         env["GDAL_TIFF_INTERNAL_MASK"] = "NO"
-        env["GDAL_NUM_THREADS"] = "1"
+        env["GDAL_NUM_THREADS"] = "ALL_CPUS"
         env["VSI_CACHE"] = "TRUE"
-        env["VSI_CACHE_SIZE"] = "10000000"
-        env["GDAL_CACHEMAX"] = "512"
+        env["VSI_CACHE_SIZE"] = "100000000"
+        env["GDAL_CACHEMAX"] = "2048"
         env["CPL_VSIL_USE_TEMP_FILE_FOR_RANDOM_WRITE"] = "NO"
         env["GDAL_TIFF_OVR_BLOCKSIZE"] = "512"
         # Suppress numpy cast warnings that spam stderr

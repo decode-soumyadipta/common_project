@@ -3430,12 +3430,14 @@ class DesktopController:
             self.panel.log("Add Point tool disabled.")
             return False
 
-        # Disable conflicting modes (but NOT Add Polygon — they can coexist)
+        # Disable conflicting modes (exclusivity enforced per user request)
         self._distance_measure_mode_enabled = False
         self._shadow_height_mode_enabled = False
         self._pan_mode_enabled = False
+        self._add_point_mode_enabled = True # Current mode
         self._run_js_call("setDistanceMeasureMode", False)
         self._run_js_call("setPanMode", False)
+        self._run_js_call("setSearchDrawMode", "none") # Disable Polygon Draw
         self._set_measurement_cursor_enabled(True)
         self._set_annotation_overlay_visible(True)
         self.panel.log("Add Point enabled. Click map to place annotation points.")
@@ -3512,7 +3514,7 @@ class DesktopController:
         polygon = self._current_polygon_lonlat()
         if not polygon:
             self._distance_measure_mode_enabled = False
-            # self._add_point_mode_enabled = False (Removed to allow coexistence)
+            self._add_point_mode_enabled = False # Enforce exclusivity
             self._set_annotation_overlay_visible(True)
             self._run_js_call("setAnnotationDrawingMode", True)
             self._shadow_height_mode_enabled = False

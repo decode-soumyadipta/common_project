@@ -12,11 +12,8 @@
     element.style.removeProperty("cursor");
   };
 
-  const SEARCH_CROSSHAIR_CURSOR_IMAGE =
-    "data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2224%22 height=%2224%22 viewBox=%220 0 24 24%22%3E%3Cpath fill=%22none%22 stroke=%22%23ffffff%22 stroke-width=%221.8%22 d=%22M12 2v20M2 12h20%22/%3E%3Ccircle cx=%2212%22 cy=%2212%22 r=%222.5%22 fill=%22none%22 stroke=%22%23ffffff%22 stroke-width=%221.2%22/%3E%3C/svg%3E";
-  const SEARCH_DRAW_CURSOR = `url("${SEARCH_CROSSHAIR_CURSOR_IMAGE}") 12 12, crosshair`;
+  const SEARCH_DRAW_CURSOR = "crosshair";
 
-  let searchCursorOverlay = null;
   let lastSearchCursorScreenPosition = null;
   let measureCursorStyleEl = null;
 
@@ -29,53 +26,16 @@
   }
 
   function ensureSearchCursorOverlay() {
-    if (searchCursorOverlay || !document.body) {
-      return;
-    }
-    const overlay = document.createElement("div");
-    overlay.id = "searchCursorOverlay";
-    overlay.setAttribute("aria-hidden", "true");
-    overlay.style.position = "fixed";
-    overlay.style.left = "0px";
-    overlay.style.top = "0px";
-    overlay.style.width = "24px";
-    overlay.style.height = "24px";
-    overlay.style.pointerEvents = "none";
-    overlay.style.zIndex = "100000";
-    overlay.style.display = "none";
-    overlay.style.backgroundRepeat = "no-repeat";
-    overlay.style.backgroundSize = "24px 24px";
-    overlay.style.backgroundImage = `url("${SEARCH_CROSSHAIR_CURSOR_IMAGE}")`;
-    overlay.style.transform = "translate(-12px, -12px)";
-    document.body.appendChild(overlay);
-    searchCursorOverlay = overlay;
+    // Overlay mechanism removed per user request for "windows default crosshair".
+    // We now rely on native CSS 'crosshair' and Python-side 'Qt.CrossCursor'.
   }
 
   function updateSearchCursorOverlay(screenPosition) {
-    const viewer = getViewer();
-    if (!viewer || !viewer.canvas || !searchCursorOverlay || !screenPosition) {
-      return;
-    }
-    const x = Number(screenPosition.x);
-    const y = Number(screenPosition.y);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) {
-      return;
-    }
-    const rect = viewer.canvas.getBoundingClientRect();
-    searchCursorOverlay.style.left = `${rect.left + x}px`;
-    searchCursorOverlay.style.top = `${rect.top + y}px`;
+    // No-op: native cursor follows mouse automatically.
   }
 
   function setSearchCursorOverlayVisible(visible) {
-    if (!searchCursorOverlay) {
-      return;
-    }
-    if (!visible || !lastSearchCursorScreenPosition) {
-      searchCursorOverlay.style.display = "none";
-      return;
-    }
-    searchCursorOverlay.style.display = "block";
-    updateSearchCursorOverlay(lastSearchCursorScreenPosition);
+    // No-op: native cursor visibility managed via CSS.
   }
 
   function setSearchCursorEnabled(enabled) {
@@ -83,9 +43,10 @@
     if (!viewer || !viewer.canvas) {
       return;
     }
-    ensureSearchCursorOverlay();
-    const nextCursor = enabled ? (searchCursorOverlay ? "none" : SEARCH_DRAW_CURSOR) : "";
+    
+    const nextCursor = enabled ? SEARCH_DRAW_CURSOR : "";
     applyCursorStyle(viewer.canvas, nextCursor);
+    
     const mapElement = document.getElementById("cesiumContainer");
     if (mapElement) {
       applyCursorStyle(mapElement, nextCursor);
@@ -94,10 +55,12 @@
     if (viewer.container) {
       applyCursorStyle(viewer.container, nextCursor);
     }
-    setSearchCursorOverlayVisible(Boolean(enabled));
+
+    // Trigger Python-side system cursor for maximum consistency
+    setMeasurementCursorEnabled(enabled);
   }
 
-  function ensureMeasureCursorOverlay() { /* no-op — cursor handled by Qt */ }
+  function ensureMeasureCursorOverlay() { /* no-op */ }
   function updateMeasureCursorOverlay() { /* no-op */ }
   function setMeasureCursorOverlayVisible() { /* no-op */ }
 
@@ -111,7 +74,12 @@
       measureCursorStyleEl.id = "measureCursorOverride";
       document.head.appendChild(measureCursorStyleEl);
     }
-    measureCursorStyleEl.textContent = "";
+    // Ensure all Cesium interaction elements respect the crosshair when enabled
+    if (enabled) {
+      measureCursorStyleEl.textContent = ".cesium-viewer { cursor: crosshair !important; }";
+    } else {
+      measureCursorStyleEl.textContent = "";
+    }
   }
 
   function _enforceMeasureCursor(active) {
@@ -120,10 +88,10 @@
 
   runtime.searchCursorControls = {
     get searchCursorOverlay() {
-      return searchCursorOverlay;
+      return null;
     },
     set searchCursorOverlay(value) {
-      searchCursorOverlay = value;
+      // ignore
     },
     get lastSearchCursorScreenPosition() {
       return lastSearchCursorScreenPosition;

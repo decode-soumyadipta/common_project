@@ -845,6 +845,8 @@ class MainWindow(QMainWindow):
             "Distance / Azimuth",
             "Elevation Profile",
             "Fill Volume",
+            "Add Point",
+            "Add Polygon",
         }
         if action_label in interaction_toggles and bool(final_state):
             for other_label in interaction_toggles:
@@ -1273,41 +1275,9 @@ class MainWindow(QMainWindow):
             self.elevation_profile_panel.set_cursor_fraction(frac)
 
     def _build_crosshair_cursor(self) -> QCursor:
-        """Build a precise black crosshair QCursor using QPainter."""
-        from qtpy.QtGui import QPen
-
-        size = 20  # smaller = more precise feel
-        hot = size // 2  # hotspot at centre
-        px = QPixmap(size, size)
-        px.fill(QColor(0, 0, 0, 0))  # transparent background
-
-        p = QPainter(px)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        # Black halo for visibility on light backgrounds
-        halo_pen = QPen(QColor(0, 0, 0, 180), 3.0)
-        p.setPen(halo_pen)
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        radius = 4
-        p.drawEllipse(hot - radius, hot - radius, radius * 2, radius * 2)
-        gap = radius + 1
-        arm = 5
-        p.drawLine(hot, hot - gap - arm, hot, hot - gap)
-        p.drawLine(hot, hot + gap, hot, hot + gap + arm)
-        p.drawLine(hot - gap - arm, hot, hot - gap, hot)
-        p.drawLine(hot + gap, hot, hot + gap + arm, hot)
-
-        # White foreground on top for "white crosshair" feel
-        white_pen = QPen(QColor(255, 255, 255, 255), 1.4)
-        p.setPen(white_pen)
-        p.drawEllipse(hot - radius, hot - radius, radius * 2, radius * 2)
-        p.drawLine(hot, hot - gap - arm, hot, hot - gap)
-        p.drawLine(hot, hot + gap, hot, hot + gap + arm)
-        p.drawLine(hot - gap - arm, hot, hot - gap, hot)
-        p.drawLine(hot + gap, hot, hot + gap + arm, hot)
-
-        p.end()
-        return QCursor(px, hot, hot)
+        """Return the standard Windows system crosshair cursor for maximum precision."""
+        from qtpy.QtCore import Qt
+        return QCursor(Qt.CursorShape.CrossCursor)
 
     def _on_measure_cursor_changed(self, enabled: bool) -> None:
         """Set or restore the crosshair cursor on the map web view only."""

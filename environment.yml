@@ -13,4 +13,4 @@ dependencies:
   - numpy
   - pip:
       # Pull app + desktop + dev dependencies from pyproject.toml
-      - -e .[desktop,dev]
+      - -e .[desktop,geo,dev]
