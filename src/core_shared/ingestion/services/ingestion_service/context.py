@@ -10,7 +10,7 @@ from core_shared.db.models import RasterAsset, RasterKind
 from core_shared.ingestion.services.metadata_models import RasterMetadata
 
 
-ProgressCallback = Callable[[str], None]
+ProgressCallback = Callable[[str, int | None], None]
 
 
 @dataclass
@@ -28,6 +28,6 @@ class IngestionContext:
     stages_completed: list[str] = field(default_factory=list)
     last_stage_completed: str | None = None
 
-    def report(self, message: str) -> None:
+    def report(self, message: str, percent: int | None = None) -> None:
         if self.progress_callback is not None:
-            self.progress_callback(message)
+            self.progress_callback(message, percent)

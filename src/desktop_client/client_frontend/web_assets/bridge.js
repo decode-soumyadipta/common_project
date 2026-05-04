@@ -2592,19 +2592,19 @@
     const normalized = String(colormapName || "terrain").toLowerCase();
     const gradients = {
       terrain:
-        "to bottom, #f7f7f7 0%, #d9d3c7 14%, #b48f6a 28%, #c7b34a 42%, #7ca860 58%, #4aa8b2 74%, #2d7bd0 88%, #173c8f 100%",
+        "to bottom, #ffffff 0%, #f0f0f0 5%, #d9d3c7 15%, #b48f6a 30%, #c7b34a 45%, #7ca860 60%, #4aa8b2 75%, #2d7bd0 90%, #173c8f 100%",
       viridis:
         "to bottom, #fde725 0%, #90d743 24%, #35b779 45%, #21918c 64%, #31688e 82%, #443a83 100%",
       turbo:
         "to bottom, #7a0403 0%, #d84f2a 18%, #f6b44f 36%, #f7f756 50%, #7bd651 66%, #2c8fe3 84%, #23135a 100%",
       slope:
-        "to bottom, #fde725 0%, #90d743 24%, #35b779 45%, #21918c 64%, #31688e 82%, #443a83 100%",
+        "to bottom, #7a0403 0%, #fde725 50%, #2c8fe3 100%",
       aspect:
-        "to bottom, #0000ff 0%, #00ffff 25%, #00ff00 50%, #ffff00 75%, #ff0000 100%",
+        "to bottom, #ff0000 0%, #ffff00 25%, #00ff00 50%, #00ffff 75%, #0000ff 100%",
       gray:
-        "to bottom, #ffffff 0%, #cccccc 45%, #808080 72%, #202020 100%",
+        "to bottom, #ffffff 0%, #f0f0f0 10%, #aaaaaa 50%, #444444 80%, #000000 100%",
       greys:
-        "to bottom, #ffffff 0%, #cccccc 45%, #808080 72%, #202020 100%",
+        "to bottom, #ffffff 0%, #f0f0f0 10%, #aaaaaa 50%, #444444 80%, #000000 100%",
     };
     return gradients[normalized] || gradients.terrain;
   }
@@ -2619,8 +2619,7 @@
 
     // CRITICAL: Only show colorbar for DEM layers, not regular imagery
     // Check if this is actually a DEM layer by verifying options.is_dem or algorithm presence
-    const isDemLayer = (options && options.is_dem === true) || 
-                       (options && options.query && options.query.algorithm);
+    const isDemLayer = options && (options.is_dem === true || (options.query && options.query.algorithm));
     
     if (!isDemLayer) {
       // This is regular imagery, not DEM - hide colorbar

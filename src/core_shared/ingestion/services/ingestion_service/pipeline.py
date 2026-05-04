@@ -25,13 +25,18 @@ class IngestionPipeline:
     ) -> IngestionContext:
         skip_until = context.resume_from_stage
         skipping = bool(skip_until)
-        for stage in self._stages:
+        total_stages = len(self._stages)
+        for i, stage in enumerate(self._stages):
             if skipping:
                 context.stages_completed.append(stage.name)
                 if stage.name == skip_until:
                     skipping = False
                 continue
-            context.report(stage.message)
+            
+            # Calculate progress percentage (0 to 95, last 5% reserved for completion)
+            percent = int((i / total_stages) * 95)
+            context.report(stage.message, percent)
+            
             stage.run(context)
             context.stages_completed.append(stage.name)
             context.last_stage_completed = stage.name

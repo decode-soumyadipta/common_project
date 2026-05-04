@@ -200,7 +200,7 @@ class ControlPanel(QWidget):
         # Format selection dropdown
         self.format_combo = QComboBox()
         self.format_combo.addItems(
-            ["GeoTIFF (.tif)", "JPEG2000 (.jp2 + .prj)", "MBTiles (.mbtiles)"]
+            ["GeoTIFF (.tif)", "JPEG2000 (.jp2, .j2k) + .prj", "MBTiles (.mbtiles)"]
         )
         self.format_combo.setCurrentIndex(0)  # Default to GeoTIFF
         self.format_combo.setToolTip("Select raster format type for ingestion")
@@ -1656,7 +1656,7 @@ class ControlPanel(QWidget):
         # Check for orphaned .prj files
         for stem in prj_files:
             if stem not in jp2_files:
-                errors.append(f"{stem}.prj: No matching .jp2 file found")
+                errors.append(f"{stem}.prj: No matching JPEG2000 file (.jp2 or .j2k) found")
 
         # Note: World files without matching JP2 are silently ignored (they're optional)
 

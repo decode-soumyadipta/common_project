@@ -47,6 +47,7 @@ class _RuntimeProgress:
     current_step: str | None = None
     current_item_path: str | None = None
     current_item_stage: str | None = None
+    item_progress: int = 0
 
 
 class IngestQueueService:
@@ -334,8 +335,8 @@ class IngestQueueService:
                     result = register_raster(
                         Path(item.file_path),
                         session,
-                        progress_callback=lambda step: self._set_runtime_progress(
-                            job_id, step, item.file_path
+                        progress_callback=lambda step, percent=None: self._set_runtime_progress(
+                            job_id, step, item.file_path, percent
                         ),
                         resume_from_stage=item.checkpoint_stage,
                         stage_checkpoint_callback=_persist_stage_checkpoint,
@@ -424,15 +425,19 @@ class IngestQueueService:
                 self._set_runtime_progress(job_id, "Completed", None)
 
     def _set_runtime_progress(
-        self, job_id: str, step: str | None, item_path: str | None
+        self, job_id: str, step: str | None, item_path: str | None, item_progress: int | None = None
     ) -> None:
         with self._lock:
             existing = self._runtime_progress.get(job_id)
             stage = existing.current_item_stage if existing else None
+            # Keep previous progress if not provided
+            progress = item_progress if item_progress is not None else (existing.item_progress if existing else 0)
+            
             self._runtime_progress[job_id] = _RuntimeProgress(
                 current_step=step,
                 current_item_path=item_path,
                 current_item_stage=stage,
+                item_progress=progress,
             )
 
     def _set_runtime_stage(self, job_id: str, stage: str | None) -> None:
@@ -442,6 +447,7 @@ class IngestQueueService:
                 current_step=existing.current_step if existing else None,
                 current_item_path=existing.current_item_path if existing else None,
                 current_item_stage=stage,
+                item_progress=existing.item_progress if existing else 0,
             )
 
     def _attach_runtime_progress(self, view: IngestJobView) -> IngestJobView:
@@ -449,8 +455,14 @@ class IngestQueueService:
             runtime = self._runtime_progress.get(view.id)
 
         total = max(1, int(view.total_items))  # Avoid division by zero
-        done = min(total, int(view.processed_items) + int(view.failed_items))
-        progress_percent = int((done * 100) / total) if total > 0 else 0
+        done_items = int(view.processed_items) + int(view.failed_items)
+        
+        # Calculate granular progress including current item's internal progress
+        current_item_contribution = (runtime.item_progress / 100.0) if runtime and done_items < total else 0.0
+        total_done_weighted = float(done_items) + current_item_contribution
+        
+        progress_percent = int((total_done_weighted * 100) / total) if total > 0 else 0
+        progress_percent = max(0, min(progress_percent, 100))
 
         elapsed_seconds: float | None = None
         if view.started_at:

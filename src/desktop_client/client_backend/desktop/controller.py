@@ -4072,15 +4072,15 @@ class DesktopController:
         kind = str(asset.get("kind", "")).lower()
         file_name = str(asset.get("file_name", "")).lower()
 
-        # Explicit DEM markers
-        if kind == "dem" or kind == "elevation":
+        # Explicit DEM markers (dem, dtm, elevation)
+        if any(marker in file_name for marker in ("dem", "dtm", "elevation")) or kind in ("dem", "elevation"):
             if file_path:
                 self._dem_asset_kind_cache[file_path] = True
             return True
 
         # Explicit imagery markers (JP2, RGB, etc.) - NOT DEM
-        imagery_extensions = (".jp2", ".jpeg", ".jpg", ".png", ".tif", ".tiff")
-        imagery_keywords = ("rgb", "aerial", "ortho", "satellite", "imagery", "photo")
+        imagery_extensions = (".jp2", ".j2k", ".jpeg", ".jpg", ".png", ".tif", ".tiff")
+        imagery_keywords = ("rgb", "aerial", "ortho", "satellite", "imagery", "photo", "aot", "tci", "wvp", "scl")
 
         if any(file_name.endswith(ext) for ext in imagery_extensions):
             # Check if filename contains imagery keywords
@@ -4143,8 +4143,8 @@ class DesktopController:
         query: dict[str, object] = {}
         file_name = asset.get("file_name", "")
         is_dem = (
-            str(asset.get("kind", "")).lower() == "dem"
-            or "dem" in str(file_name).lower()
+            str(asset.get("kind", "")).lower() in ("dem", "elevation")
+            or any(marker in str(file_name).lower() for marker in ("dem", "dtm", "elevation"))
         )
 
         self._logger.debug(f"Raster render query for {file_name}: is_dem={is_dem}")
@@ -4330,10 +4330,13 @@ class DesktopController:
 
     def on_js_log(self, level: str, message: str) -> None:
         normalized = level.lower().strip()
+        msg_lower = message.lower()
         if self._layer_loading_active and (
-            "Fly-through started" in message
-            or "Fly-to bounds" in message
-            or "Fly-to lon=" in message
+            "fly-through started" in msg_lower
+            or "fly-to bounds" in msg_lower
+            or "fly-to lon=" in msg_lower
+            or "fly-to: complete" in msg_lower
+            or "flight started" in msg_lower
         ):
             self._set_layer_loading(False, "Layer ready")
 
