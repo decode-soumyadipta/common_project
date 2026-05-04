@@ -5,6 +5,7 @@ import os
 import platform
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Sequence
@@ -13,40 +14,36 @@ import httpx
 
 from core_shared.config_pkg.settings import settings
 
+LOGGER = logging.getLogger("desktop.titiler_manager")
+
 
 class TiTilerManager:
-    def __init__(self):
-        self._logger = logging.getLogger("desktop.titiler")
-        self._process: subprocess.Popen | None = None
-        self._health_url = f"{settings.titiler_base_url.rstrip('/')}/healthz"
-        self.last_error: str = ""
+    """Manages the local TiTiler server process for on-the-fly COG rendering."""
 
-    def is_ready(self) -> bool:
-        try:
-            response = httpx.get(self._health_url, timeout=2.0)
-            return response.is_success
-        except httpx.HTTPError:
-            return False
+    def __init__(self, port: int = 8081):
+        self.port = port
+        self._process: subprocess.Popen | None = None
+        self._logger = LOGGER
+        self.last_error: str | None = None
 
     def ensure_running(self) -> bool:
-        self.last_error = ""
-        if self.is_ready():
+        if self.is_running():
             return True
+
+        self._logger.info("Starting local TiTiler server on port %d...", self.port)
         self._start_process()
-        for _ in range(40):  # up to 10 s — Windows process startup is slower
-            if self.is_ready():
-                self._logger.info("TiTiler is ready")
+
+        # Wait for health check
+        for _ in range(20):  # 10 seconds total
+            if self.is_running():
+                self._logger.info("TiTiler server started successfully")
                 return True
-            time.sleep(0.25)
-        # Log stderr snippet from the subprocess to help diagnose Windows failures
-        if self._process is not None and self._process.stderr is not None:
+            time.sleep(0.5)
+
+        # Check for immediate failure
+        if self._process:
             try:
-                import select as _select
-
-                # Non-blocking read on Windows via os.read with a short timeout
-                import threading
-
-                _lines: list[str] = []
+                _lines = []
 
                 def _drain():
                     try:
@@ -71,12 +68,33 @@ class TiTilerManager:
             self.last_error = "TiTiler failed health check after auto-start"
         return False
 
+    def is_running(self) -> bool:
+        if self._process and self._process.poll() is not None:
+            self._process = None
+            return False
+
+        try:
+            resp = httpx.get(f"http://127.0.0.1:{self.port}/health", timeout=0.5)
+            return resp.status_code == 200
+        except Exception:
+            return False
+
+    def stop(self) -> None:
+        if self._process:
+            self._logger.info("Stopping TiTiler server...")
+            self._process.terminate()
+            try:
+                self._process.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                self._process.kill()
+            self._process = None
+
     def _start_process(self) -> None:
         if self._process and self._process.poll() is None:
             return
 
         bootstrap_code = (
-            "import sys, platform, re, uvicorn\n"
+            "import sys, platform, re, uvicorn, os\n"
             "# Windows DLL shadowing fix: load shapely (GEOS) before rasterio (GDAL)\n"
             "try: import shapely\n"
             "except: pass\n"
@@ -87,17 +105,37 @@ class TiTilerManager:
             "\n"
             "class _WinPathFix(BaseHTTPMiddleware):\n"
             "    async def dispatch(self, request, call_next):\n"
-            "        if platform.system() == 'Windows' and 'url' in request.query_params:\n"
+            "        if platform.system() == 'Windows':\n"
             "            raw = request.scope.get('query_string', b'').decode('utf-8', errors='replace')\n"
-            "            fixed = re.sub(r'(?<=[?&])url=%2F([A-Za-z](?:%3A|:))', lambda m: 'url=' + m.group(1).replace('%3A', ':'), raw)\n"
-            "            fixed = re.sub(r'(?<=[?&])url=/([A-Za-z]:)', r'url=\\1', fixed)\n"
-            "            fixed = re.sub(r'(?<=[?&])url=file:/{2,3}([A-Za-z]:)', r'url=\\1', fixed)\n"
-            "            fixed = re.sub(r'(?<=[?&])url=file%3A(?:%2F){2,3}([A-Za-z](?:%3A|:))', lambda m: 'url=' + m.group(1).replace('%3A', ':'), fixed)\n"
-            "            request.scope['query_string'] = fixed.encode('utf-8')\n"
-            "        return await call_next(request)\n"
+            "            import urllib.parse\n"
+            "            params = urllib.parse.parse_qsl(raw, keep_blank_values='url' in raw)\n"
+            "            new_params = []\n"
+            "            target_file = None\n"
+            "            for k, v in params:\n"
+            "                if k == 'url':\n"
+            "                    # Normalize Windows paths (/C:/... -> C:/...)\n"
+            "                    v = re.sub(r'^/([A-Za-z]:)', r'\\1', v)\n"
+            "                    v = re.sub(r'^file:/{2,3}([A-Za-z]:)', r'\\1', v)\n"
+            "                    v = v.replace('\\\\', '/')\n"
+            "                    target_file = v\n"
+            "                new_params.append((k, v))\n"
+            "            \n"
+            "            # Pre-emptive check: If file is missing, return 404 instead of letting GDAL crash with 500\n"
+            "            if target_file and not os.path.exists(target_file):\n"
+            "                from starlette.responses import JSONResponse\n"
+            "                return JSONResponse({'detail': f'File not found: {target_file}'}, status_code=404)\n"
+            "                \n"
+            "            request.scope['query_string'] = urllib.parse.urlencode(new_params, quote_via=urllib.parse.quote).encode('utf-8')\n"
+            "        try:\n"
+            "            return await call_next(request)\n"
+            "        except Exception as e:\n"
+            "            import logging\n"
+            "            logging.getLogger('titiler.middleware').error(f'TiTiler request failed: {e}')\n"
+            "            from starlette.responses import JSONResponse\n"
+            "            return JSONResponse({'detail': str(e)}, status_code=500)\n"
             "\n"
             "app.add_middleware(_WinPathFix)\n"
-            "uvicorn.run(app, host='127.0.0.1', port=8081, log_level='warning')\n"
+            "uvicorn.run(app, host='127.0.0.1', port=8081, log_level='info')\n"
         )
 
         env = os.environ.copy()
@@ -173,29 +211,6 @@ class TiTilerManager:
             kwargs["creationflags"] = 0x08000000 | 0x00000200
 
         self._process = subprocess.Popen(command, **kwargs)
-        self._logger.warning(
-            "Auto-started TiTiler process pid=%s gdal_data=%s proj_data=%s",
-            self._process.pid,
-            env.get("GDAL_DATA", "not-set"),
-            env.get("PROJ_DATA", "not-set"),
-        )
-        # Give the process 500 ms to fail fast (import error, port conflict, etc.)
-        # and log stderr if it exits immediately.
-        time.sleep(0.5)
-        if self._process.poll() is not None:
-            try:
-                stderr_out = (
-                    self._process.stderr.read().decode("utf-8", errors="replace")
-                    if self._process.stderr
-                    else ""
-                )
-            except Exception:
-                stderr_out = ""
-            if stderr_out:
-                self.last_error = stderr_out[:2000]
-            self._logger.error(
-                "TiTiler process exited immediately (rc=%s). stderr: %s",
-                self._process.returncode,
-                stderr_out[:2000],
-            )
-            self._process = None
+
+    def __del__(self):
+        self.stop()

@@ -149,12 +149,8 @@
   }
 
   function _encodeParamValue(key, value) {
-    if (key === "url") {
-      return encodeURIComponent(value)
-        .replace(/%3A/gi, ":")
-        .replace(/%2F/gi, "/")
-        .replace(/%40/gi, "@");
-    }
+    // Use standard encoding for all parameters including 'url'.
+    // Unencoding ':' and '/' can lead to mis-routing or parsing errors in some server environments.
     return encodeURIComponent(value);
   }
 

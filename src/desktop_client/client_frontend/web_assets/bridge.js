@@ -2312,6 +2312,7 @@
       layerErrorCounts.set(name, currentCount);
       const msg = error && error.message ? String(error.message) : "tile request failed";
       
+      
       function resolveTileTemplateUrl(template, providerRef, errorRef) {
         if (!template || !errorRef) {
           return "";
@@ -2351,6 +2352,21 @@
           " y=" + error.y + 
           " msg=" + msg +
           " url=" + (error.url || resolvedTileUrl || templateUrlForError || "unknown"));
+
+      // PERSISTENCE FIX: If a layer fails consistently (e.g. 50+ tiles), it's likely a config/server issue.
+      // Stop requesting tiles for this provider to prevent UI freeze and log spam.
+      if (currentCount >= 50 && provider) {
+          if (!provider._disabledByError) {
+              log("warning", "TILE_DEBUG: Repeated tile error for " + name + " count=" + currentCount + ". Disabling provider to prevent log spam.");
+              provider._disabledByError = true;
+              
+              // Effectively stop Cesium from fetching more tiles by hiding the layer
+              const layer = findImageryLayerByProvider(provider);
+              if (layer) {
+                  layer.show = false;
+              }
+          }
+      }
       
       // Log tile coordinate analysis for debugging only on first error
       if (provider.rectangle && currentCount === 1) {

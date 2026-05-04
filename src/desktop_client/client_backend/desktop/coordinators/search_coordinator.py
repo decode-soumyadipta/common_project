@@ -113,8 +113,8 @@ class SearchCoordinator:
             c._shadow_height_mode_enabled = False
         c._pan_mode_enabled = False
         c._run_js_call("setSearchDrawMode", "polygon")
-        if c._polygon_drawing_context == "measurement":
-            c._set_measurement_cursor_enabled(True)
+        # Always enable crosshair for drawing activities
+        c._set_measurement_cursor_enabled(True)
         c._set_search_draw_button_checked(True)
         c.panel.log("Polygon draw mode enabled.")
 

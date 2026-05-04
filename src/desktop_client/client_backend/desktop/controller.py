@@ -3459,6 +3459,20 @@ class DesktopController:
         self._run_js_call("setDistanceMeasureMode", False)
         self._run_js_call("setPanMode", False)
         self._run_js_call("setSearchDrawMode", "none") # Disable Polygon Draw
+        
+        # EXCLUSIVITY: Disable other visualization tools
+        from desktop_client.client_backend.desktop.main_window import MainWindow
+        main_win = self.panel.window()
+        if isinstance(main_win, MainWindow):
+            for other in ["Comparator", "Layer Compositor", "Fly Through"]:
+                if other != "Add Point": # Defensive
+                    action = main_win.toolbar_actions.get(other)
+                    if action and action.isChecked():
+                        action.setChecked(False)
+                        self.handle_toolbar_action(other, False)
+                    if action:
+                        action.setEnabled(False)
+
         self._set_measurement_cursor_enabled(True)
         self._set_annotation_overlay_visible(True)
         self.panel.log("Add Point enabled. Click map to place annotation points.")
@@ -3542,7 +3556,21 @@ class DesktopController:
             self._pan_mode_enabled = False
             self._run_js_call("setDistanceMeasureMode", False)
             self._run_js_call("setPanMode", False)
+            
+            # EXCLUSIVITY: Disable other visualization tools
+            from desktop_client.client_backend.desktop.main_window import MainWindow
+            main_win = self.panel.window()
+            if isinstance(main_win, MainWindow):
+                for other in ["Comparator", "Layer Compositor", "Fly Through"]:
+                    action = main_win.toolbar_actions.get(other)
+                    if action and action.isChecked():
+                        action.setChecked(False)
+                        self.handle_toolbar_action(other, False)
+                    if action:
+                        action.setEnabled(False)
+
             self.set_search_draw_mode()
+            self._set_measurement_cursor_enabled(True)
             self.panel.log(
                 "Polygon draw enabled. Click points, right-click to finish."
             )
@@ -3750,7 +3778,20 @@ class DesktopController:
             )
 
     def _get_server_optimized_tile_url(self, asset: dict, tile_url: str) -> str:
-        """Get server-optimized tile URL for terabyte-scale performance."""
+        """Adjust the tile URL for server-side delivery if needed."""
+        # Find the best version of the file (prioritize Web Mercator projected files)
+        from pathlib import Path
+        from urllib.parse import quote
+        original_file_path = asset.get("file_path")
+        if original_file_path:
+            best_file_path = self._find_best_file_version(original_file_path)
+            if best_file_path != original_file_path:
+                self._logger.info(f"Optimizing tile URL for {asset.get('file_name')}: using {Path(best_file_path).name}")
+                # Re-build the XYZ URL for the optimized file
+                if "/cog/tiles/" in tile_url:
+                    base_url = tile_url.split("?url=")[0]
+                    tile_url = f"{base_url}?url={quote(best_file_path)}"
+
         # Server handles all URL optimization and caching strategies
         optimized_url = self._normalize_tile_url_legacy(tile_url)
 
@@ -3768,9 +3809,10 @@ class DesktopController:
         from pathlib import Path
 
         original_path = Path(file_path)
+        # Even if the original file is missing (e.g. it was replaced by a COG version during ingestion),
+        # we should still look for candidates based on its name.
         if not original_path.exists():
-            self._logger.debug(f"Original file not found: {file_path}")
-            return file_path
+            self._logger.debug(f"Original file not found, searching for versions: {file_path}")
 
         # Priority order: _3857.cog.tif > _3857.tif > .cog.tif > original
         candidates = []

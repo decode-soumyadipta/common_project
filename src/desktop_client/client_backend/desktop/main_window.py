@@ -766,27 +766,28 @@ class MainWindow(QMainWindow):
                 return
             if checked:
                 self._show_comparator_dropdown()
-                # Disable Layer Compositor while Comparator is active
-                compositor_action = self.toolbar_actions.get("Layer Compositor")
-                if compositor_action is not None:
-                    compositor_action.setEnabled(False)
-                    compositor_action.setChecked(False)
-                    if hasattr(self, "compositor_overlay"):
-                        self.compositor_overlay.hide()
-                # Hide AOI checkbox in comparator mode
+                # EXCLUSIVITY: Disable Layer Compositor and Fly Through while Comparator is active
+                for other in ["Layer Compositor", "Fly Through"]:
+                    other_action = self.toolbar_actions.get(other)
+                    if other_action:
+                        if other_action.isChecked():
+                            other_action.setChecked(False)
+                            self.controller.handle_toolbar_action(other, False)
+                        other_action.setEnabled(False)
                 if hasattr(self, "map_overlay_controls"):
                     self.map_overlay_controls.set_special_mode(True)
                 return
-            # Comparator toggled OFF — disable it and re-enable compositor
+            # Comparator toggled OFF — disable it and re-enable others
             final_state = self.controller.handle_toolbar_action(
                 action_label, checked=checked
             )
             if isinstance(final_state, bool):
                 action.setChecked(final_state)
-            # Always re-enable Layer Compositor when Comparator is off
-            compositor_action = self.toolbar_actions.get("Layer Compositor")
-            if compositor_action is not None:
-                compositor_action.setEnabled(True)
+            # Re-enable Layer Compositor and Fly Through
+            for other in ["Layer Compositor", "Fly Through"]:
+                other_action = self.toolbar_actions.get(other)
+                if other_action:
+                    other_action.setEnabled(True)
             # Restore AOI checkbox visibility
             if hasattr(self, "map_overlay_controls"):
                 self.map_overlay_controls.set_special_mode(False)
@@ -798,14 +799,14 @@ class MainWindow(QMainWindow):
                 return
             if checked:
                 self._show_layer_compositor_overlay()
-                # Disable Comparator while Layer Compositor is active
-                comparator_action = self.toolbar_actions.get("Comparator")
-                if comparator_action is not None:
-                    comparator_action.setEnabled(False)
-                    comparator_action.setChecked(False)
-                    # Also tell controller to disable comparator if it was on
-                    self.controller.handle_toolbar_action("Comparator", checked=False)
-                # Hide AOI checkbox in compositor mode
+                # EXCLUSIVITY: Disable Comparator and Fly Through while Layer Compositor is active
+                for other in ["Comparator", "Fly Through"]:
+                    other_action = self.toolbar_actions.get(other)
+                    if other_action:
+                        if other_action.isChecked():
+                            other_action.setChecked(False)
+                            self.controller.handle_toolbar_action(other, False)
+                        other_action.setEnabled(False)
                 if hasattr(self, "map_overlay_controls"):
                     self.map_overlay_controls.set_special_mode(True)
                 return
@@ -814,10 +815,11 @@ class MainWindow(QMainWindow):
             if hasattr(self, "compositor_overlay"):
                 self.compositor_overlay.hide()
             action.setChecked(False)
-            # Always re-enable Comparator when Layer Compositor is off
-            comparator_action = self.toolbar_actions.get("Comparator")
-            if comparator_action is not None:
-                comparator_action.setEnabled(True)
+            # Re-enable Comparator and Fly Through
+            for other in ["Comparator", "Fly Through"]:
+                other_action = self.toolbar_actions.get(other)
+                if other_action:
+                    other_action.setEnabled(True)
             # Restore AOI checkbox visibility
             if hasattr(self, "map_overlay_controls"):
                 self.map_overlay_controls.set_special_mode(False)
