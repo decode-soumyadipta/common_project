@@ -32,6 +32,7 @@ class MeasurementCoordinator:
                 "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
             }
         )
+        c._set_project_modified(True)
         d = result
         message = (
             "Distance/Azimuth: "

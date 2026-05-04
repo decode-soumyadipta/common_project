@@ -37,6 +37,65 @@ body,
   align-items: stretch;
 }
 
+/* 3-pane: 2 top + 1 bottom */
+#comparatorWindows.active[data-pane-count="3"] {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 4px;
+  align-items: stretch;
+  justify-items: stretch;
+}
+
+#comparatorWindows.active[data-pane-count="3"] > .comparatorPane:nth-child(1) {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+/* pane 0 = grid item 1, divider0 = grid item 2, pane 1 = grid item 3 ... */
+/* dividers are hidden in grid modes */
+#comparatorWindows.active[data-pane-count="3"] > .comparatorDivider {
+  display: none !important;
+}
+
+#comparatorWindows.active[data-pane-count="3"] > .comparatorPane:nth-child(3) {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+/* 3rd pane spans both columns at the bottom */
+#comparatorWindows.active[data-pane-count="3"] > .comparatorPane:nth-child(5) {
+  grid-column: 1 / 3;
+  grid-row: 2;
+}
+
+/* 4-pane: 2x2 grid */
+#comparatorWindows.active[data-pane-count="4"] {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 4px;
+  align-items: stretch;
+  justify-items: stretch;
+}
+
+#comparatorWindows.active[data-pane-count="4"] > .comparatorDivider {
+  display: none !important;
+}
+
+#comparatorWindows.active[data-pane-count="4"] > .comparatorPane:nth-child(1) {
+  grid-column: 1; grid-row: 1;
+}
+#comparatorWindows.active[data-pane-count="4"] > .comparatorPane:nth-child(3) {
+  grid-column: 2; grid-row: 1;
+}
+#comparatorWindows.active[data-pane-count="4"] > .comparatorPane:nth-child(5) {
+  grid-column: 1; grid-row: 2;
+}
+#comparatorWindows.active[data-pane-count="4"] > .comparatorPane:nth-child(7) {
+  grid-column: 2; grid-row: 2;
+}
+
 .comparatorPane {
   position: relative;
   flex: 1 1 0;
@@ -55,6 +114,16 @@ body,
 
 .comparatorPane.active {
   display: flex;
+}
+
+/* In grid mode, panes need block display and full dimensions */
+#comparatorWindows.active[data-pane-count="3"] > .comparatorPane.active,
+#comparatorWindows.active[data-pane-count="4"] > .comparatorPane.active {
+  display: block;
+  width: auto;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
 }
 
 .comparatorPane.selected {

@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 
 import httpx
 from pyproj import Transformer
-from qtpy.QtCore import QSignalBlocker, QThreadPool, QTimer, Qt
+from qtpy.QtCore import QObject, QSignalBlocker, QThreadPool, QTimer, Qt, Signal
 from qtpy.QtWebEngineWidgets import QWebEngineView
 from qtpy.QtWidgets import QFileDialog
 
@@ -69,8 +69,10 @@ def _fmt_vol(m3: float) -> str:
     return f"{m3:.3f} m³"
 
 
-class DesktopController:
+class DesktopController(QObject):
     """Coordinates desktop UI actions, API calls, and Cesium bridge commands."""
+
+    project_metadata_changed = Signal(str, bool)
 
     def __init__(
         self,
@@ -83,6 +85,7 @@ class DesktopController:
         api_server_manager: ApiServerManager | None = None,
         toolbar_context_callback: Callable[[str], None] | None = None,
     ):
+        super().__init__()
         self.panel = panel
         self.web_view = web_view
         self.bridge = bridge
@@ -145,6 +148,11 @@ class DesktopController:
         self._annotation_records: list[dict[str, object]] = []
         self._annotation_line_records: list[dict[str, object]] = []
         self._annotation_polygon_records: list[dict[str, object]] = []
+        self._user_added_assets: dict[str, dict[str, object]] = {}
+        self._vector_layers: dict[str, dict[str, object]] = {}
+        self._project_path: Path | None = None
+        self._is_project_modified = False
+
 
         # Event-driven architecture performance tracking
         self._event_driven_enabled = False
@@ -465,6 +473,11 @@ class DesktopController:
             self.toggle_search_result_visibility
         )
         self.panel.search_layers_reordered.connect(self.reorder_search_result_layers)
+        self.panel.asset_focus_requested.connect(self._toolbar_zoom_to_asset)
+        self.panel.vector_layer_visibility_toggled.connect(
+            self.set_vector_layer_visibility
+        )
+        self.panel.vector_layer_delete_requested.connect(self.remove_vector_layer)
         self.bridge.mapClicked.connect(self.on_map_click)
         self.bridge.measurementUpdated.connect(self.on_measurement)
         self.bridge.jsLogReceived.connect(self.on_js_log)
@@ -480,6 +493,7 @@ class DesktopController:
             self.clear_all_measurement_results
         )
         self.panel.uploaded_assets_refresh_requested.connect(self._clear_asset_caches)
+        self.panel.search_layer_delete_requested.connect(self.remove_search_layer)
 
     def _connect_button(
         self, signal, label: str, callback: Callable[..., object]
@@ -786,6 +800,8 @@ class DesktopController:
             display = f"{asset['file_name']} [{asset['kind']}]{display_suffix}"
             self.panel.assets_combo.addItem(display, asset)
 
+        self._merge_user_added_assets()
+
         current_paths = set(self._search_result_assets_by_path.keys())
         stale_visible_paths = previously_visible_paths - current_paths
         for stale_path in stale_visible_paths:
@@ -844,7 +860,10 @@ class DesktopController:
             asset_count=len(assets),
         )
 
-        self.panel.update_search_results(assets, self._search_layer_visibility)
+        self.panel.update_search_results(
+            list(self._search_result_assets_by_path.values()),
+            self._search_layer_visibility,
+        )
 
         # Enhanced logging for event-driven mode
         if event_driven:
@@ -971,6 +990,18 @@ class DesktopController:
         if len(deduped) != len(assets):
             self._logger.info("Deduped assets: %d -> %d (Original non-COG preferred)", len(assets), len(deduped))
         return deduped
+
+    def _merge_user_added_assets(self) -> None:
+        for path, asset in self._user_added_assets.items():
+            normalized_path = str(path).replace("\\", "/")
+            if not normalized_path:
+                continue
+            if normalized_path in self._search_result_assets_by_path:
+                continue
+            self._search_result_assets_by_path[normalized_path] = asset
+            self._asset_cache[normalized_path] = asset
+            if normalized_path not in self._search_layer_visibility:
+                self._search_layer_visibility[normalized_path] = True
 
     def _sync_search_visibility_layers_event_driven(self) -> None:
         """Synchronize search visibility layers with event-driven optimization."""
@@ -1653,6 +1684,578 @@ class DesktopController:
             else:
                 self.panel.log("No valid files selected after validation")
 
+    def add_raster_layers(self) -> None:
+        file_filter = (
+            "Raster Files (*.tif *.tiff *.jp2 *.j2k *.mbtiles);;All Files (*)"
+        )
+        files, _ = QFileDialog.getOpenFileNames(
+            self.panel,
+            "Add Raster Layers",
+            "",
+            file_filter,
+        )
+        if not files:
+            return
+
+        added = 0
+        for file_path in files:
+            asset = self._create_raster_asset_from_path(file_path)
+            if not asset:
+                continue
+            normalized_path = str(asset.get("file_path") or "").replace("\\", "/")
+            if not normalized_path:
+                continue
+
+            self._user_added_assets[normalized_path] = asset
+            self._search_result_assets_by_path[normalized_path] = asset
+            self._search_layer_visibility[normalized_path] = True
+            loaded = self._load_asset_layer(
+                asset,
+                replace_existing=False,
+                layer_key=normalized_path,
+                auto_fly_to=added == 0,
+                apply_scene_mode=False,
+                show_loading=True,
+                skip_cog=True,
+            )
+            if loaded:
+                self._loaded_search_layer_keys.add(normalized_path)
+                added += 1
+        if added:
+            self.panel.log(f"Added {added} raster layer(s).")
+            self.panel.update_search_results(
+                list(self._search_result_assets_by_path.values()),
+                self._search_layer_visibility,
+            )
+            self._set_project_modified(True)
+
+        else:
+            self.panel.log("No raster layers were added.")
+        
+        self._set_layer_loading(False, "Ready")
+
+    def add_vector_layers(self) -> None:
+        file_filter = (
+            "Vector Files (*.geojson *.json *.shp *.kml);;All Files (*)"
+        )
+        files, _ = QFileDialog.getOpenFileNames(
+            self.panel,
+            "Add Vector Layers",
+            "",
+            file_filter,
+        )
+        if not files:
+            return
+
+        added = 0
+        for file_path in files:
+            geojson = self._read_vector_geojson(Path(file_path))
+            if not geojson:
+                continue
+            label = Path(file_path).stem
+            normalized_path = str(file_path).replace("\\", "/")
+            layer_key = self._make_unique_vector_key(f"vector:{normalized_path}")
+            self._run_js_call("addVectorLayer", layer_key, label, geojson, {})
+            self._vector_layers[layer_key] = {
+                "layer_key": layer_key,
+                "label": label,
+                "file_path": normalized_path,
+                "source": Path(file_path).suffix.lstrip(".").lower() or "file",
+                "geojson": geojson,
+                "is_visible": True,
+                "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            }
+            self._set_project_modified(True)
+            added += 1
+
+
+        self._refresh_vector_layers_ui()
+        if added:
+            self.panel.log(f"Added {added} vector layer(s).")
+        else:
+            self.panel.log("No vector layers were added.")
+
+    def remove_search_layer(self, file_path: str) -> None:
+        normalized_path = str(file_path or "").replace("\\", "/")
+        if not normalized_path:
+            return
+        asset = self._search_result_assets_by_path.get(normalized_path)
+        if not asset:
+            self.panel.log("Layer not found.")
+            return
+
+        self._run_js_call("removeLayerByKey", normalized_path)
+        self._loaded_search_layer_keys.discard(normalized_path)
+        self._search_layer_visibility.pop(normalized_path, None)
+        self._last_synced_visibility.pop(normalized_path, None)
+        self._search_result_assets_by_path.pop(normalized_path, None)
+        self._asset_cache.pop(normalized_path, None)
+        self._user_added_assets.pop(normalized_path, None)
+        if self._active_dem_search_layer_key == normalized_path:
+            self._active_dem_search_layer_key = None
+            self.state.active_layer_is_dem = False
+        if hasattr(self.panel, "_layer_order_registry"):
+            self.panel._layer_order_registry.pop(normalized_path, None)
+
+        self._apply_display_control_mode()
+        self.panel.update_search_results(
+            list(self._search_result_assets_by_path.values()),
+            self._search_layer_visibility,
+        )
+        self._set_project_modified(True)
+
+    def set_vector_layer_visibility(self, layer_key: str, visible: bool) -> None:
+        key = str(layer_key or "")
+        if not key or key not in self._vector_layers:
+            return
+        self._vector_layers[key]["is_visible"] = bool(visible)
+        self._run_js_call("setVectorLayerVisibility", key, bool(visible))
+        self._refresh_vector_layers_ui()
+
+    def remove_vector_layer(self, layer_key: str) -> None:
+        key = str(layer_key or "")
+        if not key or key not in self._vector_layers:
+            return
+        layer = self._vector_layers.pop(key)
+        self._run_js_call("removeVectorLayer", key)
+        if layer.get("source") == "annotations":
+            self._annotation_line_records = []
+            self._annotation_polygon_records = []
+        self._refresh_vector_layers_ui()
+
+    def new_project(self) -> None:
+        self._clear_project_state()
+        self._project_path = None
+        self._set_project_modified(False)
+        self.panel.log("New project ready.")
+
+    def open_project(self) -> None:
+        self._project_io.open_project()
+
+    def save_project(self) -> None:
+        self._project_io.save_project()
+
+    def save_project_as(self) -> None:
+        self._project_io.save_project_as()
+
+    def undo_last_action(self) -> None:
+        self.panel.log("Undo is not available yet.")
+
+    def redo_last_action(self) -> None:
+        self.panel.log("Redo is not available yet.")
+
+    def build_project_payload(self) -> dict:
+        now = dt.datetime.now(dt.timezone.utc).isoformat()
+        order_registry = getattr(self.panel, "_layer_order_registry", {}) or {}
+
+        raster_layers: list[dict[str, object]] = []
+        for path, asset in self._search_result_assets_by_path.items():
+            normalized_path = str(path or "").replace("\\", "/")
+            if not normalized_path:
+                continue
+            entry = order_registry.get(normalized_path, {})
+            raster_layers.append(
+                {
+                    "file_path": normalized_path,
+                    "file_name": asset.get("file_name"),
+                    "kind": asset.get("kind"),
+                    "crs": asset.get("crs"),
+                    "bounds_wkt": asset.get("bounds_wkt"),
+                    "tile_url": asset.get("tile_url"),
+                    "resolution_x": asset.get("resolution_x"),
+                    "resolution_y": asset.get("resolution_y"),
+                    "width": asset.get("width"),
+                    "height": asset.get("height"),
+                    "created_at": asset.get("created_at"),
+                    "is_visible": bool(
+                        self._search_layer_visibility.get(normalized_path, True)
+                    ),
+                    "order": entry.get("order", 0),
+                    "source": "user"
+                    if normalized_path in self._user_added_assets
+                    else "search",
+                }
+            )
+
+        vector_layers = [dict(layer) for layer in self._vector_layers.values()]
+
+        layer_order = [
+            path
+            for path, entry in sorted(
+                order_registry.items(), key=lambda item: item[1].get("order", 0)
+            )
+        ]
+
+        return {
+            "version": 1,
+            "saved_at": now,
+            "selected_asset_path": (
+                self.state.selected_asset.get("file_path")
+                if isinstance(self.state.selected_asset, dict)
+                else None
+            ),
+            "clicked_points": list(self.state.clicked_points),
+            "search": {
+                "geometry_type": self.state.search_geometry_type,
+                "geometry_payload": self.state.search_geometry_payload,
+                "visibility": dict(self._search_layer_visibility),
+                "layer_order": layer_order,
+                "active_dem": self._active_dem_search_layer_key,
+            },
+            "annotations": {
+                "points": list(self._annotation_records),
+                "lines": list(self._annotation_line_records),
+                "polygons": list(self._annotation_polygon_records),
+            },
+            "layers": {
+                "rasters": raster_layers,
+                "vectors": vector_layers,
+            },
+        }
+
+    def apply_project_payload(self, payload: dict, source_path: Path | None = None) -> None:
+        self._clear_project_state()
+        if source_path:
+            self._project_path = source_path
+
+        search_payload = payload.get("search") if isinstance(payload, dict) else {}
+        if not isinstance(search_payload, dict):
+            search_payload = {}
+        geometry_type = search_payload.get("geometry_type")
+        geometry_payload = search_payload.get("geometry_payload")
+        self.state.search_geometry_type = geometry_type
+        self.state.search_geometry_payload = geometry_payload
+        if geometry_type == "polygon" and isinstance(geometry_payload, dict):
+            points = geometry_payload.get("points", [])
+            if isinstance(points, list):
+                self._run_js_call("loadSearchPolygon", points)
+                self._update_coordinate_inputs_from_polygon({"points": points})
+
+        annotations = payload.get("annotations") if isinstance(payload, dict) else {}
+        if isinstance(annotations, dict):
+            self._annotation_records = list(annotations.get("points") or [])
+            self._annotation_line_records = list(annotations.get("lines") or [])
+            self._annotation_polygon_records = list(annotations.get("polygons") or [])
+        else:
+            self._annotation_records = []
+            self._annotation_line_records = []
+            self._annotation_polygon_records = []
+
+        layers_payload = payload.get("layers") if isinstance(payload, dict) else {}
+        raster_layers = []
+        if isinstance(layers_payload, dict):
+            raster_layers = layers_payload.get("rasters") or []
+        if not isinstance(raster_layers, list):
+            raster_layers = []
+
+        self._search_result_assets_by_path = {}
+        self._search_layer_visibility = {}
+        self._loaded_search_layer_keys = set()
+        self._last_synced_visibility = {}
+        self._user_added_assets = {}
+
+        order_registry = {}
+        for entry in raster_layers:
+            if not isinstance(entry, dict):
+                continue
+            file_path = str(entry.get("file_path") or "").replace("\\", "/")
+            if not file_path:
+                continue
+            file_name = str(entry.get("file_name") or Path(file_path).name)
+            tile_url = entry.get("tile_url") or build_xyz_url(file_path)
+            asset = {
+                "file_path": file_path,
+                "file_name": file_name,
+                "kind": entry.get("kind") or "unknown",
+                "crs": entry.get("crs") or "-",
+                "bounds_wkt": entry.get("bounds_wkt") or "",
+                "tile_url": tile_url,
+                "resolution_x": entry.get("resolution_x"),
+                "resolution_y": entry.get("resolution_y"),
+                "width": entry.get("width"),
+                "height": entry.get("height"),
+                "created_at": entry.get("created_at"),
+            }
+            self._search_result_assets_by_path[file_path] = asset
+            self._search_layer_visibility[file_path] = bool(
+                entry.get("is_visible", True)
+            )
+            if str(entry.get("source") or "") == "user":
+                self._user_added_assets[file_path] = asset
+            order_registry[file_path] = {
+                "file_name": file_name,
+                "kind": str(asset.get("kind") or "-"),
+                "crs": str(asset.get("crs") or "-"),
+                "created_at": str(entry.get("created_at") or "-"),
+                "is_visible": bool(entry.get("is_visible", True)),
+                "order": int(entry.get("order", 0)),
+            }
+
+        self.panel._layer_order_registry = order_registry
+        self._active_dem_search_layer_key = search_payload.get("active_dem")
+        if (
+            self._active_dem_search_layer_key
+            and self._active_dem_search_layer_key not in self._search_result_assets_by_path
+        ):
+            self._active_dem_search_layer_key = None
+
+        self._sync_search_visibility_layers()
+
+        layer_order = search_payload.get("layer_order")
+        if isinstance(layer_order, list) and layer_order:
+            ordered_keys = [
+                str(p).replace("\\", "/")
+                for p in layer_order
+                if str(p or "").strip()
+            ]
+            if ordered_keys:
+                self._run_js_call("enforceLayerDisplayOrder", ordered_keys)
+
+        self.panel.update_search_results(
+            list(self._search_result_assets_by_path.values()),
+            self._search_layer_visibility,
+        )
+
+        vectors = []
+        if isinstance(layers_payload, dict):
+            vectors = layers_payload.get("vectors") or []
+        if not isinstance(vectors, list):
+            vectors = []
+
+        self._vector_layers = {}
+        self._run_js_call("clearVectorLayers")
+        for entry in vectors:
+            if not isinstance(entry, dict):
+                continue
+            layer_key = str(entry.get("layer_key") or "").strip()
+            label = str(entry.get("label") or "Vector")
+            geojson = entry.get("geojson")
+            if not layer_key or not isinstance(geojson, dict):
+                continue
+            self._run_js_call("addVectorLayer", layer_key, label, geojson, {})
+            is_visible = bool(entry.get("is_visible", True))
+            if not is_visible:
+                self._run_js_call("setVectorLayerVisibility", layer_key, False)
+            self._vector_layers[layer_key] = dict(entry)
+            self._vector_layers[layer_key]["is_visible"] = is_visible
+
+        self._restore_annotations_on_map()
+        self._refresh_vector_layers_ui()
+
+        selected_path = payload.get("selected_asset_path")
+        if isinstance(selected_path, str) and selected_path:
+            selected_asset = self._search_result_assets_by_path.get(
+                selected_path.replace("\\", "/")
+            )
+            if selected_asset:
+                self.state.selected_asset = selected_asset
+
+        self.state.clicked_points = list(payload.get("clicked_points") or [])
+
+        self.panel.log("Project loaded.")
+        self._set_project_modified(False)
+
+    def _set_project_modified(self, modified: bool = True) -> None:
+        """Update modification state and notify UI."""
+        self._is_project_modified = modified
+        name = self._project_path.stem if self._project_path else "Untitled Project"
+        self.project_metadata_changed.emit(name, modified)
+
+
+    def _clear_project_state(self) -> None:
+        self._run_js_call("clearAllLayers")
+        self._run_js_call("clearVectorLayers")
+        self._run_js_call("clearSearchGeometry")
+        self._run_js_call("clearAnnotations")
+        self._run_js_call("resetDefaultView")
+
+        self._search_result_assets_by_path = {}
+        self._search_layer_visibility = {}
+        self._loaded_search_layer_keys = set()
+        self._last_synced_visibility = {}
+        self._active_dem_search_layer_key = None
+        self._explicit_imagery_layer_visible = False
+        self._explicit_dem_layer_visible = False
+        self._user_added_assets = {}
+        self._vector_layers = {}
+        self._annotation_records = []
+        self._annotation_line_records = []
+        self._annotation_polygon_records = []
+        self.state.selected_asset = None
+        self.state.clicked_points = []
+        self.state.search_geometry_type = None
+        self.state.search_geometry_payload = None
+        self.panel.assets_combo.clear()
+        if hasattr(self.panel, "_layer_order_registry"):
+            self.panel._layer_order_registry = {}
+        self.panel.update_search_results([], {})
+        self.panel.update_vector_layers([])
+        self.clear_all_measurement_results()
+        self._apply_display_control_mode()
+
+    def _restore_annotations_on_map(self) -> None:
+        self._run_js_call("clearAnnotations")
+        for item in self._annotation_records:
+            try:
+                lon = float(item.get("lon") or 0.0)
+                lat = float(item.get("lat") or 0.0)
+                text = str(item.get("text") or self._default_annotation_text)
+            except (TypeError, ValueError):
+                continue
+            self._run_js_call("addAnnotation", text, lon, lat)
+
+        for item in self._annotation_polygon_records:
+            coords = item.get("coords", [])
+            if coords:
+                # Convert list of tuples/lists or list of dicts to dict format expected by JS
+                js_points = []
+                for c in coords:
+                    if isinstance(c, (list, tuple)) and len(c) >= 2:
+                        js_points.append({"lon": float(c[0]), "lat": float(c[1])})
+                    elif isinstance(c, dict) and "lon" in c and "lat" in c:
+                        js_points.append({"lon": float(c["lon"]), "lat": float(c["lat"])})
+                
+                if js_points:
+                    self._run_js_call("restoreAnnotationPolygon", js_points)
+
+        annotation_geojson = self._annotation_line_polygon_geojson()
+        if annotation_geojson:
+            layer_key = self._make_unique_vector_key("vector:annotations")
+            self._run_js_call("addVectorLayer", layer_key, "Annotations", annotation_geojson, {})
+            self._vector_layers[layer_key] = {
+                "layer_key": layer_key,
+                "label": "Annotations",
+                "file_path": None,
+                "source": "annotations",
+                "geojson": annotation_geojson,
+                "is_visible": True,
+                "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            }
+
+    def _annotation_line_polygon_geojson(self) -> dict | None:
+        features = []
+        for item in self._annotation_line_records:
+            coords = item.get("coords", [])
+            if coords:
+                features.append(
+                    {
+                        "type": "Feature",
+                        "geometry": {"type": "LineString", "coordinates": coords},
+                        "properties": {
+                            "feature_type": item.get("feature_type", "line"),
+                            "length_m": item.get("length_m", 0.0),
+                            "width_m": item.get("width_m", 0.0),
+                            "condition": item.get("condition", "intact"),
+                        },
+                    }
+                )
+        for item in self._annotation_polygon_records:
+            coords = item.get("coords", [])
+            if coords:
+                ring = list(coords)
+                if ring and ring[0] != ring[-1]:
+                    ring.append(ring[0])
+                features.append(
+                    {
+                        "type": "Feature",
+                        "geometry": {"type": "Polygon", "coordinates": [ring]},
+                        "properties": {
+                            "feature_type": item.get("feature_type", "polygon"),
+                            "area_m2": item.get("area_m2", 0.0),
+                            "condition": item.get("condition", "intact"),
+                        },
+                    }
+                )
+        if not features:
+            return None
+        return {"type": "FeatureCollection", "features": features}
+
+    def _create_raster_asset_from_path(self, file_path: str) -> dict | None:
+        path = Path(str(file_path)).expanduser()
+        if not path.exists():
+            self.panel.log(f"Raster not found: {path}")
+            return None
+        if self.api.api_ready():
+            try:
+                asset = self.api.register_raster(str(path))
+                if isinstance(asset, dict):
+                    if "tile_url" not in asset:
+                        asset["tile_url"] = build_xyz_url(str(path))
+                    return asset
+            except Exception as exc:
+                self.panel.log(f"Raster registration failed: {path.name}. {exc}")
+                self._logger.warning("Raster registration failed: %s", exc)
+        try:
+            metadata = extract_metadata(path)
+        except MetadataExtractorError as exc:
+            self.panel.log(f"Metadata extraction failed: {path.name}. {exc}")
+            self._logger.warning("Metadata extraction failed: %s", exc)
+            return None
+        except Exception as exc:
+            self.panel.log(f"Metadata extraction error: {path.name}. {exc}")
+            self._logger.warning("Metadata extraction error: %s", exc)
+            return None
+
+        bounds_wkt = metadata.bounds.to_wkt_polygon()
+        return {
+            "file_path": str(metadata.file_path),
+            "file_name": metadata.file_name,
+            "kind": metadata.kind.value,
+            "crs": metadata.crs or "-",
+            "bounds_wkt": bounds_wkt,
+            "resolution_x": metadata.resolution_x,
+            "resolution_y": metadata.resolution_y,
+            "width": metadata.width,
+            "height": metadata.height,
+            "tile_url": build_xyz_url(str(metadata.file_path)),
+            "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        }
+
+    def _read_vector_geojson(self, path: Path) -> dict | None:
+        suffix = path.suffix.lower()
+        if suffix in {".geojson", ".json"}:
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                self.panel.log(f"Failed to read {path.name}: {exc}")
+                return None
+            if isinstance(payload, dict) and payload.get("type"):
+                return payload
+            if isinstance(payload, list):
+                return {"type": "FeatureCollection", "features": payload}
+            self.panel.log(f"Unsupported GeoJSON structure: {path.name}")
+            return None
+
+        try:
+            import fiona
+        except Exception:
+            self.panel.log(
+                f"Vector support for {path.suffix} requires Fiona. Install geo extras."
+            )
+            return None
+
+        try:
+            features = []
+            with fiona.open(path) as src:
+                for feature in src:
+                    features.append(feature)
+            return {"type": "FeatureCollection", "features": features}
+        except Exception as exc:
+            self.panel.log(f"Failed to read vector {path.name}: {exc}")
+            return None
+
+    def _make_unique_vector_key(self, base: str) -> str:
+        key = str(base or "vector")
+        if key not in self._vector_layers:
+            return key
+        suffix = 1
+        while f"{key}:{suffix}" in self._vector_layers:
+            suffix += 1
+        return f"{key}:{suffix}"
+
+    def _refresh_vector_layers_ui(self) -> None:
+        self.panel.update_vector_layers(list(self._vector_layers.values()))
+
     def clear_file_selection(self) -> None:
         """Clear the current file selection."""
         self.panel.clear_selected_files()
@@ -2156,6 +2759,7 @@ class DesktopController:
         auto_fly_to: bool = True,
         apply_scene_mode: bool = True,
         show_loading: bool = True,
+        skip_cog: bool = False,
     ) -> dict | None:
         if show_loading:
             self._set_layer_loading(True, f"Loading {asset['file_name']}...")
@@ -2192,7 +2796,7 @@ class DesktopController:
         # Auto-convert to COG if the source is a plain GeoTIFF.
         # Non-COG files fail to tile on Windows and are slower everywhere.
         # The COG is written next to the source (e.g. dem.cog.tif) and reused.
-        if self.app_mode != DesktopAppMode.CLIENT:
+        if self.app_mode != DesktopAppMode.CLIENT and not skip_cog:
             try:
                 from core_shared.ingestion.services.cog_service import (
                     CogPreparationService,
@@ -2659,6 +3263,8 @@ class DesktopController:
             }
         )
         self.panel.log(f"Annotation added at {lon:.5f}, {lat:.5f}")
+        self._set_project_modified(True)
+
         self._logger.info("Annotation added lon=%.5f lat=%.5f text=%s", lon, lat, text)
 
     def _toolbar_elevation_profile(self) -> bool:
@@ -2883,6 +3489,23 @@ class DesktopController:
         self.panel.log("Layer compositor settings applied.")
         return True
 
+    def _toolbar_zoom_to_asset(self, file_path: str) -> None:
+        """Zoom/Focus on a specific asset instantly."""
+        asset = self._search_result_assets_by_path.get(file_path)
+        if not asset:
+            return
+
+        bounds = asset.get("bounds")
+        if bounds:
+            self._run_js_call(
+                "instantFocusBounds",
+                bounds.get("west"),
+                bounds.get("south"),
+                bounds.get("east"),
+                bounds.get("north"),
+            )
+            self.panel.log(f"Focused on: {asset.get('file_name', 'asset')}")
+
     def _toolbar_fly_through(self, enabled: bool | None = None) -> bool:
         """Toggle fly-through path drawing mode."""
         next_state = (
@@ -2898,6 +3521,7 @@ class DesktopController:
                 "Fly Through mode enabled. Click to draw a path, Right-Click to finish."
             )
         else:
+            self._run_js_call("stopFlyThrough")
             self._run_js_call("setFlyThroughMode", False)
             self._set_measurement_cursor_enabled(False)
             self.panel.log("Fly Through mode disabled.")
@@ -3455,24 +4079,13 @@ class DesktopController:
         self._distance_measure_mode_enabled = False
         self._shadow_height_mode_enabled = False
         self._pan_mode_enabled = False
+        self._fly_through_mode_enabled = False  # Strict exclusivity
         self._add_point_mode_enabled = True # Current mode
         self._run_js_call("setDistanceMeasureMode", False)
         self._run_js_call("setPanMode", False)
+        self._run_js_call("setFlyThroughMode", False) # Sync JS state
         self._run_js_call("setSearchDrawMode", "none") # Disable Polygon Draw
         
-        # EXCLUSIVITY: Disable other visualization tools
-        from desktop_client.client_backend.desktop.main_window import MainWindow
-        main_win = self.panel.window()
-        if isinstance(main_win, MainWindow):
-            for other in ["Comparator", "Layer Compositor", "Fly Through"]:
-                if other != "Add Point": # Defensive
-                    action = main_win.toolbar_actions.get(other)
-                    if action and action.isChecked():
-                        action.setChecked(False)
-                        self.handle_toolbar_action(other, False)
-                    if action:
-                        action.setEnabled(False)
-
         self._set_measurement_cursor_enabled(True)
         self._set_annotation_overlay_visible(True)
         self.panel.log("Add Point enabled. Click map to place annotation points.")
@@ -3550,25 +4163,15 @@ class DesktopController:
         if not polygon:
             self._distance_measure_mode_enabled = False
             self._add_point_mode_enabled = False # Enforce exclusivity
+            self._fly_through_mode_enabled = False # Strict exclusivity
             self._set_annotation_overlay_visible(True)
             self._run_js_call("setAnnotationDrawingMode", True)
             self._shadow_height_mode_enabled = False
             self._pan_mode_enabled = False
             self._run_js_call("setDistanceMeasureMode", False)
             self._run_js_call("setPanMode", False)
+            self._run_js_call("setFlyThroughMode", False) # Sync JS state
             
-            # EXCLUSIVITY: Disable other visualization tools
-            from desktop_client.client_backend.desktop.main_window import MainWindow
-            main_win = self.panel.window()
-            if isinstance(main_win, MainWindow):
-                for other in ["Comparator", "Layer Compositor", "Fly Through"]:
-                    action = main_win.toolbar_actions.get(other)
-                    if action and action.isChecked():
-                        action.setChecked(False)
-                        self.handle_toolbar_action(other, False)
-                    if action:
-                        action.setEnabled(False)
-
             self.set_search_draw_mode()
             self._set_measurement_cursor_enabled(True)
             self.panel.log(
@@ -3588,6 +4191,7 @@ class DesktopController:
                 "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
             }
         )
+        self._set_project_modified(True)
         self.panel.log(
             "Polygon annotation saved: "
             f"area={area:.2f} m2, perimeter={perimeter:.2f} m, orientation={orientation:.1f} deg"
@@ -4413,6 +5017,8 @@ class DesktopController:
         else:
             self._layer_loading_timeout_timer.stop()
         self.panel.set_layer_loading(active, message)
+        from qtpy.QtWidgets import QApplication
+        QApplication.processEvents()
 
     def _on_layer_loading_timeout(self) -> None:
         if not self._layer_loading_active:

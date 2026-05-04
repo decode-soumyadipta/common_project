@@ -23,6 +23,7 @@ from qtpy.QtGui import (
     QPen,
     QPixmap,
 )
+from qtpy.QtGui import QDesktopServices
 from qtpy.QtWebChannel import QWebChannel
 from qtpy.QtWebEngineWidgets import QWebEngineSettings, QWebEngineView
 from qtpy.QtWidgets import (
@@ -33,6 +34,7 @@ from qtpy.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QMainWindow,
     QPushButton,
     QScrollArea,
@@ -223,7 +225,7 @@ class MapOverlayControls(QWidget):
             }
             QCheckBox {
                 color: #e0e8f4;
-                font-size: 11px;
+                font-size: 10px;
             }
             """
         )
@@ -247,22 +249,29 @@ class MapOverlayControls(QWidget):
         )
         self.layout_main.addWidget(self.basemap_visibility_combo)
 
-        # Polygon Visibility (hidden by default, shown only when polygon exists)
+        # Polygon Visibility (always visible; enabled when polygon exists)
         self.polygon_visibility_checkbox = QCheckBox("Show Search AOI Polygon")
         self.polygon_visibility_checkbox.setChecked(True)
-        self.polygon_visibility_checkbox.setVisible(
-            False
-        )  # Hidden until polygon exists
+        self.polygon_visibility_checkbox.setEnabled(False)
         self.polygon_visibility_checkbox.toggled.connect(
             self._on_polygon_visibility_toggled
         )
         self.layout_main.addWidget(self.polygon_visibility_checkbox)
+
+        # Hide AOI checkbox in server mode as searching is client-only
+        if self.controller.app_mode == DesktopAppMode.SERVER:
+            self.polygon_visibility_checkbox.setVisible(False)
+        else:
+            self.polygon_visibility_checkbox.setVisible(True)
 
         # AOI Stats
         self.aoi_stats_label = QLabel("Area: 0 m\u00b2 | Vertices: 0")
         self.aoi_stats_label.setWordWrap(True)
         self.aoi_stats_label.setVisible(False)
         self.layout_main.addWidget(self.aoi_stats_label)
+
+        self._last_aoi_vertices = 0
+        self._last_aoi_area_text = "0 m\u00b2"
 
         self.setFixedWidth(200)
 
@@ -274,28 +283,25 @@ class MapOverlayControls(QWidget):
     def set_special_mode(self, active: bool) -> None:
         """Call when comparator or compositor mode is activated/deactivated.
 
-        Hides the AOI polygon checkbox in special modes.
+        Keeps the AOI checkbox visible and hides stats when needed.
         """
         self._special_mode_active = bool(active)
-        # Force a visibility refresh
-        if self._special_mode_active:
-            self.polygon_visibility_checkbox.setVisible(False)
-            self.aoi_stats_label.setVisible(False)
-            self.adjustSize()
+        self._apply_aoi_visibility()
 
     def update_position(self) -> None:
         """Update the overlay position to top-right corner of parent widget."""
         parent_widget = self.parentWidget()
         if parent_widget and parent_widget.isVisible():
-            parent_rect = parent_widget.rect()
-            top_right = parent_widget.mapToGlobal(parent_rect.topRight())
-            x_pos = top_right.x() - self.width() - 20
-            y_pos = top_right.y() + 20
-            if x_pos < 0:
-                x_pos = 10
-            if y_pos < 0:
-                y_pos = 10
+            # For Tool windows, move() expects global screen coordinates.
+            # Map the parent's top-right corner to global space.
+            top_right_global = parent_widget.mapToGlobal(parent_widget.rect().topRight())
+            
+            # Position near the top-right edge with a 10px internal margin
+            x_pos = top_right_global.x() - self.width() - 10
+            y_pos = top_right_global.y() + 10
+            
             self.move(x_pos, y_pos)
+            self.raise_()
 
     def _on_scene_mode_changed(self, text: str) -> None:
         mode = "2d" if "2D" in text else "3d"
@@ -317,18 +323,102 @@ class MapOverlayControls(QWidget):
 
     def update_aoi_stats(self, vertices: int, area_text: str) -> None:
         """Update the AOI statistics display."""
+        self._last_aoi_vertices = int(vertices)
+        self._last_aoi_area_text = str(area_text)
+        self._apply_aoi_visibility()
+
+    def _apply_aoi_visibility(self) -> None:
+        vertices = self._last_aoi_vertices
+        area_text = self._last_aoi_area_text
+        self.polygon_visibility_checkbox.setVisible(True)
+        self.polygon_visibility_checkbox.setEnabled(vertices >= 3)
         if vertices >= 3 and not self._special_mode_active:
-            self.polygon_visibility_checkbox.setVisible(True)
             self.aoi_stats_label.setText(f"Area: {area_text}\nVertices: {vertices}")
             self.aoi_stats_label.setVisible(True)
         else:
-            self.polygon_visibility_checkbox.setVisible(False)
             self.aoi_stats_label.setVisible(False)
 
         self.adjustSize()
         main_win = self.window()
         if hasattr(main_win, "_position_compositor_overlay"):
             main_win._position_compositor_overlay()
+
+
+class BusyOverlay(QWidget):
+    """Semi-transparent overlay with a loading spinner and message."""
+
+    def __init__(self, parent: QWidget):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        # Block mouse events while busy
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        
+        self.layout = QVBoxLayout(self)
+        self.layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        self.container = QWidget()
+        self.container.setFixedSize(280, 120)
+        self.container.setObjectName("busyContainer")
+        self.container.setStyleSheet("""
+            QWidget#busyContainer {
+                background: rgba(255, 255, 255, 0.95);
+                border: 1px solid #0078d4;
+                border-radius: 12px;
+            }
+            QLabel#busyTitle {
+                color: #0078d4;
+                font-size: 16px;
+                font-weight: 700;
+            }
+            QLabel#busyMessage {
+                color: #444444;
+                font-size: 13px;
+            }
+        """)
+        
+        self.inner_layout = QVBoxLayout(self.container)
+        self.inner_layout.setContentsMargins(20, 20, 20, 20)
+        self.inner_layout.setSpacing(10)
+        
+        self.title = QLabel("ResGIS Engine")
+        self.title.setObjectName("busyTitle")
+        self.title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        self.message = QLabel("Loading data...")
+        self.message.setObjectName("busyMessage")
+        self.message.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.message.setWordWrap(True)
+        
+        # Simple CSS-based pulse animation simulation via QProgressBar
+        from qtpy.QtWidgets import QProgressBar
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 0) # Indeterminate
+        self.progress.setTextVisible(False)
+        self.progress.setFixedHeight(4)
+        self.progress.setStyleSheet("""
+            QProgressBar {
+                background: #f0f0f0;
+                border: none;
+                border-radius: 2px;
+            }
+            QProgressBar::chunk {
+                background: #0078d4;
+                border-radius: 2px;
+            }
+        """)
+        
+        self.inner_layout.addWidget(self.title)
+        self.inner_layout.addWidget(self.progress)
+        self.inner_layout.addWidget(self.message)
+        
+        self.layout.addWidget(self.container)
+        self.hide()
+
+    def show_with_message(self, message: str):
+        self.message.setText(message)
+        self.raise_()
+        self.show()
 
 
 class MainWindow(QMainWindow):
@@ -408,6 +498,7 @@ class MainWindow(QMainWindow):
             ),
         ),
     )
+    HELP_URL = "https://example.com/docs"
 
     def __init__(self, app_mode: DesktopAppMode = DesktopAppMode.UNIFIED):
         """Initialize the main window.
@@ -417,7 +508,9 @@ class MainWindow(QMainWindow):
         """
         super().__init__()
         self.app_mode = app_mode
-        self.setWindowTitle(self._window_title_for_mode(app_mode))
+        self._project_name = "Untitled Project"
+        self._is_modified = True
+        self._update_window_title()
 
         # Initialize database when in server mode
         if app_mode in (DesktopAppMode.UNIFIED, DesktopAppMode.SERVER):
@@ -459,6 +552,7 @@ class MainWindow(QMainWindow):
                 self.measurement_tools_switch,
             ) = self._create_main_toolbar()
             self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.main_toolbar)
+
         self._toolbar_layer_context: str = "none"
         self._visualization_tools_enabled: bool = True
         self._measurement_tools_enabled: bool = True
@@ -477,6 +571,9 @@ class MainWindow(QMainWindow):
         web_settings.setAttribute(
             QWebEngineSettings.LocalContentCanAccessFileUrls, True
         )
+        
+        self.busy_overlay = BusyOverlay(self)
+        self.busy_overlay.hide()
         # Disable disk cache so local JS/CSS changes are always picked up.
         # For a local file:// app there is no benefit to caching — it only
         # causes stale bridge.js to be served after code updates.
@@ -548,6 +645,11 @@ class MainWindow(QMainWindow):
             if app_mode != DesktopAppMode.SERVER
             else None,
         )
+        self.controller.project_metadata_changed.connect(self.set_project_info)
+
+
+        if app_mode == DesktopAppMode.CLIENT:
+            self._create_menu_bar()
 
         self.compositor_overlay = LayerCompositorOverlay(self.web_view, self.controller)
         self.map_overlay_controls = MapOverlayControls(self.web_view, self.controller)
@@ -670,7 +772,14 @@ class MainWindow(QMainWindow):
             source_override: Path | None = None,
         ) -> None:
             link_path = web_assets_dir / name
-            # Use source_override if provided, otherwise use desktop_web_assets
+            
+            # 1. If it's already there and correct, we're done.
+            if link_path.exists():
+                if not required_file or (link_path / required_file).exists():
+                    logger.debug("%s assets already present at %s", name, link_path)
+                    return
+
+            # 2. Otherwise, look for canonical source to link/copy from
             canonical = (
                 source_override if source_override else (desktop_web_assets / name)
             )
@@ -760,114 +869,45 @@ class MainWindow(QMainWindow):
             action_label: Label of the triggered action.
             checked: Checked state for toggle actions.
         """
-        if action_label == "Comparator":
-            action = self.toolbar_actions.get(action_label)
-            if action is None:
-                return
-            if checked:
-                self._show_comparator_dropdown()
-                # EXCLUSIVITY: Disable Layer Compositor and Fly Through while Comparator is active
-                for other in ["Layer Compositor", "Fly Through"]:
-                    other_action = self.toolbar_actions.get(other)
-                    if other_action:
-                        if other_action.isChecked():
-                            other_action.setChecked(False)
-                            self.controller.handle_toolbar_action(other, False)
-                        other_action.setEnabled(False)
-                if hasattr(self, "map_overlay_controls"):
-                    self.map_overlay_controls.set_special_mode(True)
-                return
-            # Comparator toggled OFF — disable it and re-enable others
-            final_state = self.controller.handle_toolbar_action(
-                action_label, checked=checked
-            )
-            if isinstance(final_state, bool):
-                action.setChecked(final_state)
-            # Re-enable Layer Compositor and Fly Through
-            for other in ["Layer Compositor", "Fly Through"]:
-                other_action = self.toolbar_actions.get(other)
-                if other_action:
-                    other_action.setEnabled(True)
-            # Restore AOI checkbox visibility
-            if hasattr(self, "map_overlay_controls"):
-                self.map_overlay_controls.set_special_mode(False)
+    def _on_toolbar_action_triggered(self, action_label: str, checked: bool) -> None:
+        """Handle toolbar action triggers by coordinating with the controller and refreshing UI state."""
+        action = self.toolbar_actions.get(action_label)
+        if action is None:
             return
 
-        if action_label == "Layer Compositor":
-            action = self.toolbar_actions.get(action_label)
-            if action is None:
-                return
-            if checked:
-                self._show_layer_compositor_overlay()
-                # EXCLUSIVITY: Disable Comparator and Fly Through while Layer Compositor is active
-                for other in ["Comparator", "Fly Through"]:
-                    other_action = self.toolbar_actions.get(other)
-                    if other_action:
-                        if other_action.isChecked():
-                            other_action.setChecked(False)
-                            self.controller.handle_toolbar_action(other, False)
-                        other_action.setEnabled(False)
-                if hasattr(self, "map_overlay_controls"):
-                    self.map_overlay_controls.set_special_mode(True)
-                return
-            # Layer Compositor toggled OFF — re-enable comparator
+        # --- Dropdown / Selection Phase ---
+        if action_label == "Comparator" and checked:
+            self._show_comparator_dropdown()
+            # Note: We don't return here yet, we still let the controller/refresh run
+        elif action_label == "Layer Compositor" and checked:
+            self._show_layer_compositor_overlay()
+        elif action_label == "Export":
+            self._show_export_dropdown()
+            return
+        elif action_label == "Add Raster Layer":
+            self.controller.add_raster_layers()
+            return
+        elif action_label == "Add Vector":
+            self.controller.add_vector_layers()
+            return
+
+        # --- State Sync Phase ---
+        # Special case: Layer Compositor toggled OFF
+        if action_label == "Layer Compositor" and not checked:
             self.controller.disable_layer_compositor()
             if hasattr(self, "compositor_overlay"):
                 self.compositor_overlay.hide()
-            action.setChecked(False)
-            # Re-enable Comparator and Fly Through
-            for other in ["Comparator", "Fly Through"]:
-                other_action = self.toolbar_actions.get(other)
-                if other_action:
-                    other_action.setEnabled(True)
-            # Restore AOI checkbox visibility
-            if hasattr(self, "map_overlay_controls"):
-                self.map_overlay_controls.set_special_mode(False)
-            return
+        else:
+            # Delegate all other actions to the controller
+            final_state = self.controller.handle_toolbar_action(action_label, checked=checked)
+            # Sync the action's checked state if the controller returned a definitive boolean
+            if action.isCheckable() and isinstance(final_state, bool):
+                action.blockSignals(True)
+                action.setChecked(final_state)
+                action.blockSignals(False)
 
-        if action_label == "Export":
-            self._show_export_dropdown()
-            return
-
-        if (action_label == "Fly Through"):
-            action = self.toolbar_actions.get(action_label)
-            if action is None:
-                return
-            if checked:
-                # Disable and uncheck other visualization tools
-                for other in ["Comparator", "Layer Compositor"]:
-                    other_action = self.toolbar_actions.get(other)
-                    if other_action:
-                        if other_action.isChecked():
-                            other_action.setChecked(False)
-                            self.controller.handle_toolbar_action(other, False)
-                        other_action.setEnabled(False)
-                self.controller.handle_toolbar_action(action_label, True)
-                return
-            
-            # Re-enable other visualization tools
-            for other in ["Comparator", "Layer Compositor"]:
-                other_action = self.toolbar_actions.get(other)
-                if other_action:
-                    other_action.setEnabled(True)
-            self.controller.handle_toolbar_action(action_label, False)
-            return
-
-        if action_label in ("Add Vector", "Add Raster Layer"):
-            self.controller.browse_path()
-            return
-
-        final_state = self.controller.handle_toolbar_action(
-            action_label, checked=checked
-        )
-        action = self.toolbar_actions.get(action_label)
-        if action is None or not action.isCheckable():
-            return
-        if isinstance(final_state, bool):
-            action.blockSignals(True)
-            action.setChecked(final_state)
-            action.blockSignals(False)
-
+        # --- Interaction Exclusivity ---
+        # If an interaction tool was just ENABLED, uncheck all OTHER interaction tools.
         interaction_toggles = {
             "Pan",
             "Distance / Azimuth",
@@ -876,21 +916,33 @@ class MainWindow(QMainWindow):
             "Add Point",
             "Add Polygon",
         }
-        if action_label in interaction_toggles and bool(final_state):
+        if action_label in interaction_toggles and action.isChecked():
             for other_label in interaction_toggles:
                 if other_label == action_label:
                     continue
+                if action_label == "Pan" and other_label == "Elevation Profile":
+                    continue
                 other_action = self.toolbar_actions.get(other_label)
-                if (
-                    other_action is not None
-                    and other_action.isCheckable()
-                    and other_action.isChecked()
-                ):
+                if other_action and other_action.isCheckable() and other_action.isChecked():
                     other_action.blockSignals(True)
                     other_action.setChecked(False)
                     other_action.blockSignals(False)
-                    # explicitly tell controller to turn it off
+                    # Tell controller the other tool is now OFF
                     self.controller.handle_toolbar_action(other_label, False)
+
+        # --- Overlay Management ---
+        if hasattr(self, "map_overlay_controls"):
+            # Update AOI polygon visibility context
+            is_special = any(
+                self.toolbar_actions.get(l).isChecked() 
+                for l in ["Comparator", "Layer Compositor"] 
+                if self.toolbar_actions.get(l)
+            )
+            self.map_overlay_controls.set_special_mode(is_special)
+
+        # --- Final UI Refresh ---
+        # This will handle mutual exclusivity (grey-out) and contextual visibility
+        self._refresh_toolbar_action_state()
 
     def _show_layer_compositor_overlay(self) -> None:
         """Show the layer compositor overlay for adjusting layer opacities."""
@@ -912,6 +964,50 @@ class MainWindow(QMainWindow):
         self._position_compositor_overlay()
         action.setChecked(True)
 
+    def _create_menu_bar(self) -> None:
+        menu_bar = self.menuBar()
+        menu_bar.setNativeMenuBar(False)
+
+        file_menu = menu_bar.addMenu("&File")
+        new_action = QAction(IconRegistry.get("new_project", size=16), "New Project", self)
+        open_action = QAction(IconRegistry.get("open_project", size=16), "Open...", self)
+        save_action = QAction(IconRegistry.get("save_project", size=16), "Save", self)
+        save_as_action = QAction(IconRegistry.get("save_project_as", size=16), "Save As...", self)
+        exit_action = QAction("Exit", self)
+
+        new_action.triggered.connect(self.controller.new_project)
+        open_action.triggered.connect(self.controller.open_project)
+        save_action.triggered.connect(self.controller.save_project)
+        save_as_action.triggered.connect(self.controller.save_project_as)
+        exit_action.triggered.connect(self.close)
+
+        file_menu.addAction(new_action)
+        file_menu.addAction(open_action)
+        file_menu.addSeparator()
+        file_menu.addAction(save_action)
+        file_menu.addAction(save_as_action)
+        file_menu.addSeparator()
+        file_menu.addAction(exit_action)
+
+        edit_menu = menu_bar.addMenu("&Edit")
+        undo_action = QAction(IconRegistry.get("undo", size=16), "Undo", self)
+        redo_action = QAction(IconRegistry.get("redo", size=16), "Redo", self)
+        undo_action.triggered.connect(self.controller.undo_last_action)
+        redo_action.triggered.connect(self.controller.redo_last_action)
+        edit_menu.addAction(undo_action)
+        edit_menu.addAction(redo_action)
+
+        help_menu = menu_bar.addMenu("&Help")
+        docs_action = QAction("Documentation", self)
+        docs_action.triggered.connect(self._open_help_url)
+        help_menu.addAction(docs_action)
+
+    def _open_help_url(self) -> None:
+        if not self.HELP_URL:
+            self.panel.log("Help URL is not configured yet.")
+            return
+        QDesktopServices.openUrl(QUrl(self.HELP_URL))
+
     def showEvent(self, event: object) -> None:
         """Handle window show event.
 
@@ -925,6 +1021,14 @@ class MainWindow(QMainWindow):
         ):
             self.map_overlay_controls.update_position()
 
+    def set_busy_overlay(self, active: bool, message: str = "") -> None:
+        """Toggle the modal busy overlay."""
+        if active:
+            self.busy_overlay.show_with_message(message)
+            self.busy_overlay.resize(self.size())
+        else:
+            self.busy_overlay.hide()
+
     def moveEvent(self, event: object) -> None:
         """Handle window move event.
 
@@ -933,6 +1037,8 @@ class MainWindow(QMainWindow):
         """
         super().moveEvent(event)
         self._position_compositor_overlay()
+        if hasattr(self, "map_overlay_controls") and self.map_overlay_controls.isVisible():
+            self.map_overlay_controls.update_position()
 
     def resizeEvent(self, event: object) -> None:
         """Handle window resize event.
@@ -941,6 +1047,8 @@ class MainWindow(QMainWindow):
             event: Resize event object.
         """
         super().resizeEvent(event)
+        if hasattr(self, "busy_overlay"):
+            self.busy_overlay.resize(self.size())
         if hasattr(self, "compositor_overlay") and self.compositor_overlay.isVisible():
             self._position_compositor_overlay()
         if (
@@ -1238,34 +1346,68 @@ class MainWindow(QMainWindow):
 
             action.setVisible(True)
 
+            # --- Enablement Logic ---
+            is_enabled = True
+
+            # 1. Measurement tools need at least one layer
             if group == "measurement" and self._toolbar_layer_context == "none":
-                action.setEnabled(False)
-                if action.isCheckable():
-                    action.setChecked(False)
-            else:
-                action.setEnabled(True)
+                is_enabled = False
 
-            if label == "Comparator" and hasattr(self, "controller"):
-                comparator_available = self.controller.can_attempt_enable_comparator()
-                if not comparator_available:
-                    action.setEnabled(False)
-                    if action.isCheckable():
-                        action.setChecked(False)
+            # 2. Visualization exclusivity (Comparator, Layer Compositor, Fly Through)
+            viz_exclusives = {"Comparator", "Layer Compositor", "Fly Through"}
+            active_viz_tool = None
+            for viz_tool in viz_exclusives:
+                other_action = self.toolbar_actions.get(viz_tool)
+                if other_action and other_action.isChecked():
+                    active_viz_tool = viz_tool
+                    break
 
-        # Mutual exclusion guard: compositor on => comparator disabled (and vice-versa).
-        compositor_action = self.toolbar_actions.get("Layer Compositor")
-        comparator_action = self.toolbar_actions.get("Comparator")
-        if comparator_action is not None and compositor_action is not None:
-            if compositor_action.isChecked():
-                comparator_action.setEnabled(False)
-                comparator_action.setChecked(False)
-            elif comparator_action.isChecked():
-                compositor_action.setEnabled(False)
-                compositor_action.setChecked(False)
-            else:
-                if self.controller.can_attempt_enable_comparator():
-                    comparator_action.setEnabled(True)
-                compositor_action.setEnabled(True)
+            if label in viz_exclusives:
+                if active_viz_tool and active_viz_tool != label:
+                    is_enabled = False
+
+            normal_view_blockers = {
+                "Distance / Azimuth",
+                "Elevation Profile",
+                "Fill Volume",
+                "Add Point",
+                "Add Polygon",
+            }
+            normal_view_blocked = any(
+                self.toolbar_actions.get(blocker).isChecked()
+                for blocker in normal_view_blockers
+                if self.toolbar_actions.get(blocker)
+            )
+            if label in {"Comparator", "Fly Through"} and normal_view_blocked:
+                is_enabled = False
+
+            # 5. Annotation tool exclusivity (Add Point, Add Polygon)
+            # Disable during Comparator and Fly Through modes.
+            annotation_tools = {"Add Point", "Add Polygon"}
+            if label in annotation_tools:
+                if active_viz_tool in {"Comparator", "Fly Through"}:
+                    is_enabled = False
+
+            # 6. Global group disable
+            if group == "visualization" and not self._visualization_tools_enabled:
+                is_enabled = False
+            if group == "measurement" and not self._measurement_tools_enabled:
+                is_enabled = False
+
+            # 3. Comparator specific check
+            if label == "Comparator" and is_enabled and hasattr(self, "controller"):
+                if not self.controller.can_attempt_enable_comparator():
+                    is_enabled = False
+
+            action.setEnabled(is_enabled)
+            
+            # Auto-uncheck if disabled
+            if not is_enabled and action.isCheckable() and action.isChecked():
+                action.blockSignals(True)
+                action.setChecked(False)
+                action.blockSignals(False)
+                if hasattr(self, "controller"):
+                    self.controller.handle_toolbar_action(label, False)
 
     def _on_elevation_profile_close(self) -> None:
         """Hide the profile panel, clear globe markers, uncheck toolbar button."""
@@ -1315,7 +1457,8 @@ class MainWindow(QMainWindow):
         # Always clear any application-level override so toolbar/panel stay normal
         while QApplication.overrideCursor():
             QApplication.restoreOverrideCursor()
-        if enabled:
+            
+        if self._measure_cursor_active:
             self._apply_crosshair_to_webview()
         else:
             self.web_view.unsetCursor()
@@ -1396,30 +1539,28 @@ class MainWindow(QMainWindow):
         toolbar.setStyleSheet(
             """
             QToolBar#desktopMainToolbar {
-                background: #f1f3f7;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #fcfdfe, stop:1 #ebf0f5);
                 border: none;
-                border-bottom: 1px solid #d7dde6;
-                spacing: 2px;
-                padding: 2px 4px;
+                border-bottom: 1px solid #bfc9d4;
+                spacing: 4px;
+                padding: 4px 6px;
             }
             QToolBar#desktopMainToolbar QToolButton {
-                background: #eef2f7;
-                border: 1px solid #c4ccd6;
-                border-radius: 3px;
-                padding: 1px;
-                margin: 0px;
-                min-width: 30px;
-                min-height: 30px;
-                max-width: 30px;
-                max-height: 30px;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #f0f4f8);
+                border: 1px solid #ced6e0;
+                border-radius: 4px;
+                padding: 2px;
+                margin: 0px 1px;
+                min-width: 32px;
+                min-height: 32px;
             }
             QToolBar#desktopMainToolbar QToolButton:hover {
-                background: #f7f9fc;
-                border: 1px solid #aeb8c5;
+                background: #ffffff;
+                border: 1px solid #0078d4;
             }
             QToolBar#desktopMainToolbar QToolButton:pressed {
-                background: #dde3eb;
-                border: 1px solid #9ba7b6;
+                background: #e2e8f0;
+                border: 1px solid #005a9e;
             }
             QToolBar#desktopMainToolbar QToolButton:checked {
                 background: #ffc857;
@@ -1523,3 +1664,23 @@ class MainWindow(QMainWindow):
         if app_mode == DesktopAppMode.CLIENT:
             return "Offline GIS Client Desktop"
         return "Offline 3D GIS Desktop"
+
+    def set_project_info(self, name: str | None = None, modified: bool | None = None) -> None:
+        """Update the project name and modification status."""
+        if name is not None:
+            self._project_name = name
+        if modified is not None:
+            self._is_modified = modified
+        self._update_window_title()
+
+    def _update_window_title(self) -> None:
+        """Refresh the window title based on current project state."""
+        if self.app_mode == DesktopAppMode.SERVER:
+            self.setWindowTitle("ResGIS")
+            return
+
+        prefix = "*" if self._is_modified else ""
+        project_display = f"{prefix}{self._project_name}"
+        
+        # Long hyphen: — (U+2014)
+        self.setWindowTitle(f"{project_display} — ResGIS")

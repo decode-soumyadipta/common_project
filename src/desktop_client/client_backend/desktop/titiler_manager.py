@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import platform
+import socket
 import subprocess
 import sys
 import threading
@@ -25,57 +26,83 @@ class TiTilerManager:
         self._process: subprocess.Popen | None = None
         self._logger = LOGGER
         self.last_error: str | None = None
+        self._stderr_buffer: list[str] = []
+        self._drain_threads: list[threading.Thread] = []
+
+    def is_port_in_use(self) -> bool:
+        """Check if the target port is already being used."""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.2)
+            return s.connect_ex(("127.0.0.1", self.port)) == 0
 
     def ensure_running(self) -> bool:
+        """Ensures TiTiler is running, either by starting a new one or adopting an existing one."""
         if self.is_running():
             return True
 
+        # If port is in use but it's not us (is_running failed), try to 'adopt' it if it looks like TiTiler
+        if self.is_port_in_use():
+            self._logger.info("Port %d is in use. Checking if it's an existing TiTiler instance...", self.port)
+            # Try a few common TiTiler/FastAPI paths
+            for path in ["/health", "/openapi.json", "/"]:
+                try:
+                    resp = httpx.get(f"http://127.0.0.1:{self.port}{path}", timeout=1.0)
+                    # Even if 404, if it's a FastAPI server it's likely our TiTiler from a previous run
+                    if resp.status_code in (200, 404):
+                        server_header = resp.headers.get("server", "").lower()
+                        if "uvicorn" in server_header or resp.status_code == 200:
+                            self._logger.info("Adopted existing TiTiler server on port %d", self.port)
+                            return True
+                except Exception:
+                    continue
+            
+            self._logger.warning("Port %d is occupied by an unknown process.", self.port)
+            self.last_error = f"Port {self.port} is already in use by a non-responsive or unknown process."
+            # We will still try to start it (it will likely fail, but uvicorn will provide the error)
+        
         self._logger.info("Starting local TiTiler server on port %d...", self.port)
         self._start_process()
 
-        # Wait for health check
-        for _ in range(20):  # 10 seconds total
+        # Wait for health check with more patience and better logging
+        for i in range(40):  # 20 seconds total
             if self.is_running():
                 self._logger.info("TiTiler server started successfully")
                 return True
+            
+            # Check if process died during startup
+            if self._process:
+                poll = self._process.poll()
+                if poll is not None:
+                    stderr_content = "".join(self._stderr_buffer)
+                    self._logger.error("TiTiler process exited with code %d. Output: %s", poll, stderr_content)
+                    self.last_error = stderr_content or f"Process exited with code {poll}"
+                    return False
+
+            if i % 10 == 0 and i > 0:
+                self._logger.info("Waiting for TiTiler health check... (attempt %d/40)", i)
             time.sleep(0.5)
 
-        # Check for immediate failure
-        if self._process:
-            try:
-                _lines = []
-
-                def _drain():
-                    try:
-                        for line in self._process.stderr:
-                            _lines.append(line.decode("utf-8", errors="replace"))
-                            if len(_lines) > 20:
-                                break
-                    except Exception:
-                        pass
-
-                t = threading.Thread(target=_drain, daemon=True)
-                t.start()
-                t.join(timeout=0.5)
-                if _lines:
-                    stderr_text = "".join(_lines[:20])
-                    self.last_error = stderr_text
-                    self._logger.error("TiTiler stderr: %s", stderr_text)
-            except Exception:
-                pass
-        self._logger.error("TiTiler failed health check after auto-start")
+        self._logger.error("TiTiler failed health check after auto-start. Buffer: %s", "".join(self._stderr_buffer[-10:]))
         if not self.last_error:
             self.last_error = "TiTiler failed health check after auto-start"
         return False
 
     def is_running(self) -> bool:
+        """Check if TiTiler is responsive on the configured port."""
         if self._process and self._process.poll() is not None:
             self._process = None
             return False
 
         try:
-            resp = httpx.get(f"http://127.0.0.1:{self.port}/health", timeout=0.5)
-            return resp.status_code == 200
+            # We check /health (new) then /openapi.json (default titiler)
+            for path in ["/health", "/openapi.json"]:
+                try:
+                    resp = httpx.get(f"http://127.0.0.1:{self.port}{path}", timeout=0.8)
+                    if resp.status_code == 200:
+                        return True
+                except Exception:
+                    continue
+            return False
         except Exception:
             return False
 
@@ -88,11 +115,13 @@ class TiTilerManager:
             except subprocess.TimeoutExpired:
                 self._process.kill()
             self._process = None
+        self._drain_threads = []
 
     def _start_process(self) -> None:
         if self._process and self._process.poll() is None:
             return
 
+        self._stderr_buffer = []
         bootstrap_code = (
             "import sys, platform, re, uvicorn, os\n"
             "# Windows DLL shadowing fix: load shapely (GEOS) before rasterio (GDAL)\n"
@@ -135,7 +164,15 @@ class TiTilerManager:
             "            return JSONResponse({'detail': str(e)}, status_code=500)\n"
             "\n"
             "app.add_middleware(_WinPathFix)\n"
-            "uvicorn.run(app, host='127.0.0.1', port=8081, log_level='info')\n"
+            "\n"
+            "@app.get('/health')\n"
+            "async def health():\n"
+            "    return {'status': 'ok'}\n"
+            "\n"
+            "print('TITILER_STARTUP: Server process initialized', flush=True)\n"
+            "cpu_count = os.cpu_count() or 2\n"
+            "backlog = max(128, cpu_count * 64)\n"
+            "uvicorn.run(app, host='127.0.0.1', port=8081, log_level='warning', access_log=False, timeout_keep_alive=5, backlog=backlog)\n"
         )
 
         env = os.environ.copy()
@@ -183,8 +220,6 @@ class TiTilerManager:
 
         env["GDAL_DISABLE_READDIR_ON_OPEN"] = "EMPTY_DIR"
         env["GDAL_HTTP_MERGE_CONSECUTIVE_RANGES"] = "YES"
-        # Fix "INIT_DEST was set to NO_DATA, but a NoData value was not defined"
-        # — a GDAL 3.x bug on Windows when tiling files without a nodata value.
         env["GDAL_TIFF_INTERNAL_MASK"] = "NO"
         env["GDAL_NUM_THREADS"] = "ALL_CPUS"
         env["VSI_CACHE"] = "TRUE"
@@ -204,13 +239,30 @@ class TiTilerManager:
         command: Sequence[str] = (sys.executable, "-c", bootstrap_code)
 
         # ── Windows-specific subprocess flags ─────────────────────────────────
-        kwargs: dict = dict(env=env, stderr=subprocess.PIPE)
+        kwargs: dict = dict(env=env, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
         if platform.system() == "Windows":
             # CREATE_NO_WINDOW (0x08000000): suppress console flash
             # CREATE_NEW_PROCESS_GROUP (0x00000200): isolate signal handling
             kwargs["creationflags"] = 0x08000000 | 0x00000200
 
         self._process = subprocess.Popen(command, **kwargs)
+
+        # Start drain threads to prevent pipe blocking
+        def _drain_output(stream, label):
+            try:
+                for line in stream:
+                    text = line.decode("utf-8", errors="replace")
+                    self._stderr_buffer.append(f"[{label}] {text}")
+                    if len(self._stderr_buffer) > 200:
+                        self._stderr_buffer.pop(0)
+            except Exception:
+                pass
+
+        t1 = threading.Thread(target=_drain_output, args=(self._process.stdout, "STDOUT"), daemon=True)
+        t2 = threading.Thread(target=_drain_output, args=(self._process.stderr, "STDERR"), daemon=True)
+        t1.start()
+        t2.start()
+        self._drain_threads = [t1, t2]
 
     def __del__(self):
         self.stop()

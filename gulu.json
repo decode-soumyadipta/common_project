@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "saved_at": "2026-05-04T22:04:04.324416+00:00",
+  "selected_asset_path": "C:/Users/Jitaditya Ray/common_project/data_test/dem.tif",
+  "clicked_points": [
+    [
+      87.18718798734484,
+      23.675624899314716
+    ],
+    [
+      87.22307881076372,
+      23.667072277363598
+    ]
+  ],
+  "search": {
+    "geometry_type": "none",
+    "geometry_payload": {},
+    "visibility": {
+      "C:/Users/Jitaditya Ray/common_project/data_test/dem.tif": true,
+      "C:/Users/Jitaditya Ray/common_project/data_test/coal 14_2024_4.tif": true
+    },
+    "layer_order": [
+      "C:/Users/Jitaditya Ray/common_project/data_test/dem.tif",
+      "C:/Users/Jitaditya Ray/common_project/data_test/coal 14_2024_4.tif"
+    ],
+    "active_dem": "C:/Users/Jitaditya Ray/common_project/data_test/dem.tif"
+  },
+  "annotations": {
+    "points": [
+      {
+        "type": "point",
+        "lon": 87.20447456994405,
+        "lat": 23.69395867620903,
+        "text": "Point",
+        "created_at": "2026-05-04T22:01:08.971985+00:00"
+      }
+    ],
+    "lines": [],
+    "polygons": []
+  },
+  "layers": {
+    "rasters": [
+      {
+        "file_path": "C:/Users/Jitaditya Ray/common_project/data_test/dem.tif",
+        "file_name": "dem.tif",
+        "kind": "dem",
+        "crs": "EPSG:32645",
+        "bounds_wkt": "POLYGON((87.1702693776709 23.65950239174837,87.2703836042859 23.65950239174837,87.2703836042859 23.752047794413638,87.1702693776709 23.752047794413638,87.1702693776709 23.65950239174837))",
+        "tile_url": "http://127.0.0.1:8081/cog/tiles/WebMercatorQuad/{z}/{x}/{y}.png?url=C:\\Users\\Jitaditya Ray\\common_project\\data_test\\dem.cog.tif&cache_strategy=aggressive&memory_efficient=true",
+        "resolution_x": null,
+        "resolution_y": null,
+        "width": null,
+        "height": null,
+        "created_at": "2026-05-04T16:29:23.028208",
+        "is_visible": true,
+        "order": 0,
+        "source": "search"
+      },
+      {
+        "file_path": "C:/Users/Jitaditya Ray/common_project/data_test/coal 14_2024_4.tif",
+        "file_name": "coal 14_2024_4.tif",
+        "kind": "geotiff",
+        "crs": "EPSG:4326",
+        "bounds_wkt": "POLYGON((87.17026938274806 23.659648290083133,87.27034170539898 23.659648290083133,87.27034170539898 23.751905269762208,87.17026938274806 23.751905269762208,87.17026938274806 23.659648290083133))",
+        "tile_url": "http://127.0.0.1:8081/cog/tiles/WebMercatorQuad/{z}/{x}/{y}.png?url=C:/Users/Jitaditya Ray/common_project/data_test/coal 14_2024_4.tif&cache_strategy=aggressive&memory_efficient=true",
+        "resolution_x": null,
+        "resolution_y": null,
+        "width": null,
+        "height": null,
+        "created_at": "2026-05-04T16:29:19.237133",
+        "is_visible": true,
+        "order": 1,
+        "source": "search"
+      }
+    ],
+    "vectors": []
+  }
+}

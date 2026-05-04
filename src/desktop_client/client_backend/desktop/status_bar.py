@@ -65,15 +65,15 @@ def _coord_box(text: str = "—", tooltip: str = "", min_width: int = 120) -> QF
     box.setStyleSheet("""
         QFrame#coordBox {
             background: #ffffff;
-            border: 1px solid #b0bac5;
-            border-radius: 3px;
+            border: 1px solid #cccccc;
+            border-radius: 2px;
             padding: 2px 4px;
         }
         QLabel {
-            color: #0a1929;
+            color: #222222;
             font-size: 11px;
-            font-family: 'Menlo', 'Consolas', 'Monaco', monospace;
-            font-weight: 600;
+            font-family: 'Segoe UI', sans-serif;
+            font-weight: 500;
             padding: 1px 3px;
             margin: 0px;
             background: transparent;
@@ -117,21 +117,24 @@ def _utm_epsg_for_lon_lat(lon: float, lat: float) -> int:
 
 _STATUSBAR_STYLE = """
 QStatusBar {
-    background: #f5f7fa;
-    border-top: 1px solid #c0c8d0;
-    color: #0a1929;
+    background: #f0f0f0;
+    border-top: 1px solid #c0c0c0;
+    color: #333333;
     font-size: 11px;
 }
+QStatusBar::item {
+    border: none;
+}
 QProgressBar {
-    border: 1px solid #b0bac5;
-    background: #e0e5eb;
+    border: 1px solid #999999;
+    background: #ffffff;
     border-radius: 2px;
     text-align: center;
-    min-height: 8px;
-    max-height: 8px;
+    min-height: 12px;
+    max-height: 12px;
 }
 QProgressBar::chunk {
-    background: #2f80ed;
+    background: #4a90e2;
     border-radius: 1px;
 }
 """
@@ -164,19 +167,15 @@ class GISStatusBar(QStatusBar):
         # ── Progress bar (no text, just blue fill) ───────────────────────
         self._progress_bar = QProgressBar(self)
         self._progress_bar.setTextVisible(False)
-        self._progress_bar.setFixedWidth(100)  # Half the previous width
+        self._progress_bar.setFixedWidth(120)
         self._progress_bar.setRange(0, 100)
         self._progress_bar.setValue(0)
-
-        # ── Progress label (2-3 word status beside the bar) ───────────────
-        self._progress_label = QLabel("", self)
-        self._progress_label.setFixedWidth(110)
-        self._progress_label.setAlignment(
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-        )
-        self._progress_label.setStyleSheet(
-            "QLabel { color: #90caf9; font-size: 11px; font-family: 'Menlo','Consolas','Monaco',monospace; }"
-        )
+        self._progress_bar.setVisible(True)
+        
+        self._activity_label = QLabel("READY")
+        self._activity_label.setStyleSheet("color: #555555; font-weight: bold; font-family: sans-serif; font-size: 10px; padding-left: 5px;")
+        self._activity_label.setFixedWidth(110)
+        self._activity_label.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
 
         # ── Coordinate boxes ──────────────────────────────────────────────
         self._utm_transformers: dict[int, Transformer] = {}
@@ -187,16 +186,16 @@ class GISStatusBar(QStatusBar):
         self._crs_box = _coord_box("EPSG:4326", "Coordinate Reference System", 100)
         self._crs_box.setStyleSheet("""
             QFrame#coordBox {
-                background: #e3f2fd;
-                border: 1px solid #90caf9;
-                border-radius: 3px;
+                background: #e1f5fe;
+                border: 1px solid #b3e5fc;
+                border-radius: 2px;
                 padding: 2px 4px;
             }
             QLabel {
-                color: #0d47a1;
+                color: #0277bd;
                 font-size: 11px;
-                font-family: 'Menlo', 'Consolas', 'Monaco', monospace;
-                font-weight: 700;
+                font-family: 'Segoe UI', sans-serif;
+                font-weight: 600;
                 padding: 1px 3px;
                 margin: 0px;
                 background: transparent;
@@ -211,9 +210,9 @@ class GISStatusBar(QStatusBar):
         row.setSpacing(8)
 
         # Add stretch first to push everything to the right
-        row.addStretch(1)
-        row.addWidget(self._progress_label)
+        row.addWidget(self._activity_label)
         row.addWidget(self._progress_bar)
+        row.addStretch(1)
         row.addWidget(_make_separator())
         row.addWidget(self._lon_box)
         row.addWidget(self._lat_box)
@@ -291,45 +290,52 @@ class GISStatusBar(QStatusBar):
             percent: Progress percentage (0-100), or -1 for indeterminate spinner.
             message: Status message describing what's loading.
         """
-        is_computation = "fill volume" in (message or "").lower()
+        msg_lower = (message or "").lower()
+        is_computation = any(kw in msg_lower for kw in ["fill volume", "computing", "analysing", "processing", "slope"])
+        is_tile_load = "tile" in msg_lower
 
+        # -1 → indeterminate spinner (e.g. long-running computation)
         if percent < 0:
-            # -1 → indeterminate spinner (e.g. long-running computation)
             self._computation_active = True
             self._progress_bar.setRange(0, 0)
+            self._progress_bar.setVisible(True)
             self._progress_bar.setToolTip(str(message or "Processing…"))
-            self._progress_label.setText(self._short_label(message))
+            self._activity_label.setText(self._short_label(message).upper() or "ACTIVE")
             return
 
         percent = max(0, min(100, percent))  # Clamp to 0-100
 
-        # Tile-loading events (percent < 100, message="Loading tiles" / "Complete")
-        # must not overwrite an active computation progress update.
-        if not is_computation and self._computation_active:
+        # Lifecycle management: 100% always clears computation active state
+        if percent == 100:
+            self._computation_active = False
+
+        # Tile-loading events must not overwrite an active computation progress
+        # UNLESS the tile event itself is a completion signal (percent=100).
+        if is_tile_load and self._computation_active and percent < 100:
             return
 
         if is_computation:
-            # Track computation lifecycle: 0 = start, 100 = done
-            if percent == 0:
+            if percent < 100:
                 self._computation_active = True
-            elif percent == 100:
+            else:
                 self._computation_active = False
 
-        if percent > 0 and percent < 100:
+        if 0 < percent < 100:
             self._progress_bar.setRange(0, 100)
             self._progress_bar.setValue(percent)
-            self._progress_label.setText(self._short_label(message))
+            self._activity_label.setText(self._short_label(message).upper() or "LOADING")
         else:
-            # 0 (start) → show indeterminate so the bar is visible immediately
-            # 100 (done) → reset
-            if percent == 0 and is_computation:
-                self._progress_bar.setRange(0, 0)  # indeterminate until first real %
-                self._progress_label.setText(self._short_label(message))
+            # Handle 0% (Start) or 100% (Complete)
+            self._progress_bar.setRange(0, 100)
+            if percent == 0 and (is_computation or "loading" in msg_lower):
+                # Show a small hint of progress (5%) for "Active/Loading" starts
+                self._progress_bar.setValue(5)
+                self._activity_label.setText(self._short_label(message).upper() or "ACTIVE")
             else:
-                self._progress_bar.setRange(0, 100)
+                # 100% or other -> READY
                 self._progress_bar.setValue(0)
-                self._progress_label.setText("")
-        self._progress_bar.setToolTip("")
+                self._activity_label.setText("READY")
+        self._progress_bar.setToolTip(message or "System Ready")
 
     @staticmethod
     def _short_label(message: str) -> str:

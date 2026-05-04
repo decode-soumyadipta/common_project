@@ -142,6 +142,9 @@ class ControlPanel(QWidget):
 
     search_result_visibility_toggled = Signal(str, bool)
     search_layers_reordered = Signal(list)  # Signal for drag-and-drop layer reordering
+    asset_focus_requested = Signal(str)
+    vector_layer_visibility_toggled = Signal(str, bool)
+    vector_layer_delete_requested = Signal(str)
     visualization_tools_toggled = Signal(bool)
     measurement_tools_toggled = Signal(bool)
     measurement_result_clear_selected_requested = Signal()
@@ -150,6 +153,7 @@ class ControlPanel(QWidget):
         Signal()
     )  # Signal to request controller cache clearing
     asset_delete_requested = Signal(dict)  # Signal to request asset deletion
+    search_layer_delete_requested = Signal(str)  # Signal to request search layer deletion
 
     def __init__(
         self,
@@ -175,6 +179,50 @@ class ControlPanel(QWidget):
         self.sections = QToolBox(self)
         self.sections.setObjectName("controlSections")
         self.sections.setMinimumWidth(360)
+        self.sections.setStyleSheet("""
+            QToolBox::tab {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #fcfdfe, stop:1 #e2e8f0);
+                border: 1px solid #cbd5e0;
+                border-radius: 4px;
+                color: #2d3748;
+                font-weight: 600;
+                padding: 4px;
+            }
+            QToolBox::tab:selected {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ebf8ff, stop:1 #bee3f8);
+                border: 1px solid #4299e1;
+                color: #2b6cb0;
+            }
+            QGroupBox {
+                border: 1px solid #e2e8f0;
+                border-radius: 6px;
+                margin-top: 10px;
+                background: #ffffff;
+                font-weight: bold;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 3px 0 3px;
+                color: #4a5568;
+            }
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #edf2f7);
+                border: 1px solid #cbd5e0;
+                border-radius: 4px;
+                padding: 6px 12px;
+                color: #2d3748;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                background: #ffffff;
+                border: 1px solid #4299e1;
+                color: #2b6cb0;
+            }
+            QPushButton:pressed {
+                background: #e2e8f0;
+            }
+        """)
 
         # Multiple file selection UI
         self.selected_files_list = QListWidget()
@@ -518,8 +566,8 @@ class ControlPanel(QWidget):
         search_layout.addWidget(self.search_results_summary)
 
         self.search_results_table = QTableWidget(
-            0, 6
-        )  # Added one more column for drag handle
+            0, 7
+        )  # Added one more column for drag handle and delete
         self._ensure_search_results_header()
 
         # Configure drag and drop for layer reordering with smooth animations
@@ -551,6 +599,7 @@ class ControlPanel(QWidget):
             0,
             QHeaderView.ResizeToContents,  # Drag handle column
         )
+        self.search_results_table.itemClicked.connect(self._on_search_table_item_clicked)
         self.search_results_table.horizontalHeader().setSectionResizeMode(
             1,
             QHeaderView.Stretch,  # File name
@@ -571,6 +620,10 @@ class ControlPanel(QWidget):
             5,
             QHeaderView.ResizeToContents,  # View
         )
+        self.search_results_table.horizontalHeader().setSectionResizeMode(
+            6,
+            QHeaderView.ResizeToContents,  # Delete
+        )
 
         # Set specific column widths
         self.search_results_table.setColumnWidth(0, 30)  # Drag handle
@@ -579,6 +632,7 @@ class ControlPanel(QWidget):
         self.search_results_table.setColumnWidth(3, 96)  # CRS
         self.search_results_table.setColumnWidth(4, 120)  # Added
         self.search_results_table.setColumnWidth(5, 60)  # View
+        self.search_results_table.setColumnWidth(6, 60)  # Delete
         self.search_results_table.verticalHeader().setVisible(False)
         self.search_results_table.verticalHeader().setDefaultSectionSize(22)
         self.search_results_table.setVerticalScrollBarPolicy(
@@ -590,6 +644,30 @@ class ControlPanel(QWidget):
         self.search_results_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.search_results_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.search_results_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.search_results_table.setStyleSheet(
+            """
+            QTableWidget {
+                background: #ffffff;
+                border: 1px solid #d0d0d0;
+                border-radius: 4px;
+                gridline-color: #e0e0e0;
+                font-size: 11px;
+                color: #000000;
+            }
+            QTableWidget::item {
+                padding: 2px;
+                color: #000000;
+            }
+            QHeaderView::section {
+                background: #f5f5f5;
+                color: #333333;
+                font-weight: 600;
+                padding: 4px;
+                border: 1px solid #d0d0d0;
+                font-size: 11px;
+            }
+            """
+        )
         self.search_results_table.setAlternatingRowColors(True)
         self.search_results_table.setWordWrap(False)
         self.search_results_table.setTextElideMode(Qt.TextElideMode.ElideMiddle)
@@ -673,6 +751,69 @@ class ControlPanel(QWidget):
         )
         self._set_search_results_table_visible_rows(5)
         search_layout.addWidget(self.search_results_table)
+
+        search_layout.addSpacing(6)
+        search_layout.addWidget(QLabel("<b>Vector Layers</b>"))
+        self.vector_layers_table = QTableWidget(0, 4)
+        self._ensure_vector_layers_header()
+        self.vector_layers_table.horizontalHeader().setSectionResizeMode(
+            0,
+            QHeaderView.Stretch,
+        )
+        self.vector_layers_table.horizontalHeader().setSectionResizeMode(
+            1,
+            QHeaderView.ResizeToContents,
+        )
+        self.vector_layers_table.horizontalHeader().setSectionResizeMode(
+            2,
+            QHeaderView.ResizeToContents,
+        )
+        self.vector_layers_table.horizontalHeader().setSectionResizeMode(
+            3,
+            QHeaderView.ResizeToContents,
+        )
+        self.vector_layers_table.setColumnWidth(0, 220)  # Name
+        self.vector_layers_table.setColumnWidth(1, 120)  # Source
+        self.vector_layers_table.setColumnWidth(2, 60)  # View
+        self.vector_layers_table.setColumnWidth(3, 60)  # Delete
+        self.vector_layers_table.verticalHeader().setVisible(False)
+        self.vector_layers_table.verticalHeader().setDefaultSectionSize(22)
+        self.vector_layers_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.vector_layers_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.vector_layers_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.vector_layers_table.setAlternatingRowColors(True)
+        self.vector_layers_table.setWordWrap(False)
+        self.vector_layers_table.setTextElideMode(Qt.TextElideMode.ElideMiddle)
+        self.vector_layers_table.setStyleSheet(
+            """
+            QTableWidget {
+                background: #ffffff;
+                border: 1px solid #d0d0d0;
+                border-radius: 4px;
+                gridline-color: #e0e0e0;
+                font-size: 11px;
+                color: #000000;
+            }
+            QTableWidget::item {
+                padding: 2px;
+                border: none;
+                color: #000000;
+            }
+            QTableWidget::item:selected {
+                background: rgba(232, 244, 255, 0.7);
+                color: #000000;
+            }
+            QHeaderView::section {
+                background: #f5f5f5;
+                color: #333333;
+                font-weight: 600;
+                padding: 4px;
+                border: 1px solid #d0d0d0;
+                font-size: 11px;
+            }
+            """
+        )
+        search_layout.addWidget(self.vector_layers_table)
 
         search_layout.addStretch()
 
@@ -1009,6 +1150,14 @@ class ControlPanel(QWidget):
             section_widget.setTitle(original_title if visible else "")
             section_widget.setFlat(not visible)
 
+    def _on_search_table_item_clicked(self, item: QTableWidgetItem) -> None:
+        row = item.row()
+        # Focus on click for any data column (0-4), ignoring action buttons (5, 6)
+        if item.column() < 5:
+            file_path = self.search_results_table.item(row, 1).data(Qt.ItemDataRole.UserRole)
+            if file_path:
+                self.asset_focus_requested.emit(file_path)
+
     def update_search_results(
         self, assets: list[dict], visibility_by_path: dict[str, bool] | None = None
     ) -> None:
@@ -1277,6 +1426,44 @@ class ControlPanel(QWidget):
             self.search_results_table.setItem(row, 4, created_item)
             self.search_results_table.setCellWidget(row, 5, toggle_button)
 
+            # Red delete button (QGIS style)
+            delete_btn = QPushButton("\u2715")  # Multiplication X / Close cross
+            delete_btn.setToolTip(f"Remove layer: {file_name}")
+            delete_btn.setFixedSize(24, 24)
+            delete_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #ffe5e5;
+                    border: 1px solid #ff9999;
+                    border-radius: 4px;
+                    color: #cc0000;
+                    font-weight: bold;
+                    font-size: 14px;
+                    padding: 0px;
+                }
+                QPushButton:hover {
+                    background-color: #ffcccc;
+                    border: 1px solid #ff4d4d;
+                }
+                QPushButton:pressed {
+                    background-color: #ff9999;
+                }
+            """)
+            delete_btn.setText("\u2715")  # Multiplication X / Close cross - feels like a delete icon
+            
+            # Using a custom icon if possible, but Unicode \u2715 is a safe red 'x' 
+            # as often seen in QGIS for 'Remove Layer'
+            
+            delete_btn.clicked.connect(
+                lambda checked, p=normalized_path: self.search_layer_delete_requested.emit(p)
+            )
+            
+            delete_container = QWidget()
+            delete_layout = QHBoxLayout(delete_container)
+            delete_layout.setContentsMargins(0, 0, 0, 0)
+            delete_layout.setAlignment(Qt.AlignCenter)
+            delete_layout.addWidget(delete_btn)
+            self.search_results_table.setCellWidget(row, 6, delete_container)
+
             # Force text color update after setting items (workaround for Qt palette issues)
             for col_idx, item in [
                 (1, file_item),
@@ -1300,6 +1487,88 @@ class ControlPanel(QWidget):
         )
         print(f"DEBUG: update_search_results completed\n{'=' * 80}\n")
 
+    def update_vector_layers(self, layers: list[dict]) -> None:
+        self.vector_layers_table.setRowCount(0)
+        self._ensure_vector_layers_header()
+
+        for layer in layers:
+            row = self.vector_layers_table.rowCount()
+            self.vector_layers_table.insertRow(row)
+
+            label = str(layer.get("label") or "Vector")
+            source = str(layer.get("source") or "-")
+            layer_key = str(layer.get("layer_key") or "")
+            is_visible = bool(layer.get("is_visible", True))
+
+            name_item = QTableWidgetItem(label)
+            name_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+            )
+            self.vector_layers_table.setItem(row, 0, name_item)
+
+            source_item = QTableWidgetItem(source)
+            source_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+            )
+            self.vector_layers_table.setItem(row, 1, source_item)
+
+            visibility_button = QPushButton("👁" if is_visible else "👁‍🗨")
+            visibility_button.setObjectName("searchVisibilityToggle")
+            visibility_button.setToolTip(
+                "Hide from map" if is_visible else "Show on map"
+            )
+            visibility_button.setFixedSize(32, 24)
+            visibility_button.setProperty("is_visible", is_visible)
+            visibility_button.setProperty("layer_key", layer_key)
+
+            def make_toggle_handler(btn, key):
+                def handler():
+                    current_visible = btn.property("is_visible")
+                    new_visible = not current_visible
+                    btn.setText("👁" if new_visible else "👁‍🗨")
+                    btn.setToolTip(
+                        "Hide from map" if new_visible else "Show on map"
+                    )
+                    btn.setProperty("is_visible", new_visible)
+                    self.vector_layer_visibility_toggled.emit(key, new_visible)
+
+                return handler
+
+            visibility_button.clicked.connect(
+                make_toggle_handler(visibility_button, layer_key)
+            )
+            self.vector_layers_table.setCellWidget(row, 2, visibility_button)
+
+            delete_button = QPushButton("\u2715")  # Multiplication X / Close cross
+            delete_button.setObjectName("vectorDeleteButton")
+            delete_button.setToolTip(f"Remove layer: {label}")
+            delete_button.setFixedSize(24, 24)
+            delete_button.setStyleSheet("""
+                QPushButton#vectorDeleteButton {
+                    background-color: #ffe5e5;
+                    border: 1px solid #ff9999;
+                    border-radius: 4px;
+                    color: #cc0000;
+                    font-weight: bold;
+                    font-size: 14px;
+                    padding: 0px;
+                }
+                QPushButton#vectorDeleteButton:hover {
+                    background-color: #ffcccc;
+                    border: 1px solid #ff4d4d;
+                }
+                QPushButton#vectorDeleteButton:pressed {
+                    background-color: #ff9999;
+                }
+            """)
+            delete_button.setProperty("layer_key", layer_key)
+            delete_button.clicked.connect(
+                lambda checked=False, key=layer_key: (
+                    self.vector_layer_delete_requested.emit(key)
+                )
+            )
+            self.vector_layers_table.setCellWidget(row, 3, delete_button)
+
     def _set_search_results_table_visible_rows(self, visible_rows: int) -> None:
         header_height = self.search_results_table.horizontalHeader().sizeHint().height()
         row_height = self.search_results_table.verticalHeader().defaultSectionSize()
@@ -1311,11 +1580,18 @@ class ControlPanel(QWidget):
         self.search_results_table.setMaximumHeight(total_height)
 
     def _ensure_search_results_header(self) -> None:
-        labels = ["⋮⋮", "File", "Kind", "CRS", "Added", "View"]
+        labels = ["⋮⋮", "File", "Kind", "CRS", "Added", "View", "Delete"]
         if self.search_results_table.columnCount() != len(labels):
             self.search_results_table.setColumnCount(len(labels))
         self.search_results_table.setHorizontalHeaderLabels(labels)
         self.search_results_table.horizontalHeader().setVisible(True)
+
+    def _ensure_vector_layers_header(self) -> None:
+        labels = ["Name", "Source", "View", "Delete"]
+        if self.vector_layers_table.columnCount() != len(labels):
+            self.vector_layers_table.setColumnCount(len(labels))
+        self.vector_layers_table.setHorizontalHeaderLabels(labels)
+        self.vector_layers_table.horizontalHeader().setVisible(True)
 
     @staticmethod
     def _format_search_created_at(value: object) -> str:
@@ -2341,14 +2617,27 @@ class ControlPanel(QWidget):
             button.setGraphicsEffect(effect)
 
     def set_layer_loading(self, active: bool, message: str) -> None:
+        from qtpy.QtWidgets import QApplication
+        from qtpy.QtCore import Qt
         self.layer_load_status.setText(message)
         if active:
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
             self.layer_load_progress.setRange(0, 0)
             self.layer_load_progress.setVisible(True)
+            # Notify main window to show overlay if it has one
+            if hasattr(self.parent(), "set_busy_overlay"):
+                self.parent().set_busy_overlay(True, message)
+            elif hasattr(self.window(), "set_busy_overlay"):
+                self.window().set_busy_overlay(True, message)
             return
+        QApplication.restoreOverrideCursor()
         self.layer_load_progress.setRange(0, 100)
         self.layer_load_progress.setValue(100)
         self.layer_load_progress.setVisible(False)
+        if hasattr(self.parent(), "set_busy_overlay"):
+            self.parent().set_busy_overlay(False)
+        elif hasattr(self.window(), "set_busy_overlay"):
+            self.window().set_busy_overlay(False)
 
     def _create_table_drop_handler(self):
         """Create a custom drop event handler for drag-and-drop reordering."""
@@ -2854,6 +3143,41 @@ class ControlPanel(QWidget):
         )
         table.setCellWidget(row_index, 5, visibility_button)
 
+        # Red delete button (QGIS style) (column 6)
+        delete_btn = QPushButton("\u2715")  # Multiplication X / Close cross
+        delete_btn.setToolTip(f"Remove layer: {row_data['file_name']}")
+        delete_btn.setFixedSize(24, 24)
+        delete_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #ffe5e5;
+                border: 1px solid #ff9999;
+                border-radius: 4px;
+                color: #cc0000;
+                font-weight: bold;
+                font-size: 14px;
+                padding: 0px;
+            }
+            QPushButton:hover {
+                background-color: #ffcccc;
+                border: 1px solid #ff4d4d;
+            }
+            QPushButton:pressed {
+                background-color: #ff9999;
+            }
+        """)
+        
+        path = str(row_data["file_path"]).replace("\\", "/")
+        delete_btn.clicked.connect(
+            lambda checked, p=path: self.search_layer_delete_requested.emit(p)
+        )
+        
+        delete_container = QWidget()
+        delete_layout = QHBoxLayout(delete_container)
+        delete_layout.setContentsMargins(0, 0, 0, 0)
+        delete_layout.setAlignment(Qt.AlignCenter)
+        delete_layout.addWidget(delete_btn)
+        table.setCellWidget(row_index, 6, delete_container)
+
     def _update_table_row(
         self, table: QTableWidget, row_index: int, row_data: dict
     ) -> None:
@@ -2894,6 +3218,44 @@ class ControlPanel(QWidget):
             visibility_button.setText("👁" if is_visible else "👁‍🗨")
             visibility_button.setProperty("is_visible", is_visible)
             visibility_button.setProperty("file_path", row_data["file_path"])
+
+        # Update or recreate delete button (column 6)
+        delete_container = table.cellWidget(row_index, 6)
+        if not delete_container:
+            # Recreate if missing (Qt drag-drop often clears cell widgets)
+            delete_btn = QPushButton("\u2715")
+            delete_btn.setToolTip(f"Remove layer: {row_data['file_name']}")
+            delete_btn.setFixedSize(24, 24)
+            delete_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #ffe5e5;
+                    border: 1px solid #ff9999;
+                    border-radius: 4px;
+                    color: #cc0000;
+                    font-weight: bold;
+                    font-size: 14px;
+                    padding: 0px;
+                }
+                QPushButton:hover {
+                    background-color: #ffcccc;
+                    border: 1px solid #ff4d4d;
+                }
+                QPushButton:pressed {
+                    background-color: #ff9999;
+                }
+            """)
+            
+            path = str(row_data["file_path"]).replace("\\", "/")
+            delete_btn.clicked.connect(
+                lambda checked, p=path: self.search_layer_delete_requested.emit(p)
+            )
+            
+            delete_container = QWidget()
+            delete_layout = QHBoxLayout(delete_container)
+            delete_layout.setContentsMargins(0, 0, 0, 0)
+            delete_layout.setAlignment(Qt.AlignCenter)
+            delete_layout.addWidget(delete_btn)
+            table.setCellWidget(row_index, 6, delete_container)
 
     def _force_table_text_colors(self, table: QTableWidget) -> None:
         """Force black text colors on all table items to prevent visibility issues after drag operations."""

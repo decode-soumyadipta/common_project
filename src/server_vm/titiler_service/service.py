@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import platform
 import re
 
@@ -45,7 +46,15 @@ def run_titiler(
     host: str = "127.0.0.1", port: int = 8081, log_level: str = "warning"
 ) -> None:
     """Run the TiTiler ASGI app using uvicorn."""
-    uvicorn.run(create_titiler_app(), host=host, port=port, log_level=log_level)
+    uvicorn.run(
+        create_titiler_app(),
+        host=host,
+        port=port,
+        log_level=log_level,
+        access_log=False,
+        timeout_keep_alive=5,
+        backlog=max(128, (os.cpu_count() or 2) * 64),
+    )
 
 
 __all__ = ["create_titiler_app", "run_titiler"]

@@ -253,6 +253,29 @@ class ProjectIoCoordinator:
 
     def save_project(self) -> None:
         controller = self._controller
+        if controller._project_path is None:
+            self.save_project_as()
+            return
+        try:
+            payload = controller.build_project_payload()
+            controller._project_path.write_text(
+                json.dumps(payload, indent=2), encoding="utf-8"
+            )
+            controller.panel.log(f"Project saved: {controller._project_path}")
+            controller._set_project_modified(False)
+            from qtpy.QtWidgets import QMessageBox
+            QMessageBox.information(
+                controller.panel, "Project Saved", f"Project successfully saved to:\n{controller._project_path}"
+            )
+        except Exception as e:
+            from qtpy.QtWidgets import QMessageBox
+            QMessageBox.critical(
+                controller.panel, "Save Failed", f"Failed to save project:\n{str(e)}"
+            )
+
+
+    def save_project_as(self) -> None:
+        controller = self._controller
         file_path, _ = QFileDialog.getSaveFileName(
             controller.panel,
             "Save Project",
@@ -261,16 +284,40 @@ class ProjectIoCoordinator:
         )
         if not file_path:
             return
-        payload = {
-            "selected_asset": controller.state.selected_asset,
-            "clicked_points": controller.state.clicked_points,
-            "search_geometry_type": controller.state.search_geometry_type,
-            "search_geometry_payload": controller.state.search_geometry_payload,
-            "search_visibility": controller._search_layer_visibility,
-            "saved_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-        }
-        Path(file_path).write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        controller.panel.log(f"Project saved: {file_path}")
+        try:
+            payload = controller.build_project_payload()
+            target = Path(file_path)
+            target.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            controller._project_path = target
+            controller.panel.log(f"Project saved: {target}")
+            controller._set_project_modified(False)
+            from qtpy.QtWidgets import QMessageBox
+            QMessageBox.information(
+                controller.panel, "Project Saved", f"Project successfully saved to:\n{target}"
+            )
+        except Exception as e:
+            from qtpy.QtWidgets import QMessageBox
+            QMessageBox.critical(
+                controller.panel, "Save Failed", f"Failed to save project:\n{str(e)}"
+            )
+
+
+    def open_project(self) -> None:
+        controller = self._controller
+        file_path, _ = QFileDialog.getOpenFileName(
+            controller.panel,
+            "Open Project",
+            "",
+            "JSON Files (*.json)",
+        )
+        if not file_path:
+            return
+        try:
+            payload = json.loads(Path(file_path).read_text(encoding="utf-8"))
+        except Exception as exc:
+            controller.panel.log(f"Failed to open project: {exc}")
+            return
+        controller.apply_project_payload(payload, source_path=Path(file_path))
 
 
 __all__ = ["ProjectIoCoordinator"]

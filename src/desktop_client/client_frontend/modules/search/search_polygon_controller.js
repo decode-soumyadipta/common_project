@@ -650,6 +650,157 @@
       deps.requestSceneRender();
     }
 
+    function restoreAnnotationPolygon(points, id) {
+      var cesium = getCesium();
+      var viewer = getViewer();
+      if (!cesium || !viewer || !points || points.length < 3) return;
+
+      deps.incrementDrawnPolygonCounter();
+      var polyId = deps.getDrawnPolygonCounter();
+      var colorHex = POLYGON_COLORS[(polyId - 1) % POLYGON_COLORS.length];
+      var polyColor = cesium.Color.fromCssColorString(colorHex);
+
+      var points3d = points.map(function (p) {
+        try {
+          return p.cartesian ? cesium.Cartesian3.clone(p.cartesian) : cesium.Cartesian3.fromDegrees(p.lon, p.lat);
+        } catch (e) { return null; }
+      }).filter(function(v) { return !!v; });
+
+      if (points3d.length < 3) return;
+
+      var lineEntity = viewer.entities.add({
+        polyline: {
+          positions: points3d.concat([points3d[0]]),
+          width: 3.5,
+          material: polyColor,
+          depthFailMaterial: polyColor,
+          clampToGround: true,
+        },
+      });
+
+      var polygonEntity = viewer.entities.add({
+        polygon: {
+          hierarchy: new cesium.PolygonHierarchy(points3d),
+          material: polyColor.withAlpha(0.1),
+          fill: false,
+          outline: false,
+          perPositionHeight: true,
+        },
+      });
+
+      var vertexEntities = [];
+
+      var center = geometry.polygonLabelPosition(points);
+      var areaM2 = geometry.computePolygonAreaSquareMeters ? geometry.computePolygonAreaSquareMeters(points) : 0;
+      var areaText = areaM2 > 0 ? "Area " + (geometry.formatArea ? geometry.formatArea(areaM2) : areaM2.toFixed(0) + " m\u00b2") : "";
+      var areaLabelEntity = null;
+      if (center) {
+        areaLabelEntity = viewer.entities.add({
+          position: cesium.Cartesian3.fromDegrees(center.lon, center.lat),
+          label: {
+            text: areaText,
+            font: "13px 'Segoe UI', sans-serif",
+            fillColor: cesium.Color.WHITE,
+            showBackground: true,
+            backgroundColor: cesium.Color.BLACK.withAlpha(0.82),
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            scale: 0.8,
+          },
+        });
+      }
+
+      var anchorPos = points3d[0];
+      var nameLabelEntity = viewer.entities.add({
+        position: anchorPos,
+        label: {
+          text: "Polygon " + polyId,
+          fillColor: cesium.Color.WHITE,
+          showBackground: true,
+          backgroundColor: cesium.Color.BLACK.withAlpha(0.62),
+          font: "500 12px sans-serif",
+          pixelOffset: new cesium.Cartesian2(12, -8),
+          horizontalOrigin: cesium.HorizontalOrigin.LEFT,
+          verticalOrigin: cesium.VerticalOrigin.BOTTOM,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      });
+      nameLabelEntity._polyRecordId = polyId;
+      nameLabelEntity._polyRole = "label";
+
+      var editEntity = viewer.entities.add({
+        position: anchorPos,
+        billboard: {
+          image: EDIT_ICON,
+          width: 17, height: 17,
+          color: cesium.Color.WHITE.withAlpha(0.42),
+          pixelOffset: new cesium.Cartesian2(12, -26),
+          horizontalOrigin: cesium.HorizontalOrigin.LEFT,
+          verticalOrigin: cesium.VerticalOrigin.BOTTOM,
+          scaleByDistance: new cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      });
+      editEntity._polyRecordId = polyId;
+      editEntity._polyRole = "edit";
+
+      var deleteEntity = viewer.entities.add({
+        position: anchorPos,
+        billboard: {
+          image: DELETE_ICON,
+          width: 17, height: 17,
+          color: cesium.Color.WHITE.withAlpha(0.62),
+          pixelOffset: new cesium.Cartesian2(32, -26),
+          horizontalOrigin: cesium.HorizontalOrigin.LEFT,
+          verticalOrigin: cesium.VerticalOrigin.BOTTOM,
+          scaleByDistance: new cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      });
+      deleteEntity._polyRecordId = polyId;
+      deleteEntity._polyRole = "delete";
+
+      var polyRecord = {
+        id: polyId,
+        label: "Annotation " + polyId,
+        points: points,
+        lineEntity: lineEntity,
+        polygonEntity: polygonEntity,
+        areaLabelEntity: areaLabelEntity,
+        vertexEntities: vertexEntities,
+        nameLabelEntity: nameLabelEntity,
+        editEntity: editEntity,
+        deleteEntity: deleteEntity,
+        visible: true,
+        _isAnnotationPoly: true,
+      };
+      var polys = getDrawnPolygons();
+      polys.push(polyRecord);
+      updatePolygonDropdownUI();
+      deps.requestSceneRender();
+    }
+
+    function clearAllData() {
+      var viewer = getViewer();
+      if (!viewer) return;
+      if (activeAoiEntity) {
+        try { viewer.entities.remove(activeAoiEntity); } catch(e) {}
+        activeAoiEntity = null;
+      }
+      var polys = getDrawnPolygons();
+      while (polys.length > 0) {
+        var poly = polys.pop();
+        if (poly.lineEntity) { try { viewer.entities.remove(poly.lineEntity); } catch(e) {} }
+        if (poly.polygonEntity) { try { viewer.entities.remove(poly.polygonEntity); } catch(e) {} }
+        if (poly.areaLabelEntity) { try { viewer.entities.remove(poly.areaLabelEntity); } catch(e) {} }
+        if (poly.nameLabelEntity) { try { viewer.entities.remove(poly.nameLabelEntity); } catch(e) {} }
+        if (poly.editEntity) { try { viewer.entities.remove(poly.editEntity); } catch(e) {} }
+        if (poly.deleteEntity) { try { viewer.entities.remove(poly.deleteEntity); } catch(e) {} }
+      }
+      updateAoiPanel([]);
+      updatePolygonDropdownUI();
+      deps.requestSceneRender();
+    }
+
     return {
       updateAoiPanel: updateAoiPanel,
       toggleAoiPanelMinimize: toggleAoiPanelMinimize,
@@ -658,9 +809,11 @@
       syncSearchVertexEntities: syncSearchVertexEntities,
       updateSearchPolygonPreview: updateSearchPolygonPreview,
       finalizeSearchPolygon: finalizeSearchPolygon,
+      restoreAnnotationPolygon: restoreAnnotationPolygon,
       toggleDrawnPolygonVisibility: toggleDrawnPolygonVisibility,
       toggleAllDrawnPolygonsVisibility: toggleAllDrawnPolygonsVisibility,
       updateComparatorPolygons: updateComparatorPolygons,
+      clearAllData: clearAllData,
     };
   }
 

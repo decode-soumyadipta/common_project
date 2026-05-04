@@ -25,7 +25,9 @@
   // Stable camera range used for pitch/rotate so rapid slider events don't compute
   // a live distance from a mid-flight camera position (which causes jump artifacts).
   let _cameraOrbitRange = null;
+  let lastMousePosition = null;
   const managedImageryLayers = new Map();
+  const vectorLayerSources = new Map();
   let northPolarCapLayer = null;
   let southPolarCapLayer = null;
   let defaultEarthLayer = null;  // Default Earth imagery when OSM is hidden
@@ -72,6 +74,7 @@
   let flyThroughPathEntity = null;
   let flyThroughStartButtonEntity = null;
   let flyThroughIsPlaying = false;
+  let flyThroughPreviewEnd = null;
   const runtime = (window.OfflineGISRuntime = window.OfflineGISRuntime || {});
   const bridgeUtils = window.OfflineGISUtils || {};
   const log = bridgeUtils.log || function (level, message) {
@@ -148,26 +151,79 @@
     return { min: parts[0], max: parts[1] };
   };
 
+  var flyThroughCursorCartesian = null;
+
   function updateFlyThroughPreview(mousePos) {
     if (!flyThroughModeEnabled) return;
-    if (flyThroughPreviewLineEntity) {
-      viewer.entities.remove(flyThroughPreviewLineEntity);
-      flyThroughPreviewLineEntity = null;
-    }
-    const points = [...flyThroughPoints];
+
     if (mousePos) {
-      const mouseCart = viewer.camera.pickEllipsoid(mousePos, viewer.scene.globe.ellipsoid);
-      if (mouseCart) points.push(mouseCart);
-    }
-    if (points.length < 2) return;
-    flyThroughPreviewLineEntity = viewer.entities.add({
-      polyline: {
-        positions: points,
-        width: 3,
-        material: Cesium.Color.YELLOW.withAlpha(0.6),
-        clampToGround: true,
+      // Use depth pick when available for stable terrain clamping.
+      var cartesian = null;
+      if (viewer.scene.pickPositionSupported) {
+        try {
+          cartesian = viewer.scene.pickPosition(mousePos);
+        } catch (_) {}
       }
-    });
+      if (!cartesian) {
+        var ray = viewer.camera.getPickRay(mousePos);
+        if (ray) {
+          cartesian = viewer.scene.globe.pick(ray, viewer.scene);
+        }
+      }
+      if (!cartesian) {
+        cartesian = viewer.camera.pickEllipsoid(mousePos, viewer.scene.globe.ellipsoid);
+      }
+      if (cartesian) {
+        var carto = Cesium.Cartographic.fromCartesian(cartesian);
+        var terrainHeight = viewer.scene.globe.getHeight(carto);
+        var height = (terrainHeight !== undefined && terrainHeight !== null)
+          ? terrainHeight
+          : carto.height;
+        flyThroughCursorCartesian = Cesium.Cartesian3.fromRadians(
+          carto.longitude,
+          carto.latitude,
+          Number.isFinite(height) ? height : 0
+        );
+        flyThroughPreviewEnd = flyThroughCursorCartesian;
+      }
+    } else {
+      flyThroughPreviewEnd = null;
+    }
+
+    if (flyThroughPoints.length === 0) {
+      return;
+    }
+
+    if (!flyThroughPreviewLineEntity) {
+      flyThroughPreviewLineEntity = viewer.entities.add({
+        polyline: {
+          positions: new Cesium.CallbackProperty(function () {
+            if (!flyThroughPoints.length) {
+              return [];
+            }
+            if (flyThroughPreviewEnd) {
+              return flyThroughPoints.concat([flyThroughPreviewEnd]);
+            }
+            return flyThroughPoints;
+            }, false),
+            width: 5,
+            material: Cesium.Color.fromCssColorString("#ffd700"), // Bright Goldenrod
+            depthFailMaterial: Cesium.Color.fromCssColorString("#ffd700").withAlpha(0.4),
+            clampToGround: true,
+            arcType: Cesium.ArcType.GEODESIC,
+          },
+        });
+      }
+    requestSceneRender();
+  }
+
+  function reapplyLayerOrderIfKnown() {
+    if (!_lastKnownLayerOrder || _lastKnownLayerOrder.length === 0) {
+      return;
+    }
+    if (window.offlineGIS && typeof window.offlineGIS.enforceLayerDisplayOrder === "function") {
+      window.offlineGIS.enforceLayerDisplayOrder(_lastKnownLayerOrder);
+    }
   }
 
   function finishFlyThroughPath() {
@@ -179,6 +235,7 @@
       viewer.entities.remove(flyThroughPreviewLineEntity);
       flyThroughPreviewLineEntity = null;
     }
+    flyThroughPreviewEnd = null;
     if (flyThroughPathEntity) viewer.entities.remove(flyThroughPathEntity);
     if (flyThroughStartButtonEntity) viewer.entities.remove(flyThroughStartButtonEntity);
 
@@ -187,6 +244,8 @@
         positions: flyThroughPoints,
         width: 4,
         material: Cesium.Color.YELLOW,
+        depthFailMaterial: Cesium.Color.YELLOW.withAlpha(0.35),
+        arcType: Cesium.ArcType.GEODESIC,
         clampToGround: true,
       }
     });
@@ -287,15 +346,17 @@
       const geodesic = new Cesium.EllipsoidGeodesic(carto1, carto2);
       const heading = geodesic.startHeading;
       
-      // Calculate duration: Turbo-speed traverse at 150m/s (540 km/h)
+      // Calculate duration: smoother traverse at ~120m/s (432 km/h)
       const distance = Cesium.Cartesian3.distance(p1, p2);
-      const duration = Math.max(0.5, distance / 150);
+      const duration = Math.max(0.8, distance / 120);
 
+      // CINEMATIC FIX: Maintain strictly directional "nose/eyes" orientation
+      // We use linear easing for segments to prevent erratic rotation at vertices
       viewer.camera.flyTo({
         destination: destPos,
         orientation: {
           heading: heading,
-          pitch: Cesium.Math.toRadians(-40.0), // Steeper pitch for ground awareness at turbo speed
+          pitch: Cesium.Math.toRadians(-35.0), // Tactical pitch for optimal ground inspection
           roll: 0.0
         },
         duration: duration,
@@ -310,6 +371,8 @@
 
     setStatus("Starting fly through...");
     const startCarto = Cesium.Cartographic.fromCartesian(flyThroughPoints[0]);
+    const nextCarto = Cesium.Cartographic.fromCartesian(flyThroughPoints[1]);
+    const startHeading = new Cesium.EllipsoidGeodesic(startCarto, nextCarto).startHeading;
     const startPos = Cesium.Cartesian3.fromRadians(
       startCarto.longitude,
       startCarto.latitude,
@@ -319,10 +382,12 @@
     viewer.camera.flyTo({
       destination: startPos,
       orientation: {
+        heading: startHeading,
         pitch: Cesium.Math.toRadians(-40.0),
         roll: 0.0
       },
-      duration: 2, 
+      duration: 2.5,
+      easingFunction: Cesium.EasingFunction.QUADRATIC_IN_OUT,
       complete: nextSegment
     });
   }
@@ -1707,6 +1772,9 @@
     // BEFORE Cesium creates its canvas, otherwise the canvas gets zero size and
     // stays permanently black.  Activate all needed panes now, before any viewer
     // is constructed.
+    var cwRoot = document.getElementById("comparatorWindows");
+    if (cwRoot) cwRoot.setAttribute("data-pane-count", String(count));
+
     for (var pi = 0; pi < count; pi++) {
       var paneEl = document.getElementById("comparatorPane" + pi);
       if (paneEl) paneEl.classList.add("active");
@@ -2497,6 +2565,90 @@
     applySwipeComparatorSplit();
   }
 
+  function addVectorLayer(layerKey, label, geojson, options) {
+    if (!viewer || !viewer.dataSources) {
+      return;
+    }
+    const key = String(layerKey || label || "vector");
+    const name = String(label || layerKey || "Vector");
+    const opts = options || {};
+    let payload = geojson;
+    try {
+      if (typeof payload === "string") {
+        payload = JSON.parse(payload);
+      }
+    } catch (e) {
+      log("error", "Vector parse failed key=" + key + " err=" + e.message);
+      return;
+    }
+
+    if (vectorLayerSources.has(key)) {
+      const existing = vectorLayerSources.get(key);
+      try {
+        viewer.dataSources.remove(existing, true);
+      } catch (_) {}
+      vectorLayerSources.delete(key);
+    }
+
+    Cesium.GeoJsonDataSource.load(payload, {
+      clampToGround: opts.clampToGround !== false,
+      stroke: Cesium.Color.fromCssColorString(opts.stroke || "#ffcc00"),
+      fill: Cesium.Color.fromCssColorString(opts.fill || "#ffcc00").withAlpha(0.25),
+      strokeWidth: Number(opts.strokeWidth || 2),
+    }).then(function (dataSource) {
+      dataSource.name = name;
+      dataSource.show = opts.visible !== false;
+      dataSource._layerKey = key;
+      viewer.dataSources.add(dataSource);
+      vectorLayerSources.set(key, dataSource);
+      requestSceneRender();
+      log("info", "Vector layer added key=" + key + " name=" + name);
+    }).catch(function (err) {
+      log("error", "Vector layer load failed key=" + key + " err=" + String(err));
+    });
+  }
+
+  function removeVectorLayer(layerKey) {
+    if (!viewer || !viewer.dataSources) {
+      return;
+    }
+    const key = String(layerKey || "");
+    if (!vectorLayerSources.has(key)) {
+      return;
+    }
+    const dataSource = vectorLayerSources.get(key);
+    try {
+      viewer.dataSources.remove(dataSource, true);
+    } catch (_) {}
+    vectorLayerSources.delete(key);
+    requestSceneRender();
+    log("info", "Vector layer removed key=" + key);
+  }
+
+  function setVectorLayerVisibility(layerKey, visible) {
+    const key = String(layerKey || "");
+    if (!vectorLayerSources.has(key)) {
+      return;
+    }
+    const dataSource = vectorLayerSources.get(key);
+    dataSource.show = Boolean(visible);
+    requestSceneRender();
+  }
+
+  function clearVectorLayers() {
+    if (!viewer || !viewer.dataSources) {
+      vectorLayerSources.clear();
+      return;
+    }
+    for (const [key, dataSource] of Array.from(vectorLayerSources.entries())) {
+      try {
+        viewer.dataSources.remove(dataSource, true);
+      } catch (_) {}
+      vectorLayerSources.delete(key);
+    }
+    requestSceneRender();
+  }
+
   function setLayerVisibilityByKey(layerKey, visible) {
     console.log(`DEBUG: setLayerVisibilityByKey called: layerKey=${layerKey}, visible=${visible}`);
     
@@ -2965,6 +3117,46 @@
     
     requestSceneRender();
     return true;
+  }
+
+  function removeLayerByKey(layerKey) {
+    if (!viewer || !layerKey) {
+      return false;
+    }
+    const key = String(layerKey);
+    let removed = false;
+
+    if (activeDemContext && activeDemContext.layerKey === key) {
+      clearDemTerrainMode();
+      removed = true;
+    }
+
+    const mainLayer = managedImageryLayers.get(key);
+    if (mainLayer) {
+      viewer.imageryLayers.remove(mainLayer, false);
+      managedImageryLayers.delete(key);
+      layerDefinitions.delete(key);
+      layerVisibilityState.delete(key);
+      removed = true;
+    }
+
+    const hillshadeKey = key + ":hillshade";
+    const hillshadeLayer = managedImageryLayers.get(hillshadeKey);
+    if (hillshadeLayer) {
+      viewer.imageryLayers.remove(hillshadeLayer, false);
+      managedImageryLayers.delete(hillshadeKey);
+      layerDefinitions.delete(hillshadeKey);
+      layerVisibilityState.delete(hillshadeKey);
+      removed = true;
+    }
+
+    if (_lastKnownLayerOrder && Array.isArray(_lastKnownLayerOrder)) {
+      _lastKnownLayerOrder = _lastKnownLayerOrder.filter(item => item !== key);
+    }
+
+    applySwipeComparatorSplit();
+    requestSceneRender();
+    return removed;
   }
 
   function syncOrbitFromCurrentCamera(bounds) {
@@ -3590,6 +3782,11 @@
     if (comparatorModeEnabled) {
       refreshComparatorLayers();
     }
+    
+    // CRITICAL FIX: Ensure layer display order is reapplied after any DEM rebuild
+    // to maintain sync with the user's UI list order.
+    reapplyLayerOrderIfKnown();
+    
     requestSceneRender();
   }
 
@@ -3791,6 +3988,12 @@
         activeDemDrapeLayer.alpha = 1.0;
         activeDemDrapeLayer.show = activeDemContext.visible !== false;
         activeDemDrapeUrl = newDrapeUrl;
+        
+        // CRITICAL FIX: Tag the new drape layer with its key so the reordering system 
+        // can find and position it correctly.
+        activeDemDrapeLayer._layerKey = activeDemContext.layerKey;
+        activeDemDrapeLayer._layerName = activeDemContext.name;
+        managedImageryLayers.set(activeDemContext.layerKey, activeDemDrapeLayer);
 
         // Clean up the old layer quickly — 200ms is enough for 2-3 new tiles to arrive
         // avoiding the black flash while still feeling near-instant to the user
@@ -4136,29 +4339,30 @@
           alpha: false,
           depth: true,
           stencil: false,
-          antialias: false,  // Disable antialiasing for performance
+          antialias: true,  // Enable antialiasing for high-quality visuals
           powerPreference: "high-performance",  // Use discrete GPU (NVIDIA) if available
           preserveDrawingBuffer: true,
           failIfMajorPerformanceCaveat: false,
           desynchronized: false,
         },
       },
-      msaaSamples: 1,  // Disable MSAA for performance
+      msaaSamples: 4,  // Enable MSAA for smooth edges
       useBrowserRecommendedResolution: false,
     });
     runtime.viewer = viewer;
     
     // GPU-accelerated rendering optimizations
     viewer.resolutionScale = 1.0;  // Full resolution for sharp rendering (don't divide by devicePixelRatio)
-    viewer.scene.postProcessStages.fxaa.enabled = false;  // Disable FXAA for performance
+    viewer.scene.postProcessStages.fxaa.enabled = true;  // Enable FXAA for high quality
     viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#2a3a4a");
     viewer.scene.backgroundColor = Cesium.Color.fromCssColorString("#0a0a0a");
     viewer.canvas.style.backgroundColor = "#0a0a0a";
     
     // Performance optimizations for ultra-smooth interaction
     viewer.useDefaultRenderLoop = true;
-    viewer.scene.requestRenderMode = false; // FIX: Disabled to prevent auto-blurring and visual stutter
+    viewer.scene.requestRenderMode = false; // Always live for maximum smoothness
     viewer.scene.maximumRenderTimeChange = 0;
+    viewer.scene.globe.maximumScreenSpaceError = 1.0; // High quality terrain
     viewer.scene.globe.tileCacheSize = 800;  // Larger cache for ultra-smooth panning (optimized for Windows/NVIDIA)
     viewer.scene.fog.enabled = false;  // Disable fog for performance
     viewer.scene.skyAtmosphere.show = false;  // Disable atmosphere for performance
@@ -4784,22 +4988,8 @@
     // Cesium 1.78 resets globe.terrainExaggeration when new terrain tiles are decoded.
     // Also drive the progress bar from this native event — accurate, zero polling lag.
     viewer.scene.globe.tileLoadProgressEvent.addEventListener(function (queueLength) {
-      if (isInteracting) {
-        return;
-      }
-      // Terrain exaggeration persistence
-      if (queueLength === 0 && activeDemContext && activeDemContext.visible !== false) {
-        const target = Math.max(0.1, demVisual.exaggeration);
-        if (Math.abs(viewer.scene.globe.terrainExaggeration - target) > 0.001) {
-          viewer.scene.globe.terrainExaggeration = target;
-        }
-        // Also persist verticalExaggeration for Cesium 1.90+
-        if (typeof viewer.scene.verticalExaggeration !== "undefined" && Math.abs(viewer.scene.verticalExaggeration - target) > 0.001) {
-          viewer.scene.verticalExaggeration = target;
-        }
-      }
-
       // Real-time progress bar — driven by native tile queue length
+      // We process this regardless of isInteracting to ensure the bar always reflects reality.
       if (queueLength > 0) {
         _tileQueuePeak = Math.max(_tileQueuePeak, queueLength);
         const loaded = _tileQueuePeak - queueLength;
@@ -4822,6 +5012,22 @@
             _tileLoadingActive = false;
             _tileQueuePeak = 0;
           }, 200);
+        }
+      }
+
+      if (isInteracting) {
+        return;
+      }
+
+      // Terrain exaggeration persistence (only when idle to avoid jitter)
+      if (queueLength === 0 && activeDemContext && activeDemContext.visible !== false) {
+        const target = Math.max(0.1, demVisual.exaggeration);
+        if (Math.abs(viewer.scene.globe.terrainExaggeration - target) > 0.001) {
+          viewer.scene.globe.terrainExaggeration = target;
+        }
+        // Also persist verticalExaggeration for Cesium 1.90+
+        if (typeof viewer.scene.verticalExaggeration !== "undefined" && Math.abs(viewer.scene.verticalExaggeration - target) > 0.001) {
+          viewer.scene.verticalExaggeration = target;
         }
       }
     });
@@ -5281,6 +5487,12 @@
       if (movement && movement.endPosition) {
         updateMeasureCursorOverlay(movement.endPosition);
       }
+      if (movement && movement.endPosition) {
+        lastMousePosition = movement.endPosition;
+      }
+      if (flyThroughModeEnabled && flyThroughPoints.length > 0 && movement && movement.endPosition) {
+        updateFlyThroughPreview(movement.endPosition);
+      }
       if (searchDrawMode !== "polygon" || searchPolygonPoints.length === 0) {
         return;
       }
@@ -5305,10 +5517,6 @@
       if (lonLat) {
         searchCursorPoint = { lon: lonLat.lon, lat: lonLat.lat };
         updateSearchPolygonPreview();
-      }
-      // Fly Through preview
-      if (flyThroughModeEnabled && flyThroughPoints.length > 0) {
-        updateFlyThroughPreview(movement.endPosition);
       }
     }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
@@ -5681,12 +5889,14 @@
       setMeasurementCursorEnabled(true);
       clickedPoints.length = 0;
       setStatus("Distance tool: click first point, move to preview, click second point to measure. Right-click to stop.");
+      reapplyLayerOrderIfKnown();
       return;
     }
     // Turning off — clear ALL measurement marks (line, label, preview, overlay)
     clearMeasurementEntities();
     setMeasurementCursorEnabled(false);
     setStatus("Distance tool disabled.");
+    reapplyLayerOrderIfKnown();
   }
 
   function setPanMode(enabled) {
@@ -5710,11 +5920,15 @@
       log("info", "Pan mode activated (2D-like drag)");
     } else {
       if (container) container.classList.remove("pan-mode-active");
+      // Force remove from all elements just in case of bubbling issues
+      document.body.classList.remove("pan-mode-active");
+      document.documentElement.classList.remove("pan-mode-active");
       // Restore normal 3D interaction controls
       configureCameraControllerForMode(currentSceneMode);
       setStatus("Pan mode disabled — 3D navigation restored.");
       log("info", "Pan mode deactivated (3D navigation restored)");
     }
+    reapplyLayerOrderIfKnown();
     requestSceneRender();
   }
 
@@ -5811,45 +6025,73 @@
   }
 
   function zoomBy(factor) {
-    if (!viewer || !viewer.camera) {
-      return;
-    }
+    if (!viewer || !viewer.camera) return;
     const camera = viewer.camera;
-    
-    // Get current altitude
-    const cartographic = Cesium.Cartographic.fromCartesian(camera.positionWC);
-    const altitude = cartographic.height;
-    
-    // Calculate new altitude based on factor
-    // factor < 1.0 means zoom in, factor > 1.0 means zoom out
-    const newAltitude = altitude * factor;
-    
-    // Clamp to reasonable bounds
-    const clampedAltitude = Math.max(10, Math.min(newAltitude, 100000000));
-    
-    log("debug", `zoomBy: factor=${factor.toFixed(4)} currentAlt=${altitude.toFixed(1)}m newAlt=${clampedAltitude.toFixed(1)}m ${factor < 1.0 ? "ZOOM_IN" : "ZOOM_OUT"}`);
-    
-    // Get current camera position in cartesian
-    const currentPos = camera.position.clone();
-    
-    // Update position with new altitude while preserving lon/lat
-    const newPosition = Cesium.Cartesian3.fromRadians(
-      cartographic.longitude,
-      cartographic.latitude,
-      clampedAltitude
-    );
-    
-    // Smooth camera movement with new altitude
-    camera.setView({
-      destination: newPosition,
-      orientation: {
-        heading: camera.heading,
-        pitch: camera.pitch,
-        roll: camera.roll
-      },
-      duration: 0.1
-    });
-    
+    const scene = viewer.scene;
+
+    // Use last known mouse position for anchoring if available
+    let targetCartesian = null;
+    if (lastMousePosition) {
+      const ray = camera.getPickRay(lastMousePosition);
+      if (ray) {
+        targetCartesian = scene.globe.pick(ray, scene);
+      }
+    }
+
+    if (!targetCartesian) {
+        // Fallback to screen center
+        const center = new Cesium.Cartesian2(
+            scene.canvas.clientWidth / 2,
+            scene.canvas.clientHeight / 2
+        );
+        const ray = camera.getPickRay(center);
+        if (ray) {
+            targetCartesian = scene.globe.pick(ray, scene);
+        }
+    }
+
+    if (targetCartesian) {
+        // Zoom towards the picked point
+        const distance = Cesium.Cartesian3.distance(camera.positionWC, targetCartesian);
+        const moveAmount = distance * (1.0 - factor);
+        camera.zoomIn(moveAmount);
+        log("debug", "zoomBy: mouse-anchored factor=" + factor.toFixed(4) + " move=" + moveAmount.toFixed(1) + "m");
+    } else {
+        // Fallback to simple altitude change
+        const cartographic = Cesium.Cartographic.fromCartesian(camera.positionWC);
+        const altitude = cartographic.height;
+        const newAltitude = altitude * factor;
+        const clampedAltitude = Math.max(10, Math.min(newAltitude, 100000000));
+        camera.setView({
+            destination: Cesium.Cartesian3.fromRadians(
+                cartographic.longitude,
+                cartographic.latitude,
+                clampedAltitude
+            ),
+            orientation: {
+                heading: camera.heading,
+                pitch: camera.pitch,
+                roll: camera.roll
+            }
+        });
+        log("debug", "zoomBy: center-fallback factor=" + factor.toFixed(4) + " alt=" + clampedAltitude.toFixed(1) + "m");
+    }
+    requestSceneRender();
+  }
+
+  function stopFlyThrough() {
+    if (viewer && viewer.camera) {
+      viewer.camera.cancelFlight();
+    }
+    flyThroughModeEnabled = false;
+    if (flyThroughPreviewLineEntity) {
+      viewer.entities.remove(flyThroughPreviewLineEntity);
+      flyThroughPreviewLineEntity = null;
+    }
+    flyThroughPoints.length = 0;
+    flyThroughPreviewEnd = null;
+    setStatus("Fly Through stopped.");
+    log("info", "Fly Through stopped manually");
     requestSceneRender();
   }
 
@@ -5914,6 +6156,32 @@
     if (searchPolygonController) {
       searchPolygonController.finalizeSearchPolygon();
     }
+  }
+
+  function loadSearchPolygon(points) {
+    if (!Array.isArray(points)) {
+      return;
+    }
+    searchPolygonPoints.length = 0;
+    for (let i = 0; i < points.length; i++) {
+      const item = points[i] || {};
+      const lon = Number(item.lon);
+      const lat = Number(item.lat);
+      if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
+        continue;
+      }
+      searchPolygonPoints.push({
+        lon: lon,
+        lat: lat,
+        cartesian: Cesium.Cartesian3.fromDegrees(lon, lat),
+      });
+    }
+    searchPolygonLocked = true;
+    searchOverlayVisible = true;
+    updateSearchPolygonPreview();
+    updateAoiPanel(searchPolygonPoints);
+    emitSearchGeometry("polygon", { points: searchPolygonPoints.map(p => ({ lon: p.lon, lat: p.lat })) });
+    requestSceneRender();
   }
 
   function updateAoiPanel(points) {
@@ -6084,73 +6352,129 @@
       return;
     }
 
-    const rect   = Cesium.Rectangle.fromDegrees(west, south, east, north);
+    const rect = Cesium.Rectangle.fromDegrees(west, south, east, north);
     const sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, 0.0);
-    const range  = Math.max(
-      compute3DFocusRange(targetBounds),
-      sphere.radius * 1.4,
-      300.0
-    );
-    _cameraOrbitRange = range;
+    const nearRange = Math.max(compute3DFocusRange(lastLoadedBounds), sphere.radius * 1.4);
+    const farRange = Math.min(Math.max(nearRange * 3.25, 280.0), 4500000.0);
 
-    log("info", "FLY-TO: bounds W=" + west.toFixed(4) + " S=" + south.toFixed(4) +
-      " E=" + east.toFixed(4) + " N=" + north.toFixed(4) +
-      " radius=" + sphere.radius.toFixed(0) + "m range=" + range.toFixed(0) + "m");
+    // Clamp near range so the camera never goes below ~80 m above the bounding
+    // sphere surface — prevents the "enters the globe / black surroundings" bug
+    // caused by the camera clipping through terrain during the fly-through arc.
+    const safeNearRange = Math.max(nearRange, sphere.radius * 0.5, 80.0);
 
-    // ── CRITICAL: enable continuous rendering BEFORE flight begins ───────────
-    // requestRenderMode=true means frames only render on state changes.
-    // During a flyTo the camera moves every frame but tiles may not be ready,
-    // causing blank globe sections. Setting false guarantees every frame renders
-    // so the globe always shows NaturalEarthII basemap during the approach.
-    viewer.scene.requestRenderMode = false;
-    viewer.scene.requestRender();
+    // Enhanced camera positioning debug (reduced verbosity)
+    log("debug", "CAMERA_DEBUG: Range calculation nearRange=" + nearRange.toFixed(0) + 
+        " farRange=" + farRange.toFixed(0) + " safeNearRange=" + safeNearRange.toFixed(0));
 
     viewer.camera.cancelFlight();
-
-    log("info", "FLY-TO: starting single-step flight duration=2.5s heading=0° pitch=-40°");
-
+    
+    // First position: Far view
+    const farHeading = Cesium.Math.toRadians(-45);
+    const farPitch = Cesium.Math.toRadians(-55);
+    
     viewer.camera.flyToBoundingSphere(sphere, {
-      offset: new Cesium.HeadingPitchRange(
-        Cesium.Math.toRadians(0.0),
-        Cesium.Math.toRadians(-40.0),
-        range
-      ),
-      duration: 2.5,
-      complete: function() {
-        const finalPos = viewer.camera.positionCartographic;
-        log("info", "FLY-TO: complete — lon=" +
-          Cesium.Math.toDegrees(finalPos.longitude).toFixed(4) +
-          " lat=" + Cesium.Math.toDegrees(finalPos.latitude).toFixed(4) +
-          " alt=" + finalPos.height.toFixed(0) + "m");
-
-        // Hold continuous render for 3s post-landing so tiles fully stream in
-        var t = 0;
-        var iv = setInterval(function() {
-          if (!viewer || !viewer.scene) { clearInterval(iv); return; }
-          viewer.scene.requestRender();
-          t += 100;
-          if (t >= 3000) {
-            clearInterval(iv);
-            viewer.scene.requestRenderMode = true;
-            log("info", "FLY-TO: render hold complete — returning to request-render mode");
+      offset: new Cesium.HeadingPitchRange(farHeading, farPitch, farRange),
+      duration: 2.6,
+      complete: function () {
+        // Second position: Near view
+        const nearHeading = Cesium.Math.toRadians(30);
+        const nearPitch = Cesium.Math.toRadians(-35);
+        
+        viewer.camera.flyToBoundingSphere(sphere, {
+          offset: new Cesium.HeadingPitchRange(nearHeading, nearPitch, safeNearRange),
+          duration: 3.2,
+          complete: function() {
+            // Final position logging (reduced verbosity)
+            const finalPos = viewer.camera.positionCartographic;
+            if (finalPos) {
+              const finalLon = Cesium.Math.toDegrees(finalPos.longitude);
+              const finalLat = Cesium.Math.toDegrees(finalPos.latitude);
+              log("debug", "CAMERA_DEBUG: Final position lon=" + finalLon.toFixed(4) + 
+                  " lat=" + finalLat.toFixed(4) + " height=" + finalPos.height.toFixed(0));
+              
+              // Force render after camera positioning
+              if (viewer.scene) {
+                viewer.scene.requestRender();
+              }
+            }
           }
-        }, 100);
+        });
       },
-      cancel: function() {
-        log("info", "FLY-TO: flight cancelled");
-        if (viewer && viewer.scene) {
-          viewer.scene.requestRenderMode = true;
-          viewer.scene.requestRender();
-        }
-      }
     });
-
-    setStatus("Flying to asset...");
+    setStatus("Fly-through started.");
     sceneDebug("startFlyThroughBounds flight started in 3d");
+    log("info", "Fly-through started for selected bounds");
   }
 
 
   window.offlineGIS = {
+    focusBoundsWithPadding: function (west, south, east, north, paddingFactor) {
+      if (!viewer) return;
+      // Use custom padding factor (e.g., 1.5 = 50% padding)
+      const padFactor = Number(paddingFactor) || 1.1; // Default to 10% if not specified
+      const padLon = (east - west) * (padFactor - 1.0) * 0.5;
+      const padLat = (north - south) * (padFactor - 1.0) * 0.5;
+      const paddedWest  = Math.max(-180, west  - padLon);
+      const paddedEast  = Math.min( 180, east  + padLon);
+      const paddedSouth = Math.max( -90, south - padLat);
+      const paddedNorth = Math.min(  90, north + padLat);
+      setActiveTileBounds({ west: west, south: south, east: east, north: north });
+      // SEARCH FIX: Use 3D oblique view (-40° pitch) so search results appear on the globe
+      const rect = Cesium.Rectangle.fromDegrees(paddedWest, paddedSouth, paddedEast, paddedNorth);
+      const sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, 0.0);
+      const range = Math.max(compute3DFocusRange({ west: paddedWest, south: paddedSouth, east: paddedEast, north: paddedNorth }), sphere.radius * 1.5, 300.0);
+      const wasRequestRenderMode = viewer.scene.requestRenderMode;
+      viewer.scene.requestRenderMode = false;
+      viewer.camera.cancelFlight();
+      viewer.camera.flyToBoundingSphere(sphere, {
+        offset: new Cesium.HeadingPitchRange(
+          Cesium.Math.toRadians(0.0),
+          Cesium.Math.toRadians(-40.0),  // 40° oblique — clear 3D globe perspective
+          range
+        ),
+        duration: 1.8, // Slightly longer duration for multi-asset focus
+        complete: function() {
+          if (viewer && viewer.scene) {
+            viewer.scene.requestRenderMode = wasRequestRenderMode;
+            viewer.scene.requestRender();
+          }
+        },
+        cancel: function() {
+          if (viewer && viewer.scene) {
+            viewer.scene.requestRenderMode = wasRequestRenderMode;
+            viewer.scene.requestRender();
+          }
+        }
+      });
+      requestSceneRender();
+      log("info", "Focus bounds with padding=" + padFactor + " (3D oblique) west=" + west + " south=" + south + " east=" + east + " north=" + north);
+    },
+    instantFocusBounds: function (west, south, east, north) {
+      if (!viewer) return;
+      try {
+        const padLon = (east - west) * 0.15;
+        const padLat = (north - south) * 0.15;
+        const paddedWest  = Math.max(-180, west  - padLon);
+        const paddedEast  = Math.min( 180, east  + padLon);
+        const paddedSouth = Math.max( -90, south - padLat);
+        const paddedNorth = Math.min(  90, north + padLat);
+        const rect = Cesium.Rectangle.fromDegrees(paddedWest, paddedSouth, paddedEast, paddedNorth);
+        const sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, 0.0);
+        const range = Math.max(compute3DFocusRange({ west: paddedWest, south: paddedSouth, east: paddedEast, north: paddedNorth }), sphere.radius * 1.5, 300.0);
+        viewer.camera.cancelFlight();
+        // setView is instant — no animation, just teleport
+        viewer.camera.viewBoundingSphere(sphere, new Cesium.HeadingPitchRange(
+          Cesium.Math.toRadians(0.0),
+          Cesium.Math.toRadians(-40.0),
+          range
+        ));
+        requestSceneRender();
+        log("info", "Instant focus bounds west=" + west + " south=" + south + " east=" + east + " north=" + north);
+      } catch(e) {
+        log("error", "instantFocusBounds failed: " + e);
+      }
+    },
+
     flyTo: function (lon, lat, height) {
       if (!viewer) return;
       viewer.camera.flyTo({
@@ -6461,6 +6785,9 @@
       // An internal setTimeout(focusBounds, 100) here raced with the Python fly and caused
       // black-screen flicker as the two flights fought each other.
       
+      // Final step: ensure the map reflects the user's intended display order
+      reapplyLayerOrderIfKnown();
+      
       // Force multiple render requests with improved timing for tile loading
       if (viewer.scene) {
         viewer.scene.requestRender();
@@ -6614,6 +6941,9 @@
         log("warn", "Layer visibility update ignored key=" + String(layerKey));
       }
     },
+    removeLayerByKey: function (layerKey) {
+      removeLayerByKey(String(layerKey || ""));
+    },
     setPolygonVisibility: function (polyId, visible) {
       toggleDrawnPolygonVisibility(polyId, visible);
     },
@@ -6627,6 +6957,49 @@
       toggleAllDrawnPolygonsVisibility(visible);
       updateComparatorPolygons(visible);
       log("debug", "All polygons visibility set to " + String(visible));
+    },
+    loadSearchPolygon: function (points) {
+      loadSearchPolygon(points);
+    },
+    restoreAnnotationPolygon: function(points) {
+      if (searchPolygonController && typeof searchPolygonController.restoreAnnotationPolygon === "function") {
+        searchPolygonController.restoreAnnotationPolygon(points);
+      }
+    },
+    clearAllLayers: function () {
+      clearManagedImageryLayers();
+      clearDemTerrainMode();
+      clearVectorLayers();
+      if (typeof clearMeasurementEntities === "function") clearMeasurementEntities();
+      if (typeof clearMeasurementPreviewEntities === "function") clearMeasurementPreviewEntities();
+      if (searchPolygonController && typeof searchPolygonController.clearAllData === "function") {
+        searchPolygonController.clearAllData();
+      }
+      drawnPolygonCounter = 0;
+      flyThroughPoints.length = 0;
+      if (flyThroughPathEntity) { viewer.entities.remove(flyThroughPathEntity); flyThroughPathEntity = null; }
+      if (flyThroughPreviewLineEntity) { viewer.entities.remove(flyThroughPreviewLineEntity); flyThroughPreviewLineEntity = null; }
+      if (flyThroughStartButtonEntity) { viewer.entities.remove(flyThroughStartButtonEntity); flyThroughStartButtonEntity = null; }
+      _lastKnownLayerOrder = null;
+      setStatus("Project cleared.");
+      requestSceneRender();
+    },
+    resetDefaultView: function () {
+      setSceneModeInternal("3d");
+      applyDefaultStartupFocus();
+      requestSceneRender();
+    },
+    addVectorLayer: function (layerKey, label, geojson, options) {
+      addVectorLayer(layerKey, label, geojson, options || {});
+    },
+    removeVectorLayer: function (layerKey) {
+      removeVectorLayer(layerKey);
+    },
+    setVectorLayerVisibility: function (layerKey, visible) {
+      setVectorLayerVisibility(layerKey, visible);
+    },
+    clearVectorLayers: function () {
+      clearVectorLayers();
     },
     setBasemapVisibility: function (visible) {
       // Toggle OSM basemap visibility with lazy loading and smooth transition
@@ -6656,9 +7029,7 @@
           if (!targetViewer || !targetViewer.imageryLayers) return;
           
           if (shouldShow) {
-              if (isMain && defaultEarthLayer) defaultEarthLayer.show = false;
-              if (targetViewer.__defaultEarthLayer) targetViewer.__defaultEarthLayer.show = false;
-              
+              // Smooth transition: Ensure the basemap exists but don't force a re-render yet
               if (!targetViewer.__osmBasemapLayer) {
                   try {
                       const osmProvider = new Cesium.UrlTemplateImageryProvider({
@@ -6674,23 +7045,25 @@
                       osmProvider.errorEvent.addEventListener(function (error) { error.retry = false; });
                       targetViewer.__osmBasemapLayer = targetViewer.imageryLayers.addImageryProvider(osmProvider, 0);
                       targetViewer.__osmBasemapLayer.alpha = 1.0;
-                      targetViewer.__osmBasemapLayer.show = true;
-                      targetViewer.__osmBasemapLayer.splitDirection = Cesium.ImagerySplitDirection.NONE;
-                      targetViewer.__osmBasemapLayer.cutoutRectangle = undefined;
-                      targetViewer.__osmBasemapLayer.colorToAlpha = undefined;
-                      targetViewer.__osmBasemapLayer.colorToAlphaThreshold = 0.0;
                   } catch (e) {
                       log("error", "Failed to create OSM basemap: " + e.message);
-                  }
-              } else {
-                  targetViewer.__osmBasemapLayer.show = true;
-                  if (targetViewer.imageryLayers.indexOf(targetViewer.__osmBasemapLayer) !== 0) {
-                      targetViewer.imageryLayers.lowerToBottom(targetViewer.__osmBasemapLayer);
+                      return;
                   }
               }
+              
+              // Apply visibility and order in a single batch
+              targetViewer.__osmBasemapLayer.show = true;
+              if (targetViewer.imageryLayers.indexOf(targetViewer.__osmBasemapLayer) !== 0) {
+                  targetViewer.imageryLayers.lowerToBottom(targetViewer.__osmBasemapLayer);
+              }
+              
+              if (isMain && defaultEarthLayer) defaultEarthLayer.show = false;
+              if (targetViewer.__defaultEarthLayer) targetViewer.__defaultEarthLayer.show = false;
+              
               if (isMain) osmBasemapLayer = targetViewer.__osmBasemapLayer;
           } else {
               if (targetViewer.__osmBasemapLayer) targetViewer.__osmBasemapLayer.show = false;
+              
               if (isMain && defaultEarthLayer) {
                   defaultEarthLayer.show = true;
                   if (targetViewer.imageryLayers.indexOf(defaultEarthLayer) !== 0) {
@@ -6713,12 +7086,15 @@
           comparatorViewers.forEach(v => applyBasemapToViewer(v, false));
       }
 
-      window._basemapToggleInProgress = false;
-      
-      // PERFORMANCE: Single render request instead of multiple
-      if (viewer.scene) {
-        viewer.scene.requestRender();
-      }
+      // PERFORMANCE & STABILITY: Use requestAnimationFrame to let the browser settle
+      // before requesting a Cesium scene render. This prevents WebGL 'deleted object'
+      // errors on some Intel GPUs when imagery layers are swapped.
+      window.requestAnimationFrame(() => {
+          window._basemapToggleInProgress = false;
+          if (viewer && viewer.scene) {
+            viewer.scene.requestRender();
+          }
+      });
       
       // Reset the in-progress flag immediately (no need to wait for render)
       window._basemapToggleInProgress = false;
@@ -7167,10 +7543,14 @@
           viewer.entities.remove(flyThroughPreviewLineEntity);
           flyThroughPreviewLineEntity = null;
         }
+        flyThroughPreviewEnd = null;
+        flyThroughCursorCartesian = null;
       }
+      reapplyLayerOrderIfKnown();
     },
     setComparatorMode: function (enabled) {
       setSwipeComparatorEnabled(Boolean(enabled));
+      reapplyLayerOrderIfKnown();
     },
     setDistanceMeasureMode: function (enabled) {
       setDistanceMeasureMode(Boolean(enabled));
@@ -7917,6 +8297,13 @@
         if (newOrderKeys.length > 0) {
           _lastKnownLayerOrder = newOrderKeys;
           log("info", "EVENT_DRIVEN: _lastKnownLayerOrder updated to [" + newOrderKeys.join(", ") + "]");
+          
+          // CRITICAL: If the top-most layer is a DEM, or if a DEM is visible, 
+          // ensure the terrain provider is correctly synced.
+          if (activeDemContext && activeDemContext.visible !== false) {
+             log("info", "EVENT_DRIVEN: Refreshing DEM layer state during reorder");
+             applyDemLayer();
+          }
         }
         
       } catch (error) {
@@ -7935,19 +8322,26 @@
       
       try {
         const imageryLayers = viewer.imageryLayers;
-        
-        // Find the layer with the matching key
+        var subLayers = [];
+        // Find all sublayers for this layerKey
         for (let i = 0; i < imageryLayers.length; i++) {
           const layer = imageryLayers.get(i);
-          if (layer && layer._layerKey === layerKey) {
-            imageryLayers.raiseToTop(layer);
-            viewer.scene.requestRender();
-            log("debug", "Raised layer to top: " + layerKey);
-            return;
+          if (layer && (layer._layerKey === layerKey || layer._layerKey === layerKey + ":hillshade")) {
+            subLayers.push(layer);
           }
         }
         
-      log("warn", "Layer not found for raising to top: " + layerKey);
+        if (subLayers.length > 0) {
+          // Raise drape first, hillshade last (so hillshade is on top of drape)
+          for (var s = 0; s < subLayers.length; s++) {
+            imageryLayers.raiseToTop(subLayers[s]);
+          }
+          viewer.scene.requestRender();
+          log("debug", "Raised " + subLayers.length + " sublayers to top for: " + layerKey);
+          return;
+        }
+        
+        log("warn", "Layer not found for raising to top: " + layerKey);
         
       } catch (error) {
         log("error", "Failed to raise layer to top: " + String(error));
@@ -8010,6 +8404,19 @@
             activeDemContext && activeDemContext.visible !== false &&
             activeDemHillshadeLayer.alpha > 0.01
           );
+        }
+
+        // CRITICAL: Ensure terrain provider matches active DEM visibility
+        if (activeDemContext && activeDemContext.visible !== false && activeDemTerrainProvider) {
+          if (viewer.terrainProvider !== activeDemTerrainProvider) {
+            log("info", "enforceLayerDisplayOrder: Reactivating DEM terrain provider");
+            _swapTerrainProviderLocked(activeDemTerrainProvider);
+          }
+        } else if ((!activeDemContext || activeDemContext.visible === false) && activeDemTerrainProvider) {
+            if (viewer.terrainProvider === activeDemTerrainProvider) {
+              log("info", "enforceLayerDisplayOrder: Restoring ellipsoid terrain (DEM hidden)");
+              _swapTerrainProviderLocked(new Cesium.EllipsoidTerrainProvider());
+            }
         }
 
         viewer.scene.requestRender();

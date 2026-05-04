@@ -28,8 +28,8 @@ class ToolbarActionCoordinator:
             "Zoom In": lambda: c._run_js_call("zoomIn"),
             "Zoom Out": lambda: c._run_js_call("zoomOut"),
             "Zoom to Extent": lambda: c._run_js_call("zoomToExtent"),
-            "Add Vector": c.browse_files,  # Fixed: was c.browse_path
-            "Add Raster Layer": c.browse_files,  # Fixed: was c.browse_path
+            "Add Vector": c.add_vector_layers,
+            "Add Raster Layer": c.add_raster_layers,
             "Save Project": c._toolbar_save_project,
             "Export": c._toolbar_export_geopackage,
             "Export GeoPackage": c._toolbar_export_geopackage,
