@@ -37,6 +37,7 @@ ICON_MANIFEST: dict[str, str] = {
     "annotate_point": "mActionCapturePoint.svg",
     "annotate_line": "mActionCaptureLine.svg",
     "annotate_polygon": "mActionCapturePolygon.svg",
+    "annotate_text": "mActionMapIdentification.svg",
     "edit_annotation": "mActionToggleEditing.svg",
     "delete_annotation": "mActionDeleteSelected.svg",
     "lock_annotation": "mActionToggleEditing.svg",

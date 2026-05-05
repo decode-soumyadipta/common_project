@@ -49,6 +49,11 @@
   let measurementPreviewLabelEntity = null;
   let measurementPreviewStart = null;
   let measurementPreviewEnd = null;
+  let lineDrawModeEnabled = false;
+  let lineDrawStart = null;
+  let lineDrawPreviewLineEntity = null;
+  let lineDrawPreviewStart = null;
+  let lineDrawPreviewEnd = null;
   let distanceMeasureModeEnabled = false;
   let distanceMeasureAnchor = null;
   let swipeComparatorEnabled = false;
@@ -2549,6 +2554,14 @@
       if (exceptLayerKey && layerKey === exceptLayerKey) {
         continue;
       }
+      
+      // CRITICAL FIX: Don't remove DEM layers when clearing imagery layers
+      // DEM drape and hillshade layers should only be removed via clearDemTerrainMode
+      if (activeDemContext && activeDemContext.layerKey === layerKey) {
+        log("debug", "clearManagedImageryLayers: Preserving DEM layer " + layerKey);
+        continue;
+      }
+      
       if (layer) {
         viewer.imageryLayers.remove(layer, false);
       }
@@ -2659,34 +2672,8 @@
     layerVisibilityState.set(layerKey, Boolean(visible));
     console.log(`DEBUG: Updated layerVisibilityState for ${layerKey} = ${Boolean(visible)}`);
 
-    const imageryLayer = managedImageryLayers.get(layerKey);
-    if (imageryLayer) {
-      const shouldShow = Boolean(visible);
-      console.log(`DEBUG: Found imagery layer for ${layerKey}, setting show=${shouldShow}`);
-      imageryLayer.show = shouldShow;
-      if (shouldShow) {
-        activeImageryLayer = imageryLayer;
-      } else if (activeImageryLayer === imageryLayer) {
-        activeImageryLayer = null;
-      }
-      const anyVisible = Array.from(layerVisibilityState.values()).some(Boolean);
-      if (!anyVisible) {
-        if (activeDemDrapeLayer) {
-          activeDemDrapeLayer.show = false;
-        }
-        if (activeDemHillshadeLayer) {
-          activeDemHillshadeLayer.show = false;
-        }
-      }
-      applySwipeComparatorSplit();
-      if (comparatorModeEnabled) {
-        refreshComparatorLayers();
-      }
-      requestSceneRender();
-      console.log(`DEBUG: Imagery layer visibility updated successfully for ${layerKey}`);
-      return true;
-    }
-
+    // CRITICAL FIX: Check if this is a DEM layer FIRST before treating it as regular imagery
+    // DEM layers need special handling for terrain provider swapping
     if (activeDemContext && activeDemContext.layerKey === layerKey) {
       const shouldShow = Boolean(visible);
       console.log(`DEBUG: Found DEM layer for ${layerKey}, setting visible=${shouldShow}`);
@@ -2745,6 +2732,34 @@
         refreshComparatorLayers();
       }
       requestSceneRender();
+      return true;
+    }
+
+    const imageryLayer = managedImageryLayers.get(layerKey);
+    if (imageryLayer) {
+      const shouldShow = Boolean(visible);
+      console.log(`DEBUG: Found imagery layer for ${layerKey}, setting show=${shouldShow}`);
+      imageryLayer.show = shouldShow;
+      if (shouldShow) {
+        activeImageryLayer = imageryLayer;
+      } else if (activeImageryLayer === imageryLayer) {
+        activeImageryLayer = null;
+      }
+      const anyVisible = Array.from(layerVisibilityState.values()).some(Boolean);
+      if (!anyVisible) {
+        if (activeDemDrapeLayer) {
+          activeDemDrapeLayer.show = false;
+        }
+        if (activeDemHillshadeLayer) {
+          activeDemHillshadeLayer.show = false;
+        }
+      }
+      applySwipeComparatorSplit();
+      if (comparatorModeEnabled) {
+        refreshComparatorLayers();
+      }
+      requestSceneRender();
+      console.log(`DEBUG: Imagery layer visibility updated successfully for ${layerKey}`);
       return true;
     }
 
@@ -3946,11 +3961,16 @@
       query.colormap_name = "viridis";
       query.rescale = "0,90";
     } else {
-      // Returning to gray/terrain: restore original server rescale so colors match the colorbar
+      // Returning to gray/terrain: preserve current rescale if it exists, otherwise use original
       delete query.algorithm;
       query.colormap_name = normalized;
-      if (_demOriginalRescale) {
-        query.rescale = _demOriginalRescale;  // restore original min,max from server
+      
+      // SYNC FIX: If a stretch is already applied, keep it!
+      const currentStretch = activeDemDrapeLayer && activeDemDrapeLayer._stretchSettings;
+      if (currentStretch && currentStretch.params && currentStretch.params.min !== undefined) {
+        query.rescale = currentStretch.params.min.toFixed(1) + "," + currentStretch.params.max.toFixed(1);
+      } else if (_demOriginalRescale) {
+        query.rescale = _demOriginalRescale;
       }
     }
 
@@ -3993,6 +4013,13 @@
         // can find and position it correctly.
         activeDemDrapeLayer._layerKey = activeDemContext.layerKey;
         activeDemDrapeLayer._layerName = activeDemContext.name;
+        
+        // SYNC FIX: Preserve stretch settings from old layer to new layer for real-time coordination
+        if (oldDrapeLayer && oldDrapeLayer._stretchSettings) {
+          activeDemDrapeLayer._stretchSettings = oldDrapeLayer._stretchSettings;
+          log("debug", "setDemColorMode: preserved stretch settings on new drape layer");
+        }
+        
         managedImageryLayers.set(activeDemContext.layerKey, activeDemDrapeLayer);
 
         // Clean up the old layer quickly — 200ms is enough for 2-3 new tiles to arrive
@@ -4002,7 +4029,7 @@
             if (viewer && viewer.imageryLayers && viewer.imageryLayers.contains(oldDrapeLayer)) {
               viewer.imageryLayers.remove(oldDrapeLayer, false);
             }
-          }, 200);
+          }, 120); // Faster cleanup for "fast" requirement
         }
 
         // Re-apply the last known layer display order so imagery stays on top (or below)
@@ -4030,9 +4057,15 @@
         requestSceneRender();
         log("debug", "setDemColorMode: in-place drape swap colormap=" + normalized);
 
-        // Update colorbar gradient to match new color mode
-        const range = parseDemHeightRange(activeDemContext.options);
+        // SYNC FIX: Update colorbar gradient to match new color mode AND current stretch
+        // Use the actual rescale from the query (which includes stretch if applied)
+        const range = parseDemHeightRange({ query: query }); // Use updated query for accurate range
         updateDemColorbar(range.min, range.max, activeDemContext.options);
+        
+        // SYNC FIX: Also update activeDemContext.options.query to keep it in sync
+        activeDemContext.options.query = query;
+        
+        log("info", "DEM color mode changed to " + normalized + " with rescale=" + query.rescale);
       }
     } else {
       // No active drape layer yet — do a full apply with camera lock
@@ -4879,7 +4912,7 @@
       return false;
     }
     const currentText = readLabelText(labelEntity) || "Point";
-    const nextText = window.prompt("Rename point", currentText);
+    const nextText = window.prompt("Rename annotation", currentText);
     if (nextText === null) {
       return true;
     }
@@ -5427,6 +5460,26 @@
           // Silently ignore preview errors to avoid spam
         }
       }
+
+      if (lineDrawModeEnabled && lineDrawStart) {
+        try {
+          let lonLat = getLonLatFromScreen(movement.endPosition);
+          if (!lonLat && movement.endPosition) {
+            const ellipsoidCart = viewer.camera.pickEllipsoid(movement.endPosition, viewer.scene.globe.ellipsoid);
+            if (ellipsoidCart) lonLat = cartesianToLonLat(ellipsoidCart);
+          }
+          if (lonLat) {
+            updateLineDrawPreview(
+              lineDrawStart.lon,
+              lineDrawStart.lat,
+              lonLat.lon,
+              lonLat.lat
+            );
+          }
+        } catch (e) {
+          // Silently ignore preview errors
+        }
+      }
       
       // Always emit mouse coordinates for status bar (not just during polygon drawing)
       let lonLat = null;
@@ -5888,6 +5941,60 @@
     }
   }
 
+  function updateLineDrawPreview(startLon, startLat, endLon, endLat) {
+    if (!viewer) {
+      return;
+    }
+    try {
+      // CRITICAL FIX: Match distance measurement tool exactly for proper terrain draping
+      // Use same height calculation approach as measurement preview
+      let startHeight = viewer.scene.globe.getHeight(Cesium.Cartographic.fromDegrees(startLon, startLat)) || 0;
+      let endHeight = viewer.scene.globe.getHeight(Cesium.Cartographic.fromDegrees(endLon, endLat)) || 0;
+
+      // Update shared mutable positions — the CallbackProperty reads these every frame
+      lineDrawPreviewStart = Cesium.Cartesian3.fromDegrees(startLon, startLat, startHeight);
+      lineDrawPreviewEnd = Cesium.Cartesian3.fromDegrees(endLon, endLat, endHeight);
+
+      if (!lineDrawPreviewLineEntity) {
+        // Create ONCE with CallbackProperty(isConstant=false) — re-evaluated every frame
+        // EXACTLY matching measurement preview configuration for consistent terrain draping
+        lineDrawPreviewLineEntity = viewer.entities.add({
+          polyline: {
+            positions: new Cesium.CallbackProperty(function() {
+              if (lineDrawPreviewStart && lineDrawPreviewEnd) {
+                return [lineDrawPreviewStart, lineDrawPreviewEnd];
+              }
+              return [];
+            }, false),
+            width: 2,
+            arcType: Cesium.ArcType.GEODESIC,
+            material: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.85),
+            clampToGround: true,
+          },
+        });
+        log("debug", "Line draw preview entity created");
+      }
+      requestSceneRender();
+    } catch (e) {
+      log("warn", "Line draw preview error: " + e.message);
+    }
+  }
+
+  function clearLineDrawPreview() {
+    if (!viewer) {
+      return;
+    }
+    try {
+      if (lineDrawPreviewLineEntity) {
+        viewer.entities.remove(lineDrawPreviewLineEntity);
+        lineDrawPreviewLineEntity = null;
+      }
+      lineDrawPreviewStart = null;
+      lineDrawPreviewEnd = null;
+    } catch (e) {}
+    requestSceneRender();
+  }
+
   function setDistanceMeasureMode(enabled) {
     distanceMeasureModeEnabled = Boolean(enabled);
     distanceMeasureAnchor = null;
@@ -5979,10 +6086,11 @@
       const newLine = viewer.entities.add({
         polyline: {
           positions: [start, end],
-          width: 2.0,
+          width: 3.5, // Increased width for better visibility
           arcType: Cesium.ArcType.GEODESIC,
-          material: Cesium.Color.fromCssColorString("#4da8da").withAlpha(0.9),
-          depthFailMaterial: Cesium.Color.fromCssColorString("#4da8da").withAlpha(0.9),
+          material: Cesium.Color.fromCssColorString("#00e5ff"), // Standard Cyan
+          depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.4),
+          clampToGround: true, // CRITICAL FIX: Follow terrain
         },
       });
 
@@ -6889,9 +6997,12 @@
         options && typeof options.layer_key === "string" && options.layer_key
           ? options.layer_key
           : "dem:" + String(name || "layer");
-      if (replaceExisting) {
-        clearManagedImageryLayers();
-      }
+      // CRITICAL FIX: Don't clear imagery layers when replacing DEM
+      // DEM layers are managed separately via activeDemContext
+      // Clearing imagery layers here would remove user's imagery layers
+      // if (replaceExisting) {
+      //   clearManagedImageryLayers();
+      // }
       setSceneModeInternal("3d");
       setSceneModeControlEnabled(true);
       syncSceneModeToggle("3d");
@@ -7310,6 +7421,26 @@
       requestSceneRender();
       log("info", "setPitch completed: degrees=" + degrees);
     },
+    setLineDrawMode: function (enabled) {
+      lineDrawModeEnabled = Boolean(enabled);
+      if (!lineDrawModeEnabled) {
+        lineDrawStart = null;
+        clearLineDrawPreview();
+      }
+      log("info", "Line draw mode set: " + lineDrawModeEnabled);
+    },
+    setLineDrawStart: function (lon, lat) {
+      if (lon === null || lat === null || lon === undefined || lat === undefined) {
+        lineDrawStart = null;
+        clearLineDrawPreview();
+        return;
+      }
+      lineDrawStart = { lon: Number(lon), lat: Number(lat) };
+    },
+    clearLineDrawPreview: function () {
+      lineDrawStart = null;
+      clearLineDrawPreview();
+    },
     addAnnotation: function (text, lon, lat) {
       if (!viewer) return;
       annotationCounter += 1;
@@ -7357,7 +7488,7 @@
           outlineColor: Cesium.Color.BLACK.withAlpha(0.9),
           outlineWidth: 2,
           style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-          font: "500 12px 'Segoe UI', 'Helvetica Neue', sans-serif",
+          font: "600 15px 'Segoe UI', 'Helvetica Neue', sans-serif",
           pixelOffset: new Cesium.Cartesian2(12, -8),
           horizontalOrigin: Cesium.HorizontalOrigin.LEFT,
           verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
@@ -7419,6 +7550,348 @@
       window.requestAnimationFrame(requestSceneRender);
       log("info", "Annotation added lon=" + lon + " lat=" + lat);
     },
+
+    addLineAnnotation: function (coords, text) {
+      if (!viewer || !Array.isArray(coords) || coords.length < 2) return;
+      annotationCounter += 1;
+      const annotationId = "line-annotation-" + String(annotationCounter);
+      const labelText = String(text || "Line").trim() || "Line";
+
+      const positions = [];
+      const cleanCoords = [];
+      for (let i = 0; i < coords.length; i++) {
+        const pt = coords[i] || [];
+        const lon = Number(pt[0]);
+        const lat = Number(pt[1]);
+        if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
+        const carto = Cesium.Cartographic.fromDegrees(lon, lat);
+        const sampledHeight = viewer.scene && viewer.scene.globe ? viewer.scene.globe.getHeight(carto) : null;
+        const height = Number.isFinite(sampledHeight) ? Number(sampledHeight) : 0.0;
+        positions.push(Cesium.Cartesian3.fromDegrees(lon, lat, height));
+        cleanCoords.push([lon, lat]);
+      }
+      if (positions.length < 2) return;
+
+      const lineEntity = viewer.entities.add({
+        polyline: {
+          positions: positions,
+          width: 3,
+          arcType: Cesium.ArcType.GEODESIC,
+          clampToGround: true,
+          material: Cesium.Color.fromCssColorString("#f2c94c"),
+          depthFailMaterial: Cesium.Color.fromCssColorString("#f2c94c").withAlpha(0.65),
+        },
+      });
+      lineEntity.show = annotationVisibilityEnabled;
+      lineEntity._annotationId = annotationId;
+      lineEntity._annotationRole = "line";
+
+      const midIdx = Math.floor(cleanCoords.length / 2);
+      const mid = cleanCoords[midIdx] || cleanCoords[0];
+      const labelEntity = viewer.entities.add({
+        position: Cesium.Cartesian3.fromDegrees(mid[0], mid[1]),
+        label: {
+          text: labelText,
+          fillColor: Cesium.Color.WHITE,
+          showBackground: true,
+          backgroundColor: Cesium.Color.BLACK.withAlpha(0.62),
+          outlineColor: Cesium.Color.BLACK.withAlpha(0.9),
+          outlineWidth: 2,
+          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+          font: "600 14px 'Segoe UI', 'Helvetica Neue', sans-serif",
+          pixelOffset: new Cesium.Cartesian2(0, -10),
+          horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+          verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      });
+      labelEntity.show = annotationVisibilityEnabled;
+      labelEntity._annotationId = annotationId;
+      labelEntity._annotationRole = "label";
+
+      const editEntity = viewer.entities.add({
+        position: Cesium.Cartesian3.fromDegrees(mid[0], mid[1]),
+        billboard: {
+          image: ANNOTATION_EDIT_ICON_IMAGE,
+          width: 17,
+          height: 17,
+          color: Cesium.Color.WHITE.withAlpha(0.42),
+          pixelOffset: new Cesium.Cartesian2(-20, -26),
+          horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+          verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+          scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      });
+      editEntity.show = annotationVisibilityEnabled;
+      editEntity._annotationId = annotationId;
+      editEntity._annotationRole = "edit";
+      editEntity._annotationAnchorEntity = lineEntity;
+      editEntity._annotationLabelEntity = labelEntity;
+
+      const deleteEntity = viewer.entities.add({
+        position: Cesium.Cartesian3.fromDegrees(mid[0], mid[1]),
+        billboard: {
+          image: ANNOTATION_DELETE_ICON_IMAGE,
+          width: 17,
+          height: 17,
+          color: Cesium.Color.WHITE.withAlpha(0.62),
+          pixelOffset: new Cesium.Cartesian2(20, -26),
+          horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+          verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+          scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      });
+      deleteEntity.show = annotationVisibilityEnabled;
+      deleteEntity._annotationId = annotationId;
+      deleteEntity._annotationRole = "delete";
+      deleteEntity._annotationAnchorEntity = lineEntity;
+      deleteEntity._annotationLabelEntity = labelEntity;
+      deleteEntity._annotationEditEntity = editEntity;
+
+      annotationEntities.push(lineEntity);
+      annotationEntities.push(labelEntity);
+      annotationEntities.push(editEntity);
+      annotationEntities.push(deleteEntity);
+      requestSceneRender();
+      log("info", "Line annotation added with " + cleanCoords.length + " point(s)");
+    },
+    
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SECTION: Icon Annotations (QGIS-style icons with text)
+    // ═══════════════════════════════════════════════════════════════════════════
+    addIconAnnotation: function (lon, lat, iconName, text) {
+      if (!viewer) return;
+      annotationCounter += 1;
+      const annotationId = "icon-annotation-" + String(annotationCounter);
+      const displayText = String(text || "").trim() || "Label";
+      
+      // Map icon names to QGIS-style SVG data URIs
+      const iconMap = {
+        "marker": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath fill='%23e74c3c' d='M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z'/%3E%3C/svg%3E",
+        "flag": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath fill='%23f39c12' d='M14.4 6L14 4H5v17h2v-7h5.6l.4 2h7V6z'/%3E%3C/svg%3E",
+        "star": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath fill='%23f1c40f' d='M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z'/%3E%3C/svg%3E",
+        "home": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath fill='%233498db' d='M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z'/%3E%3C/svg%3E",
+        "info": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath fill='%2327ae60' d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z'/%3E%3C/svg%3E",
+        "warning": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath fill='%23e67e22' d='M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z'/%3E%3C/svg%3E",
+        "camera": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath fill='%239b59b6' d='M9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z'/%3E%3C/svg%3E",
+        "tree": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath fill='%2327ae60' d='M16.5 12c.83 0 1.5-.67 1.5-1.5 0-.83-.67-1.5-1.5-1.5-.83 0-1.5.67-1.5 1.5 0 .83.67 1.5 1.5 1.5zM9 11c.55 0 1-.45 1-1s-.45-1-1-1-1 .45-1 1 .45 1 1 1zm0 3c-.55 0-1 .45-1 1s.45 1 1 1 1-.45 1-1-.45-1-1-1zm6.5 2c-.83 0-1.5.67-1.5 1.5s.67 1.5 1.5 1.5 1.5-.67 1.5-1.5-.67-1.5-1.5-1.5zM11 19h2v3h-2z'/%3E%3C/svg%3E",
+      };
+      
+      const iconImage = iconMap[iconName] || iconMap["marker"];
+      
+      let anchorPosition = null;
+      if (lastMapClickCartesian) {
+        const lastLonLat = cartesianToLonLat(lastMapClickCartesian);
+        if (lastLonLat) {
+          const lonDiff = Math.abs(Number(lastLonLat.lon) - Number(lon));
+          const latDiff = Math.abs(Number(lastLonLat.lat) - Number(lat));
+          if (lonDiff <= 0.00002 && latDiff <= 0.00002) {
+            anchorPosition = Cesium.Cartesian3.clone(lastMapClickCartesian);
+          }
+        }
+      }
+      if (!anchorPosition) {
+        const cartographic = Cesium.Cartographic.fromDegrees(Number(lon), Number(lat));
+        const sampledHeight = viewer.scene && viewer.scene.globe ? viewer.scene.globe.getHeight(cartographic) : null;
+        const height = Number.isFinite(sampledHeight) ? Number(sampledHeight) : 0.0;
+        anchorPosition = Cesium.Cartesian3.fromDegrees(Number(lon), Number(lat), height);
+      }
+      lastMapClickCartesian = null;
+      
+      // Icon billboard
+      const iconEntity = viewer.entities.add({
+        position: anchorPosition,
+        billboard: {
+          image: iconImage,
+          width: 32,
+          height: 32,
+          verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+          horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.5),
+        },
+      });
+      iconEntity.show = annotationVisibilityEnabled;
+      iconEntity._annotationId = annotationId;
+      iconEntity._annotationRole = "icon";
+      
+      // Text label
+      const labelEntity = viewer.entities.add({
+        position: anchorPosition,
+        label: {
+          text: displayText,
+          fillColor: Cesium.Color.WHITE,
+          showBackground: true,
+          backgroundColor: Cesium.Color.BLACK.withAlpha(0.7),
+          outlineColor: Cesium.Color.BLACK.withAlpha(0.9),
+          outlineWidth: 2,
+          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+          font: "600 13px 'Segoe UI', 'Helvetica Neue', sans-serif",
+          pixelOffset: new Cesium.Cartesian2(0, -40),
+          horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+          verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+          scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.45),
+          translucencyByDistance: new Cesium.NearFarScalar(3000.0, 1.0, 2400000.0, 0.62),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      });
+      labelEntity.show = annotationVisibilityEnabled;
+      labelEntity._annotationId = annotationId;
+      labelEntity._annotationRole = "label";
+      
+      // Edit button
+      const editEntity = viewer.entities.add({
+        position: anchorPosition,
+        billboard: {
+          image: ANNOTATION_EDIT_ICON_IMAGE,
+          width: 17,
+          height: 17,
+          color: Cesium.Color.WHITE.withAlpha(0.42),
+          pixelOffset: new Cesium.Cartesian2(-20, -58),
+          horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+          verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+          scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      });
+      editEntity.show = annotationVisibilityEnabled;
+      editEntity._annotationId = annotationId;
+      editEntity._annotationRole = "edit";
+      editEntity._annotationIconEntity = iconEntity;
+      editEntity._annotationLabelEntity = labelEntity;
+      
+      // Delete button
+      const deleteEntity = viewer.entities.add({
+        position: anchorPosition,
+        billboard: {
+          image: ANNOTATION_DELETE_ICON_IMAGE,
+          width: 17,
+          height: 17,
+          color: Cesium.Color.WHITE.withAlpha(0.62),
+          pixelOffset: new Cesium.Cartesian2(20, -58),
+          horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+          verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+          scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      });
+      deleteEntity.show = annotationVisibilityEnabled;
+      deleteEntity._annotationId = annotationId;
+      deleteEntity._annotationRole = "delete";
+      deleteEntity._annotationIconEntity = iconEntity;
+      deleteEntity._annotationLabelEntity = labelEntity;
+      deleteEntity._annotationEditEntity = editEntity;
+      
+      annotationEntities.push(iconEntity);
+      annotationEntities.push(labelEntity);
+      annotationEntities.push(editEntity);
+      annotationEntities.push(deleteEntity);
+      requestSceneRender();
+      log("info", "Icon annotation added: " + iconName + " at lon=" + lon + " lat=" + lat);
+    },
+    
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SECTION: Text-Only Labels (larger, white font, editable)
+    // ═══════════════════════════════════════════════════════════════════════════
+    addTextLabel: function (lon, lat, text) {
+      if (!viewer) return;
+      annotationCounter += 1;
+      const annotationId = "text-label-" + String(annotationCounter);
+      const displayText = String(text || "Label").trim() || "Label";
+      
+      let anchorPosition = null;
+      if (lastMapClickCartesian) {
+        const lastLonLat = cartesianToLonLat(lastMapClickCartesian);
+        if (lastLonLat) {
+          const lonDiff = Math.abs(Number(lastLonLat.lon) - Number(lon));
+          const latDiff = Math.abs(Number(lastLonLat.lat) - Number(lat));
+          if (lonDiff <= 0.00002 && latDiff <= 0.00002) {
+            anchorPosition = Cesium.Cartesian3.clone(lastMapClickCartesian);
+          }
+        }
+      }
+      if (!anchorPosition) {
+        const cartographic = Cesium.Cartographic.fromDegrees(Number(lon), Number(lat));
+        const sampledHeight = viewer.scene && viewer.scene.globe ? viewer.scene.globe.getHeight(cartographic) : null;
+        const height = Number.isFinite(sampledHeight) ? Number(sampledHeight) : 0.0;
+        anchorPosition = Cesium.Cartesian3.fromDegrees(Number(lon), Number(lat), height);
+      }
+      lastMapClickCartesian = null;
+      
+      // Large white text label (no anchor point, just text)
+      const labelEntity = viewer.entities.add({
+        position: anchorPosition,
+        label: {
+          text: displayText,
+          fillColor: Cesium.Color.WHITE,
+          showBackground: true,
+          backgroundColor: Cesium.Color.BLACK.withAlpha(0.5),
+          outlineColor: Cesium.Color.BLACK,
+          outlineWidth: 3,
+          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+          font: "bold 18px 'Segoe UI', 'Helvetica Neue', sans-serif",
+          pixelOffset: new Cesium.Cartesian2(0, 0),
+          horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+          verticalOrigin: Cesium.VerticalOrigin.CENTER,
+          scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.2, 1800000.0, 0.6),
+          translucencyByDistance: new Cesium.NearFarScalar(3000.0, 1.0, 2400000.0, 0.7),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      });
+      labelEntity.show = annotationVisibilityEnabled;
+      labelEntity._annotationId = annotationId;
+      labelEntity._annotationRole = "text-label";
+      
+      // Edit button
+      const editEntity = viewer.entities.add({
+        position: anchorPosition,
+        billboard: {
+          image: ANNOTATION_EDIT_ICON_IMAGE,
+          width: 18,
+          height: 18,
+          color: Cesium.Color.WHITE.withAlpha(0.5),
+          pixelOffset: new Cesium.Cartesian2(-35, -25),
+          horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+          verticalOrigin: Cesium.VerticalOrigin.CENTER,
+          scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      });
+      editEntity.show = annotationVisibilityEnabled;
+      editEntity._annotationId = annotationId;
+      editEntity._annotationRole = "edit";
+      editEntity._annotationLabelEntity = labelEntity;
+      
+      // Delete button
+      const deleteEntity = viewer.entities.add({
+        position: anchorPosition,
+        billboard: {
+          image: ANNOTATION_DELETE_ICON_IMAGE,
+          width: 18,
+          height: 18,
+          color: Cesium.Color.WHITE.withAlpha(0.7),
+          pixelOffset: new Cesium.Cartesian2(35, -25),
+          horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+          verticalOrigin: Cesium.VerticalOrigin.CENTER,
+          scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      });
+      deleteEntity.show = annotationVisibilityEnabled;
+      deleteEntity._annotationId = annotationId;
+      deleteEntity._annotationRole = "delete";
+      deleteEntity._annotationLabelEntity = labelEntity;
+      deleteEntity._annotationEditEntity = editEntity;
+      
+      annotationEntities.push(labelEntity);
+      annotationEntities.push(editEntity);
+      annotationEntities.push(deleteEntity);
+      requestSceneRender();
+      log("info", "Text label added at lon=" + lon + " lat=" + lat);
+    },
+    
     clearAnnotations: function () {
       clearAnnotationEntities();
       log("info", "Annotations cleared");
@@ -8521,6 +8994,335 @@
           })) : []
         }
       };
+    },
+    
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SECTION: Raster Stretching (Imagery and DEM)
+    // ═══════════════════════════════════════════════════════════════════════════
+    applyRasterStretch: function (layerKey, stretchType, method, params) {
+      if (!viewer) {
+        log("warn", "applyRasterStretch: viewer not initialized");
+        return;
+      }
+      
+      log("info", "Applying raster stretch: layer=" + layerKey + " type=" + stretchType + " method=" + method);
+      
+      // Find the layer
+      const imageryLayers = viewer.imageryLayers;
+      let targetLayer = null;
+      
+      for (let i = 0; i < imageryLayers.length; i++) {
+        const layer = imageryLayers.get(i);
+        if (layer && layer._layerKey === layerKey) {
+          targetLayer = layer;
+          break;
+        }
+      }
+      
+      if (!targetLayer) {
+        log("warn", "applyRasterStretch: layer not found: " + layerKey);
+        return;
+      }
+      
+      // CRITICAL FIX: Verify stretch type matches layer type
+      // Don't apply imagery stretch to DEM layers or vice versa
+      const isDemLayer = activeDemContext && activeDemContext.layerKey === layerKey;
+      if (stretchType === "imagery" && isDemLayer) {
+        log("warn", "applyRasterStretch: cannot apply imagery stretch to DEM layer");
+        return;
+      }
+      if (stretchType === "dem" && !isDemLayer) {
+        log("warn", "applyRasterStretch: cannot apply DEM stretch to imagery layer");
+        return;
+      }
+      
+      // Store stretch settings on the layer for persistence
+      targetLayer._stretchSettings = {
+        type: stretchType,
+        method: method,
+        params: params || {}
+      };
+      
+      // Apply stretch based on type and method
+      if (stretchType === "imagery") {
+        this._applyImageryStretch(targetLayer, method, params);
+      } else if (stretchType === "dem") {
+        this._applyDemStretch(targetLayer, method, params);
+      }
+      
+      requestSceneRender();
+      log("info", "Raster stretch applied successfully");
+    },
+    
+    _applyImageryStretch: function (layer, method, params) {
+      // For imagery, we adjust brightness and contrast to simulate stretching
+      // Real stretching would require tile reprocessing on the server
+      
+      if (method === "min_max" || method === "linear") {
+        // Min-max stretch: increase contrast
+        layer.brightness = params.brightness || 1.0;
+        layer.contrast = params.contrast || 1.5;
+      } else if (method === "std_dev") {
+        // Standard deviation stretch: moderate contrast boost
+        const k = params.k || 2.0;
+        layer.brightness = params.brightness || 1.0;
+        layer.contrast = 1.0 + (k * 0.2); // Scale contrast based on k
+      } else if (method === "histogram_eq") {
+        // Histogram equalization: strong contrast
+        layer.brightness = params.brightness || 1.0;
+        layer.contrast = params.contrast || 2.0;
+      }
+      
+      // CRITICAL FIX: Ensure DEM layers remain visible when adjusting imagery stretch
+      // Imagery stretch only modifies brightness/contrast, it should not affect DEM visibility
+      if (activeDemDrapeLayer && activeDemContext && activeDemContext.visible !== false) {
+        if (!activeDemDrapeLayer.show) {
+          log("debug", "Imagery stretch: Restoring DEM drape visibility");
+          activeDemDrapeLayer.show = true;
+        }
+      }
+      if (activeDemHillshadeLayer && activeDemContext && activeDemContext.visible !== false) {
+        if (!activeDemHillshadeLayer.show && activeDemHillshadeLayer.alpha > 0.01) {
+          log("debug", "Imagery stretch: Restoring DEM hillshade visibility");
+          activeDemHillshadeLayer.show = true;
+        }
+      }
+      
+      log("debug", "Imagery stretch applied: brightness=" + layer.brightness + " contrast=" + layer.contrast);
+    },
+    
+    _applyDemStretch: function (layer, method, params) {
+      // For DEM, we can adjust the colormap rescale parameters
+      // This requires rebuilding the DEM drape with new rescale values
+      
+      if (!activeDemContext || activeDemContext.layerKey !== layer._layerKey) {
+        log("warn", "DEM stretch: layer is not the active DEM");
+        return;
+      }
+      
+      // Calculate new rescale range based on method
+      let newMin, newMax;
+      const currentRange = _demOriginalRescale || { min: -500, max: 9000 };
+      
+      if (method === "min_max") {
+        // Use full data range
+        newMin = params.min !== undefined ? params.min : currentRange.min;
+        newMax = params.max !== undefined ? params.max : currentRange.max;
+      } else if (method === "std_dev") {
+        // Standard deviation stretch
+        const k = params.k || 2.0;
+        const mean = (currentRange.min + currentRange.max) / 2;
+        const range = currentRange.max - currentRange.min;
+        const std = range / 6; // Approximate std dev
+        newMin = mean - (k * std);
+        newMax = mean + (k * std);
+      } else if (method === "linear") {
+        // Linear stretch with custom range
+        newMin = params.min !== undefined ? params.min : currentRange.min;
+        newMax = params.max !== undefined ? params.max : currentRange.max;
+      } else if (method === "histogram_eq") {
+        // Histogram equalization (approximate with enhanced contrast)
+        const range = currentRange.max - currentRange.min;
+        newMin = currentRange.min + (range * 0.1);
+        newMax = currentRange.max - (range * 0.1);
+      } else {
+        newMin = currentRange.min;
+        newMax = currentRange.max;
+      }
+      
+      // Rebuild DEM drape with new rescale
+      if (activeDemDrapeUrl) {
+        const baseUrl = activeDemDrapeUrl.split("?")[0];
+        const newRescale = newMin.toFixed(1) + "," + newMax.toFixed(1);
+        
+        // Update the drape layer URL with new rescale
+        const newUrl = buildUrlWithQuery(baseUrl, {
+          rescale: newRescale,
+          colormap_name: activeDemContext.colorMode || "gray"
+        });
+        
+        // Snapshot camera and properties for smooth swap
+        const oldDrapeLayer = activeDemDrapeLayer;
+        const wasVisible = oldDrapeLayer ? oldDrapeLayer.show : true;
+        const currentAlpha = oldDrapeLayer ? oldDrapeLayer.alpha : 1.0;
+        
+        // CRITICAL FIX: Get rectangle bounds from activeDemContext
+        const rectangle = activeDemContext.bounds ? createRectangle(activeDemContext.bounds) : null;
+        
+        // Add new drape layer with stretched values
+        const newDrapeLayer = viewer.imageryLayers.addImageryProvider(
+          new Cesium.UrlTemplateImageryProvider({
+            url: newUrl,
+            maximumLevel: 18,
+            minimumLevel: 0,
+            tilingScheme: new Cesium.WebMercatorTilingScheme(),
+            enablePickFeatures: false,
+            rectangle: rectangle
+          })
+        );
+        
+        // Restore visibility and properties
+        newDrapeLayer.show = wasVisible;
+        newDrapeLayer.alpha = currentAlpha;
+        newDrapeLayer._layerKey = activeDemContext.layerKey;
+        newDrapeLayer._layerName = activeDemContext.name;
+        
+        // SYNC FIX: Store stretch settings with calculated min/max for real-time coordination
+        // This ensures setDemColorMode can retrieve the exact stretch range
+        newDrapeLayer._stretchSettings = { 
+          type: "dem", 
+          method: method, 
+          params: Object.assign({}, params, { min: newMin, max: newMax })
+        };
+        
+        activeDemDrapeLayer = newDrapeLayer;
+        activeDemDrapeUrl = newUrl;
+
+        // Fast cleanup of old layer to avoid flicker while maintaining speed
+        if (oldDrapeLayer) {
+          setTimeout(() => {
+            if (viewer && viewer.imageryLayers && viewer.imageryLayers.contains(oldDrapeLayer)) {
+              viewer.imageryLayers.remove(oldDrapeLayer, false);
+            }
+          }, 120);
+        }
+        
+        // Update managed layers
+        managedImageryLayers.set(activeDemContext.layerKey, newDrapeLayer);
+        
+        // CRITICAL FIX: Ensure all other imagery layers remain visible
+        // When we rebuild the DEM drape, we must not affect other layers' visibility
+        for (const [key, imgLayer] of managedImageryLayers.entries()) {
+          if (key !== activeDemContext.layerKey && imgLayer && layerVisibilityState.has(key)) {
+            const shouldBeVisible = layerVisibilityState.get(key);
+            if (imgLayer.show !== shouldBeVisible) {
+              log("debug", "DEM stretch: Restoring visibility for layer " + key + " to " + shouldBeVisible);
+              imgLayer.show = shouldBeVisible;
+            }
+          }
+        }
+        
+        // Reapply layer order
+        reapplyLayerOrderIfKnown();
+        
+        // SYNC FIX: Update colorbar to match new stretch range
+        if (typeof updateDemColorbar === "function") {
+          updateDemColorbar(newMin, newMax, activeDemContext.options);
+        }
+        
+        log("info", "DEM stretch applied: rescale=" + newRescale + " visible=" + wasVisible);
+      }
+    },
+    
+    updateRasterStretchParams: function (layerKey, params) {
+      if (!viewer) return;
+      
+      // Find the layer
+      const imageryLayers = viewer.imageryLayers;
+      let targetLayer = null;
+      
+      for (let i = 0; i < imageryLayers.length; i++) {
+        const layer = imageryLayers.get(i);
+        if (layer && layer._layerKey === layerKey) {
+          targetLayer = layer;
+          break;
+        }
+      }
+      
+      if (!targetLayer || !targetLayer._stretchSettings) {
+        log("warn", "updateRasterStretchParams: layer not found or no stretch applied: " + layerKey);
+        return;
+      }
+      
+      // Update params
+      Object.assign(targetLayer._stretchSettings.params, params);
+      
+      // Reapply stretch with updated params
+      const settings = targetLayer._stretchSettings;
+      this.applyRasterStretch(layerKey, settings.type, settings.method, settings.params);
+      
+      log("debug", "Raster stretch params updated for layer: " + layerKey);
+    },
+    
+    removeRasterStretch: function (layerKey) {
+      if (!viewer) return;
+      
+      // Find the layer
+      const imageryLayers = viewer.imageryLayers;
+      let targetLayer = null;
+      
+      for (let i = 0; i < imageryLayers.length; i++) {
+        const layer = imageryLayers.get(i);
+        if (layer && layer._layerKey === layerKey) {
+          targetLayer = layer;
+          break;
+        }
+      }
+      
+      if (!targetLayer) {
+        log("warn", "removeRasterStretch: layer not found: " + layerKey);
+        return;
+      }
+      
+      // Reset to defaults
+      if (targetLayer._stretchSettings) {
+        if (targetLayer._stretchSettings.type === "imagery") {
+          targetLayer.brightness = 1.0;
+          targetLayer.contrast = 1.0;
+        } else if (targetLayer._stretchSettings.type === "dem") {
+          // Rebuild DEM with original rescale
+          if (_demOriginalRescale && activeDemContext && activeDemContext.layerKey === layerKey) {
+            const baseUrl = activeDemDrapeUrl.split("?")[0];
+            const originalRescale = _demOriginalRescale.min + "," + _demOriginalRescale.max;
+            
+            const newUrl = buildUrlWithQuery(baseUrl, {
+              rescale: originalRescale,
+              colormap_name: activeDemContext.colorMode || "gray"
+            });
+            
+            // CRITICAL FIX: Preserve current visibility and properties
+            const wasVisible = activeDemDrapeLayer ? activeDemDrapeLayer.show : true;
+            const currentAlpha = activeDemDrapeLayer ? activeDemDrapeLayer.alpha : 1.0;
+            
+            if (activeDemDrapeLayer) {
+              viewer.imageryLayers.remove(activeDemDrapeLayer, false);
+            }
+            
+            // CRITICAL FIX: Get rectangle bounds from activeDemContext
+            const rectangle = activeDemContext.bounds ? createRectangle(activeDemContext.bounds) : null;
+            
+            const newDrapeLayer = viewer.imageryLayers.addImageryProvider(
+              new Cesium.UrlTemplateImageryProvider({
+                url: newUrl,
+                maximumLevel: 18,
+                minimumLevel: 0,
+                tilingScheme: new Cesium.WebMercatorTilingScheme(),
+                enablePickFeatures: false,
+                rectangle: rectangle
+              })
+            );
+            
+            // CRITICAL FIX: Restore visibility and properties
+            newDrapeLayer.show = wasVisible;
+            newDrapeLayer.alpha = currentAlpha;
+            newDrapeLayer._layerKey = activeDemContext.layerKey;
+            newDrapeLayer._layerName = activeDemContext.name;
+            
+            activeDemDrapeLayer = newDrapeLayer;
+            activeDemDrapeUrl = newUrl;
+            
+            managedImageryLayers.set(activeDemContext.layerKey, newDrapeLayer);
+            reapplyLayerOrderIfKnown();
+            
+            log("info", "DEM stretch removed: restored original rescale, visible=" + wasVisible);
+          }
+        }
+        
+        delete targetLayer._stretchSettings;
+      }
+      
+      requestSceneRender();
+      log("info", "Raster stretch removed from layer: " + layerKey);
     }
   };
 

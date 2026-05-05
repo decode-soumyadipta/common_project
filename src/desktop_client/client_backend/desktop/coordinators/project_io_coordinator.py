@@ -46,6 +46,8 @@ class ProjectIoCoordinator:
             not controller._annotation_records
             and not controller._annotation_line_records
             and not controller._annotation_polygon_records
+            and not controller._annotation_icon_records
+            and not controller._annotation_text_records
         ):
             controller.panel.log("No annotations captured yet.")
             return
@@ -73,6 +75,37 @@ class ProjectIoCoordinator:
                     "properties": properties,
                 }
             )
+        for item in controller._annotation_icon_records:
+            lon = float(item.get("lon") or 0.0)
+            lat = float(item.get("lat") or 0.0)
+            properties = {
+                "type": "icon",
+                "icon": item.get("icon", ""),
+                "text": item.get("text", ""),
+                "created_at": item.get("created_at", ""),
+            }
+            features.append(
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [lon, lat]},
+                    "properties": properties,
+                }
+            )
+        for item in controller._annotation_text_records:
+            lon = float(item.get("lon") or 0.0)
+            lat = float(item.get("lat") or 0.0)
+            properties = {
+                "type": "text",
+                "text": item.get("text", ""),
+                "created_at": item.get("created_at", ""),
+            }
+            features.append(
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [lon, lat]},
+                    "properties": properties,
+                }
+            )
         for item in controller._annotation_line_records:
             features.append(
                 {
@@ -83,6 +116,7 @@ class ProjectIoCoordinator:
                     },
                     "properties": {
                         "feature_type": item.get("feature_type", "road"),
+                        "label": item.get("label", ""),
                         "length_m": item.get("length_m", 0.0),
                         "width_m": item.get("width_m", 0.0),
                         "condition": item.get("condition", "intact"),
@@ -119,6 +153,8 @@ class ProjectIoCoordinator:
             not controller._annotation_records
             and not controller._annotation_line_records
             and not controller._annotation_polygon_records
+            and not controller._annotation_icon_records
+            and not controller._annotation_text_records
         ):
             controller.panel.log("No annotations captured yet.")
             return
@@ -150,6 +186,8 @@ class ProjectIoCoordinator:
                 "created_at": "str",
                 "notes": "str",
                 "class_level": "str",
+                "annotation_type": "str",
+                "icon": "str",
             },
         }
         with fiona.open(
@@ -173,6 +211,44 @@ class ProjectIoCoordinator:
                             "created_at": str(item.get("created_at") or ""),
                             "notes": str(item.get("text") or ""),
                             "class_level": "UNCLASS",
+                            "annotation_type": str(item.get("type") or "point"),
+                            "icon": "",
+                        },
+                    }
+                )
+            for item in controller._annotation_icon_records:
+                lon = float(item.get("lon") or 0.0)
+                lat = float(item.get("lat") or 0.0)
+                sink.write(
+                    {
+                        "geometry": {"type": "Point", "coordinates": (lon, lat)},
+                        "properties": {
+                            "category": "icon",
+                            "confidence": "possible",
+                            "height_m": -9999.0,
+                            "created_at": str(item.get("created_at") or ""),
+                            "notes": str(item.get("text") or ""),
+                            "class_level": "UNCLASS",
+                            "annotation_type": "icon",
+                            "icon": str(item.get("icon") or ""),
+                        },
+                    }
+                )
+            for item in controller._annotation_text_records:
+                lon = float(item.get("lon") or 0.0)
+                lat = float(item.get("lat") or 0.0)
+                sink.write(
+                    {
+                        "geometry": {"type": "Point", "coordinates": (lon, lat)},
+                        "properties": {
+                            "category": "text",
+                            "confidence": "possible",
+                            "height_m": -9999.0,
+                            "created_at": str(item.get("created_at") or ""),
+                            "notes": str(item.get("text") or ""),
+                            "class_level": "UNCLASS",
+                            "annotation_type": "text",
+                            "icon": "",
                         },
                     }
                 )
@@ -181,6 +257,7 @@ class ProjectIoCoordinator:
             "geometry": "LineString",
             "properties": {
                 "feature_type": "str",
+                "label": "str",
                 "length_m": "float",
                 "width_m": "float",
                 "condition": "str",
@@ -203,6 +280,7 @@ class ProjectIoCoordinator:
                         },
                         "properties": {
                             "feature_type": str(item.get("feature_type") or "road"),
+                            "label": str(item.get("label") or ""),
                             "length_m": float(item.get("length_m") or 0.0),
                             "width_m": float(item.get("width_m") or 0.0),
                             "condition": str(item.get("condition") or "intact"),

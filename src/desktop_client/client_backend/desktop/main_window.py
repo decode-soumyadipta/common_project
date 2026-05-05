@@ -451,7 +451,9 @@ class MainWindow(QMainWindow):
         "Fill Volume",
         "Pan",
         "Add Point",
+        "Add Line",
         "Add Polygon",
+        "Add Text Label",
         "Fly Through",
     }
     TOOLBAR_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
@@ -476,7 +478,9 @@ class MainWindow(QMainWindow):
             "annotation",
             (
                 ("Add Point", "annotate_point"),
+                ("Add Line", "annotate_line"),
                 ("Add Polygon", "annotate_polygon"),
+                ("Add Text Label", "annotate_text"),
             ),
         ),
         (
@@ -914,7 +918,9 @@ class MainWindow(QMainWindow):
             "Elevation Profile",
             "Fill Volume",
             "Add Point",
+            "Add Line",
             "Add Polygon",
+            "Add Text Label",
         }
         if action_label in interaction_toggles and action.isChecked():
             for other_label in interaction_toggles:
@@ -1371,7 +1377,9 @@ class MainWindow(QMainWindow):
                 "Elevation Profile",
                 "Fill Volume",
                 "Add Point",
+                "Add Line",
                 "Add Polygon",
+                "Add Text Label",
             }
             normal_view_blocked = any(
                 self.toolbar_actions.get(blocker).isChecked()
@@ -1381,9 +1389,14 @@ class MainWindow(QMainWindow):
             if label in {"Comparator", "Fly Through"} and normal_view_blocked:
                 is_enabled = False
 
-            # 5. Annotation tool exclusivity (Add Point, Add Polygon)
+            # 5. Annotation tool exclusivity (Add Point, Add Line, Add Polygon, Add Text Label)
             # Disable during Comparator and Fly Through modes.
-            annotation_tools = {"Add Point", "Add Polygon"}
+            annotation_tools = {
+                "Add Point",
+                "Add Line",
+                "Add Polygon",
+                "Add Text Label",
+            }
             if label in annotation_tools:
                 if active_viz_tool in {"Comparator", "Fly Through"}:
                     is_enabled = False

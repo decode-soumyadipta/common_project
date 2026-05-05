@@ -22,7 +22,9 @@ class ToolbarActionCoordinator:
             "Fill Volume": c._toolbar_measure_volume,
             "Clear Last": c._toolbar_clear_last,
             "Add Point": c._toolbar_toggle_add_point_mode,
+            "Add Line": c._toolbar_toggle_add_line_mode,
             "Add Polygon": c._toolbar_add_polygon_annotation,
+            "Add Text Label": c._toolbar_toggle_add_text_mode,
             "Fly Through": c._toolbar_fly_through,
             "Pan": c._toolbar_set_pan_mode,
             "Zoom In": lambda: c._run_js_call("zoomIn"),
@@ -51,8 +53,12 @@ class ToolbarActionCoordinator:
                 return c._toolbar_set_pan_mode(enabled=checked)
             if action_label == "Add Point":
                 return c._toolbar_toggle_add_point_mode(enabled=checked)
+            if action_label == "Add Line":
+                return c._toolbar_toggle_add_line_mode(enabled=checked)
             if action_label == "Add Polygon":
                 return c._toolbar_add_polygon_annotation(enabled=checked)
+            if action_label == "Add Text Label":
+                return c._toolbar_toggle_add_text_mode(enabled=checked)
             if action_label == "Fly Through":
                 return c._toolbar_fly_through(enabled=checked)
             handler()

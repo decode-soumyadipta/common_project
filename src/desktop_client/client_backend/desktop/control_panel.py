@@ -834,11 +834,19 @@ class ControlPanel(QWidget):
         )
         self.contrast_value.setMinimumWidth(64)
         self.stretch_mode_combo = QComboBox()
-        self.stretch_mode_combo.addItem("Linear (2-98%)", "linear")
-        self.stretch_mode_combo.addItem("Min-Max", "minmax")
+        self.stretch_mode_combo.addItem("RGB Min-Max (Per-Channel)", "minmax")
+        self.stretch_mode_combo.addItem("RGB Linear (Shared)", "linear_shared")
         self.stretch_mode_combo.setCurrentIndex(0)
         self.stretch_mode_combo.setToolTip(
-            "Rescale raster values before rendering the imagery."
+            "Rescale RGB imagery values before rendering."
+        )
+        self.dem_stretch_mode_combo = QComboBox()
+        self.dem_stretch_mode_combo.addItem("Min-Max", "minmax")
+        self.dem_stretch_mode_combo.addItem("Std Dev (2x)", "stddev")
+        self.dem_stretch_mode_combo.addItem("Histogram Equalization", "histeq")
+        self.dem_stretch_mode_combo.setCurrentIndex(0)
+        self.dem_stretch_mode_combo.setToolTip(
+            "Rescale DEM values before rendering terrain."
         )
         self.pitch_slider = QSlider(Qt.Orientation.Horizontal)
         self.pitch_slider.setRange(-85, -10)
@@ -882,7 +890,7 @@ class ControlPanel(QWidget):
         view_layout.setContentsMargins(10, 10, 10, 10)
 
         # RGB Layer controls
-        rgb_label = QLabel("<b>Imagery</b>")
+        rgb_label = QLabel("<b>Imagery (RGB)</b>")
         view_layout.addWidget(rgb_label)
         bright_layout = QHBoxLayout()
         bright_layout.addWidget(QLabel("Brightness:"))
@@ -918,7 +926,7 @@ class ControlPanel(QWidget):
         view_layout.addSpacing(8)
 
         # DEM-specific controls (initially hidden)
-        dem_label = QLabel("<b>Terrain</b>")
+        dem_label = QLabel("<b>Terrain (DEM)</b>")
         view_layout.addWidget(dem_label)
         hillshade_layout = QHBoxLayout()
         hillshade_layout.addWidget(QLabel("Hillshade:"))
@@ -929,6 +937,10 @@ class ControlPanel(QWidget):
         dem_color_layout.addWidget(QLabel("Style:"))
         dem_color_layout.addWidget(self.dem_color_mode_combo, 1)
         view_layout.addLayout(dem_color_layout)
+        dem_stretch_layout = QHBoxLayout()
+        dem_stretch_layout.addWidget(QLabel("Stretch:"))
+        dem_stretch_layout.addWidget(self.dem_stretch_mode_combo, 1)
+        view_layout.addLayout(dem_stretch_layout)
 
         view_layout.addStretch()
 

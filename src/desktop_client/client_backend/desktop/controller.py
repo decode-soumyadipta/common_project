@@ -127,6 +127,9 @@ class DesktopController(QObject):
         self._comparator_selected_layer_type: str | None = None
         self._distance_measure_mode_enabled = False
         self._add_point_mode_enabled = False
+        self._add_line_mode_enabled = False
+        self._add_text_mode_enabled = False
+        self._annotation_line_start: tuple[float, float] | None = None
         self._shadow_height_mode_enabled = False
         self._pan_mode_enabled = True
         self._polygon_area_mode_enabled = False
@@ -148,6 +151,11 @@ class DesktopController(QObject):
         self._annotation_records: list[dict[str, object]] = []
         self._annotation_line_records: list[dict[str, object]] = []
         self._annotation_polygon_records: list[dict[str, object]] = []
+        self._annotation_icon_records: list[dict[str, object]] = []  # Icon + text annotations
+        self._annotation_text_records: list[dict[str, object]] = []  # Text-only labels
+        
+        # Raster stretching state
+        self._raster_stretch_settings: dict[str, dict[str, object]] = {}  # {layer_key: {type, method, params}}
         self._user_added_assets: dict[str, dict[str, object]] = {}
         self._vector_layers: dict[str, dict[str, object]] = {}
         self._project_path: Path | None = None
@@ -425,6 +433,10 @@ class DesktopController(QObject):
         self.panel.stretch_mode_combo.currentIndexChanged.connect(
             self._on_stretch_mode_changed
         )
+        if hasattr(self.panel, "dem_stretch_mode_combo"):
+            self.panel.dem_stretch_mode_combo.currentIndexChanged.connect(
+                self._on_dem_stretch_mode_changed
+            )
         self.panel.dem_hillshade_slider.valueChanged.connect(
             self._on_dem_slider_changed
         )
@@ -1909,7 +1921,10 @@ class DesktopController(QObject):
                 "points": list(self._annotation_records),
                 "lines": list(self._annotation_line_records),
                 "polygons": list(self._annotation_polygon_records),
+                "icons": list(self._annotation_icon_records),
+                "text_labels": list(self._annotation_text_records),
             },
+            "raster_stretch": dict(self._raster_stretch_settings),
             "layers": {
                 "rasters": raster_layers,
                 "vectors": vector_layers,
@@ -1939,10 +1954,21 @@ class DesktopController(QObject):
             self._annotation_records = list(annotations.get("points") or [])
             self._annotation_line_records = list(annotations.get("lines") or [])
             self._annotation_polygon_records = list(annotations.get("polygons") or [])
+            self._annotation_icon_records = list(annotations.get("icons") or [])
+            self._annotation_text_records = list(annotations.get("text_labels") or [])
         else:
             self._annotation_records = []
             self._annotation_line_records = []
             self._annotation_polygon_records = []
+            self._annotation_icon_records = []
+            self._annotation_text_records = []
+
+        # Load raster stretch settings
+        raster_stretch = payload.get("raster_stretch") if isinstance(payload, dict) else {}
+        if isinstance(raster_stretch, dict):
+            self._raster_stretch_settings = dict(raster_stretch)
+        else:
+            self._raster_stretch_settings = {}
 
         layers_payload = payload.get("layers") if isinstance(payload, dict) else {}
         raster_layers = []
@@ -2084,6 +2110,9 @@ class DesktopController(QObject):
         self._annotation_records = []
         self._annotation_line_records = []
         self._annotation_polygon_records = []
+        self._annotation_icon_records = []
+        self._annotation_text_records = []
+        self._raster_stretch_settings = {}
         self.state.selected_asset = None
         self.state.clicked_points = []
         self.state.search_geometry_type = None
@@ -2107,6 +2136,36 @@ class DesktopController(QObject):
                 continue
             self._run_js_call("addAnnotation", text, lon, lat)
 
+        # Restore icon annotations
+        for item in self._annotation_icon_records:
+            try:
+                lon = float(item.get("lon") or 0.0)
+                lat = float(item.get("lat") or 0.0)
+                icon = str(item.get("icon") or "marker")
+                text = str(item.get("text") or "")
+            except (TypeError, ValueError):
+                continue
+            self._run_js_call("addIconAnnotation", lon, lat, icon, text)
+
+        # Restore text labels
+        for item in self._annotation_text_records:
+            try:
+                lon = float(item.get("lon") or 0.0)
+                lat = float(item.get("lat") or 0.0)
+                text = str(item.get("text") or "Label")
+            except (TypeError, ValueError):
+                continue
+            self._run_js_call("addTextLabel", lon, lat, text)
+
+        for item in self._annotation_line_records:
+            coords = item.get("coords", [])
+            if coords:
+                self._run_js_call(
+                    "addLineAnnotation",
+                    coords,
+                    str(item.get("label") or "Line"),
+                )
+
         for item in self._annotation_polygon_records:
             coords = item.get("coords", [])
             if coords:
@@ -2120,6 +2179,14 @@ class DesktopController(QObject):
                 
                 if js_points:
                     self._run_js_call("restoreAnnotationPolygon", js_points)
+
+        # Restore raster stretch settings
+        for layer_key, settings in self._raster_stretch_settings.items():
+            stretch_type = settings.get("type")
+            method = settings.get("method")
+            params = settings.get("params", {})
+            if stretch_type and method:
+                self._run_js_call("applyRasterStretch", layer_key, stretch_type, method, params)
 
         annotation_geojson = self._annotation_line_polygon_geojson()
         if annotation_geojson:
@@ -2146,6 +2213,7 @@ class DesktopController(QObject):
                         "geometry": {"type": "LineString", "coordinates": coords},
                         "properties": {
                             "feature_type": item.get("feature_type", "line"),
+                            "label": item.get("label", ""),
                             "length_m": item.get("length_m", 0.0),
                             "width_m": item.get("width_m", 0.0),
                             "condition": item.get("condition", "intact"),
@@ -3149,7 +3217,10 @@ class DesktopController(QObject):
         self._viz.on_visual_slider_changed(_value)
 
     def _on_stretch_mode_changed(self, _index: int) -> None:
-        self._apply_stretch_mode(log_to_panel=True)
+        self._apply_imagery_stretch_mode(log_to_panel=True)
+
+    def _on_dem_stretch_mode_changed(self, _index: int) -> None:
+        self._apply_dem_stretch_mode(log_to_panel=True)
 
     def _on_dem_slider_changed(self, _value: int) -> None:
         self._viz.on_dem_slider_changed(_value)
@@ -3160,23 +3231,43 @@ class DesktopController(QObject):
     def apply_visual_settings(self, log_to_panel: bool = True) -> None:
         self._viz.apply_visual_settings(log_to_panel=log_to_panel)
 
-    def _apply_stretch_mode(self, log_to_panel: bool = True) -> None:
-        refreshed = self._refresh_raster_layers_for_stretch()
+    def _apply_imagery_stretch_mode(self, log_to_panel: bool = True) -> None:
+        refreshed = self._refresh_raster_layers_for_stretch(layer_kind="imagery")
         mode_label = self.panel.stretch_mode_combo.currentText()
         if not log_to_panel:
             return
         if refreshed > 0:
             self.panel.log(
-                f"Stretch mode applied: {mode_label} ({refreshed} layer(s) refreshed)"
+                f"Imagery stretch applied: {mode_label} ({refreshed} layer(s) refreshed)"
             )
             self._logger.info(
-                "Stretch mode applied mode=%s refreshed=%s", mode_label, refreshed
+                "Imagery stretch applied mode=%s refreshed=%s", mode_label, refreshed
             )
             return
-        self.panel.log(f"Stretch mode set: {mode_label}")
-        self._logger.info("Stretch mode set mode=%s (no active raster layers)", mode_label)
+        self.panel.log(f"Imagery stretch set: {mode_label}")
+        self._logger.info(
+            "Imagery stretch set mode=%s (no active raster layers)", mode_label
+        )
 
-    def _refresh_raster_layers_for_stretch(self) -> int:
+    def _apply_dem_stretch_mode(self, log_to_panel: bool = True) -> None:
+        if not hasattr(self.panel, "dem_stretch_mode_combo"):
+            return
+        refreshed = self._refresh_raster_layers_for_stretch(layer_kind="dem")
+        mode_label = self.panel.dem_stretch_mode_combo.currentText()
+        if not log_to_panel:
+            return
+        if refreshed > 0:
+            self.panel.log(
+                f"DEM stretch applied: {mode_label} ({refreshed} layer(s) refreshed)"
+            )
+            self._logger.info(
+                "DEM stretch applied mode=%s refreshed=%s", mode_label, refreshed
+            )
+            return
+        self.panel.log(f"DEM stretch set: {mode_label}")
+        self._logger.info("DEM stretch set mode=%s (no active raster layers)", mode_label)
+
+    def _refresh_raster_layers_for_stretch(self, layer_kind: str | None = None) -> int:
         refreshed = 0
         seen_paths: set[str] = set()
 
@@ -3184,6 +3275,10 @@ class DesktopController(QObject):
             if not self._search_layer_visibility.get(path, False):
                 continue
             if not isinstance(asset, dict):
+                continue
+            if layer_kind == "dem" and not self._is_dem_asset(asset):
+                continue
+            if layer_kind == "imagery" and self._is_dem_asset(asset):
                 continue
             asset_path = str(asset.get("file_path") or "")
             if asset_path and asset_path in seen_paths:
@@ -3208,6 +3303,10 @@ class DesktopController(QObject):
                 if asset_path and asset_path in seen_paths:
                     return refreshed
                 is_dem = self._is_dem_asset(asset)
+                if layer_kind == "dem" and not is_dem:
+                    return refreshed
+                if layer_kind == "imagery" and is_dem:
+                    return refreshed
                 if (self._explicit_dem_layer_visible and is_dem) or (
                     self._explicit_imagery_layer_visible and not is_dem
                 ):
@@ -3265,6 +3364,22 @@ class DesktopController(QObject):
         # Route to elevation profile coordinator first (it manages its own click state)
         if self._elevation_profile.active:
             self._elevation_profile.on_map_click(lon, lat)
+            return
+
+        if self._add_text_mode_enabled:
+            self._add_text_label_at(lon, lat, "Label")
+            return
+
+        if self._add_line_mode_enabled:
+            if self._annotation_line_start is None:
+                self._annotation_line_start = (lon, lat)
+                self._run_js_call("setLineDrawStart", lon, lat)
+                self.panel.log("Line start set. Click the end point to finish.")
+                return
+            start_lon, start_lat = self._annotation_line_start
+            self._annotation_line_start = None
+            self._add_line_annotation_between((start_lon, start_lat), (lon, lat))
+            self._run_js_call("clearLineDrawPreview")
             return
 
         if self._add_point_mode_enabled:
@@ -3336,6 +3451,140 @@ class DesktopController(QObject):
 
         self._logger.info("Annotation added lon=%.5f lat=%.5f text=%s", lon, lat, text)
 
+    def _add_icon_annotation_at(self, lon: float, lat: float, icon_name: str, text: str) -> None:
+        """Add icon-based annotation with text label."""
+        self._run_js_call("addIconAnnotation", lon, lat, icon_name, text)
+        self._annotation_icon_records.append(
+            {
+                "type": "icon",
+                "lon": lon,
+                "lat": lat,
+                "icon": icon_name,
+                "text": text,
+                "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            }
+        )
+        self.panel.log(f"Icon annotation '{icon_name}' added at {lon:.5f}, {lat:.5f}")
+        self._set_project_modified(True)
+        self._logger.info("Icon annotation added lon=%.5f lat=%.5f icon=%s text=%s", lon, lat, icon_name, text)
+
+    def _add_text_label_at(self, lon: float, lat: float, text: str) -> None:
+        """Add text-only label (editable, larger font, white color)."""
+        self._run_js_call("addTextLabel", lon, lat, text)
+        self._annotation_text_records.append(
+            {
+                "type": "text",
+                "lon": lon,
+                "lat": lat,
+                "text": text,
+                "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            }
+        )
+        self.panel.log(f"Text label added at {lon:.5f}, {lat:.5f}")
+        self._set_project_modified(True)
+        self._logger.info("Text label added lon=%.5f lat=%.5f text=%s", lon, lat, text)
+
+    def _add_line_annotation_between(
+        self, start: tuple[float, float], end: tuple[float, float]
+    ) -> None:
+        coords = [[float(start[0]), float(start[1])], [float(end[0]), float(end[1])]]
+        line_label = f"Line {len(self._annotation_line_records) + 1}"
+        length_m = self._line_length_m(coords)
+        self._run_js_call("addLineAnnotation", coords, line_label)
+        self._annotation_line_records.append(
+            {
+                "coords": coords,
+                "label": line_label,
+                "feature_type": "line",
+                "length_m": length_m,
+                "width_m": 0.0,
+                "condition": "intact",
+                "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            }
+        )
+        self.panel.log(f"Line annotation added ({length_m:.1f} m)")
+        self._set_project_modified(True)
+
+    @staticmethod
+    def _line_length_m(coords: list[list[float]]) -> float:
+        if len(coords) < 2:
+            return 0.0
+        try:
+            from pyproj import Geod
+
+            geod = Geod(ellps="WGS84")
+            total = 0.0
+            for idx in range(len(coords) - 1):
+                lon1, lat1 = coords[idx]
+                lon2, lat2 = coords[idx + 1]
+                _, _, dist = geod.inv(lon1, lat1, lon2, lat2)
+                total += float(dist)
+            return total
+        except Exception:
+            total = 0.0
+            radius_m = 6371008.8
+            for idx in range(len(coords) - 1):
+                lon1, lat1 = coords[idx]
+                lon2, lat2 = coords[idx + 1]
+                lon1_r = math.radians(lon1)
+                lat1_r = math.radians(lat1)
+                lon2_r = math.radians(lon2)
+                lat2_r = math.radians(lat2)
+                dlon = lon2_r - lon1_r
+                dlat = lat2_r - lat1_r
+                a = (
+                    math.sin(dlat / 2.0) ** 2
+                    + math.cos(lat1_r) * math.cos(lat2_r) * math.sin(dlon / 2.0) ** 2
+                )
+                c = 2.0 * math.atan2(math.sqrt(a), math.sqrt(1.0 - a))
+                total += radius_m * c
+            return total
+
+    def apply_raster_stretch(self, layer_key: str, stretch_type: str, method: str, **params) -> None:
+        """
+        Apply raster stretching to imagery or DEM layers.
+        
+        Args:
+            layer_key: Unique identifier for the layer
+            stretch_type: 'imagery' or 'dem'
+            method: 'min_max', 'std_dev', 'linear', 'histogram_eq'
+            params: Additional parameters (e.g., k for std_dev, percentile for percentile_clip)
+        """
+        self._raster_stretch_settings[layer_key] = {
+            "type": stretch_type,
+            "method": method,
+            "params": params,
+            "applied_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        }
+        
+        # Apply stretch via JavaScript bridge with real-time sync
+        self._run_js_call("applyRasterStretch", layer_key, stretch_type, method, params)
+        self.panel.log(f"Applied {method} stretch to {stretch_type} layer: {layer_key}")
+        self._logger.info("Raster stretch applied: layer=%s type=%s method=%s params=%s", 
+                         layer_key, stretch_type, method, params)
+
+    def update_raster_stretch_params(self, layer_key: str, **params) -> None:
+        """Update stretch parameters for real-time adjustment (e.g., slider changes)."""
+        if layer_key not in self._raster_stretch_settings:
+            self._logger.warning("Cannot update stretch params for unknown layer: %s", layer_key)
+            return
+        
+        settings = self._raster_stretch_settings[layer_key]
+        settings["params"].update(params)
+        
+        # Real-time update via JavaScript
+        self._run_js_call("updateRasterStretchParams", layer_key, params)
+        self._logger.debug("Updated stretch params for layer %s: %s", layer_key, params)
+
+    def remove_raster_stretch(self, layer_key: str) -> None:
+        """Remove stretching from a layer (reset to original)."""
+        if layer_key in self._raster_stretch_settings:
+            del self._raster_stretch_settings[layer_key]
+        
+        self._run_js_call("removeRasterStretch", layer_key)
+        self.panel.log(f"Removed stretch from layer: {layer_key}")
+        self._logger.info("Raster stretch removed from layer: %s", layer_key)
+
     def _toolbar_elevation_profile(self) -> bool:
         """Activate elevation profile two-click mode via the coordinator."""
         if self._elevation_profile.active:
@@ -3387,6 +3636,9 @@ class DesktopController(QObject):
         if group_name == "measurement":
             self._distance_measure_mode_enabled = False
             self._add_point_mode_enabled = False
+            self._add_line_mode_enabled = False
+            self._add_text_mode_enabled = False
+            self._annotation_line_start = None
             self._set_annotation_overlay_visible(False)
             self._shadow_height_mode_enabled = False
             self._pan_mode_enabled = True
@@ -3604,6 +3856,9 @@ class DesktopController(QObject):
         )
         if self._distance_measure_mode_enabled:
             self._add_point_mode_enabled = False
+            self._add_line_mode_enabled = False
+            self._add_text_mode_enabled = False
+            self._annotation_line_start = None
             self._set_annotation_overlay_visible(False)
             self._shadow_height_mode_enabled = False
         self._pan_mode_enabled = not self._distance_measure_mode_enabled
@@ -3635,6 +3890,13 @@ class DesktopController(QObject):
                 self._run_js_call("setDistanceMeasureMode", False)
             if self._add_point_mode_enabled:
                 self._add_point_mode_enabled = False
+                self._set_annotation_overlay_visible(False)
+            if self._add_line_mode_enabled:
+                self._add_line_mode_enabled = False
+                self._annotation_line_start = None
+                self._set_annotation_overlay_visible(False)
+            if self._add_text_mode_enabled:
+                self._add_text_mode_enabled = False
                 self._set_annotation_overlay_visible(False)
             if self._shadow_height_mode_enabled:
                 self._shadow_height_mode_enabled = False
@@ -4121,6 +4383,9 @@ class DesktopController(QObject):
 
         self._distance_measure_mode_enabled = False
         self._add_point_mode_enabled = False
+        self._add_line_mode_enabled = False
+        self._add_text_mode_enabled = False
+        self._annotation_line_start = None
         self._set_annotation_overlay_visible(False)
         self._pan_mode_enabled = False
         self.state.clicked_points.clear()
@@ -4149,6 +4414,9 @@ class DesktopController(QObject):
         self._shadow_height_mode_enabled = False
         self._pan_mode_enabled = False
         self._fly_through_mode_enabled = False  # Strict exclusivity
+        self._add_line_mode_enabled = False
+        self._add_text_mode_enabled = False
+        self._annotation_line_start = None
         self._add_point_mode_enabled = True # Current mode
         self._run_js_call("setDistanceMeasureMode", False)
         self._run_js_call("setPanMode", False)
@@ -4158,6 +4426,64 @@ class DesktopController(QObject):
         self._set_measurement_cursor_enabled(True)
         self._set_annotation_overlay_visible(True)
         self.panel.log("Add Point enabled. Click map to place annotation points.")
+        return True
+
+    def _toolbar_toggle_add_line_mode(self, enabled: bool | None = None) -> bool:
+        next_state = (
+            (not self._add_line_mode_enabled) if enabled is None else bool(enabled)
+        )
+        self._add_line_mode_enabled = next_state
+        if not next_state:
+            self._annotation_line_start = None
+            self._run_js_call("setLineDrawMode", False)
+            self._run_js_call("clearLineDrawPreview")
+            self._set_measurement_cursor_enabled(False)
+            self.panel.log("Add Line tool disabled.")
+            return False
+
+        self._distance_measure_mode_enabled = False
+        self._shadow_height_mode_enabled = False
+        self._pan_mode_enabled = False
+        self._fly_through_mode_enabled = False
+        self._add_point_mode_enabled = False
+        self._add_text_mode_enabled = False
+        self._annotation_line_start = None
+        self._run_js_call("setDistanceMeasureMode", False)
+        self._run_js_call("setPanMode", False)
+        self._run_js_call("setFlyThroughMode", False)
+        self._run_js_call("setSearchDrawMode", "none")
+
+        self._set_measurement_cursor_enabled(True)
+        self._set_annotation_overlay_visible(True)
+        self._run_js_call("setLineDrawMode", True)
+        self.panel.log("Add Line enabled. Click start, then end point.")
+        return True
+
+    def _toolbar_toggle_add_text_mode(self, enabled: bool | None = None) -> bool:
+        next_state = (
+            (not self._add_text_mode_enabled) if enabled is None else bool(enabled)
+        )
+        self._add_text_mode_enabled = next_state
+        if not next_state:
+            self._set_measurement_cursor_enabled(False)
+            self.panel.log("Add Text Label tool disabled.")
+            return False
+
+        self._distance_measure_mode_enabled = False
+        self._shadow_height_mode_enabled = False
+        self._pan_mode_enabled = False
+        self._fly_through_mode_enabled = False
+        self._add_point_mode_enabled = False
+        self._add_line_mode_enabled = False
+        self._annotation_line_start = None
+        self._run_js_call("setDistanceMeasureMode", False)
+        self._run_js_call("setPanMode", False)
+        self._run_js_call("setFlyThroughMode", False)
+        self._run_js_call("setSearchDrawMode", "none")
+
+        self._set_measurement_cursor_enabled(True)
+        self._set_annotation_overlay_visible(True)
+        self.panel.log("Add Text Label enabled. Click map to place label.")
         return True
 
     def _toolbar_clear_last(self) -> None:
@@ -4173,6 +4499,9 @@ class DesktopController(QObject):
         self.state.search_geometry_payload = None
         self._distance_measure_mode_enabled = False
         self._add_point_mode_enabled = False
+        self._add_line_mode_enabled = False
+        self._add_text_mode_enabled = False
+        self._annotation_line_start = None
         self._set_annotation_overlay_visible(False)
         self._shadow_height_mode_enabled = False
         self._pan_mode_enabled = True
@@ -4232,6 +4561,9 @@ class DesktopController(QObject):
         if not polygon:
             self._distance_measure_mode_enabled = False
             self._add_point_mode_enabled = False # Enforce exclusivity
+            self._add_line_mode_enabled = False
+            self._add_text_mode_enabled = False
+            self._annotation_line_start = None
             self._fly_through_mode_enabled = False # Strict exclusivity
             self._set_annotation_overlay_visible(True)
             self._run_js_call("setAnnotationDrawingMode", True)
@@ -4708,8 +5040,10 @@ class DesktopController(QObject):
         for widget in (
             self.panel.dem_hillshade_slider,
             self.panel.dem_color_mode_combo,
+            getattr(self.panel, "dem_stretch_mode_combo", None),
         ):
-            widget.setEnabled(dem_visible)
+            if widget is not None:
+                widget.setEnabled(dem_visible)
 
         # Camera controls: pitch slider enabled in ALL 3D modes with any layer
         # Rotation works in both 2D and 3D (heading rotation valid in 2D Cesium)
@@ -4912,9 +5246,13 @@ class DesktopController(QObject):
             )
 
         stretch_mode = "linear"
-        if hasattr(self.panel, "stretch_mode_combo"):
+        if is_dem and hasattr(self.panel, "dem_stretch_mode_combo"):
+            stretch_mode = str(
+                self.panel.dem_stretch_mode_combo.currentData() or "linear"
+            )
+        elif hasattr(self.panel, "stretch_mode_combo"):
             stretch_mode = str(self.panel.stretch_mode_combo.currentData() or "linear")
-        use_percentiles = stretch_mode != "minmax"
+        use_percentiles = stretch_mode not in {"minmax", "stddev"}
 
         def _stat_range(stat: dict) -> tuple[float | None, float | None]:
             if not isinstance(stat, dict):
@@ -4938,7 +5276,7 @@ class DesktopController(QObject):
 
             query["colormap_name"] = color_mode
 
-            # FIX: Provide default elevation rescale if TiTiler stats fail, preventing blank maps.
+            # Provide default elevation rescale if TiTiler stats fail, preventing blank maps.
             low, high = -100.0, 4000.0
             if isinstance(stats, dict) and stats:
                 first_band = (
@@ -4947,13 +5285,24 @@ class DesktopController(QObject):
                     else next(iter(stats.values()))
                 )
                 if isinstance(first_band, dict):
-                    b_low, b_high = _stat_range(first_band)
-                    if (
-                        b_low is not None
-                        and b_high is not None
-                        and float(b_high) > float(b_low)
-                    ):
-                        low, high = float(b_low), float(b_high)
+                    if stretch_mode == "stddev":
+                        mean = first_band.get("mean")
+                        std = first_band.get("std")
+                        if std is None:
+                            std = first_band.get("stdev")
+                        if std is None:
+                            std = first_band.get("stddev")
+                        if mean is not None and std is not None:
+                            low = float(mean) - (2.0 * float(std))
+                            high = float(mean) + (2.0 * float(std))
+                    else:
+                        b_low, b_high = _stat_range(first_band)
+                        if (
+                            b_low is not None
+                            and b_high is not None
+                            and float(b_high) > float(b_low)
+                        ):
+                            low, high = float(b_low), float(b_high)
 
             query["rescale"] = f"{low},{high}"
             self._logger.debug(f"Final DEM raster query for {file_name}: {query}")
@@ -4969,6 +5318,28 @@ class DesktopController(QObject):
             # FIX: Apply QGIS-style per-band Cumulative Count Cut (2% - 98%)
             # This fixes both the pitch-black 16-bit rendering and the bluish tint.
             # Passing a list of rescales allows TiTiler to stretch each band independently.
+            if stretch_mode == "linear_shared":
+                lows = []
+                highs = []
+                for i in range(1, min(3, band_count) + 1):
+                    stat = stats.get(f"b{i}")
+                    if not isinstance(stat, dict):
+                        lows = []
+                        highs = []
+                        break
+                    low, high = _stat_range(stat)
+                    if low is None or high is None or float(low) >= float(high):
+                        lows = []
+                        highs = []
+                        break
+                    lows.append(float(low))
+                    highs.append(float(high))
+                if lows and highs:
+                    query["rescale"] = f"{min(lows)},{max(highs)}"
+                    self._logger.debug(
+                        f"Applied shared RGB stretch: {query}"
+                    )
+                    return query
             rescales = []
             valid = True
             for i in range(1, min(3, band_count) + 1):
@@ -4981,11 +5352,11 @@ class DesktopController(QObject):
                     valid = False
                     break
                 rescales.append(f"{float(low)},{float(high)}")
-            
+
             if valid and len(rescales) == 3:
                 query["rescale"] = rescales
                 self._logger.debug(
-                    f"Applied QGIS-style per-band true color correction: {query}"
+                    f"Applied per-band true color correction: {query}"
                 )
             else:
                 self._logger.debug(
