@@ -4,13 +4,12 @@ channels:
 dependencies:
   - python=3.11
   - pip
-  # Heavy geo/native libs in conda for cross-platform reliability (Windows/macOS/Linux)
-  - gdal>=3.8.0  # GDAL with GPU support for NVIDIA on Windows
+  - gdal>=3.10.3
+  - libgdal-jp2openjpeg  # Explicitly required for raw .j2k codestream support
   - rasterio=1.4.3
   - pyproj
   - shapely=2.0.7
   - scipy
   - numpy
   - pip:
-      # Pull app + desktop + dev dependencies from pyproject.toml
       - -e .[desktop,geo,dev]
