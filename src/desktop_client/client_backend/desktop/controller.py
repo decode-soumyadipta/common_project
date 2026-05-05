@@ -422,6 +422,9 @@ class DesktopController(QObject):
             self._on_visual_slider_changed
         )
         self.panel.contrast_slider.valueChanged.connect(self._on_visual_slider_changed)
+        self.panel.stretch_mode_combo.currentIndexChanged.connect(
+            self._on_stretch_mode_changed
+        )
         self.panel.dem_hillshade_slider.valueChanged.connect(
             self._on_dem_slider_changed
         )
@@ -3145,6 +3148,9 @@ class DesktopController(QObject):
     def _on_visual_slider_changed(self, _value: int) -> None:
         self._viz.on_visual_slider_changed(_value)
 
+    def _on_stretch_mode_changed(self, _index: int) -> None:
+        self._apply_stretch_mode(log_to_panel=True)
+
     def _on_dem_slider_changed(self, _value: int) -> None:
         self._viz.on_dem_slider_changed(_value)
 
@@ -3153,6 +3159,69 @@ class DesktopController(QObject):
 
     def apply_visual_settings(self, log_to_panel: bool = True) -> None:
         self._viz.apply_visual_settings(log_to_panel=log_to_panel)
+
+    def _apply_stretch_mode(self, log_to_panel: bool = True) -> None:
+        refreshed = self._refresh_raster_layers_for_stretch()
+        mode_label = self.panel.stretch_mode_combo.currentText()
+        if not log_to_panel:
+            return
+        if refreshed > 0:
+            self.panel.log(
+                f"Stretch mode applied: {mode_label} ({refreshed} layer(s) refreshed)"
+            )
+            self._logger.info(
+                "Stretch mode applied mode=%s refreshed=%s", mode_label, refreshed
+            )
+            return
+        self.panel.log(f"Stretch mode set: {mode_label}")
+        self._logger.info("Stretch mode set mode=%s (no active raster layers)", mode_label)
+
+    def _refresh_raster_layers_for_stretch(self) -> int:
+        refreshed = 0
+        seen_paths: set[str] = set()
+
+        for path, asset in self._search_result_assets_by_path.items():
+            if not self._search_layer_visibility.get(path, False):
+                continue
+            if not isinstance(asset, dict):
+                continue
+            asset_path = str(asset.get("file_path") or "")
+            if asset_path and asset_path in seen_paths:
+                continue
+            loaded = self._load_asset_layer_event_driven(
+                asset,
+                replace_existing=True,
+                layer_key=path,
+                auto_fly_to=False,
+                apply_scene_mode=False,
+                show_loading=False,
+            )
+            if loaded:
+                refreshed += 1
+            if asset_path:
+                seen_paths.add(asset_path)
+
+        if self._explicit_imagery_layer_visible or self._explicit_dem_layer_visible:
+            asset = self.state.selected_asset
+            if isinstance(asset, dict):
+                asset_path = str(asset.get("file_path") or "")
+                if asset_path and asset_path in seen_paths:
+                    return refreshed
+                is_dem = self._is_dem_asset(asset)
+                if (self._explicit_dem_layer_visible and is_dem) or (
+                    self._explicit_imagery_layer_visible and not is_dem
+                ):
+                    loaded = self._load_asset_layer_event_driven(
+                        asset,
+                        replace_existing=True,
+                        layer_key=None,
+                        auto_fly_to=False,
+                        apply_scene_mode=False,
+                        show_loading=False,
+                    )
+                    if loaded:
+                        refreshed += 1
+        return refreshed
 
     def apply_dem_settings(
         self, _checked: bool | None = None, log_to_panel: bool = True
@@ -4625,6 +4694,7 @@ class DesktopController(QObject):
         for widget in (
             self.panel.brightness_slider,
             self.panel.contrast_slider,
+            self.panel.stretch_mode_combo,
         ):
             widget.setEnabled(imagery_visible)
 
@@ -4841,6 +4911,22 @@ class DesktopController(QObject):
                 "Statistics unavailable for %s: %s", asset.get("file_name"), exc
             )
 
+        stretch_mode = "linear"
+        if hasattr(self.panel, "stretch_mode_combo"):
+            stretch_mode = str(self.panel.stretch_mode_combo.currentData() or "linear")
+        use_percentiles = stretch_mode != "minmax"
+
+        def _stat_range(stat: dict) -> tuple[float | None, float | None]:
+            if not isinstance(stat, dict):
+                return None, None
+            if use_percentiles:
+                low = stat.get("percentile_2", stat.get("min"))
+                high = stat.get("percentile_98", stat.get("max"))
+            else:
+                low = stat.get("min", stat.get("percentile_2"))
+                high = stat.get("max", stat.get("percentile_98"))
+            return low, high
+
         if is_dem:
             color_mode = str(self.panel.dem_color_mode_combo.currentData() or "gray")
             if color_mode == "slope":
@@ -4861,8 +4947,7 @@ class DesktopController(QObject):
                     else next(iter(stats.values()))
                 )
                 if isinstance(first_band, dict):
-                    b_low = first_band.get("min")
-                    b_high = first_band.get("max")
+                    b_low, b_high = _stat_range(first_band)
                     if (
                         b_low is not None
                         and b_high is not None
@@ -4891,8 +4976,7 @@ class DesktopController(QObject):
                 if not isinstance(stat, dict):
                     valid = False
                     break
-                low = stat.get("percentile_2", stat.get("min"))
-                high = stat.get("percentile_98", stat.get("max"))
+                low, high = _stat_range(stat)
                 if low is None or high is None or float(low) >= float(high):
                     valid = False
                     break
@@ -4920,8 +5004,7 @@ class DesktopController(QObject):
             )
             return query
 
-        low = first_band.get("percentile_2", first_band.get("min"))
-        high = first_band.get("percentile_98", first_band.get("max"))
+        low, high = _stat_range(first_band)
         if low is None or high is None or float(high) <= float(low):
             self._logger.debug(
                 f"Invalid rescale values for {asset.get('file_name', '')}, final query: {query}"

@@ -336,11 +336,11 @@
       const carto1 = Cesium.Cartographic.fromCartesian(p1);
       const carto2 = Cesium.Cartographic.fromCartesian(p2);
       
-      // Calculate destination: 600m above p2 for safe high-speed travel
+      // Calculate destination: 900m above p2 for safe high-speed travel
       const destPos = Cesium.Cartesian3.fromRadians(
         carto2.longitude,
         carto2.latitude,
-        carto2.height + 600
+        carto2.height + 900
       );
 
       const geodesic = new Cesium.EllipsoidGeodesic(carto1, carto2);
@@ -348,7 +348,7 @@
       
       // Calculate duration: smoother traverse at ~120m/s (432 km/h)
       const distance = Cesium.Cartesian3.distance(p1, p2);
-      const duration = Math.max(0.8, distance / 120);
+      const duration = Math.max(1.0, distance / 100);
 
       // CINEMATIC FIX: Maintain strictly directional "nose/eyes" orientation
       // We use linear easing for segments to prevent erratic rotation at vertices
@@ -356,12 +356,12 @@
         destination: destPos,
         orientation: {
           heading: heading,
-          pitch: Cesium.Math.toRadians(-35.0), // Tactical pitch for optimal ground inspection
+          pitch: Cesium.Math.toRadians(-42.0), // Tactical pitch for optimal ground inspection
           roll: 0.0
         },
         duration: duration,
         easingFunction: Cesium.EasingFunction.QUADRATIC_IN_OUT,
-        maximumHeight: carto2.height + 800, 
+        maximumHeight: carto2.height + 1100, 
         complete: () => {
           currentIndex++;
           nextSegment();
@@ -376,14 +376,14 @@
     const startPos = Cesium.Cartesian3.fromRadians(
       startCarto.longitude,
       startCarto.latitude,
-      startCarto.height + 600
+      startCarto.height + 900
     );
     
     viewer.camera.flyTo({
       destination: startPos,
       orientation: {
         heading: startHeading,
-        pitch: Cesium.Math.toRadians(-40.0),
+        pitch: Cesium.Math.toRadians(-47.0),
         roll: 0.0
       },
       duration: 2.5,
@@ -2941,7 +2941,7 @@
     
     // Enable collision detection to prevent going inside Earth
     controller.enableCollisionDetection = true;
-    controller.maximumMovementRatio = 0.5;  // Fast camera movement
+    controller.maximumMovementRatio = 0.65;  // Faster camera movement
     
     // CRITICAL: Prevent camera from going inside Earth surface
     // Minimum zoom distance = 10 meters above ground (safe minimum)
@@ -2982,8 +2982,8 @@
     // inertiaZoom > 0 applies momentum over many frames after each scroll tick.
     // At high altitude (6000km), even one tick's momentum carries the camera from
     // space to ground level. Setting to 0 makes each tick a discrete, predictable step.
-    controller.inertiaSpin = is2d ? 0.65 : 0.90;
-    controller.inertiaTranslate = is2d ? 0.80 : 0.90;
+    controller.inertiaSpin = is2d ? 0.50 : 0.75;
+    controller.inertiaTranslate = is2d ? 0.60 : 0.75;
     controller.inertiaZoom = 0.0;  // CRITICAL: must be 0 to prevent momentum runaway
 
     // zoomFactor=1.5: each tick zooms ~33% of distance — gentle and controllable at all
@@ -4091,6 +4091,19 @@
     const IDLE_DELAY_MS = 150;
     const baseSse = Number(scene.globe.maximumScreenSpaceError) || 2.0;
     const movingSse = Math.max(4.0, baseSse + 2.0);
+    function setIdleRenderMode(isIdle) {
+      if (!scene) {
+        return;
+      }
+      const desiredMode = Boolean(isIdle);
+      if (scene.requestRenderMode !== desiredMode) {
+        scene.requestRenderMode = desiredMode;
+      }
+      const desiredMaxChange = desiredMode ? Number.POSITIVE_INFINITY : 0;
+      if (scene.maximumRenderTimeChange !== desiredMaxChange) {
+        scene.maximumRenderTimeChange = desiredMaxChange;
+      }
+    }
 
     function applyInteractionTilePolicy(active) {
       if (!scene.globe) {
@@ -4110,7 +4123,7 @@
       if (!interacting) {
         interacting = true;
         isInteracting = true;
-        // FIX: Removed requestRenderMode toggle to prevent rendering lag and auto-blurring
+        setIdleRenderMode(false);
       }
       scene.requestRender();
     }
@@ -4122,7 +4135,7 @@
       idleTimer = setTimeout(function () {
         interacting = false;
         isInteracting = false;
-        // FIX: Removed requestRenderMode toggle to prevent rendering lag and auto-blurring
+        setIdleRenderMode(true);
         applyInteractionTilePolicy(false);
         scene.requestRender();
         idleTimer = null;
@@ -4161,7 +4174,7 @@
       viewer.scene.screenSpaceCameraController.enableZoom = false;
     }
 
-    const WHEEL_ZOOM_STEP = 0.12;  // 12% of current altitude per tick — medium-fast
+    const WHEEL_ZOOM_STEP = 0.15;  // 15% of current altitude per tick — snappier
     let wheelZoomImpulse = 0;
     let wheelZoomRaf = null;
 
@@ -4910,7 +4923,7 @@
   function emitMouseCoordinates(lon, lat) {
     if (!bridge || !bridge.on_mouse_coordinates) return;
     const now = Date.now();
-    const throttleMs = isInteracting ? 16 : (currentSceneMode === "2d" ? 60 : _SB_COORD_THROTTLE_MS);
+    const throttleMs = isInteracting ? 33 : (currentSceneMode === "2d" ? 60 : _SB_COORD_THROTTLE_MS);
     if (now - _sbLastCoordEmitMs < throttleMs) return;
     _sbLastCoordEmitMs = now;
 
@@ -5097,6 +5110,8 @@
     // Track mouse down position to distinguish clicks from drags
     let mouseDownPosition = null;
     const CLICK_THRESHOLD = 5; // pixels - if mouse moves more than this, it's a drag, not a click
+    let lastHoverUpdateMs = 0;
+    const HOVER_THROTTLE_MS = 80;
     
     // Track LEFT_DOWN to detect clicks vs drags
     handler.setInputAction(function (movement) {
@@ -5352,7 +5367,13 @@
         if (window.OfflineGISCursorControls) {
           window.OfflineGISCursorControls.lastSearchCursorScreenPosition = movement.endPosition;
         }
-        updateAnnotationHover(movement.endPosition);
+        if (!isInteracting) {
+          const now = Date.now();
+          if (now - lastHoverUpdateMs >= HOVER_THROTTLE_MS) {
+            lastHoverUpdateMs = now;
+            updateAnnotationHover(movement.endPosition);
+          }
+        }
 
         // Keep status-bar lon/lat responsive during drag using a cheap ellipsoid pick.
         let fastLonLat = null;
@@ -5408,9 +5429,12 @@
       }
       
       // Always emit mouse coordinates for status bar (not just during polygon drawing)
-      const lonLat = getLonLatFromScreen(movement.endPosition);
-      if (lonLat && !statusCoordEmitted) {
-        emitMouseCoordinates(lonLat.lon, lonLat.lat);
+      let lonLat = null;
+      if (!statusCoordEmitted || searchDrawMode === "polygon") {
+        lonLat = getLonLatFromScreen(movement.endPosition);
+        if (lonLat && !statusCoordEmitted) {
+          emitMouseCoordinates(lonLat.lon, lonLat.lat);
+        }
       }
 
       // Live rubber-band line for elevation profile mode — mirrors distance tool approach

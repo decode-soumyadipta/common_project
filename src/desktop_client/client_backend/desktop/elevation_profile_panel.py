@@ -2,10 +2,10 @@
 
 Layout (embedded in main window vertical splitter):
   
-     Elevation Profile    [ Close]   ← header bar
+    Elevation Profile    [ Close]   ← header bar
   
-     2D Profile Chart          3D Section Plane               
-     (distance vs elev)        (oblique cut view)             
+    2D Profile Chart
+    (distance vs elev)
   
 
 Uses QOpenGLWidget as base so Qt routes all QPainter calls through the GPU
@@ -658,20 +658,11 @@ class ElevationProfilePanel(QWidget):
 
         #  Charts 
         self._chart_2d = _Profile2DWidget(self)
-        self._chart_3d = _Profile3DWidget(self)
 
         charts_row = QHBoxLayout()
         charts_row.setContentsMargins(0, 0, 0, 0)
-        charts_row.setSpacing(1)
+        charts_row.setSpacing(0)
         charts_row.addWidget(self._chart_2d)
-
-        divider = QFrame(self)
-        divider.setFrameShape(QFrame.Shape.VLine)
-        divider.setFrameShadow(QFrame.Shadow.Sunken)
-        divider.setStyleSheet("color: #c9d3df;")
-        charts_row.addWidget(divider)
-
-        charts_row.addWidget(self._chart_3d)
 
         #  Root layout 
         root = QVBoxLayout(self)
@@ -707,10 +698,8 @@ class ElevationProfilePanel(QWidget):
             f"Δ: {vmax - vmin:.1f} m   n={len(vals)}"
         )
         self._chart_2d.set_data(vals, distance_m)
-        self._chart_3d.set_data(vals, distance_m)
         self.update()
 
     def set_cursor_fraction(self, frac: float) -> None:
         """Update the georeferenced cursor on both charts (0–1 along the profile)."""
         self._chart_2d.set_cursor_fraction(frac)
-        self._chart_3d.set_cursor_fraction(frac)

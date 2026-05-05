@@ -17,6 +17,7 @@ Signals consumed (from WebBridge via the QWebChannel pipe):
 from __future__ import annotations
 
 import math
+import time
 
 from qtpy.QtCore import Qt, Slot
 from qtpy.QtWidgets import (
@@ -225,6 +226,8 @@ class GISStatusBar(QStatusBar):
 
         # ── Coordinate precision ──────────────────────────────────────────
         self._coord_decimal_places = 6
+        self._coord_update_interval_s = 0.05
+        self._last_coord_update_ts = 0.0
         # ── Progress priority tracking ────────────────────────────────────
         # Computation progress (fill volume, slope, etc.) takes priority over
         # tile-loading progress so the two don't fight each other.
@@ -246,6 +249,11 @@ class GISStatusBar(QStatusBar):
         if not (math.isfinite(lon) and math.isfinite(lat)):
             self.clear_coordinates()
             return
+
+        now = time.monotonic()
+        if now - self._last_coord_update_ts < self._coord_update_interval_s:
+            return
+        self._last_coord_update_ts = now
 
         # Enhanced coordinate display with higher precision for professional use
         # Use 8 decimal places for sub-meter accuracy

@@ -833,6 +833,13 @@ class ControlPanel(QWidget):
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
         self.contrast_value.setMinimumWidth(64)
+        self.stretch_mode_combo = QComboBox()
+        self.stretch_mode_combo.addItem("Linear (2-98%)", "linear")
+        self.stretch_mode_combo.addItem("Min-Max", "minmax")
+        self.stretch_mode_combo.setCurrentIndex(0)
+        self.stretch_mode_combo.setToolTip(
+            "Rescale raster values before rendering the imagery."
+        )
         self.pitch_slider = QSlider(Qt.Orientation.Horizontal)
         self.pitch_slider.setRange(-85, -10)
         self.pitch_slider.setValue(-45)
@@ -887,6 +894,10 @@ class ControlPanel(QWidget):
         contrast_layout.addWidget(self.contrast_slider, 1)
         contrast_layout.addWidget(self.contrast_value)
         view_layout.addLayout(contrast_layout)
+        stretch_layout = QHBoxLayout()
+        stretch_layout.addWidget(QLabel("Stretch:"))
+        stretch_layout.addWidget(self.stretch_mode_combo, 1)
+        view_layout.addLayout(stretch_layout)
 
         view_layout.addSpacing(8)
 
