@@ -1465,15 +1465,20 @@ class MainWindow(QMainWindow):
     def _on_measure_cursor_changed(self, enabled: bool) -> None:
         """Set or restore the crosshair cursor on the map web view only."""
         from qtpy.QtWidgets import QApplication
-
+        import logging
+        logger = logging.getLogger("desktop.main_window")
+        
+        logger.debug("_on_measure_cursor_changed called: enabled=%s", enabled)
         self._measure_cursor_active = bool(enabled)
         # Always clear any application-level override so toolbar/panel stay normal
         while QApplication.overrideCursor():
             QApplication.restoreOverrideCursor()
             
         if self._measure_cursor_active:
+            logger.info("Applying crosshair cursor to web view")
             self._apply_crosshair_to_webview()
         else:
+            logger.info("Removing crosshair cursor from web view")
             self.web_view.unsetCursor()
             vp = self.web_view.focusProxy() or self.web_view.childAt(1, 1)
             if vp:
@@ -1481,14 +1486,22 @@ class MainWindow(QMainWindow):
 
     def _apply_crosshair_to_webview(self) -> None:
         """Set crosshair cursor on the web view widget and its viewport child."""
+        import logging
+        logger = logging.getLogger("desktop.main_window")
+        
         if getattr(self, "_applying_cursor", False):
+            logger.debug("Already applying cursor, skipping")
             return
         self._applying_cursor = True
         try:
+            logger.debug("Setting crosshair cursor on web_view")
             self.web_view.setCursor(self._measure_crosshair_cursor)
             vp = self.web_view.focusProxy() or self.web_view.childAt(1, 1)
             if vp:
+                logger.debug("Setting crosshair cursor on viewport: %s", vp)
                 vp.setCursor(self._measure_crosshair_cursor)
+            else:
+                logger.warning("No viewport found for cursor setting")
         finally:
             self._applying_cursor = False
 

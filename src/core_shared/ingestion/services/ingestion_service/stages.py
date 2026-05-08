@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 
 from core_shared.ingestion.services.cog_service import CogPreparationService
 from core_shared.ingestion.services.file_kind import detect_raster_kind
@@ -18,6 +19,8 @@ from core_shared.ingestion.services.pyramiding_service import (
 )
 from core_shared.ingestion.services.tiler_service import TiTilerUrlPolicy
 
+LOGGER = logging.getLogger("services.ingest.stages")
+
 
 @dataclass(frozen=True)
 class ValidatePathStage(IngestionStage):
@@ -29,7 +32,17 @@ class ValidatePathStage(IngestionStage):
             raise FileNotFoundError(
                 f"Raster path does not exist: {context.source_path}"
             )
-        context.working_path = context.source_path.resolve()
+        resolved = context.source_path.resolve()
+        if resolved.suffix.lower() == ".j2k":
+            jp2_candidate = resolved.with_suffix(".jp2")
+            if jp2_candidate.exists():
+                LOGGER.info(
+                    "Preferring JP2 container over J2K codestream for %s -> %s",
+                    resolved.name,
+                    jp2_candidate.name,
+                )
+                resolved = jp2_candidate.resolve()
+        context.working_path = resolved
 
 
 @dataclass(frozen=True)

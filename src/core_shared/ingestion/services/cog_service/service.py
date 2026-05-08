@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import logging
+import shutil
+import subprocess
 
 from core_shared.config_pkg.settings import settings
 
@@ -21,6 +23,10 @@ class CogPreparationService:
 
     def prepare(self, source_path: Path) -> CogPreparationResult:
         source = source_path.resolve()
+        if source.suffix.lower() == ".j2k":
+            jp2_candidate = source.with_suffix(".jp2")
+            if jp2_candidate.exists():
+                source = jp2_candidate.resolve()
         if not settings.ingest_enable_cog_conversion:
             return CogPreparationResult(
                 source_path=source, working_path=source, converted=False
@@ -43,6 +49,12 @@ class CogPreparationService:
                 source_path=source, working_path=cog_path, converted=False
             )
 
+        if suffix in {".jp2", ".j2k"}:
+            if self._try_gdal_translate(source, cog_path):
+                return CogPreparationResult(
+                    source_path=source, working_path=cog_path, converted=True
+                )
+
         try:
             import rasterio  # type: ignore
             from rasterio.shutil import copy as rio_copy  # type: ignore
@@ -50,6 +62,11 @@ class CogPreparationService:
             LOGGER.warning(
                 "COG conversion skipped because rasterio COG support is unavailable"
             )
+            if source.suffix.lower() in {".jp2", ".j2k"}:
+                if self._try_gdal_translate(source, cog_path):
+                    return CogPreparationResult(
+                        source_path=source, working_path=cog_path, converted=True
+                    )
             return CogPreparationResult(
                 source_path=source, working_path=source, converted=False
             )
@@ -111,6 +128,11 @@ class CogPreparationService:
             LOGGER.warning(
                 "Tiled GeoTIFF fallback also failed for %s: %s", source, exc2
             )
+            if source.suffix.lower() in {".jp2", ".j2k"}:
+                if self._try_gdal_translate(source, cog_path):
+                    return CogPreparationResult(
+                        source_path=source, working_path=cog_path, converted=True
+                    )
             try:
                 if cog_path.exists():
                     cog_path.unlink()
@@ -119,6 +141,92 @@ class CogPreparationService:
             return CogPreparationResult(
                 source_path=source, working_path=source, converted=False
             )
+
+    @staticmethod
+    def _try_gdal_translate(source: Path, target: Path) -> bool:
+        """Attempt a GDAL CLI translate when Python GDAL/rasterio fails."""
+        gdal_translate = shutil.which("gdal_translate")
+        if gdal_translate is None:
+            LOGGER.warning("gdal_translate not available on PATH; cannot fallback")
+            return False
+
+        creation_options = CogPreparationService._build_gdal_translate_options(source)
+
+        command = [
+            gdal_translate,
+            "-of",
+            "GTiff",
+        ]
+        for option in creation_options:
+            command.extend(["-co", option])
+        command.extend([str(source), str(target)])
+
+        try:
+            result = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("gdal_translate failed to start for %s: %s", source, exc)
+            return False
+
+        if result.returncode != 0:
+            LOGGER.warning(
+                "gdal_translate failed for %s: %s", source, result.stderr.strip()
+            )
+            return False
+
+        if not target.exists():
+            LOGGER.warning(
+                "gdal_translate reported success but output missing: %s", target
+            )
+            return False
+
+        LOGGER.info(
+            "gdal_translate fallback succeeded source=%s target=%s", source, target
+        )
+        return True
+
+    @staticmethod
+    def _build_gdal_translate_options(source: Path) -> list[str]:
+        options = ["TILED=YES", "BIGTIFF=IF_SAFER"]
+        compress = "DEFLATE"
+        extra: list[str] = []
+
+        try:
+            from osgeo import gdal
+
+            gdal.UseExceptions()
+            dataset = gdal.Open(str(source))
+            if dataset is not None:
+                band_count = int(dataset.RasterCount)
+                data_type = (
+                    dataset.GetRasterBand(1).DataType
+                    if band_count > 0
+                    else gdal.GDT_Unknown
+                )
+
+                if band_count in {3, 4} and data_type == gdal.GDT_Byte:
+                    compress = "JPEG"
+                    extra.append("JPEG_QUALITY=90")
+                    if band_count == 3:
+                        extra.append("PHOTOMETRIC=YCBCR")
+                    else:
+                        extra.append("PHOTOMETRIC=RGB")
+                else:
+                    if data_type in {gdal.GDT_Float32, gdal.GDT_Float64}:
+                        extra.append("PREDICTOR=3")
+                    elif data_type in {gdal.GDT_Byte, gdal.GDT_UInt16, gdal.GDT_Int16}:
+                        extra.append("PREDICTOR=2")
+            dataset = None
+        except Exception:
+            pass
+
+        options.append(f"COMPRESS={compress}")
+        options.extend(extra)
+        return options
 
     @staticmethod
     def _target_cog_path(source_path: Path) -> Path:

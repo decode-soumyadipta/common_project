@@ -338,7 +338,7 @@ class IngestQueueService:
                         progress_callback=lambda step, percent=None: self._set_runtime_progress(
                             job_id, step, item.file_path, percent
                         ),
-                        resume_from_stage=item.checkpoint_stage,
+                        resume_from_stage=None,
                         stage_checkpoint_callback=_persist_stage_checkpoint,
                     )
                 with self._session_factory() as session:

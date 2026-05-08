@@ -95,7 +95,9 @@ class SearchCoordinator:
 
     def set_search_draw_mode(self, enabled: bool | None = None) -> None:
         c = self._controller
+        c._logger.debug("SearchCoordinator.set_search_draw_mode called: enabled=%s", enabled)
         next_state = True if enabled is None else bool(enabled)
+        c._logger.debug("Search draw mode next_state=%s", next_state)
         if not next_state:
             if c._polygon_drawing_context == "measurement":
                 c._set_measurement_cursor_enabled(False)
@@ -114,6 +116,7 @@ class SearchCoordinator:
         c._pan_mode_enabled = False
         c._run_js_call("setSearchDrawMode", "polygon")
         # Always enable crosshair for drawing activities
+        c._logger.info("Search draw mode enabled, setting measurement cursor")
         c._set_measurement_cursor_enabled(True)
         c._set_search_draw_button_checked(True)
         c.panel.log("Polygon draw mode enabled.")

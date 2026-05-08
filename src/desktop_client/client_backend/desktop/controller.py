@@ -675,7 +675,16 @@ class DesktopController(QObject):
         self._run_js_call("setAnnotationVisibility", bool(visible))
 
     def _set_measurement_cursor_enabled(self, enabled: bool) -> None:
+        # Set cursor via JavaScript (for Cesium canvas cursor)
+        self._logger.debug("_set_measurement_cursor_enabled called: enabled=%s", enabled)
         self._run_js_call("setMeasurementCursor", bool(enabled))
+        # CRITICAL FIX: Emit signal to update Qt widget cursor (for Windows cursor display)
+        # The MainWindow listens to this signal and updates the web view cursor
+        if hasattr(self, "bridge") and self.bridge:
+            self._logger.debug("Emitting measureCursorChanged signal: enabled=%s", enabled)
+            self.bridge.measureCursorChanged.emit(bool(enabled))
+        else:
+            self._logger.warning("Bridge not available, cannot emit measureCursorChanged signal")
 
     @staticmethod
     def _coordinate_buffer_polygon(
@@ -4399,10 +4408,12 @@ class DesktopController(QObject):
         return True
 
     def _toolbar_toggle_add_point_mode(self, enabled: bool | None = None) -> bool:
+        self._logger.debug("_toolbar_toggle_add_point_mode called: enabled=%s", enabled)
         next_state = (
             (not self._add_point_mode_enabled) if enabled is None else bool(enabled)
         )
         self._add_point_mode_enabled = next_state
+        self._logger.debug("Add Point mode next_state=%s", next_state)
         if not next_state:
             # Don't hide placed annotations — they are persistent data
             self._set_measurement_cursor_enabled(False)
@@ -4423,16 +4434,19 @@ class DesktopController(QObject):
         self._run_js_call("setFlyThroughMode", False) # Sync JS state
         self._run_js_call("setSearchDrawMode", "none") # Disable Polygon Draw
         
+        self._logger.info("Add Point mode enabled, setting measurement cursor")
         self._set_measurement_cursor_enabled(True)
         self._set_annotation_overlay_visible(True)
         self.panel.log("Add Point enabled. Click map to place annotation points.")
         return True
 
     def _toolbar_toggle_add_line_mode(self, enabled: bool | None = None) -> bool:
+        self._logger.debug("_toolbar_toggle_add_line_mode called: enabled=%s", enabled)
         next_state = (
             (not self._add_line_mode_enabled) if enabled is None else bool(enabled)
         )
         self._add_line_mode_enabled = next_state
+        self._logger.debug("Add Line mode next_state=%s", next_state)
         if not next_state:
             self._annotation_line_start = None
             self._run_js_call("setLineDrawMode", False)
@@ -4453,6 +4467,7 @@ class DesktopController(QObject):
         self._run_js_call("setFlyThroughMode", False)
         self._run_js_call("setSearchDrawMode", "none")
 
+        self._logger.info("Add Line mode enabled, setting measurement cursor")
         self._set_measurement_cursor_enabled(True)
         self._set_annotation_overlay_visible(True)
         self._run_js_call("setLineDrawMode", True)
