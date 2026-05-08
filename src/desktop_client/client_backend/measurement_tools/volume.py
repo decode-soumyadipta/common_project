@@ -38,12 +38,12 @@ except ImportError:
     mapping = None
     ndlabel = None
 
-from desktop_client.client_backend.measurement_tools.models import (
+from client_desktop.client_backend.measurement_tools.models import (
     DepressionRegion,
     FillVolumeResult,
     VolumeMeasurement,
 )
-from desktop_client.client_backend.measurement_tools.dem_utils import read_dem_window
+from client_desktop.client_backend.measurement_tools.dem_utils import read_dem_window
 
 
 # ── Legacy entry-point (kept for backward compatibility) ─────────────────────
