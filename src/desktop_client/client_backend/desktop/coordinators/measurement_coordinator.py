@@ -4,8 +4,8 @@ import datetime as dt
 
 from qtpy.QtCore import Qt
 
-from desktop_client.client_backend.desktop.measurement_worker import MeasurementWorker
-from desktop_client.client_backend.measurement_tools import measure_distance
+from client_desktop.backend.measurement_worker import MeasurementWorker
+from client_desktop.client_backend.measurement_tools import measure_distance
 
 
 class MeasurementCoordinator:

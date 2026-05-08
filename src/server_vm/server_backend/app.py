@@ -3,8 +3,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from server_vm.api_routes import include_default_routes
-from core_shared.db.session import init_db
-from core_shared.ingestion.services.ingest_queue_service import (
+from platform_core.db.session import init_db
+from platform_core.ingestion.services.ingest_queue_service import (
     ingest_queue_service,
 )
 

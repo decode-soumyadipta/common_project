@@ -16,11 +16,11 @@ from qtpy.QtCore import QObject, QSignalBlocker, QThreadPool, QTimer, Qt, Signal
 from qtpy.QtWebEngineWidgets import QWebEngineView
 from qtpy.QtWidgets import QFileDialog
 
-from desktop_client.client_backend.desktop.api_client import DesktopApiClient
-from desktop_client.client_backend.desktop.api_server_manager import ApiServerManager
-from desktop_client.client_backend.desktop.app_mode import DesktopAppMode
-from desktop_client.client_backend.desktop.bridge import WebBridge
-from desktop_client.client_backend.desktop.coordinators import (
+from client_desktop.backend.api_client import DesktopApiClient
+from client_desktop.backend.api_server_manager import ApiServerManager
+from client_desktop.backend.app_mode import DesktopAppMode
+from client_desktop.backend.bridge import WebBridge
+from client_desktop.backend.coordinators import (
     ComparatorCoordinator,
     MeasurementCoordinator,
     ProjectIoCoordinator,
@@ -29,16 +29,16 @@ from desktop_client.client_backend.desktop.coordinators import (
     VisualizationCoordinator,
     ExportCoordinator,
 )
-from desktop_client.client_backend.desktop.coordinators.elevation_profile_coordinator import (
+from client_desktop.backend.coordinators.elevation_profile_coordinator import (
     ElevationProfileCoordinator,
 )
-from desktop_client.client_backend.desktop.control_panel import ControlPanel
-from desktop_client.client_backend.desktop.performance_service import (
+from client_desktop.backend.control_panel import ControlPanel
+from client_desktop.backend.performance_service import (
     DesktopPerformanceService,
 )
-from desktop_client.client_backend.desktop.state import DesktopState
-from desktop_client.client_backend.desktop.titiler_manager import TiTilerManager
-from desktop_client.client_backend.measurement_tools import (
+from client_desktop.backend.state import DesktopState
+from client_desktop.backend.titiler_manager import TiTilerManager
+from client_desktop.client_backend.measurement_tools import (
     compute_fill_volume,
     compute_slope_aspect,
     compute_viewshed,
@@ -46,11 +46,11 @@ from desktop_client.client_backend.measurement_tools import (
     measure_polygon_area,
     measure_shadow_height,
 )
-from core_shared.ingestion.services.metadata_extractor import (
+from platform_core.ingestion.services.metadata_extractor import (
     MetadataExtractorError,
     extract_metadata,
 )
-from core_shared.ingestion.services.tile_url_builder import build_xyz_url
+from platform_core.ingestion.services.tile_url_builder import build_xyz_url
 
 
 def _fmt_vol(m3: float) -> str:
@@ -1002,7 +1002,7 @@ class DesktopController(QObject):
                                 asset["file_name"] = Path(cand).name
                                 if "tile_url" in asset:
                                     try:
-                                        from core_shared.ingestion.services.tile_url_builder import build_xyz_url
+                                        from platform_core.ingestion.services.tile_url_builder import build_xyz_url
                                         asset["tile_url"] = build_xyz_url(cand)
                                     except Exception as e:
                                         self._logger.error("Failed to build tile_url for reverted asset: %s", e)
@@ -2878,7 +2878,7 @@ class DesktopController(QObject):
         # The COG is written next to the source (e.g. dem.cog.tif) and reused.
         if self.app_mode != DesktopAppMode.CLIENT and not skip_cog:
             try:
-                from core_shared.ingestion.services.cog_service import (
+                from platform_core.ingestion.services.cog_service import (
                     CogPreparationService,
                 )
 
@@ -4048,7 +4048,7 @@ class DesktopController(QObject):
             return compute_fill_volume(polygon, dem_path, progress_callback=progress_cb)
 
         def formatter(result: object) -> str:
-            from desktop_client.client_backend.measurement_tools.models import (
+            from client_desktop.client_backend.measurement_tools.models import (
                 FillVolumeResult,
             )
 
@@ -4088,7 +4088,7 @@ class DesktopController(QObject):
             if error or result is None:
                 self._fill_volume_active = False
                 return
-            from desktop_client.client_backend.measurement_tools.models import (
+            from client_desktop.client_backend.measurement_tools.models import (
                 FillVolumeResult,
             )
 
@@ -4117,7 +4117,7 @@ class DesktopController(QObject):
             self._fill_volume_active = True
 
         from qtpy.QtCore import Qt, QThreadPool
-        from desktop_client.client_backend.desktop.measurement_worker import (
+        from client_desktop.backend.measurement_worker import (
             MeasurementWorker,
         )
 
@@ -4280,7 +4280,7 @@ class DesktopController(QObject):
                 callback()
 
         from qtpy.QtCore import Qt, QThreadPool
-        from desktop_client.client_backend.desktop.measurement_worker import (
+        from client_desktop.backend.measurement_worker import (
             MeasurementWorker,
         )
 
@@ -4665,7 +4665,7 @@ class DesktopController(QObject):
         bounds_wkt = asset.get("bounds_wkt")
         if not bounds_wkt:
             return None
-        from core_shared.utils.geometry import parse_bounds_wkt_polygon
+        from platform_core.utils.geometry import parse_bounds_wkt_polygon
 
         bounds = parse_bounds_wkt_polygon(bounds_wkt)
         lon, lat = bounds.centroid()
@@ -4677,7 +4677,7 @@ class DesktopController(QObject):
         bounds_wkt = asset.get("bounds_wkt")
         if not bounds_wkt:
             return None
-        from core_shared.utils.geometry import parse_bounds_wkt_polygon
+        from platform_core.utils.geometry import parse_bounds_wkt_polygon
 
         b = parse_bounds_wkt_polygon(bounds_wkt)
         if not self._is_valid_lon_lat(b.min_x, b.min_y) or not self._is_valid_lon_lat(

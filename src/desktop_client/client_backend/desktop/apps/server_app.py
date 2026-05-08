@@ -5,13 +5,13 @@ import os
 import traceback
 from pathlib import Path
 
-from desktop_client.client_backend.desktop.app_mode import DesktopAppMode
-from desktop_client.client_backend.desktop.qt_compat import (
+from client_desktop.backend.app_mode import DesktopAppMode
+from client_desktop.backend.qt_compat import (
     QtDesktopRuntimeError,
     ensure_desktop_qt_runtime,
 )
-from desktop_client.client_backend.desktop.run_desktop import run
-from desktop_client.client_backend.desktop.standalone_runtime import (
+from client_desktop.backend.run_desktop import run
+from client_desktop.backend.standalone_runtime import (
     configure_standalone_runtime,
 )
 
@@ -30,7 +30,7 @@ def _write_error_log(message: str) -> None:
 
 def _run_api_only() -> int:
     import uvicorn
-    from server_vm.server_backend.app import app
+    from server_gateway.api.app import app
 
     uvicorn.run(app, host="127.0.0.1", port=8000, log_level="info")
     return 0

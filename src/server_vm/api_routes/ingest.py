@@ -6,10 +6,10 @@ from pathlib import Path
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from core_shared.ingestion.services.ingest_queue_service import ingest_queue_service
-from core_shared.ingestion.services.ingest_service import register_raster
-from core_shared.ingestion.services.metadata_extractor import MetadataExtractorError
-from server_vm.server_backend.schemas import (
+from platform_core.ingestion.services.ingest_queue_service import ingest_queue_service
+from platform_core.ingestion.services.ingest_service import register_raster
+from platform_core.ingestion.services.metadata_extractor import MetadataExtractorError
+from server_gateway.api.schemas import (
     IngestJobResponse,
     IngestQueueRequest,
     RegisterRasterRequest,

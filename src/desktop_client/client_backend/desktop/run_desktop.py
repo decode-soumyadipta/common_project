@@ -4,11 +4,11 @@ import logging
 import sys
 from pathlib import Path
 
-from desktop_client.client_backend.desktop.app_mode import DesktopAppMode
-from desktop_client.client_backend.desktop.logging_setup import (
+from client_desktop.backend.app_mode import DesktopAppMode
+from client_desktop.backend.logging_setup import (
     configure_desktop_logging,
 )
-from desktop_client.client_backend.desktop.qt_compat import ensure_desktop_qt_runtime
+from client_desktop.backend.qt_compat import ensure_desktop_qt_runtime
 
 
 def _write_startup_trace(message: str) -> None:
@@ -164,7 +164,7 @@ def run(
     def _launch_main_window() -> None:
         try:
             _write_startup_trace("run:main_window_import_start")
-            from desktop_client.client_backend.desktop.main_window import MainWindow
+            from client_desktop.backend.main_window import MainWindow
 
             _write_startup_trace("run:main_window_import_done")
             window = MainWindow(app_mode=app_mode)

@@ -4,9 +4,9 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from core_shared.ingestion.services.metadata_extractor import MetadataExtractorError
-from core_shared.ingestion.services.profile_service import sample_profile
-from server_vm.server_backend.schemas import ProfileRequest
+from platform_core.ingestion.services.metadata_extractor import MetadataExtractorError
+from platform_core.ingestion.services.profile_service import sample_profile
+from server_gateway.api.schemas import ProfileRequest
 
 
 def elevation_profile_from_request(request: ProfileRequest) -> dict:

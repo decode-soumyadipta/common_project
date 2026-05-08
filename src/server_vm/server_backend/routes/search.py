@@ -3,14 +3,14 @@ from typing import Any
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from server_vm.server_backend.schemas import (
+from server_gateway.api.schemas import (
     BBoxSearchRequest,
     CoordinateSearchRequest,
     PolygonSearchRequest,
 )
-from server_vm.server_backend.catalog.catalog_repository import CatalogRepository
-from server_vm.server_backend.catalog.service import CatalogService
-from core_shared.db.session import get_session
+from server_gateway.api.catalog.catalog_repository import CatalogRepository
+from server_gateway.api.catalog.service import CatalogService
+from platform_core.db.session import get_session
 
 
 router = APIRouter(prefix="/search", tags=["search"])

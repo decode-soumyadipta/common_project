@@ -30,6 +30,6 @@ ICON_MANIFEST: dict[str, str] = {
 }
 
 
-from desktop_client.client_backend.desktop import icon_registry as _target
+from client_desktop.backend import icon_registry as _target
 
 sys.modules[__name__] = _target

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import logging
 
-from desktop_client.client_backend.desktop.app_mode import DesktopAppMode
-from desktop_client.client_backend.desktop.qt_compat import (
+from client_desktop.backend.app_mode import DesktopAppMode
+from client_desktop.backend.qt_compat import (
     QtDesktopRuntimeError,
     ensure_desktop_qt_runtime,
 )
-from desktop_client.client_backend.desktop.run_desktop import run
+from client_desktop.backend.run_desktop import run
 
 
 LOGGER = logging.getLogger("desktop_ingestion.gui_admin")

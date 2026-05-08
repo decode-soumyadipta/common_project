@@ -1,6 +1,6 @@
 """Viewer desktop entrypoint."""
 
-from desktop_client.client_backend.desktop.apps.client_app import main
+from client_desktop.backend.apps.client_app import main
 
 
 if __name__ == "__main__":

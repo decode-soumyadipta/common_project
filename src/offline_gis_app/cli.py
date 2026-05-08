@@ -2,10 +2,10 @@ import argparse
 
 import uvicorn
 
-from server_vm.server_backend.app import app
-from core_shared.config_pkg.settings import settings
-from desktop_client.client_backend.desktop.app_mode import DesktopAppMode
-from desktop_client.client_backend.desktop.qt_compat import (
+from server_gateway.api.app import app
+from platform_core.config.settings import settings
+from client_desktop.backend.app_mode import DesktopAppMode
+from client_desktop.backend.qt_compat import (
     QtDesktopRuntimeError,
     ensure_desktop_qt_runtime,
 )
@@ -21,7 +21,7 @@ def run_desktop(mode: DesktopAppMode = DesktopAppMode.UNIFIED) -> None:
     except QtDesktopRuntimeError as exc:
         raise SystemExit(str(exc)) from exc
 
-    from desktop_client.client_backend.desktop.run_desktop import run
+    from client_desktop.backend.run_desktop import run
 
     raise SystemExit(run(app_mode=mode, qt_backend=qt_backend))
 

@@ -1,4 +1,4 @@
-from core_shared.ingestion.repository.ingest_job_repository import (
+from platform_core.ingestion.repository.ingest_job_repository import (
     IngestJobRepository,
 )
 

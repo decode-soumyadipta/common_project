@@ -11,8 +11,8 @@ from urllib.parse import urlparse
 
 import httpx
 
-from core_shared.config_pkg.settings import settings
-from server_vm.server_backend.routes.health import API_BUILD
+from platform_core.config_pkg.settings import settings
+from server_gateway.api.routes.health import API_BUILD
 
 
 class ApiServerManager:
@@ -83,7 +83,7 @@ class ApiServerManager:
             sys.executable,
             "-m",
             "uvicorn",
-            "server_vm.server_backend.app:app",
+            "server_gateway.api.app:app",
             "--host",
             settings.api_host,
             "--port",

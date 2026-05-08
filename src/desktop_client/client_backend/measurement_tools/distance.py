@@ -12,8 +12,8 @@ from typing import Optional
 
 from pyproj import Geod
 
-from desktop_client.client_backend.measurement_tools.models import DistanceMeasurement
-from desktop_client.client_backend.measurement_tools.dem_utils import sample_dem_height
+from client_desktop.client_backend.measurement_tools.models import DistanceMeasurement
+from client_desktop.client_backend.measurement_tools.dem_utils import sample_dem_height
 
 
 def vincenty_distance(

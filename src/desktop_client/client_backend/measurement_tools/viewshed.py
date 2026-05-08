@@ -12,8 +12,8 @@ except ImportError:
     rowcol = None
     Transformer = None
 
-from desktop_client.client_backend.measurement_tools.models import ViewshedMeasurement
-from desktop_client.client_backend.measurement_tools.dem_utils import read_dem_window
+from client_desktop.client_backend.measurement_tools.models import ViewshedMeasurement
+from client_desktop.client_backend.measurement_tools.dem_utils import read_dem_window
 
 EARTH_RADIUS_M = 6_371_000.0
 

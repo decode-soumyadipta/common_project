@@ -10,12 +10,12 @@ from collections.abc import Generator
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
-from core_shared.config_pkg.settings import settings
-from core_shared.db.base import Base
-from core_shared.db.migrations.runner import apply_migrations
+from platform_core.config_pkg.settings import settings
+from platform_core.db.base import Base
+from platform_core.db.migrations.runner import apply_migrations
 
 # Import all models to ensure they are registered with Base.metadata
-from core_shared.db.models import (  # noqa: F401
+from platform_core.db.models import (  # noqa: F401
     IngestJob,
     IngestJobItem,
     IngestJobItemStatus,

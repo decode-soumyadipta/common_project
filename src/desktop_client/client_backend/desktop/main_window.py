@@ -47,14 +47,14 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
-from desktop_client.client_backend.desktop.app_mode import DesktopAppMode
-from desktop_client.client_backend.desktop.bridge import WebBridge
-from desktop_client.client_backend.desktop.control_panel import ControlPanel
-from desktop_client.client_backend.desktop.controller import DesktopController
-from desktop_client.client_backend.desktop.icon_registry import IconRegistry
-from desktop_client.client_backend.desktop.status_bar import GISStatusBar
-from desktop_client.client_backend.desktop.titiler_manager import TiTilerManager
-from desktop_client.client_backend.desktop.web_page import LoggingWebEnginePage
+from client_desktop.backend.app_mode import DesktopAppMode
+from client_desktop.backend.bridge import WebBridge
+from client_desktop.backend.control_panel import ControlPanel
+from client_desktop.backend.controller import DesktopController
+from client_desktop.backend.icon_registry import IconRegistry
+from client_desktop.backend.status_bar import GISStatusBar
+from client_desktop.backend.titiler_manager import TiTilerManager
+from client_desktop.backend.web_page import LoggingWebEnginePage
 
 
 class LayerCompositorOverlay(QWidget):
@@ -519,7 +519,7 @@ class MainWindow(QMainWindow):
         # Initialize database when in server mode
         if app_mode in (DesktopAppMode.UNIFIED, DesktopAppMode.SERVER):
             try:
-                from core_shared.db.session import init_db
+                from platform_core.db.session import init_db
 
                 init_db()
                 logging.getLogger("desktop").info("Database initialized successfully")
@@ -606,7 +606,7 @@ class MainWindow(QMainWindow):
         # ── Elevation profile panel (hidden until first profile) ──────────
         # It sits ONLY under the map column (web_view), not the full window.
         # We achieve this by putting the web_view in its own vertical splitter.
-        from desktop_client.client_backend.desktop.elevation_profile_panel import (
+        from client_desktop.backend.elevation_profile_panel import (
             ElevationProfilePanel,
         )
 

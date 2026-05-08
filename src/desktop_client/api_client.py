@@ -1,5 +1,5 @@
 """Public API client boundary for desktop viewer."""
 
-from desktop_client.client_backend.desktop.api_client import DesktopApiClient
+from client_desktop.backend.api_client import DesktopApiClient
 
 __all__ = ["DesktopApiClient"]

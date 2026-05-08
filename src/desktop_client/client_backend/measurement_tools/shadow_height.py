@@ -10,11 +10,11 @@ except ImportError:
     get_altitude = None
     get_azimuth = None
 
-from desktop_client.client_backend.measurement_tools.models import (
+from client_desktop.client_backend.measurement_tools.models import (
     ShadowHeightMeasurement,
 )
-from desktop_client.client_backend.measurement_tools.dem_utils import sample_dem_height
-from desktop_client.client_backend.measurement_tools.distance import vincenty_distance
+from client_desktop.client_backend.measurement_tools.dem_utils import sample_dem_height
+from client_desktop.client_backend.measurement_tools.distance import vincenty_distance
 
 
 def _solar_position_noaa(

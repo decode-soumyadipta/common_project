@@ -24,10 +24,10 @@ except ImportError:
     Transformer = None
     Polygon = None
 
-from desktop_client.client_backend.measurement_tools.models import (
+from client_desktop.client_backend.measurement_tools.models import (
     PolygonAreaMeasurement,
 )
-from desktop_client.client_backend.measurement_tools.dem_utils import (
+from client_desktop.client_backend.measurement_tools.dem_utils import (
     horn_gradient,
     read_dem_window,
 )

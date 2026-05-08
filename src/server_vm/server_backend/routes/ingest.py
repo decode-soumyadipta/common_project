@@ -3,12 +3,12 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from server_vm.server_backend.schemas import (
+from server_gateway.api.schemas import (
     IngestJobResponse,
     IngestQueueRequest,
     RegisterRasterRequest,
 )
-from core_shared.db.session import get_session
+from platform_core.db.session import get_session
 from server_vm.api_routes.ingest import (
     enqueue_ingest_from_request,
     get_ingest_job as get_ingest_job_from_boundary,

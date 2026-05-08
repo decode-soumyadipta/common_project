@@ -2,8 +2,8 @@
 
 import uvicorn
 
-from core_shared.config import settings
-from server_vm.server_backend.app import app
+from platform_core.config import settings
+from server_gateway.api.app import app
 
 
 def main() -> None:

@@ -68,6 +68,6 @@ class MainWindow:
     )
 
 
-from desktop_client.client_backend.desktop import main_window as _target
+from client_desktop.backend import main_window as _target
 
 sys.modules[__name__] = _target
