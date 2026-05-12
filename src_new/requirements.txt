@@ -1,0 +1,139 @@
+# Offline 3D GIS - Refactored Architecture Requirements
+# Python 3.11+ required
+# System dependencies: GDAL >= 3.8, PostgreSQL >= 14, PostGIS >= 3.3, Qt6 >= 6.5
+
+# Web Framework and Server
+fastapi==0.115.6
+uvicorn[standard]==0.30.6
+httpx==0.27.2
+starlette==0.41.3
+
+# Database ORM and Drivers
+sqlalchemy==2.0.36
+psycopg[binary]==3.2.3
+psycopg2-binary==2.9.10
+alembic==1.14.0
+
+# Data Validation and Settings
+pydantic==2.10.5
+pydantic-settings==2.7.1
+python-dotenv==1.0.1
+
+# Tile Serving (TiTiler)
+titiler.application==0.21.0
+titiler.core==0.21.0
+titiler.mosaic==0.21.0
+rio-tiler==7.2.3
+morecantile==6.1.0
+
+# Geospatial Libraries
+# Note: GDAL, rasterio, pyproj, shapely should be installed via conda
+# or system package manager for proper binary dependencies
+rasterio==1.4.3
+pyproj==3.6.1
+shapely==2.0.7
+geojson-pydantic==1.1.2
+
+# Scientific Computing
+numpy==1.26.4
+scipy==1.11.4
+
+# Desktop UI (PySide6)
+# Note: Only required for desktop clients, not for backend services
+PySide6==6.5.3
+PySide6-WebEngine==6.5.3
+qtpy==2.4.2
+
+# Testing
+pytest==8.3.4
+pytest-asyncio==0.24.0
+pytest-cov==6.0.0
+pytest-mock==3.14.0
+pytest-httpx==0.34.0
+
+# Development Tools
+black==24.10.0
+ruff==0.8.4
+mypy==1.13.0
+types-requests==2.32.0.20241016
+
+# Rust Integration (Optional - for performance accelerators)
+maturin==1.7.4
+
+# Logging and Monitoring
+python-json-logger==3.2.1
+
+# Security
+cryptography==44.0.0
+
+# Utilities
+click==8.1.8
+tqdm==4.67.1
+aiofiles==24.1.0
+python-multipart==0.0.20  # For file uploads in FastAPI
+
+# Additional FastAPI dependencies
+jinja2==3.1.5
+python-jose[cryptography]==3.3.0  # For JWT tokens (if needed)
+passlib[bcrypt]==1.7.4  # For password hashing (if needed)
+
+# Caching
+redis==5.2.1  # Optional: for distributed tile caching
+hiredis==3.0.0  # Optional: faster Redis protocol parser
+
+# ============================================================================
+# Installation Instructions
+# ============================================================================
+#
+# Option 1: Using conda (recommended for GDAL dependencies)
+# ---------------------------------------------------------
+# 1. Install conda/mamba
+# 2. Create environment: conda env create -f src_new/environment.yml
+# 3. Activate: conda activate offline-3d-gis-refactored
+# 4. Install package: pip install -e .
+#
+# Option 2: Using pip only (requires system GDAL)
+# ------------------------------------------------
+# 1. Install system dependencies:
+#    - Ubuntu/Debian: apt-get install gdal-bin libgdal-dev python3-dev postgresql-client
+#    - macOS: brew install gdal postgresql qt6
+#    - RHEL/CentOS: yum install gdal gdal-devel python3-devel postgresql
+# 2. Create virtual environment: python3.11 -m venv venv
+# 3. Activate: source venv/bin/activate
+# 4. Install: pip install -r src_new/requirements.txt
+# 5. Install package: pip install -e .
+#
+# Option 3: Server-specific installations
+# ----------------------------------------
+# Server 1 (Ingestion + Tile Serving):
+#   pip install -r src_new/requirements.txt
+#
+# Server 2 (Query Service - minimal):
+#   pip install fastapi uvicorn sqlalchemy psycopg[binary] pydantic pydantic-settings \
+#               python-dotenv pyproj shapely httpx python-json-logger
+#
+# Desktop Clients:
+#   pip install -r src_new/requirements.txt  # Full installation
+#
+# ============================================================================
+# Offline/Air-Gapped Installation
+# ============================================================================
+#
+# 1. On internet-connected machine:
+#    pip download -r src_new/requirements.txt -d ./packages/
+#
+# 2. Transfer ./packages/ directory to air-gapped machine
+#
+# 3. On air-gapped machine:
+#    pip install --no-index --find-links=./packages/ -r src_new/requirements.txt
+#
+# ============================================================================
+# Notes
+# ============================================================================
+#
+# - GDAL installation via pip can be problematic; conda is strongly recommended
+# - Desktop clients require Qt6; backend services do not
+# - Rust accelerators are optional; pure Python fallbacks exist
+# - For production, pin all transitive dependencies using pip-compile
+# - Redis is optional; file-based caching is the default
+# - JWT/password hashing dependencies are optional (for future auth features)

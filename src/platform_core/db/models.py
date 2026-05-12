@@ -15,6 +15,16 @@ class RasterKind(str, Enum):
     MBTILES = "mbtiles"
     DEM = "dem"
     UNKNOWN = "unknown"
+    
+    @classmethod
+    def _missing_(cls, value):
+        """Handle case-insensitive enum lookup."""
+        if isinstance(value, str):
+            value_lower = value.lower()
+            for member in cls:
+                if member.value.lower() == value_lower:
+                    return member
+        return cls.UNKNOWN
 
 
 class RasterAsset(Base):
@@ -22,24 +32,44 @@ class RasterAsset(Base):
 
     __tablename__ = "raster_assets"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    # Map to actual database column names
+    id: Mapped[str] = mapped_column("raster_id", String(36), primary_key=True)
     file_path: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     file_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    raster_kind: Mapped[RasterKind] = mapped_column(
-        SqlEnum(RasterKind),
+    raster_kind: Mapped[str] = mapped_column(
+        "kind",
+        String(20),
         nullable=False,
-        default=RasterKind.UNKNOWN,
+        default="unknown",
     )
     crs: Mapped[str] = mapped_column(String(128), nullable=False)
-    bounds_wkt: Mapped[str] = mapped_column(Text, nullable=False)
+    # Store bounds as separate columns instead of WKT
+    min_lon: Mapped[float] = mapped_column(nullable=False)
+    min_lat: Mapped[float] = mapped_column(nullable=False)
+    max_lon: Mapped[float] = mapped_column(nullable=False)
+    max_lat: Mapped[float] = mapped_column(nullable=False)
     resolution_x: Mapped[float] = mapped_column(nullable=False)
     resolution_y: Mapped[float] = mapped_column(nullable=False)
     width: Mapped[int] = mapped_column(nullable=False)
     height: Mapped[int] = mapped_column(nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
-    )
+    created_at: Mapped[datetime] = mapped_column("upload_date", DateTime, default=datetime.utcnow)
+    # Note: updated_at column doesn't exist in the legacy schema, so we make it optional and don't query it
+    # updated_at: Mapped[datetime] = mapped_column(
+    #     DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=True
+    # )
+    
+    @property
+    def bounds_wkt(self) -> str:
+        """Generate WKT polygon from bounding box coordinates."""
+        return (
+            f"POLYGON(("
+            f"{self.min_lon} {self.min_lat}, "
+            f"{self.max_lon} {self.min_lat}, "
+            f"{self.max_lon} {self.max_lat}, "
+            f"{self.min_lon} {self.max_lat}, "
+            f"{self.min_lon} {self.min_lat}"
+            f"))"
+        )
 
 
 class IngestJobStatus(str, Enum):

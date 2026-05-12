@@ -1,0 +1,414 @@
+html,
+body,
+#app,
+#cesiumContainer {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: #101726;
+  color: #e6eefc;
+  font-family: "Avenir Next", "Segoe UI", "Noto Sans", sans-serif;
+}
+
+#app {
+  position: relative;
+}
+
+#status {
+  display: none;
+}
+
+#comparatorWindows {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: none;
+  z-index: 26;
+  pointer-events: none;
+  background: transparent;
+  align-items: stretch;
+}
+
+#comparatorWindows.active {
+  display: flex;
+  align-items: stretch;
+}
+
+/* 3-pane: 2 top + 1 bottom */
+#comparatorWindows.active[data-pane-count="3"] {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 4px;
+  align-items: stretch;
+  justify-items: stretch;
+}
+
+#comparatorWindows.active[data-pane-count="3"] > .comparatorPane:nth-child(1) {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+/* pane 0 = grid item 1, divider0 = grid item 2, pane 1 = grid item 3 ... */
+/* dividers are hidden in grid modes */
+#comparatorWindows.active[data-pane-count="3"] > .comparatorDivider {
+  display: none !important;
+}
+
+#comparatorWindows.active[data-pane-count="3"] > .comparatorPane:nth-child(3) {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+/* 3rd pane spans both columns at the bottom */
+#comparatorWindows.active[data-pane-count="3"] > .comparatorPane:nth-child(5) {
+  grid-column: 1 / 3;
+  grid-row: 2;
+}
+
+/* 4-pane: 2x2 grid */
+#comparatorWindows.active[data-pane-count="4"] {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 4px;
+  align-items: stretch;
+  justify-items: stretch;
+}
+
+#comparatorWindows.active[data-pane-count="4"] > .comparatorDivider {
+  display: none !important;
+}
+
+#comparatorWindows.active[data-pane-count="4"] > .comparatorPane:nth-child(1) {
+  grid-column: 1; grid-row: 1;
+}
+#comparatorWindows.active[data-pane-count="4"] > .comparatorPane:nth-child(3) {
+  grid-column: 2; grid-row: 1;
+}
+#comparatorWindows.active[data-pane-count="4"] > .comparatorPane:nth-child(5) {
+  grid-column: 1; grid-row: 2;
+}
+#comparatorWindows.active[data-pane-count="4"] > .comparatorPane:nth-child(7) {
+  grid-column: 2; grid-row: 2;
+}
+
+.comparatorPane {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  pointer-events: auto;
+  background: rgba(8, 14, 24, 1.0);
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  box-sizing: border-box;
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+  display: none;
+}
+
+.comparatorPane.active {
+  display: flex;
+}
+
+/* In grid mode, panes need block display and full dimensions */
+#comparatorWindows.active[data-pane-count="3"] > .comparatorPane.active,
+#comparatorWindows.active[data-pane-count="4"] > .comparatorPane.active {
+  display: block;
+  width: auto;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.comparatorPane.selected {
+  border-color: rgba(255, 222, 89, 0.98);
+  box-shadow: inset 0 0 0 1px rgba(255, 222, 89, 0.9), 0 0 20px rgba(255, 222, 89, 0.2);
+}
+
+.comparatorPane.selected .comparatorTitle {
+  background: rgba(28, 20, 8, 0.86);
+  color: rgba(255, 246, 220, 0.98);
+}
+
+.comparatorDivider {
+  width: 4px;
+  align-self: stretch;
+  background: rgba(255, 255, 255, 0.15);
+  box-shadow: inset 1px 0 0 rgba(255,255,255,0.05);
+  pointer-events: none;
+  display: none;
+}
+
+.comparatorDivider.active {
+  display: block;
+}
+
+.comparatorViewer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.comparatorTitle {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 4;
+  max-width: calc(100% - 16px);
+  padding: 3px 7px;
+  border-radius: 4px;
+  background: rgba(14, 22, 36, 0.58);
+  color: rgba(249, 252, 255, 0.94);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  font-weight: 600;
+  backdrop-filter: blur(2px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.comparatorCrosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 18px;
+  height: 18px;
+  margin-left: -9px;
+  margin-top: -9px;
+  z-index: 4;
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+.comparatorCrosshair::before,
+.comparatorCrosshair::after {
+  content: "";
+  position: absolute;
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.comparatorCrosshair::before {
+  left: 8px;
+  top: 0;
+  width: 2px;
+  height: 18px;
+}
+
+.comparatorCrosshair::after {
+  left: 0;
+  top: 8px;
+  width: 18px;
+  height: 2px;
+}
+
+
+
+
+#edgeScaleTop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 32px;
+  z-index: 11;
+  pointer-events: none;
+  background: transparent;
+}
+
+#edgeScaleLeft {
+  position: absolute;
+  top: 32px;
+  left: 0;
+  bottom: 0;
+  width: 52px;
+  z-index: 11;
+  pointer-events: none;
+  background: transparent;
+}
+
+#edgeScaleTopSvg,
+#edgeScaleLeftSvg {
+  width: 100%;
+  height: 100%;
+}
+
+#edgeScaleTopSvg .axis,
+#edgeScaleLeftSvg .axis {
+  stroke: rgba(200, 220, 240, 0.7);
+  stroke-width: 1.2;
+}
+
+#edgeScaleTopSvg .tick,
+#edgeScaleLeftSvg .tick {
+  stroke: rgba(200, 220, 240, 0.8);
+  stroke-width: 1.5;
+}
+
+#edgeScaleTopSvg .label,
+#edgeScaleLeftSvg .label {
+  fill: rgba(210, 230, 250, 0.9);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  font-family: monospace;
+}
+
+#demColorbar {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  z-index: 12;
+  pointer-events: none;
+  display: none;
+}
+
+#demColorbar.visible {
+  display: block;
+}
+
+#demColorbar-gradient {
+  width: 24px;
+  height: 140px;
+  border: 1px solid rgba(255, 255, 255, 0.82);
+  border-radius: 3px;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.38);
+}
+
+#demColorbar-labels {
+  position: absolute;
+  top: 0;
+  right: 30px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 140px;
+  font-size: 10px;
+  color: rgba(248, 251, 255, 0.96);
+  font-family: monospace;
+  font-weight: 600;
+  text-align: right;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.72);
+}
+
+#demColorbar-label-high,
+#demColorbar-label-mid,
+#demColorbar-label-low {
+  line-height: 1;
+}
+
+#searchBusyOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 12, 20, 0.22);
+  pointer-events: auto;
+}
+
+#searchBusyOverlay.visible {
+  display: flex;
+}
+
+#searchBusyDialog {
+  min-width: 190px;
+  max-width: 280px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(16, 28, 46, 0.28);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#searchBusySpinner {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid #c9d5e8;
+  border-top-color: #1d66d1;
+  animation: searchBusySpin 0.85s linear infinite;
+  flex: 0 0 auto;
+}
+
+#searchBusyText {
+  color: #17263d;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.search-draw-cursor-active {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2720%27 height=%2720%27 viewBox=%270 0 24 24%27%3E%3Cpath fill=%22%23f4c430%22 stroke=%22%231a1a1a%22 stroke-width=%221.4%22 d=%22M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z%22/%3E%3Cpath fill=%22%231a1a1a%22 d=%22M20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83l3.75 3.75z%22/%3E%3C/svg%3E") 2 18, crosshair !important;
+}
+
+@keyframes searchBusySpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+
+/* ── Compass widget ─────────────────────────────────────────────────────── */
+#compassWidget {
+  position: absolute;
+  bottom: 48px;
+  left: 16px;           /* bottom-LEFT corner */
+  width: 72px;
+  height: 72px;
+  z-index: 20;
+  cursor: pointer;
+  user-select: none;
+  filter: drop-shadow(0 2px 8px rgba(0,0,0,0.65));
+  /* No CSS transition — rotation is driven by rAF for maximum fluidity */
+}
+
+#compassWidget:hover {
+  filter: drop-shadow(0 3px 14px rgba(80,160,255,0.7));
+}
+
+#compassWidget:active {
+  filter: drop-shadow(0 1px 4px rgba(0,0,0,0.4));
+}
+
+#compassSvg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ── Measurement tool cursors ───────────────────────────────────────────── */
+.measure-distance-cursor-active,
+.measure-distance-cursor-active * {
+  cursor: crosshair !important;
+}
+
+.measure-profile-cursor-active,
+.measure-profile-cursor-active * {
+  cursor: crosshair !important;
+}
+
+/* Pan mode cursor */
+.pan-mode-active,
+.pan-mode-active * {
+  cursor: grab !important;
+}
+
+.pan-mode-active:active,
+.pan-mode-active:active * {
+  cursor: grabbing !important;
+}

@@ -1,0 +1,122 @@
+name: offline-3d-gis-refactored
+channels:
+  - conda-forge
+dependencies:
+  # Python runtime
+  - python=3.11.9
+
+  # Core system dependencies
+  - pip=24.0
+
+  # Geospatial libraries (system-level)
+  - gdal=3.10.3
+  - libgdal-jp2openjpeg  # Required for JPEG2000 (.j2k) support
+  - rasterio=1.4.3
+  - pyproj=3.6.1
+  - shapely=2.0.7
+
+  # Scientific computing
+  - numpy=1.26.4
+  - scipy=1.11.4
+
+  # Database
+  - postgresql=16.4  # Client libraries
+  - libpq=16.4  # PostgreSQL C library
+
+  # Desktop UI (optional - only for clients)
+  - qt-main=6.5.3
+  - pyqt=6.5.3
+  - pyqt6-webengine=6.5.0
+
+  # Python packages via pip
+  - pip:
+      # Web framework and server
+      - fastapi==0.115.6
+      - uvicorn[standard]==0.30.6
+      - httpx==0.27.2
+
+      # Database ORM and drivers
+      - sqlalchemy==2.0.36
+      - psycopg[binary]==3.2.3
+      - psycopg2-binary==2.9.10  # Fallback for legacy code
+
+      # Data validation and settings
+      - pydantic==2.10.5
+      - pydantic-settings==2.7.1
+      - python-dotenv==1.0.1
+
+      # Tile serving
+      - titiler.application==0.21.0
+      - titiler.core==0.21.0
+      - titiler.mosaic==0.21.0
+
+      # Desktop UI (PySide6 alternative to PyQt)
+      - PySide6==6.5.3
+      - PySide6-WebEngine==6.5.3
+
+      # Testing
+      - pytest==8.3.4
+      - pytest-asyncio==0.24.0
+      - pytest-cov==6.0.0
+      - pytest-mock==3.14.0
+
+      # Development tools
+      - black==24.10.0
+      - ruff==0.8.4
+      - mypy==1.13.0
+
+      # Rust integration (optional)
+      - maturin==1.7.4  # For building PyO3 Rust extensions
+
+      # Additional geospatial utilities
+      - rio-tiler==7.2.3  # TiTiler dependency
+      - morecantile==6.1.0  # Tile grid utilities
+      - geojson-pydantic==1.1.2
+
+      # Logging and monitoring
+      - python-json-logger==3.2.1
+
+      # Security
+      - cryptography==44.0.0
+
+      # Utilities
+      - click==8.1.8  # CLI framework
+      - tqdm==4.67.1  # Progress bars
+      - aiofiles==24.1.0  # Async file I/O
+
+# Environment variables (documentation only - set in .env file)
+# DATA_ROOT=/path/to/geospatial/data
+# DATABASE_URL=postgresql://user:pass@host:5432/dbname
+# API_HOST=192.168.1.100
+# INGESTION_SERVICE_PORT=8001
+# TILE_SERVICE_PORT=8002
+# QUERY_SERVICE_PORT=8003
+# TITILER_BASE_URL=http://192.168.1.100:8002
+# CESIUM_BASE_URL=http://localhost:8080/cesium
+# INGESTION_SERVICE_URL=http://192.168.1.100:8001
+# QUERY_SERVICE_URL=http://192.168.1.101:8003
+# TILE_SERVICE_URL=http://192.168.1.100:8002
+# MAX_UPLOAD_SIZE=10737418240
+# TILE_CACHE_SIZE=1073741824
+# GDAL_DISABLE_READDIR_ON_OPEN=EMPTY_DIR
+# GDAL_HTTP_MERGE_CONSECUTIVE_RANGES=YES
+# ALLOWED_HOSTS=192.168.1.0/24,127.0.0.1
+# LOG_LEVEL=INFO
+# LOG_FORMAT=json
+# LOG_OUTPUT_PATH=/var/log/offline-3d-gis
+
+# Installation instructions:
+# 1. Create environment: conda env create -f environment.yml
+# 2. Activate environment: conda activate offline-3d-gis-refactored
+# 3. Install package in development mode: pip install -e .
+# 4. (Optional) Build Rust accelerators: bash src_new/scripts/build_rust.sh
+# 5. Copy .env.example to .env and configure environment variables
+# 6. Run services using scripts in src_new/scripts/
+
+# Notes:
+# - This environment is compatible with offline/air-gapped deployments
+# - All packages can be cached using conda-pack for offline installation
+# - Rust accelerators are optional; pure Python fallbacks are available
+# - Desktop clients require Qt6/PySide6; servers do not
+# - For Server 1: Install full environment
+# - For Server 2: Can skip GDAL, rasterio, and desktop dependencies

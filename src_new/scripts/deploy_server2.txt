@@ -1,0 +1,85 @@
+# Server 2 Deployment Manifest
+# Components: Query Service
+# Purpose: Spatial search, metadata queries, and coordinate-based lookups via PostGIS
+
+## Python Packages/Modules Required
+
+### Services
+src_new/services/query/
+
+### Shared Components
+src_new/shared/
+
+## Detailed Module Listing
+
+### Query Service Modules
+- src_new/services/query/__init__.py
+- src_new/services/query/service.py
+- src_new/services/query/spatial_queries.py
+- src_new/services/query/api/
+  - routes.py
+  - dependencies.py
+- src_new/services/query/repositories/
+  - raster_repository.py
+  - spatial_index_repository.py
+
+### Shared Modules (Required by Server 2)
+- src_new/shared/__init__.py
+- src_new/shared/config.py
+- src_new/shared/constants.py
+- src_new/shared/models/
+  - raster_metadata.py
+  - bounding_box.py
+  - crs.py
+  - tile_request.py
+  - query_result.py
+- src_new/shared/utils/
+  - coordinate_conversion.py
+  - file_validation.py
+  - logging_config.py
+  - error_handlers.py
+- src_new/shared/auth/
+  - lan_security.py
+
+## System Dependencies
+- PostgreSQL client libraries (psycopg2/psycopg)
+- PostGIS >= 3.3 (spatial extension)
+- PyProj >= 3.6 (for coordinate transformations)
+
+## Python Dependencies
+- fastapi >= 0.115
+- uvicorn >= 0.30
+- pydantic >= 2.0
+- pydantic-settings >= 2.5
+- python-dotenv
+- psycopg[binary] >= 3.2
+- sqlalchemy >= 2.0
+- pyproj >= 3.6
+- shapely >= 2.0
+- httpx >= 0.27
+
+## Environment Variables Required
+- DATABASE_URL
+- API_HOST
+- QUERY_SERVICE_PORT (default: 8003)
+- ALLOWED_HOSTS
+- LOG_LEVEL
+- LOG_FORMAT
+- LOG_OUTPUT_PATH
+
+## Startup Scripts
+- src_new/scripts/start_query_service.sh
+- src_new/scripts/deploy_server2.sh (launches query service)
+
+## Hardware Requirements
+- CPU: Moderate multi-core (for query processing)
+- RAM: 16GB+ (for query operations)
+- Disk: Moderate capacity (primarily for logs)
+- Network: LAN connectivity to PostGIS database and Server 1 (for tile requests)
+
+## Notes
+- Query Service does NOT require GDAL or raster processing libraries
+- Communicates with Server 1 Tile Service via REST API for tile URLs
+- All PostGIS queries use parameterized statements to prevent SQL injection
+- Services bind to LAN interface only (not 0.0.0.0) for security
+- Spatial indexing (GIST) is managed by PostGIS for optimal query performance

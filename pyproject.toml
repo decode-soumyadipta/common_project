@@ -20,10 +20,18 @@ dependencies = [
 ]
 
 [project.scripts]
+# Legacy entry points (src/)
 offline-gis-cli = "offline_gis_app.cli:main"
 offline-gis-server = "server_vm.main_server:main"
 offline-gis-client = "desktop_client.main_client:main"
 offline-gis-admin = "desktop_ingestion.main_admin:main"
+
+# New modular entry points (src_new/)
+offline-gis-ingestion-service = "src_new.services.ingestion.service:main"
+offline-gis-tile-service = "src_new.services.tile_serving.service:main"
+offline-gis-query-service = "src_new.services.query.service:main"
+offline-gis-ingestion-client = "src_new.clients.desktop_ingestion.main:main"
+offline-gis-search-client = "src_new.clients.desktop_search.main:main"
 
 [project.optional-dependencies]
 desktop = [
@@ -48,7 +56,7 @@ dev = [
 package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["src", "src_new"]
 
 [tool.setuptools.package-data]
 desktop_client = [
@@ -59,6 +67,13 @@ desktop_client = [
 ]
 core_shared = [
   "db/migrations/*",
+]
+"src_new.clients.desktop_search" = [
+  "web_assets/**/*",
+  "cesium/**/*.js",
+]
+"src_new.clients.desktop_ingestion" = [
+  "ui/**/*.ui",
 ]
 
 [tool.pytest.ini_options]

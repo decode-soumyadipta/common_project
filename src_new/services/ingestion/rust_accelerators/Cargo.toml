@@ -1,0 +1,39 @@
+[package]
+name = "rust_accelerators"
+version = "0.1.0"
+edition = "2021"
+description = "PyO3-based Rust accelerators for CPU-intensive geospatial operations in the Ingestion Service"
+
+# Build as a cdylib so Python can import it as a .so/.pyd extension module
+[lib]
+name = "rust_accelerators"
+crate-type = ["cdylib"]
+
+[dependencies]
+# PyO3: Python bindings for Rust — enables calling Rust from Python and releasing the GIL
+pyo3 = { version = "0.21", features = ["extension-module"] }
+
+# rusterize: fast vector-to-raster conversion (equivalent to rasterio.features.rasterize)
+# Provides burn_geometries() for rasterizing GeoJSON/WKT geometries onto a pixel grid
+rusterize = { version = "0.1", optional = true }
+
+# proj: PROJ bindings for batch CRS transformations
+proj = { version = "0.27", optional = true }
+
+# ndarray: N-dimensional array support for raster pixel buffers
+ndarray = "0.15"
+
+[features]
+default = ["rusterize_support", "proj_support"]
+rusterize_support = ["dep:rusterize"]
+proj_support = ["dep:proj"]
+
+[profile.release]
+# Optimise for speed; LTO reduces binary size and improves inlining across crates
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[build-dependencies]
+# maturin uses this to locate the correct Python interpreter during `maturin develop`
+pyo3-build-config = "0.21"

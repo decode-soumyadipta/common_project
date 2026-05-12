@@ -1,0 +1,119 @@
+# Server 1 Deployment Manifest
+# Components: Ingestion Service + Tile Serving Service
+# Purpose: Data upload, GDAL processing, COG conversion, and dynamic tile generation
+
+## Python Packages/Modules Required
+
+### Services
+src_new/services/ingestion/
+src_new/services/tile_serving/
+
+### Shared Components
+src_new/shared/
+
+## Detailed Module Listing
+
+### Ingestion Service Modules
+- src_new/services/ingestion/__init__.py
+- src_new/services/ingestion/service.py
+- src_new/services/ingestion/api/
+  - routes.py
+  - dependencies.py
+- src_new/services/ingestion/gdal_pipelines/
+  - metadata_extractor.py
+  - cog_converter.py
+  - reprojector.py
+  - thumbnail_generator.py
+- src_new/services/ingestion/format_handlers/
+  - geotiff_handler.py
+  - jpeg2000_handler.py
+  - mbtiles_handler.py
+- src_new/services/ingestion/rust_accelerators/
+  - __init__.py (Python wrappers)
+  - rasterize.rs (compiled to .so/.pyd)
+  - transform.rs (compiled to .so/.pyd)
+  - Cargo.toml
+
+### Tile Serving Service Modules
+- src_new/services/tile_serving/__init__.py
+- src_new/services/tile_serving/service.py
+- src_new/services/tile_serving/titiler_config.py
+- src_new/services/tile_serving/tile_endpoints.py
+- src_new/services/tile_serving/cache_manager.py
+
+### Shared Modules (Required by Server 1)
+- src_new/shared/__init__.py
+- src_new/shared/config.py
+- src_new/shared/constants.py
+- src_new/shared/models/
+  - raster_metadata.py
+  - bounding_box.py
+  - crs.py
+  - tile_request.py
+  - query_result.py
+- src_new/shared/utils/
+  - coordinate_conversion.py
+  - file_validation.py
+  - logging_config.py
+  - error_handlers.py
+- src_new/shared/auth/
+  - lan_security.py
+
+## System Dependencies
+- GDAL >= 3.8.0 (with JPEG2000 support via libgdal-jp2openjpeg)
+- Rasterio >= 1.3
+- PostgreSQL client libraries (psycopg2/psycopg)
+- PostGIS (for database connection)
+
+## Python Dependencies
+- fastapi >= 0.115
+- uvicorn >= 0.30
+- titiler.application >= 0.21
+- pydantic >= 2.0
+- pydantic-settings >= 2.5
+- python-dotenv
+- rasterio >= 1.3
+- pyproj >= 3.6
+- numpy >= 1.26
+- psycopg[binary] >= 3.2
+- sqlalchemy >= 2.0
+- httpx >= 0.27
+
+## Rust Dependencies (Optional Performance Accelerators)
+- Rust toolchain >= 1.70
+- PyO3 >= 0.20
+- rusterize (for vector rasterization)
+- maturin (for building Python extensions)
+
+## Environment Variables Required
+- DATA_ROOT
+- DATABASE_URL
+- API_HOST
+- INGESTION_SERVICE_PORT (default: 8001)
+- TILE_SERVICE_PORT (default: 8002)
+- TITILER_BASE_URL
+- MAX_UPLOAD_SIZE
+- TILE_CACHE_SIZE
+- GDAL_DISABLE_READDIR_ON_OPEN
+- GDAL_HTTP_MERGE_CONSECUTIVE_RANGES
+- ALLOWED_HOSTS
+- LOG_LEVEL
+- LOG_FORMAT
+- LOG_OUTPUT_PATH
+
+## Startup Scripts
+- src_new/scripts/start_ingestion_service.sh
+- src_new/scripts/start_tile_service.sh
+- src_new/scripts/deploy_server1.sh (launches both services)
+
+## Hardware Requirements
+- CPU: High-performance multi-core (for GDAL processing)
+- RAM: 32GB+ (for processing large rasters)
+- Disk: Large capacity for DATA_ROOT storage (terabyte-scale)
+- Network: LAN connectivity to PostGIS database and Server 2
+
+## Notes
+- Rust accelerators are optional; pure Python fallbacks are available
+- Services communicate with Server 2 only via REST API endpoints
+- All services bind to LAN interface only (not 0.0.0.0) for security
+- TiTiler is configured to disable all external HTTP requests
