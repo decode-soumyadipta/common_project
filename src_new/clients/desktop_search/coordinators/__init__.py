@@ -43,6 +43,15 @@ from src_new.clients.desktop_search.coordinators.ingest_coordinator import (
 from src_new.clients.desktop_search.coordinators.asset_loading_coordinator import (
     AssetLoadingCoordinator,
 )
+from src_new.clients.desktop_search.coordinators.rendering_coordinator import (
+    RenderingCoordinator,
+)
+from src_new.clients.desktop_search.coordinators.display_settings_coordinator import (
+    DisplaySettingsCoordinator,
+)
+from src_new.clients.desktop_search.coordinators.utility_coordinator import (
+    UtilityCoordinator,
+)
 
 __all__ = [
     "ComparatorCoordinator",
@@ -60,4 +69,7 @@ __all__ = [
     "SyncFocusCoordinator",
     "IngestCoordinator",
     "AssetLoadingCoordinator",
+    "RenderingCoordinator",
+    "DisplaySettingsCoordinator",
+    "UtilityCoordinator",
 ]

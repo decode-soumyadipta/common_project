@@ -37,6 +37,9 @@ from src_new.clients.desktop_search.coordinators import (
     SyncFocusCoordinator,
     IngestCoordinator,
     AssetLoadingCoordinator,
+    RenderingCoordinator,
+    DisplaySettingsCoordinator,
+    UtilityCoordinator,
 )
 from src_new.clients.desktop_search.coordinators.elevation_profile_coordinator import (
     ElevationProfileCoordinator,
@@ -203,6 +206,9 @@ class DesktopController(QObject):
         self._sync_focus = SyncFocusCoordinator(self)
         self._ingest = IngestCoordinator(self)
         self._asset_loading = AssetLoadingCoordinator(self)
+        self._rendering = RenderingCoordinator(self)
+        self._display_settings = DisplaySettingsCoordinator(self)
+        self._utility = UtilityCoordinator(self)
         self._logger.info("Controller initialized mode=%s", self.app_mode.value)
         self._connect_signals()
         self._apply_display_control_mode()
@@ -610,76 +616,8 @@ class DesktopController(QObject):
     def on_search_geometry(self, geometry_type: str, payload_json: str) -> None:
         self._search.on_search_geometry(geometry_type, payload_json)
 
-    @staticmethod
-    def _set_slider_from_float_value(
-        slider, raw_value: object, scale: float = 1.0
-    ) -> None:
-        if not isinstance(raw_value, (int, float)):
-            return
-        scaled = int(round(float(raw_value) * scale))
-        slider.setValue(max(slider.minimum(), min(slider.maximum(), scaled)))
-
     def on_comparator_pane_state(self, payload_json: str) -> None:
-        try:
-            payload = json.loads(payload_json)
-        except json.JSONDecodeError:
-            self._logger.warning(
-                "Invalid comparator pane state payload JSON: %s", payload_json
-            )
-            return
-
-        if not isinstance(payload, dict):
-            self._logger.warning(
-                "Invalid comparator pane state payload type: %s", type(payload).__name__
-            )
-            return
-
-        pane = str(payload.get("pane") or "").strip().lower()
-        layer_type = str(payload.get("layer_type") or "").strip().lower()
-        if pane not in {"left", "right"}:
-            pane = "left"
-        self._comparator_selected_pane = pane
-        self._comparator_selected_layer_type = (
-            layer_type if layer_type in {"dem", "imagery"} else None
-        )
-
-        imagery = (
-            payload.get("imagery") if isinstance(payload.get("imagery"), dict) else {}
-        )
-        dem = payload.get("dem") if isinstance(payload.get("dem"), dict) else {}
-
-        blockers = [
-            QSignalBlocker(self.panel.brightness_slider),
-            QSignalBlocker(self.panel.contrast_slider),
-            QSignalBlocker(self.panel.dem_hillshade_slider),
-            QSignalBlocker(self.panel.dem_color_mode_combo),
-        ]
-        try:
-            self._set_slider_from_float_value(
-                self.panel.brightness_slider, imagery.get("brightness"), scale=100.0
-            )
-            self._set_slider_from_float_value(
-                self.panel.contrast_slider, imagery.get("contrast"), scale=100.0
-            )
-            self._set_slider_from_float_value(
-                self.panel.dem_hillshade_slider, dem.get("hillshade_alpha"), scale=100.0
-            )
-
-            color_mode = str(dem.get("color_mode") or "").strip().lower()
-            if color_mode:
-                color_mode_index = self.panel.dem_color_mode_combo.findData(color_mode)
-                if color_mode_index >= 0:
-                    self.panel.dem_color_mode_combo.setCurrentIndex(color_mode_index)
-        finally:
-            del blockers
-
-        self.panel._update_display_value_labels()
-        self._apply_display_control_mode()
-        self._logger.debug(
-            "Comparator pane selected pane=%s type=%s",
-            self._comparator_selected_pane,
-            self._comparator_selected_layer_type,
-        )
+        self._comparator_coordinator.on_comparator_pane_state(payload_json)
 
     def _apply_search_results(self, assets: list[dict], label: str) -> None:
         """Apply search results with standard processing."""
@@ -789,229 +727,11 @@ class DesktopController(QObject):
         self.panel.log("Redo is not available yet.")
 
     def build_project_payload(self) -> dict:
-        now = dt.datetime.now(dt.timezone.utc).isoformat()
-        order_registry = getattr(self.panel, "_layer_order_registry", {}) or {}
-
-        raster_layers: list[dict[str, object]] = []
-        for path, asset in self._search_result_assets_by_path.items():
-            normalized_path = str(path or "").replace("\\", "/")
-            if not normalized_path:
-                continue
-            entry = order_registry.get(normalized_path, {})
-            raster_layers.append(
-                {
-                    "file_path": normalized_path,
-                    "file_name": asset.get("file_name"),
-                    "kind": asset.get("kind"),
-                    "crs": asset.get("crs"),
-                    "bounds_wkt": asset.get("bounds_wkt"),
-                    "tile_url": asset.get("tile_url"),
-                    "resolution_x": asset.get("resolution_x"),
-                    "resolution_y": asset.get("resolution_y"),
-                    "width": asset.get("width"),
-                    "height": asset.get("height"),
-                    "created_at": asset.get("created_at"),
-                    "is_visible": bool(
-                        self._search_layer_visibility.get(normalized_path, True)
-                    ),
-                    "order": entry.get("order", 0),
-                    "source": "user"
-                    if normalized_path in self._user_added_assets
-                    else "search",
-                }
-            )
-
-        vector_layers = [dict(layer) for layer in self._vector_layers.values()]
-
-        layer_order = [
-            path
-            for path, entry in sorted(
-                order_registry.items(), key=lambda item: item[1].get("order", 0)
-            )
-        ]
-
-        return {
-            "version": 1,
-            "saved_at": now,
-            "selected_asset_path": (
-                self.state.selected_asset.get("file_path")
-                if isinstance(self.state.selected_asset, dict)
-                else None
-            ),
-            "clicked_points": list(self.state.clicked_points),
-            "search": {
-                "geometry_type": self.state.search_geometry_type,
-                "geometry_payload": self.state.search_geometry_payload,
-                "visibility": dict(self._search_layer_visibility),
-                "layer_order": layer_order,
-                "active_dem": self._active_dem_search_layer_key,
-            },
-            "annotations": {
-                "points": list(self._annotation_records),
-                "lines": list(self._annotation_line_records),
-                "polygons": list(self._annotation_polygon_records),
-                "icons": list(self._annotation_icon_records),
-                "text_labels": list(self._annotation_text_records),
-            },
-            "raster_stretch": dict(self._raster_stretch_settings),
-            "layers": {
-                "rasters": raster_layers,
-                "vectors": vector_layers,
-            },
-        }
+        return self._project_io.build_project_payload()
 
     def apply_project_payload(self, payload: dict, source_path: Path | None = None) -> None:
-        self._clear_project_state()
-        if source_path:
-            self._project_path = source_path
-
-        search_payload = payload.get("search") if isinstance(payload, dict) else {}
-        if not isinstance(search_payload, dict):
-            search_payload = {}
-        geometry_type = search_payload.get("geometry_type")
-        geometry_payload = search_payload.get("geometry_payload")
-        self.state.search_geometry_type = geometry_type
-        self.state.search_geometry_payload = geometry_payload
-        if geometry_type == "polygon" and isinstance(geometry_payload, dict):
-            points = geometry_payload.get("points", [])
-            if isinstance(points, list):
-                self._run_js_call("loadSearchPolygon", points)
-                self._update_coordinate_inputs_from_polygon({"points": points})
-
-        annotations = payload.get("annotations") if isinstance(payload, dict) else {}
-        if isinstance(annotations, dict):
-            self._annotation_records = list(annotations.get("points") or [])
-            self._annotation_line_records = list(annotations.get("lines") or [])
-            self._annotation_polygon_records = list(annotations.get("polygons") or [])
-            self._annotation_icon_records = list(annotations.get("icons") or [])
-            self._annotation_text_records = list(annotations.get("text_labels") or [])
-        else:
-            self._annotation_records = []
-            self._annotation_line_records = []
-            self._annotation_polygon_records = []
-            self._annotation_icon_records = []
-            self._annotation_text_records = []
-
-        # Load raster stretch settings
-        raster_stretch = payload.get("raster_stretch") if isinstance(payload, dict) else {}
-        if isinstance(raster_stretch, dict):
-            self._raster_stretch_settings = dict(raster_stretch)
-        else:
-            self._raster_stretch_settings = {}
-
-        layers_payload = payload.get("layers") if isinstance(payload, dict) else {}
-        raster_layers = []
-        if isinstance(layers_payload, dict):
-            raster_layers = layers_payload.get("rasters") or []
-        if not isinstance(raster_layers, list):
-            raster_layers = []
-
-        self._search_result_assets_by_path = {}
-        self._search_layer_visibility = {}
-        self._loaded_search_layer_keys = set()
-        self._last_synced_visibility = {}
-        self._user_added_assets = {}
-
-        order_registry = {}
-        for entry in raster_layers:
-            if not isinstance(entry, dict):
-                continue
-            file_path = str(entry.get("file_path") or "").replace("\\", "/")
-            if not file_path:
-                continue
-            file_name = str(entry.get("file_name") or Path(file_path).name)
-            tile_url = entry.get("tile_url") or build_xyz_url(file_path)
-            asset = {
-                "file_path": file_path,
-                "file_name": file_name,
-                "kind": entry.get("kind") or "unknown",
-                "crs": entry.get("crs") or "-",
-                "bounds_wkt": entry.get("bounds_wkt") or "",
-                "tile_url": tile_url,
-                "resolution_x": entry.get("resolution_x"),
-                "resolution_y": entry.get("resolution_y"),
-                "width": entry.get("width"),
-                "height": entry.get("height"),
-                "created_at": entry.get("created_at"),
-            }
-            self._search_result_assets_by_path[file_path] = asset
-            self._search_layer_visibility[file_path] = bool(
-                entry.get("is_visible", True)
-            )
-            if str(entry.get("source") or "") == "user":
-                self._user_added_assets[file_path] = asset
-            order_registry[file_path] = {
-                "file_name": file_name,
-                "kind": str(asset.get("kind") or "-"),
-                "crs": str(asset.get("crs") or "-"),
-                "created_at": str(entry.get("created_at") or "-"),
-                "is_visible": bool(entry.get("is_visible", True)),
-                "order": int(entry.get("order", 0)),
-            }
-
-        self.panel._layer_order_registry = order_registry
-        self._active_dem_search_layer_key = search_payload.get("active_dem")
-        if (
-            self._active_dem_search_layer_key
-            and self._active_dem_search_layer_key not in self._search_result_assets_by_path
-        ):
-            self._active_dem_search_layer_key = None
-
-        self._sync_search_visibility_layers()
-
-        layer_order = search_payload.get("layer_order")
-        if isinstance(layer_order, list) and layer_order:
-            ordered_keys = [
-                str(p).replace("\\", "/")
-                for p in layer_order
-                if str(p or "").strip()
-            ]
-            if ordered_keys:
-                self._run_js_call("enforceLayerDisplayOrder", ordered_keys)
-
-        self.panel.update_search_results(
-            list(self._search_result_assets_by_path.values()),
-            self._search_layer_visibility,
-        )
-
-        vectors = []
-        if isinstance(layers_payload, dict):
-            vectors = layers_payload.get("vectors") or []
-        if not isinstance(vectors, list):
-            vectors = []
-
-        self._vector_layers = {}
-        self._run_js_call("clearVectorLayers")
-        for entry in vectors:
-            if not isinstance(entry, dict):
-                continue
-            layer_key = str(entry.get("layer_key") or "").strip()
-            label = str(entry.get("label") or "Vector")
-            geojson = entry.get("geojson")
-            if not layer_key or not isinstance(geojson, dict):
-                continue
-            self._run_js_call("addVectorLayer", layer_key, label, geojson, {})
-            is_visible = bool(entry.get("is_visible", True))
-            if not is_visible:
-                self._run_js_call("setVectorLayerVisibility", layer_key, False)
-            self._vector_layers[layer_key] = dict(entry)
-            self._vector_layers[layer_key]["is_visible"] = is_visible
-
-        self._restore_annotations_on_map()
-        self._refresh_vector_layers_ui()
-
-        selected_path = payload.get("selected_asset_path")
-        if isinstance(selected_path, str) and selected_path:
-            selected_asset = self._search_result_assets_by_path.get(
-                selected_path.replace("\\", "/")
-            )
-            if selected_asset:
-                self.state.selected_asset = selected_asset
-
-        self.state.clicked_points = list(payload.get("clicked_points") or [])
-
-        self.panel.log("Project loaded.")
-        self._set_project_modified(False)
+        """Apply project payload to restore project state."""
+        self._project_io.apply_project_payload(payload, source_path)
 
     def _set_project_modified(self, modified: bool = True) -> None:
         """Update modification state and notify UI."""
@@ -1021,195 +741,16 @@ class DesktopController(QObject):
 
 
     def _clear_project_state(self) -> None:
-        self._run_js_call("clearAllLayers")
-        self._run_js_call("clearVectorLayers")
-        self._run_js_call("clearSearchGeometry")
-        self._run_js_call("clearAnnotations")
-        self._run_js_call("resetDefaultView")
-
-        self._search_result_assets_by_path = {}
-        self._search_layer_visibility = {}
-        self._loaded_search_layer_keys = set()
-        self._last_synced_visibility = {}
-        self._active_dem_search_layer_key = None
-        self._explicit_imagery_layer_visible = False
-        self._explicit_dem_layer_visible = False
-        self._user_added_assets = {}
-        self._vector_layers = {}
-        self._annotation_records = []
-        self._annotation_line_records = []
-        self._annotation_polygon_records = []
-        self._annotation_icon_records = []
-        self._annotation_text_records = []
-        self._raster_stretch_settings = {}
-        self.state.selected_asset = None
-        self.state.clicked_points = []
-        self.state.search_geometry_type = None
-        self.state.search_geometry_payload = None
-        self.panel.assets_combo.clear()
-        if hasattr(self.panel, "_layer_order_registry"):
-            self.panel._layer_order_registry = {}
-        self.panel.update_search_results([], {})
-        self.panel.update_vector_layers([])
-        self.clear_all_measurement_results()
-        self._apply_display_control_mode()
+        self._project_io.clear_project_state()
 
     def _restore_annotations_on_map(self) -> None:
-        self._run_js_call("clearAnnotations")
-        for item in self._annotation_records:
-            try:
-                lon = float(item.get("lon") or 0.0)
-                lat = float(item.get("lat") or 0.0)
-                text = str(item.get("text") or self._default_annotation_text)
-            except (TypeError, ValueError):
-                continue
-            self._run_js_call("addAnnotation", text, lon, lat)
-
-        # Restore icon annotations
-        for item in self._annotation_icon_records:
-            try:
-                lon = float(item.get("lon") or 0.0)
-                lat = float(item.get("lat") or 0.0)
-                icon = str(item.get("icon") or "marker")
-                text = str(item.get("text") or "")
-            except (TypeError, ValueError):
-                continue
-            self._run_js_call("addIconAnnotation", lon, lat, icon, text)
-
-        # Restore text labels
-        for item in self._annotation_text_records:
-            try:
-                lon = float(item.get("lon") or 0.0)
-                lat = float(item.get("lat") or 0.0)
-                text = str(item.get("text") or "Label")
-            except (TypeError, ValueError):
-                continue
-            self._run_js_call("addTextLabel", lon, lat, text)
-
-        for item in self._annotation_line_records:
-            coords = item.get("coords", [])
-            if coords:
-                self._run_js_call(
-                    "addLineAnnotation",
-                    coords,
-                    str(item.get("label") or "Line"),
-                )
-
-        for item in self._annotation_polygon_records:
-            coords = item.get("coords", [])
-            if coords:
-                # Convert list of tuples/lists or list of dicts to dict format expected by JS
-                js_points = []
-                for c in coords:
-                    if isinstance(c, (list, tuple)) and len(c) >= 2:
-                        js_points.append({"lon": float(c[0]), "lat": float(c[1])})
-                    elif isinstance(c, dict) and "lon" in c and "lat" in c:
-                        js_points.append({"lon": float(c["lon"]), "lat": float(c["lat"])})
-                
-                if js_points:
-                    self._run_js_call("restoreAnnotationPolygon", js_points)
-
-        # Restore raster stretch settings
-        for layer_key, settings in self._raster_stretch_settings.items():
-            stretch_type = settings.get("type")
-            method = settings.get("method")
-            params = settings.get("params", {})
-            if stretch_type and method:
-                self._run_js_call("applyRasterStretch", layer_key, stretch_type, method, params)
-
-        annotation_geojson = self._annotation_line_polygon_geojson()
-        if annotation_geojson:
-            layer_key = self._make_unique_vector_key("vector:annotations")
-            self._run_js_call("addVectorLayer", layer_key, "Annotations", annotation_geojson, {})
-            self._vector_layers[layer_key] = {
-                "layer_key": layer_key,
-                "label": "Annotations",
-                "file_path": None,
-                "source": "annotations",
-                "geojson": annotation_geojson,
-                "is_visible": True,
-                "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-            }
+        self._annotation.restore_annotations_on_map()
 
     def _annotation_line_polygon_geojson(self) -> dict | None:
-        features = []
-        for item in self._annotation_line_records:
-            coords = item.get("coords", [])
-            if coords:
-                features.append(
-                    {
-                        "type": "Feature",
-                        "geometry": {"type": "LineString", "coordinates": coords},
-                        "properties": {
-                            "feature_type": item.get("feature_type", "line"),
-                            "label": item.get("label", ""),
-                            "length_m": item.get("length_m", 0.0),
-                            "width_m": item.get("width_m", 0.0),
-                            "condition": item.get("condition", "intact"),
-                        },
-                    }
-                )
-        for item in self._annotation_polygon_records:
-            coords = item.get("coords", [])
-            if coords:
-                ring = list(coords)
-                if ring and ring[0] != ring[-1]:
-                    ring.append(ring[0])
-                features.append(
-                    {
-                        "type": "Feature",
-                        "geometry": {"type": "Polygon", "coordinates": [ring]},
-                        "properties": {
-                            "feature_type": item.get("feature_type", "polygon"),
-                            "area_m2": item.get("area_m2", 0.0),
-                            "condition": item.get("condition", "intact"),
-                        },
-                    }
-                )
-        if not features:
-            return None
-        return {"type": "FeatureCollection", "features": features}
+        return self._annotation._annotation_line_polygon_geojson()
 
     def _create_raster_asset_from_path(self, file_path: str) -> dict | None:
-        path = Path(str(file_path)).expanduser()
-        if not path.exists():
-            self.panel.log(f"Raster not found: {path}")
-            return None
-        if self.api.api_ready():
-            try:
-                asset = self.api.register_raster(str(path))
-                if isinstance(asset, dict):
-                    if "tile_url" not in asset:
-                        asset["tile_url"] = build_xyz_url(str(path))
-                    return asset
-            except Exception as exc:
-                self.panel.log(f"Raster registration failed: {path.name}. {exc}")
-                self._logger.warning("Raster registration failed: %s", exc)
-        try:
-            metadata = extract_metadata(path)
-        except MetadataExtractorError as exc:
-            self.panel.log(f"Metadata extraction failed: {path.name}. {exc}")
-            self._logger.warning("Metadata extraction failed: %s", exc)
-            return None
-        except Exception as exc:
-            self.panel.log(f"Metadata extraction error: {path.name}. {exc}")
-            self._logger.warning("Metadata extraction error: %s", exc)
-            return None
-
-        bounds_wkt = metadata.bounds.to_wkt_polygon()
-        return {
-            "file_path": str(metadata.file_path),
-            "file_name": metadata.file_name,
-            "kind": metadata.kind.value,
-            "crs": metadata.crs or "-",
-            "bounds_wkt": bounds_wkt,
-            "resolution_x": metadata.resolution_x,
-            "resolution_y": metadata.resolution_y,
-            "width": metadata.width,
-            "height": metadata.height,
-            "tile_url": build_xyz_url(str(metadata.file_path)),
-            "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-        }
+        return self._asset.create_raster_asset_from_path(file_path)
 
     def _read_vector_geojson(self, path: Path) -> dict | None:
         suffix = path.suffix.lower()
@@ -1395,10 +936,10 @@ class DesktopController(QObject):
         self._viz.on_visual_slider_changed(_value)
 
     def _on_stretch_mode_changed(self, _index: int) -> None:
-        self._apply_imagery_stretch_mode(log_to_panel=True)
+        self._display_settings.on_stretch_mode_changed(_index)
 
     def _on_dem_stretch_mode_changed(self, _index: int) -> None:
-        self._apply_dem_stretch_mode(log_to_panel=True)
+        self._display_settings.on_dem_stretch_mode_changed(_index)
 
     def _on_dem_slider_changed(self, _value: int) -> None:
         self._viz.on_dem_slider_changed(_value)
@@ -1410,95 +951,13 @@ class DesktopController(QObject):
         self._viz.apply_visual_settings(log_to_panel=log_to_panel)
 
     def _apply_imagery_stretch_mode(self, log_to_panel: bool = True) -> None:
-        refreshed = self._refresh_raster_layers_for_stretch(layer_kind="imagery")
-        mode_label = self.panel.stretch_mode_combo.currentText()
-        if not log_to_panel:
-            return
-        if refreshed > 0:
-            self.panel.log(
-                f"Imagery stretch applied: {mode_label} ({refreshed} layer(s) refreshed)"
-            )
-            self._logger.info(
-                "Imagery stretch applied mode=%s refreshed=%s", mode_label, refreshed
-            )
-            return
-        self.panel.log(f"Imagery stretch set: {mode_label}")
-        self._logger.info(
-            "Imagery stretch set mode=%s (no active raster layers)", mode_label
-        )
+        self._display_settings.apply_imagery_stretch_mode(log_to_panel=log_to_panel)
 
     def _apply_dem_stretch_mode(self, log_to_panel: bool = True) -> None:
-        if not hasattr(self.panel, "dem_stretch_mode_combo"):
-            return
-        refreshed = self._refresh_raster_layers_for_stretch(layer_kind="dem")
-        mode_label = self.panel.dem_stretch_mode_combo.currentText()
-        if not log_to_panel:
-            return
-        if refreshed > 0:
-            self.panel.log(
-                f"DEM stretch applied: {mode_label} ({refreshed} layer(s) refreshed)"
-            )
-            self._logger.info(
-                "DEM stretch applied mode=%s refreshed=%s", mode_label, refreshed
-            )
-            return
-        self.panel.log(f"DEM stretch set: {mode_label}")
-        self._logger.info("DEM stretch set mode=%s (no active raster layers)", mode_label)
+        self._display_settings.apply_dem_stretch_mode(log_to_panel=log_to_panel)
 
     def _refresh_raster_layers_for_stretch(self, layer_kind: str | None = None) -> int:
-        refreshed = 0
-        seen_paths: set[str] = set()
-
-        for path, asset in self._search_result_assets_by_path.items():
-            if not self._search_layer_visibility.get(path, False):
-                continue
-            if not isinstance(asset, dict):
-                continue
-            if layer_kind == "dem" and not self._is_dem_asset(asset):
-                continue
-            if layer_kind == "imagery" and self._is_dem_asset(asset):
-                continue
-            asset_path = str(asset.get("file_path") or "")
-            if asset_path and asset_path in seen_paths:
-                continue
-            loaded = self._load_asset_layer_event_driven(
-                asset,
-                replace_existing=True,
-                layer_key=path,
-                auto_fly_to=False,
-                apply_scene_mode=False,
-                show_loading=False,
-            )
-            if loaded:
-                refreshed += 1
-            if asset_path:
-                seen_paths.add(asset_path)
-
-        if self._explicit_imagery_layer_visible or self._explicit_dem_layer_visible:
-            asset = self.state.selected_asset
-            if isinstance(asset, dict):
-                asset_path = str(asset.get("file_path") or "")
-                if asset_path and asset_path in seen_paths:
-                    return refreshed
-                is_dem = self._is_dem_asset(asset)
-                if layer_kind == "dem" and not is_dem:
-                    return refreshed
-                if layer_kind == "imagery" and is_dem:
-                    return refreshed
-                if (self._explicit_dem_layer_visible and is_dem) or (
-                    self._explicit_imagery_layer_visible and not is_dem
-                ):
-                    loaded = self._load_asset_layer_event_driven(
-                        asset,
-                        replace_existing=True,
-                        layer_key=None,
-                        auto_fly_to=False,
-                        apply_scene_mode=False,
-                        show_loading=False,
-                    )
-                    if loaded:
-                        refreshed += 1
-        return refreshed
+        return self._display_settings.refresh_raster_layers_for_stretch(layer_kind=layer_kind)
 
     def apply_dem_settings(
         self, _checked: bool | None = None, log_to_panel: bool = True
@@ -1684,84 +1143,22 @@ class DesktopController(QObject):
         self._set_project_modified(True)
 
     @staticmethod
+    @staticmethod
     def _line_length_m(coords: list[list[float]]) -> float:
-        if len(coords) < 2:
-            return 0.0
-        try:
-            from pyproj import Geod
-
-            geod = Geod(ellps="WGS84")
-            total = 0.0
-            for idx in range(len(coords) - 1):
-                lon1, lat1 = coords[idx]
-                lon2, lat2 = coords[idx + 1]
-                _, _, dist = geod.inv(lon1, lat1, lon2, lat2)
-                total += float(dist)
-            return total
-        except Exception:
-            total = 0.0
-            radius_m = 6371008.8
-            for idx in range(len(coords) - 1):
-                lon1, lat1 = coords[idx]
-                lon2, lat2 = coords[idx + 1]
-                lon1_r = math.radians(lon1)
-                lat1_r = math.radians(lat1)
-                lon2_r = math.radians(lon2)
-                lat2_r = math.radians(lat2)
-                dlon = lon2_r - lon1_r
-                dlat = lat2_r - lat1_r
-                a = (
-                    math.sin(dlat / 2.0) ** 2
-                    + math.cos(lat1_r) * math.cos(lat2_r) * math.sin(dlon / 2.0) ** 2
-                )
-                c = 2.0 * math.atan2(math.sqrt(a), math.sqrt(1.0 - a))
-                total += radius_m * c
-            return total
+        from src_new.clients.desktop_search.coordinators.utility_coordinator import UtilityCoordinator
+        return UtilityCoordinator.line_length_m(coords)
 
     def apply_raster_stretch(self, layer_key: str, stretch_type: str, method: str, **params) -> None:
-        """
-        Apply raster stretching to imagery or DEM layers.
-        
-        Args:
-            layer_key: Unique identifier for the layer
-            stretch_type: 'imagery' or 'dem'
-            method: 'min_max', 'std_dev', 'linear', 'histogram_eq'
-            params: Additional parameters (e.g., k for std_dev, percentile for percentile_clip)
-        """
-        self._raster_stretch_settings[layer_key] = {
-            "type": stretch_type,
-            "method": method,
-            "params": params,
-            "applied_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-        }
-        
-        # Apply stretch via JavaScript bridge with real-time sync
-        self._run_js_call("applyRasterStretch", layer_key, stretch_type, method, params)
-        self.panel.log(f"Applied {method} stretch to {stretch_type} layer: {layer_key}")
-        self._logger.info("Raster stretch applied: layer=%s type=%s method=%s params=%s", 
-                         layer_key, stretch_type, method, params)
+        """Apply raster stretching to imagery or DEM layers."""
+        self._display_settings.apply_raster_stretch(layer_key, stretch_type, method, **params)
 
     def update_raster_stretch_params(self, layer_key: str, **params) -> None:
-        """Update stretch parameters for real-time adjustment (e.g., slider changes)."""
-        if layer_key not in self._raster_stretch_settings:
-            self._logger.warning("Cannot update stretch params for unknown layer: %s", layer_key)
-            return
-        
-        settings = self._raster_stretch_settings[layer_key]
-        settings["params"].update(params)
-        
-        # Real-time update via JavaScript
-        self._run_js_call("updateRasterStretchParams", layer_key, params)
-        self._logger.debug("Updated stretch params for layer %s: %s", layer_key, params)
+        """Update stretch parameters for real-time adjustment."""
+        self._display_settings.update_raster_stretch_params(layer_key, **params)
 
     def remove_raster_stretch(self, layer_key: str) -> None:
-        """Remove stretching from a layer (reset to original)."""
-        if layer_key in self._raster_stretch_settings:
-            del self._raster_stretch_settings[layer_key]
-        
-        self._run_js_call("removeRasterStretch", layer_key)
-        self.panel.log(f"Removed stretch from layer: {layer_key}")
-        self._logger.info("Raster stretch removed from layer: %s", layer_key)
+        """Remove stretching from a layer."""
+        self._display_settings.remove_raster_stretch(layer_key)
 
     def _toolbar_elevation_profile(self) -> bool:
         """Activate elevation profile two-click mode via the coordinator."""
@@ -1930,21 +1327,6 @@ class DesktopController(QObject):
     def _selected_dem_path(self) -> str | None:
         return self._measure.selected_dem_path()
 
-    def _current_polygon_lonlat(self) -> list[tuple[float, float]] | None:
-        payload = self.state.search_geometry_payload or {}
-        points = payload.get("points")
-        if not isinstance(points, list) or len(points) < 3:
-            return None
-        out: list[tuple[float, float]] = []
-        for point in points:
-            if not isinstance(point, dict):
-                continue
-            lon = point.get("lon")
-            lat = point.get("lat")
-            if isinstance(lon, (int, float)) and isinstance(lat, (int, float)):
-                out.append((float(lon), float(lat)))
-        return out if len(out) >= 3 else None
-
     def _toolbar_toggle_comparator(self, enabled: bool | None = None) -> bool:
         return self._comparator._toolbar_toggle_comparator(enabled=enabled)
 
@@ -2089,465 +1471,24 @@ class DesktopController(QObject):
         return False
 
     def _toolbar_measure_polygon_area(self) -> None:
-        polygon = self._current_polygon_lonlat()
-        if not polygon:
-            # Disable conflicting modes
-            self._distance_measure_mode_enabled = False
-            self._run_js_call("setDistanceMeasureMode", False)
-            self._add_point_mode_enabled = False
-            self._set_annotation_overlay_visible(False)
-            self._shadow_height_mode_enabled = False
-            self._viewshed_mode_enabled = False
-            self._volume_mode_enabled = False
-            self._pan_mode_enabled = False
-            self._run_js_call("setAnnotationDrawingMode", False)
-
-            # Enable polygon drawing mode for measurement
-            self._polygon_drawing_context = "measurement"
-            self._polygon_area_mode_enabled = True
-            self.set_search_draw_mode(enabled=True)
-            self._set_measurement_cursor_enabled(True)
-            self.panel.log(
-                "Draw a polygon on the map, then click Finish to calculate area."
-            )
-            return
-
-        def task() -> object:
-            dem_path = self._selected_dem_path()
-            return measure_polygon_area(polygon, dem_path=dem_path)
-
-        def formatter(result: object) -> str:
-            m = result
-            compactness = m.compactness_index
-            return (
-                "Polygon Area: "
-                f"planimetric={m.planimetric_area_m2:.2f} m2, perimeter={m.perimeter_m:.2f} m, compactness={compactness:.4f}"
-            )
-
-        self._submit_measurement_job("Polygon Area", task, formatter)
-        # Clear the measurement mode flag after calculation
-        self._polygon_area_mode_enabled = False
-        self._polygon_drawing_context = "none"
-        self._set_measurement_cursor_enabled(False)
+        self._measure.toolbar_measure_polygon_area()
 
     def _toolbar_measure_volume(self) -> bool | None:
-        self._logger.info(
-            "FillVolume: enter computing=%s active=%s",
-            getattr(self, "_fill_volume_computing", False),
-            getattr(self, "_fill_volume_active", False),
-        )
-        # Guard: ignore clicks while analysis is already running
-        if getattr(self, "_fill_volume_computing", False):
-            self.panel.log("Fill Volume: analysis in progress, please wait")
-            return True  # keep button highlighted
-
-        # Toggle off: clear overlays, keep polygon for re-use on next tap
-        if getattr(self, "_fill_volume_active", False):
-            self._logger.info("FillVolume: toggling off")
-            self._fill_volume_active = False
-            self._fill_volume_computing = False
-            self._volume_mode_enabled = False
-            self._set_measurement_cursor_enabled(False)
-            self._polygon_drawing_context = "none"
-            self._run_js_call("clearFillVolumes")
-            self.panel.log("Fill Volume: off (polygon kept — tap again to re-analyse)")
-            return False
-
-        self._logger.info("FillVolume: checking DEM path")
-        # Need a DEM
-        dem_path = self._selected_dem_path()
-        if not dem_path:
-            self.panel.log("Select or show a DEM layer first.")
-            return False
-
-        self._logger.info("FillVolume: getting polygon dem_path=%s", dem_path)
-        # Get polygon — use existing drawn polygon, or auto-derive from DEM bounds
-        polygon = self._current_polygon_lonlat()
-        if not polygon:
-            polygon = self._dem_bounds_polygon(dem_path)
-
-        self._logger.info("FillVolume: polygon=%s", "found" if polygon else "none")
-
-        if not polygon:
-            # No DEM bounds available — fall back to draw mode
-            self._logger.info("FillVolume: no polygon, entering draw mode")
-            self._distance_measure_mode_enabled = False
-            self._run_js_call("setDistanceMeasureMode", False)
-            self._add_point_mode_enabled = False
-            self._set_annotation_overlay_visible(False)
-            self._shadow_height_mode_enabled = False
-            self._viewshed_mode_enabled = False
-            self._polygon_area_mode_enabled = False
-            self._pan_mode_enabled = False
-            self._polygon_drawing_context = "measurement"
-            self._volume_mode_enabled = True
-            self._fill_volume_active = False
-            self.set_search_draw_mode(enabled=True)
-            self.panel.log("Fill Volume: draw a polygon on the DEM, then click Finish")
-            return True
-
-        # Polygon ready — submit analysis
-        self._logger.info(
-            "FillVolume: submitting analysis polygon_pts=%d", len(polygon)
-        )
-        self._fill_volume_computing = True
-
-        # Wire a one-shot relay so the worker thread can safely post progress
-        # to the main thread without calling emit() directly across threads
-        # (direct cross-thread emit is undefined behaviour in Qt and causes
-        # segfaults on repeated invocations).
-        # We use a small QObject relay whose signal is connected with
-        # Qt.QueuedConnection — Qt then marshals the call onto the main thread.
-        from qtpy.QtCore import QObject, Signal as _Signal, Qt as _Qt
-
-        class _ProgressRelay(QObject):
-            progress = _Signal(int, str)
-
-        relay = _ProgressRelay()
-        relay.progress.connect(
-            self.bridge.on_loading_progress,
-            _Qt.ConnectionType.QueuedConnection,
-        )
-
-        def task(_relay=relay) -> object:
-            # _relay kept alive via default-arg capture for the worker's lifetime
-            def progress_cb(pct: float, msg: str) -> None:
-                _relay.progress.emit(int(pct), f"Fill Volume: {msg}")
-
-            return compute_fill_volume(polygon, dem_path, progress_callback=progress_cb)
-
-        def formatter(result: object) -> str:
-            from src_new.clients.desktop_search.measurement_tools.models import (
-                FillVolumeResult,
-            )
-
-            if not isinstance(result, FillVolumeResult):
-                return "Fill Volume: no result"
-            n = len(result.regions)
-            total = sum(r.fill_volume_m3 for r in result.regions)
-            if n == 0:
-                return (
-                    f"Fill Volume: no depressions found "
-                    f"(ref={result.reference_elevation_m:.1f} m, "
-                    f"void={100 * result.void_fraction:.1f}%)"
-                )
-            lines = [
-                f"Fill Volume: {n} depression(s) found, "
-                f"total fill={_fmt_vol(total)}, "
-                f"ref={result.reference_elevation_m:.1f} m"
-            ]
-            for r in result.regions[:5]:
-                lines.append(
-                    f"  Region {r.region_id}: fill={_fmt_vol(r.fill_volume_m3)}, "
-                    f"area={r.area_m2:.0f} m², depth max={r.max_depth_m:.2f} m"
-                )
-            return "\n".join(lines)
-
-        def on_done(name: str, result: object, error: str, fmt) -> None:
-            self._logger.info(
-                "FillVolume: on_done called error=%s result_type=%s",
-                error or "none",
-                type(result).__name__,
-            )
-            self._fill_volume_computing = False
-            self._active_fill_volume_worker = None  # release worker reference
-            self._active_fill_volume_pool = None  # release pool reference
-            self.bridge.loadingProgress.emit(100, "Fill Volume: Complete")
-            self._measure.on_measurement_job_finished(name, result, error, fmt)
-            if error or result is None:
-                self._fill_volume_active = False
-                return
-            from src_new.clients.desktop_search.measurement_tools.models import (
-                FillVolumeResult,
-            )
-
-            if not isinstance(result, FillVolumeResult) or not result.regions:
-                self._run_js_call("clearFillVolumes")
-                self._fill_volume_active = False
-                return
-            regions_payload = [
-                {
-                    "id": r.region_id,
-                    "fill_volume_m3": r.fill_volume_m3,
-                    "area_m2": r.area_m2,
-                    "max_depth_m": r.max_depth_m,
-                    "mean_depth_m": r.mean_depth_m,
-                    "reference_elevation_m": r.reference_elevation_m,
-                    "rim_elevation_m": r.rim_elevation_m,
-                    "centroid_lon": r.centroid_lon,
-                    "centroid_lat": r.centroid_lat,
-                    "outline": [
-                        {"lon": lon, "lat": lat} for lon, lat in r.outline_lonlat
-                    ],
-                }
-                for r in result.regions
-            ]
-            self._run_js_call("drawFillVolumes", json.dumps(regions_payload))
-            self._fill_volume_active = True
-
-        from qtpy.QtCore import Qt, QThreadPool
-        from src_new.clients.desktop_search.measurement_worker import (
-            MeasurementWorker,
-        )
-
-        worker = MeasurementWorker(name="Fill Volume", task=task)
-        # Keep a strong Python reference so the worker (and its signals QObject)
-        # stays alive until on_done fires and clears it.
-        self._active_fill_volume_worker = worker
-        # Use a dedicated parentless pool per analysis — avoids bus error on macOS
-        # caused by QThreadPool(parent=QWidget) thread state corruption across runs.
-        pool = QThreadPool()
-        pool.setMaxThreadCount(1)
-        self._active_fill_volume_pool = pool
-        self._logger.info(
-            "FillVolume: worker created id=%s pool_active=%s",
-            id(worker),
-            pool.activeThreadCount(),
-        )
-        worker.signals.finished.connect(
-            lambda job_name, res, err, fmt=formatter: on_done(job_name, res, err, fmt),
-            Qt.QueuedConnection,
-        )
-        self.bridge.loadingProgress.emit(0, "Fill Volume: Starting analysis")
-        self._logger.info("FillVolume: calling pool.start")
-        pool.start(worker)
-        self._logger.info("FillVolume: pool.start returned")
-        self.panel.log("Fill Volume: Starting analysis")
-        self._volume_mode_enabled = False
-        self._polygon_drawing_context = "none"
-        self._set_measurement_cursor_enabled(False)
-        return True  # keep button highlighted while computing
+        return self._measure.toolbar_measure_volume()
 
     def _dem_bounds_polygon(self, dem_path: str) -> list[tuple[float, float]] | None:
         """Return a bounding-box polygon for the active DEM asset, or None."""
-        # Try to get bounds from the asset cache
-        for path, asset in self._asset_cache.items():
-            if str(asset.get("file_path") or "") == dem_path and self._is_dem_asset(
-                asset
-            ):
-                bounds = self._asset_bounds(asset)
-                if bounds:
-                    w, s, e, n = (
-                        bounds["west"],
-                        bounds["south"],
-                        bounds["east"],
-                        bounds["north"],
-                    )
-                    return [(w, s), (e, s), (e, n), (w, n), (w, s)]
-        for path, asset in self._search_result_assets_by_path.items():
-            if str(asset.get("file_path") or "") == dem_path and self._is_dem_asset(
-                asset
-            ):
-                bounds = self._asset_bounds(asset)
-                if bounds:
-                    w, s, e, n = (
-                        bounds["west"],
-                        bounds["south"],
-                        bounds["east"],
-                        bounds["north"],
-                    )
-                    return [(w, s), (e, s), (e, n), (w, n), (w, s)]
-        # Fallback: read bounds directly from the raster file
-        try:
-            import rasterio
-            from pyproj import Transformer as _T
+        return self._utility.dem_bounds_polygon(dem_path)
 
-            with rasterio.open(dem_path) as src:
-                b = src.bounds
-                crs = src.crs
-                if crs and not crs.is_geographic:
-                    t = _T.from_crs(crs, "EPSG:4326", always_xy=True)
-                    w, s = t.transform(b.left, b.bottom)
-                    e, n = t.transform(b.right, b.top)
-                else:
-                    w, s, e, n = b.left, b.bottom, b.right, b.top
-            return [(w, s), (e, s), (e, n), (w, n), (w, s)]
-        except Exception:
-            return None
-
-        # Guard while computing
-        if getattr(self, "_slope_aspect_computing", False):
-            self.panel.log("Slope & Aspect: analysis in progress, please wait")
-            return True
-
-        # Need a DEM
-        dem_path = self._selected_dem_path()
-        if not dem_path:
-            self.panel.log("Select or show a DEM layer first.")
-            return False
-
-        # Switch DEM colour mode to slope if not already slope/aspect
-        mode = str(self.panel.dem_color_mode_combo.currentData() or "gray")
-        if mode not in {"slope", "aspect"}:
-            idx = self.panel.dem_color_mode_combo.findData("slope")
-            if idx >= 0:
-                self.panel.dem_color_mode_combo.setCurrentIndex(idx)
-                self._viz.apply_dem_color_mode(log_to_panel=False)
-
-        # No polygon yet — enter draw mode
-        polygon = self._current_polygon_lonlat()
-        if not polygon:
-            self._distance_measure_mode_enabled = False
-            self._run_js_call("setDistanceMeasureMode", False)
-            self._add_point_mode_enabled = False
-            self._set_annotation_overlay_visible(False)
-            self._volume_mode_enabled = False
-            self._polygon_area_mode_enabled = False
-            self._pan_mode_enabled = False
-            self._polygon_drawing_context = "measurement"
-            self._slope_aspect_mode_enabled = True
-            self.set_search_draw_mode(enabled=True)
-            self._set_measurement_cursor_enabled(True)
-            self.panel.log(
-                "Draw a polygon on the map, then click Finish to calculate slope & aspect."
-            )
-            return True
-
-        # Polygon ready — run async
-        self._slope_aspect_computing = True
-        self._polygon_drawing_context = "none"
-        self._set_measurement_cursor_enabled(False)
-
-        from qtpy.QtCore import QObject, Signal as _Signal, Qt as _Qt
-
-        class _Relay(QObject):
-            progress = _Signal(int, str)
-
-        relay = _Relay()
-        relay.progress.connect(
-            self.bridge.on_loading_progress,
-            _Qt.ConnectionType.QueuedConnection,
-        )
-
-        def task(_relay=relay) -> object:
-            def _cb(pct: float, msg: str) -> None:
-                _relay.progress.emit(int(pct), f"Slope & Aspect: {msg}")
-
-            _cb(5, "Starting")
-            result = compute_slope_aspect(polygon, dem_path)
-            _cb(95, "Finalising")
-            return result
-
-        def formatter(result: object) -> str:
-            m = result
-            area_txt = ", ".join(
-                f"{k}:{v:.1f}m²" for k, v in m.area_by_class_m2.items()
-            )
-            return (
-                f"Slope & Aspect: mean={m.mean_slope_deg:.2f}°, "
-                f"std={m.std_slope_deg:.2f}°, max={m.max_slope_deg:.2f}°; "
-                f"classes[{area_txt}]"
-            )
-
-        def on_done(name: str, result: object, error: str, fmt) -> None:
-            self._active_slope_aspect_worker = None
-            self._active_slope_aspect_pool = None
-            self.bridge.loadingProgress.emit(100, "Slope & Aspect: Complete")
-            self._measure.on_measurement_job_finished(name, result, error, fmt)
-            callback = getattr(self, "_on_slope_aspect_done", None)
-            if callable(callback):
-                callback()
-
-        from qtpy.QtCore import Qt, QThreadPool
-        from src_new.clients.desktop_search.measurement_worker import (
-            MeasurementWorker,
-        )
-
-        worker = MeasurementWorker(name="Slope & Aspect", task=task)
-        self._active_slope_aspect_worker = worker
-        pool = QThreadPool()
-        pool.setMaxThreadCount(1)
-        self._active_slope_aspect_pool = pool
-        worker.signals.finished.connect(
-            lambda job_name, res, err, fmt=formatter: on_done(job_name, res, err, fmt),
-            Qt.QueuedConnection,
-        )
-        self.bridge.loadingProgress.emit(0, "Slope & Aspect: Starting")
-        pool.start(worker)
-        self.panel.log("Slope & Aspect: Starting analysis")
-        return True  # keep button highlighted
+    def _toolbar_measure_slope_aspect(self) -> bool | None:
+        """Handle slope & aspect measurement from toolbar."""
+        return self._measure.toolbar_measure_slope_aspect()
 
     def _toolbar_measure_viewshed(self) -> None:
-        dem_path = self._selected_dem_path()
-        if not dem_path:
-            self.panel.log("Select or show a DEM layer first.")
-            return
-        if not self.state.clicked_points:
-            # Disable conflicting modes
-            self._distance_measure_mode_enabled = False
-            self._run_js_call("setDistanceMeasureMode", False)
-            self._add_point_mode_enabled = False
-            self._set_annotation_overlay_visible(False)
-            self._shadow_height_mode_enabled = False
-            self._polygon_area_mode_enabled = False
-            self._volume_mode_enabled = False
-            self._run_js_call("setSearchDrawMode", "none")
-            self._polygon_drawing_context = "none"
-            self._pan_mode_enabled = False
-
-            # Enable viewshed mode
-            self._viewshed_mode_enabled = True
-            self._set_measurement_cursor_enabled(True)
-            self.panel.log(
-                "Click on the map to select observer point for viewshed analysis."
-            )
-            return
-        lon, lat = self.state.clicked_points[-1]
-
-        def task() -> object:
-            return compute_viewshed(lon, lat, dem_path, max_radius_m=400.0)
-
-        def formatter(result: object) -> str:
-            m = result
-            return (
-                "Viewshed/LOS: "
-                f"visible={m.visible_area_m2:.1f} m2 / {m.total_area_m2:.1f} m2 "
-                f"({100.0 * m.visible_fraction:.1f}%), max_dist={m.max_visible_distance_m:.1f} m"
-            )
-
-        self._submit_measurement_job("Viewshed / LOS", task, formatter)
-        self._viewshed_mode_enabled = False
-        self._set_measurement_cursor_enabled(False)
+        self._measure.toolbar_measure_viewshed()
 
     def _toolbar_measure_shadow_height(self) -> None:
-        if len(self.state.clicked_points) < 2:
-            self.panel.log(
-                "Click object base and shadow tip points before Shadow Height."
-            )
-            return
-        dem_path = self._selected_dem_path()
-        (base_lon, base_lat), (tip_lon, tip_lat) = (
-            self.state.clicked_points[-2],
-            self.state.clicked_points[-1],
-        )
-        acquired = dt.datetime.now(dt.timezone.utc)
-
-        def task() -> object:
-            return measure_shadow_height(
-                base_lon,
-                base_lat,
-                tip_lon,
-                tip_lat,
-                acquisition_datetime_utc=acquired,
-                dem_path=dem_path,
-                imagery_resolution_m=0.05,
-            )
-
-        def formatter(result: object) -> str:
-            m = result
-            h = (
-                m.corrected_height_m
-                if m.corrected_height_m is not None
-                else m.estimated_height_m
-            )
-            warn = f" warning={m.warning}" if m.warning else ""
-            return (
-                "Shadow Height: "
-                f"height={h:.2f} m +/- {m.uncertainty_m:.2f} m, sun_elev={m.solar_elevation_deg:.2f} deg, "
-                f"sun_az={m.solar_azimuth_deg:.2f} deg, reliable={m.reliable}{warn}"
-            )
-
-        self._submit_measurement_job("Shadow Height", task, formatter)
+        self._measure.toolbar_measure_shadow_height()
 
     def _toolbar_toggle_shadow_height_mode(self, enabled: bool | None = None) -> bool:
         next_state = (
@@ -2708,87 +1649,8 @@ class DesktopController(QObject):
         zone = int((lon + 180.0) // 6.0) + 1
         return 32600 + zone if lat >= 0 else 32700 + zone
 
-    def _polygon_metrics_for_export(
-        self, polygon_points: list[tuple[float, float]]
-    ) -> tuple[float, float, float]:
-        if not polygon_points:
-            return 0.0, 0.0, 0.0
-
-        m = measure_polygon_area(polygon_points, dem_path=None)
-
-        # Keep orientation logic for export
-        if polygon_points[0] != polygon_points[-1]:
-            polygon_points = polygon_points + [polygon_points[0]]
-        lon_c = sum(p[0] for p in polygon_points) / len(polygon_points)
-        lat_c = sum(p[1] for p in polygon_points) / len(polygon_points)
-        epsg = self._utm_epsg_for_lon_lat(lon_c, lat_c)
-        transformer = Transformer.from_crs("EPSG:4326", f"EPSG:{epsg}", always_xy=True)
-        projected = [transformer.transform(lon, lat) for lon, lat in polygon_points]
-
-        orientation = 0.0
-        longest_len = -1.0
-        for i in range(len(projected) - 1):
-            dx = projected[i + 1][0] - projected[i][0]
-            dy = projected[i + 1][1] - projected[i][1]
-            edge_len = math.sqrt(dx * dx + dy * dy)
-            if edge_len <= longest_len:
-                continue
-            longest_len = edge_len
-            orientation = (math.degrees(math.atan2(dx, dy))) % 180.0
-        return m.planimetric_area_m2, m.perimeter_m, float(orientation)
-
     def _toolbar_add_polygon_annotation(self, enabled: bool | None = None) -> bool:
-        if enabled is False:
-            # Just disable draw mode — polygons stay visible
-            self._run_js_call("setSearchDrawMode", "none")
-            self._set_measurement_cursor_enabled(False)
-            self.panel.log("Polygon draw disabled.")
-            return False
-
-        polygon = self._current_polygon_lonlat()
-        if not polygon:
-            self._distance_measure_mode_enabled = False
-            self._add_point_mode_enabled = False # Enforce exclusivity
-            self._add_line_mode_enabled = False
-            self._add_text_mode_enabled = False
-            self._annotation_line_start = None
-            self._fly_through_mode_enabled = False # Strict exclusivity
-            self._set_annotation_overlay_visible(True)
-            self._run_js_call("setAnnotationDrawingMode", True)
-            self._shadow_height_mode_enabled = False
-            self._pan_mode_enabled = False
-            self._run_js_call("setDistanceMeasureMode", False)
-            self._run_js_call("setPanMode", False)
-            self._run_js_call("setFlyThroughMode", False) # Sync JS state
-            
-            self.set_search_draw_mode()
-            self._set_measurement_cursor_enabled(True)
-            self.panel.log(
-                "Polygon draw enabled. Click points, right-click to finish."
-            )
-            return True
-        area, perimeter, orientation = self._polygon_metrics_for_export(polygon)
-        self._annotation_polygon_records.append(
-            {
-                "coords": polygon,
-                "feature_type": "building",
-                "condition": "intact",
-                "area_m2": area,
-                "perimeter_m": perimeter,
-                "orientation_deg": orientation,
-                "notes": "",
-                "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-            }
-        )
-        self._set_project_modified(True)
-        self.panel.log(
-            "Polygon annotation saved: "
-            f"area={area:.2f} m2, perimeter={perimeter:.2f} m, orientation={orientation:.1f} deg"
-        )
-        # Polygon stays visible — don't clear geometry
-        self._run_js_call("setSearchDrawMode", "none")
-        self._set_measurement_cursor_enabled(False)
-        return False
+        return self._annotation.toolbar_add_polygon_annotation(enabled)
 
     def _toolbar_export_profile_csv(self) -> None:
         self._project_io.export_profile_csv()
@@ -2891,730 +1753,91 @@ class DesktopController(QObject):
         return True
 
     def _layer_options(self, asset: dict, bounds: dict[str, float] | None) -> dict:
-        options: dict = {"bounds": bounds, "is_dem": self._is_dem_asset(asset)}
-        try:
-            tilejson = self.api.get_tilejson(asset["file_path"])
-        except httpx.HTTPError as exc:
-            self._logger.warning(
-                "TileJSON unavailable for %s: %s", asset["file_name"], exc
-            )
-            return options
-
-        minzoom = tilejson.get("minzoom")
-        maxzoom = tilejson.get("maxzoom")
-        if isinstance(minzoom, int):
-            options["minzoom"] = minzoom
-        if isinstance(maxzoom, int):
-            options["maxzoom"] = maxzoom
-
-        # TileJSON bounds: [west, south, east, north] in EPSG:4326
-        b = tilejson.get("bounds")
-        if isinstance(b, list) and len(b) == 4:
-            w, s, e, n = b
-            if self._is_valid_lon_lat(w, s) and self._is_valid_lon_lat(e, n):
-                tilejson_bounds = {
-                    "west": float(w),
-                    "south": float(s),
-                    "east": float(e),
-                    "north": float(n),
-                }
-                if (
-                    self._is_near_global_bounds(tilejson_bounds)
-                    and bounds
-                    and not self._is_near_global_bounds(bounds)
-                ):
-                    self._logger.warning(
-                        "Ignoring near-global TileJSON bounds for %s and keeping catalog bounds.",
-                        asset.get("file_name"),
-                    )
-                else:
-                    options["bounds"] = tilejson_bounds
-
-        raster_query = self._raster_render_query(asset)
-        if raster_query:
-            options["query"] = raster_query
-        self._logger.info("Layer options for %s: %s", asset["file_name"], options)
-        return options
+        return self._rendering.layer_options(asset, bounds)
 
     def _add_layer(self, asset: dict, options: dict) -> bool:
-        """Add layer with event-driven architecture and server-side optimization."""
-        tile_url = str(asset.get("tile_url") or "")
-
-        # Event-driven optimization: Let server handle URL normalization
-        if options.get("event_driven", False):
-            tile_url = self._get_server_optimized_tile_url(asset, tile_url)
-        else:
-            # Legacy path normalization for non-event-driven calls
-            tile_url = self._normalize_tile_url_legacy(tile_url)
-
-        asset["tile_url"] = tile_url
-
-        if not self._is_offline_safe_url(tile_url):
-            self.panel.log(
-                f"Blocked non-offline tile URL for {asset.get('file_name', 'asset')}"
-            )
-            self._logger.error("Blocked non-offline tile URL: %s", tile_url)
-            return False
-
-        is_dem = bool(options.get("is_dem"))
-        from_search_results = bool(str(options.get("layer_key") or "").strip())
-
-        # Event-driven performance optimizations
-        if options.get("server_optimized", False):
-            self._apply_server_performance_hints(options)
-
-        if is_dem:
-            return self._add_dem_layer_event_driven(asset, options, from_search_results)
-        else:
-            return self._add_imagery_layer_event_driven(
-                asset, options, from_search_results
-            )
+        return self._rendering.add_layer(asset, options)
 
     def _get_server_optimized_tile_url(self, asset: dict, tile_url: str) -> str:
-        """Adjust the tile URL for server-side delivery if needed."""
-        # Find the best version of the file (prioritize Web Mercator projected files)
-        from pathlib import Path
-        from urllib.parse import quote
-        original_file_path = asset.get("file_path")
-        if original_file_path:
-            best_file_path = self._find_best_file_version(original_file_path)
-            if best_file_path != original_file_path:
-                self._logger.info(f"Optimizing tile URL for {asset.get('file_name')}: using {Path(best_file_path).name}")
-                # Re-build the XYZ URL for the optimized file
-                if "/cog/tiles/" in tile_url:
-                    base_url = tile_url.split("?url=")[0]
-                    tile_url = f"{base_url}?url={quote(best_file_path)}"
-
-        # Server handles all URL optimization and caching strategies
-        optimized_url = self._normalize_tile_url_legacy(tile_url)
-
-        # Add server-side optimization parameters for large datasets
-        if "?" in optimized_url:
-            optimized_url += "&cache_strategy=aggressive&memory_efficient=true"
-        else:
-            optimized_url += "?cache_strategy=aggressive&memory_efficient=true"
-
-        self._logger.info("Server-optimized tile URL for %s", asset.get("file_name"))
-        return optimized_url
+        return self._rendering.get_server_optimized_tile_url(asset, tile_url)
 
     def _find_best_file_version(self, file_path: str) -> str:
-        """Find the best version of a file, prioritizing Web Mercator projected and COG versions."""
-        from pathlib import Path
-
-        original_path = Path(file_path)
-        # Even if the original file is missing (e.g. it was replaced by a COG version during ingestion),
-        # we should still look for candidates based on its name.
-        if not original_path.exists():
-            self._logger.debug(f"Original file not found, searching for versions: {file_path}")
-
-        # Priority order: _3857.cog.tif > _3857.tif > .cog.tif > original
-        candidates = []
-
-        # Check for Web Mercator + COG version
-        web_mercator_cog = original_path.parent / f"{original_path.stem}_3857.cog.tif"
-        if web_mercator_cog.exists():
-            candidates.append((web_mercator_cog, 4))  # Highest priority
-            self._logger.debug(f"Found Web Mercator COG: {web_mercator_cog}")
-
-        # Check for Web Mercator version
-        web_mercator = original_path.parent / f"{original_path.stem}_3857.tif"
-        if web_mercator.exists():
-            candidates.append((web_mercator, 3))
-            self._logger.debug(f"Found Web Mercator: {web_mercator}")
-
-        # Check for COG version of original
-        cog_version = original_path.parent / f"{original_path.stem}.cog.tif"
-        if cog_version.exists():
-            candidates.append((cog_version, 2))
-            self._logger.debug(f"Found COG: {cog_version}")
-
-        # Original file
-        candidates.append((original_path, 1))
-        self._logger.debug(f"Original file: {original_path}")
-
-        # Sort by priority (highest first) and return the best option
-        candidates.sort(key=lambda x: x[1], reverse=True)
-        best_file = str(candidates[0][0])
-
-        if best_file != file_path:
-            self._logger.info(
-                f"Using optimized file version: {Path(best_file).name} instead of {original_path.name}"
-            )
-        else:
-            self._logger.debug(f"Using original file: {original_path.name}")
-
-        return best_file
+        return self._rendering.find_best_file_version(file_path)
 
     def _normalize_tile_url_legacy(self, tile_url: str) -> str:
-        """Legacy tile URL normalization for backward compatibility."""
-        import platform
-        import re
-        from urllib.parse import unquote
-
-        if platform.system() == "Windows":
-            # Handle URL-encoded Windows paths with spaces and special characters
-            if "url=" in tile_url:
-                # Split the URL to get the file path part
-                base_part, url_part = tile_url.split("url=", 1)
-
-                # First decode any URL-encoded characters (like %20 for spaces, %3A for :, %2F for /)
-                decoded_url = unquote(url_part)
-                self._logger.debug(f"Windows URL decode: {url_part} -> {decoded_url}")
-
-                # Strip any file:/// or file:// or file: prefix so GDAL sees raw C:/...
-                if decoded_url.startswith("file:///"):
-                    decoded_url = decoded_url[8:]
-                elif decoded_url.startswith("file://"):
-                    decoded_url = decoded_url[7:]
-                elif decoded_url.startswith("file:"):
-                    decoded_url = decoded_url[5:]
-
-                # Ensure Windows drive letter format (C:/...)
-                if re.match(r"^[a-zA-Z]:", decoded_url):
-                    # Already in correct format
-                    pass
-                elif (
-                    decoded_url.startswith("/")
-                    and len(decoded_url) > 3
-                    and decoded_url[2] == ":"
-                ):
-                    # Remove leading slash from /C:/... format
-                    decoded_url = decoded_url[1:]
-
-                # Reconstruct the tile URL with the properly decoded path
-                tile_url = base_part + "url=" + decoded_url
-                self._logger.debug(f"Windows final URL: {tile_url}")
-
-            # Also handle already partially processed URLs with encoded characters
-            tile_url = re.sub(r"url=file:/{0,3}([a-zA-Z]:)", r"url=\1", tile_url)
-            tile_url = re.sub(
-                r"url=file%3A(?:%2F){1,3}([a-zA-Z](?:%3A|:))",
-                lambda m: "url=" + m.group(1).replace("%3A", ":"),
-                tile_url,
-            )
-        else:
-            # macOS / Linux: strip file:/// so GDAL sees a bare /abs/path.
-            if "url=file:///" in tile_url:
-                tile_url = tile_url.replace("url=file:///", "url=/")
-            elif "url=file://" in tile_url:
-                tile_url = tile_url.replace("url=file://", "url=")
-            if "url=file%3A%2F%2F%2F" in tile_url:
-                tile_url = tile_url.replace("url=file%3A%2F%2F%2F", "url=%2F")
-            elif "url=file%3A%2F%2F" in tile_url:
-                tile_url = tile_url.replace("url=file%3A%2F%2F", "url=")
-
-        return tile_url
+        return self._rendering.normalize_tile_url_legacy(tile_url)
 
     def _apply_server_performance_hints(self, options: dict) -> None:
-        """Apply server-side performance hints for terabyte-scale data."""
-        # Configure aggressive caching for large datasets
-        options["tile_cache_size"] = "large"
-        options["prefetch_strategy"] = "aggressive"
-        options["memory_management"] = "optimized"
-
-        self._logger.info("Applied server performance hints for terabyte-scale data")
+        self._rendering.apply_server_performance_hints(options)
 
     def _add_dem_layer_event_driven(
         self, asset: dict, options: dict, from_search_results: bool
     ) -> bool:
-        """Add DEM layer using event-driven architecture."""
-        if bool(options.get("replace_existing", True)) and not from_search_results:
-            self._explicit_imagery_layer_visible = False
-        if not from_search_results:
-            self._explicit_dem_layer_visible = True
-
-        self.state.active_layer_is_dem = True
-        layer_key = str(options.get("layer_key") or "")
-        self._active_dem_search_layer_key = layer_key or None
-
-        # Event-driven DEM loading with server optimization
-        self._run_js_call(
-            "addDemLayerEventDriven", asset["file_name"], asset["tile_url"], options
-        )
-
-        self.panel.rgb_view_mode_combo.setCurrentIndex(0)
-        self.panel.rgb_view_mode_combo.setEnabled(True)
-        self.panel.apply_rgb_view_mode_btn.setEnabled(True)
-        self._apply_display_control_mode()
-        self._logger.info(
-            "Event-driven DEM terrain layer requested name=%s", asset["file_name"]
-        )
-        return True
+        return self._rendering.add_dem_layer_event_driven(asset, options, from_search_results)
 
     def _add_imagery_layer_event_driven(
         self, asset: dict, options: dict, from_search_results: bool
     ) -> bool:
-        """Add imagery layer using event-driven architecture."""
-        replace_existing = bool(options.get("replace_existing", True))
-        apply_scene_mode = bool(options.get("apply_scene_mode", True))
-
-        if replace_existing:
-            if not from_search_results:
-                self._explicit_dem_layer_visible = False
-            self.state.active_layer_is_dem = False
-            self._active_dem_search_layer_key = None
-            self.panel.rgb_view_mode_combo.setEnabled(True)
-            self.panel.apply_rgb_view_mode_btn.setEnabled(True)
-            self._run_js_call("setSceneModeControlEnabled", True)
-            self._apply_display_control_mode()
-
-        # CRITICAL FIX: Do NOT force scene mode from Python backend
-        # JavaScript will automatically switch to 2D for imagery, 3D for DEM
-        # Forcing mode here creates conflicts and unnecessary morphing
-
-        self._logger.info(
-            "Event-driven layer render request name=%s kind=%s is_dem=%s replace_existing=%s apply_scene_mode=%s",
-            asset.get("file_name"),
-            asset.get("kind"),
-            False,
-            replace_existing,
-            apply_scene_mode,
-        )
-
-        # Removed: Python-side setSceneMode call that conflicts with JavaScript auto-switching
-        # JavaScript addTileLayer() will automatically call setSceneModeInternal("2d")
-        # JavaScript addDemLayer() will automatically call setSceneModeInternal("3d")
-
-        # Event-driven imagery loading with server optimization
-        self._run_js_call(
-            "addTileLayerEventDriven",
-            asset["file_name"],
-            asset["tile_url"],
-            asset["kind"],
-            options,
-        )
-
-        if not from_search_results:
-            self._explicit_imagery_layer_visible = True
-        self._apply_display_control_mode()
-        return True
+        return self._rendering.add_imagery_layer_event_driven(asset, options, from_search_results)
 
     def _apply_display_control_mode(self) -> None:
-        dem_visible = any(
-            self._search_layer_visibility.get(path, False) and self._is_dem_asset(asset)
-            for path, asset in self._search_result_assets_by_path.items()
-        )
-        imagery_visible = any(
-            self._search_layer_visibility.get(path, False)
-            and (not self._is_dem_asset(asset))
-            for path, asset in self._search_result_assets_by_path.items()
-        )
-        if self._explicit_dem_layer_visible:
-            dem_visible = True
-        if self._explicit_imagery_layer_visible:
-            imagery_visible = True
-
-        if self._swipe_comparator_enabled and self._comparator_selected_layer_type in {
-            "dem",
-            "imagery",
-        }:
-            dem_visible = self._comparator_selected_layer_type == "dem"
-            imagery_visible = self._comparator_selected_layer_type == "imagery"
-
-        for widget in (
-            self.panel.brightness_slider,
-            self.panel.contrast_slider,
-            self.panel.stretch_mode_combo,
-        ):
-            widget.setEnabled(imagery_visible)
-
-        # CRITICAL FIX: Determine current scene mode from RGB view mode combo
-        current_scene_mode = str(
-            self.panel.rgb_view_mode_combo.currentData() or "3d"
-        ).lower()
-        is_2d_mode = current_scene_mode == "2d"
-
-        # DEM controls: enabled when DEM is visible
-        for widget in (
-            self.panel.dem_hillshade_slider,
-            self.panel.dem_color_mode_combo,
-            getattr(self.panel, "dem_stretch_mode_combo", None),
-        ):
-            if widget is not None:
-                widget.setEnabled(dem_visible)
-
-        # Camera controls: pitch slider enabled in ALL 3D modes with any layer
-        # Rotation works in both 2D and 3D (heading rotation valid in 2D Cesium)
-        any_layer_visible = dem_visible or imagery_visible
-        self.panel.pitch_slider.setEnabled(any_layer_visible and not is_2d_mode)
-        for widget in (
-            self.panel.rotate_left_btn,
-            self.panel.rotate_right_btn,
-        ):
-            widget.setEnabled(any_layer_visible)  # Rotation works in both 2D/3D
-
-        # Visual feedback for disabled pitch slider in 2D mode
-        if is_2d_mode and any_layer_visible:
-            self.panel.pitch_slider.setStyleSheet("""
-                QSlider {
-                    color: #888888;
-                    background-color: #f0f0f0;
-                }
-                QSlider::handle:horizontal {
-                    background: #cccccc;
-                    border: 1px solid #999999;
-                }
-                QSlider::groove:horizontal {
-                    background: #e0e0e0;
-                }
-            """)
-            self.panel.pitch_slider.setToolTip("Pitch control is disabled in 2D mode")
-        else:
-            # Reset to default style when enabled
-            self.panel.pitch_slider.setStyleSheet("")
-            self.panel.pitch_slider.setToolTip("Adjust camera pitch angle")
-
-        if self._toolbar_context_callback is not None:
-            # The toolbar callback is a bound MainWindow method; during
-            # controller initialization the MainWindow.controller attribute
-            # may not be set yet. Call defensively to avoid AttributeError in
-            # that race. If the callback fails, log and continue — the
-            # MainWindow will refresh toolbar state later.
-            try:
-                if dem_visible and imagery_visible:
-                    self._toolbar_context_callback("mixed")
-                elif dem_visible:
-                    self._toolbar_context_callback("dem")
-                elif imagery_visible:
-                    self._toolbar_context_callback("imagery")
-                else:
-                    self._toolbar_context_callback("none")
-            except Exception as exc:  # pragma: no cover - defensive
-                try:
-                    self._logger.debug(
-                        "Toolbar context callback deferred: %s", exc
-                    )
-                except Exception:
-                    pass
-
-        if self._swipe_comparator_enabled and not self.can_enable_comparator():
-            self._swipe_comparator_enabled = False
-            self._comparator_selected_pane = None
-            self._comparator_selected_layer_type = None
-            self._run_js_call("setComparator", False)
-            self.panel.log(
-                "Comparator disabled: at least two visible raster layers are required."
-            )
+        """Apply display control mode based on visible layers."""
+        self._display_settings.apply_display_control_mode()
 
     def _is_dem_asset(self, asset: dict) -> bool:
-        """Detect if asset is DEM or RGB imagery using robust band count + data type analysis.
-
-        CRITICAL: Single-band imagery (like JP2 aerials) must NOT be detected as DEM.
-        DEM detection requires BOTH single-band AND elevation-like data type/range.
-        """
-        file_path = str(asset.get("file_path") or "")
-        if file_path and file_path in self._dem_asset_kind_cache:
-            return self._dem_asset_kind_cache[file_path]
-
-        # Step 1: Check explicit kind or filename hints
-        kind = str(asset.get("kind", "")).lower()
-        file_name = str(asset.get("file_name", "")).lower()
-
-        # Explicit DEM markers (dem, dtm, elevation)
-        if any(marker in file_name for marker in ("dem", "dtm", "elevation")) or kind in ("dem", "elevation"):
-            if file_path:
-                self._dem_asset_kind_cache[file_path] = True
-            return True
-
-        # Explicit imagery markers (JP2, RGB, etc.) - NOT DEM
-        imagery_extensions = (".jp2", ".j2k", ".jpeg", ".jpg", ".png", ".tif", ".tiff")
-        imagery_keywords = ("rgb", "aerial", "ortho", "satellite", "imagery", "photo", "aot", "tci", "wvp", "scl")
-
-        if any(file_name.endswith(ext) for ext in imagery_extensions):
-            # Check if filename contains imagery keywords
-            if any(keyword in file_name for keyword in imagery_keywords):
-                if file_path:
-                    self._dem_asset_kind_cache[file_path] = False
-                return False
-
-        # Step 2: Analyze raster metadata (band count + data type)
-        try:
-            info = self.api.get_cog_info(asset["file_path"])
-        except (httpx.HTTPError, KeyError, TypeError):
-            if file_path:
-                self._dem_asset_kind_cache[file_path] = False
-            return False
-
-        try:
-            band_count = int(info.get("count", 0) or 0)
-            dtype = str(info.get("dtype", "")).lower()
-
-            # Multi-band = RGB imagery (NOT DEM)
-            if band_count >= 3:
-                if file_path:
-                    self._dem_asset_kind_cache[file_path] = False
-                return False
-
-            # Single-band: Check data type to distinguish DEM from grayscale imagery
-            # DEM typically uses float32/float64 or int16/int32 for elevation values
-            # Grayscale imagery typically uses uint8/uint16 for pixel values
-            if band_count == 1:
-                # Float types = likely DEM (elevation values)
-                if "float" in dtype:
-                    if file_path:
-                        self._dem_asset_kind_cache[file_path] = True
-                    return True
-
-                # Signed integer types = likely DEM (elevation can be negative)
-                if "int16" in dtype or "int32" in dtype:
-                    if file_path:
-                        self._dem_asset_kind_cache[file_path] = True
-                    return True
-
-                # Unsigned integer types = likely grayscale imagery (NOT DEM)
-                if "uint" in dtype:
-                    if file_path:
-                        self._dem_asset_kind_cache[file_path] = False
-                    return False
-
-            # Default: single-band with unknown dtype = assume imagery (safer default)
-            if file_path:
-                self._dem_asset_kind_cache[file_path] = False
-            return False
-
-        except (TypeError, ValueError):
-            if file_path:
-                self._dem_asset_kind_cache[file_path] = False
-            return False
+        """Detect if asset is DEM or RGB imagery using robust band count + data type analysis."""
+        return self._utility.is_dem_asset(asset)
 
     def _raster_render_query(self, asset: dict) -> dict[str, object]:
-        query: dict[str, object] = {}
-        file_name = asset.get("file_name", "")
-        is_dem = (
-            str(asset.get("kind", "")).lower() in ("dem", "elevation")
-            or any(marker in str(file_name).lower() for marker in ("dem", "dtm", "elevation"))
-        )
-
-        self._logger.debug(f"Raster render query for {file_name}: is_dem={is_dem}")
-
-        info = {}
-        try:
-            info = self.api.get_cog_info(asset["file_path"])
-            self._logger.debug(f"COG info for {file_name}: {info}")
-        except httpx.HTTPError as exc:
-            self._logger.warning(
-                "COG info unavailable for %s: %s", asset.get("file_name"), exc
-            )
-
-        band_count = int(info.get("count", 1) or 1)
-        nodata_value = info.get("nodata_value", info.get("nodata"))
-
-        self._logger.debug(
-            f"Band count for {file_name}: {band_count}, nodata: {nodata_value}"
-        )
-
-        try:
-            if nodata_value is not None:
-                query["nodata"] = float(nodata_value)
-        except (TypeError, ValueError):
-            pass
-
-        if band_count >= 3 and not is_dem:
-            self._logger.info(
-                f"Multi-band imagery detected for {file_name}: {band_count} bands, adding bidx=[1,2,3]"
-            )
-            query["bidx"] = [1, 2, 3]
-            # Use bilinear resampling for high fidelity rendering instead of nearest neighbor
-            query["resampling"] = "bilinear"
-            # Set nodata=0 to prevent GDAL "INIT_DEST NO_DATA without defined nodata"
-            # error on Windows when the file has no nodata value defined.
-            if "nodata" not in query:
-                query["nodata"] = 0
-        else:
-            self._logger.debug(
-                f"Single-band or DEM for {file_name}: band_count={band_count}, is_dem={is_dem}"
-            )
-
-        stats = {}
-        try:
-            stats = self.api.get_cog_statistics(asset["file_path"])
-        except httpx.HTTPError as exc:
-            self._logger.warning(
-                "Statistics unavailable for %s: %s", asset.get("file_name"), exc
-            )
-
-        stretch_mode = "linear"
-        if is_dem and hasattr(self.panel, "dem_stretch_mode_combo"):
-            stretch_mode = str(
-                self.panel.dem_stretch_mode_combo.currentData() or "linear"
-            )
-        elif hasattr(self.panel, "stretch_mode_combo"):
-            stretch_mode = str(self.panel.stretch_mode_combo.currentData() or "linear")
-        use_percentiles = stretch_mode not in {"minmax", "stddev"}
-
-        def _stat_range(stat: dict) -> tuple[float | None, float | None]:
-            if not isinstance(stat, dict):
-                return None, None
-            if use_percentiles:
-                low = stat.get("percentile_2", stat.get("min"))
-                high = stat.get("percentile_98", stat.get("max"))
-            else:
-                low = stat.get("min", stat.get("percentile_2"))
-                high = stat.get("max", stat.get("percentile_98"))
-            return low, high
-
-        if is_dem:
-            color_mode = str(self.panel.dem_color_mode_combo.currentData() or "gray")
-            if color_mode == "slope":
-                query["algorithm"] = "slope"
-                query["colormap_name"] = "viridis"
-                query["rescale"] = "0,90"
-                self._logger.debug(f"DEM slope mode for {file_name}: {query}")
-                return query
-
-            query["colormap_name"] = color_mode
-
-            # Provide default elevation rescale if TiTiler stats fail, preventing blank maps.
-            low, high = -100.0, 4000.0
-            if isinstance(stats, dict) and stats:
-                first_band = (
-                    stats.get("b1")
-                    if isinstance(stats.get("b1"), dict)
-                    else next(iter(stats.values()))
-                )
-                if isinstance(first_band, dict):
-                    if stretch_mode == "stddev":
-                        mean = first_band.get("mean")
-                        std = first_band.get("std")
-                        if std is None:
-                            std = first_band.get("stdev")
-                        if std is None:
-                            std = first_band.get("stddev")
-                        if mean is not None and std is not None:
-                            low = float(mean) - (2.0 * float(std))
-                            high = float(mean) + (2.0 * float(std))
-                    else:
-                        b_low, b_high = _stat_range(first_band)
-                        if (
-                            b_low is not None
-                            and b_high is not None
-                            and float(b_high) > float(b_low)
-                        ):
-                            low, high = float(b_low), float(b_high)
-
-            query["rescale"] = f"{low},{high}"
-            self._logger.debug(f"Final DEM raster query for {file_name}: {query}")
-            return query
-
-        if not isinstance(stats, dict) or not stats:
-            self._logger.debug(
-                f"No stats available for {file_name}, final query: {query}"
-            )
-            return query
-
-        if band_count >= 3 and not is_dem:
-            # FIX: Apply QGIS-style per-band Cumulative Count Cut (2% - 98%)
-            # This fixes both the pitch-black 16-bit rendering and the bluish tint.
-            # Passing a list of rescales allows TiTiler to stretch each band independently.
-            if stretch_mode == "linear_shared":
-                lows = []
-                highs = []
-                for i in range(1, min(3, band_count) + 1):
-                    stat = stats.get(f"b{i}")
-                    if not isinstance(stat, dict):
-                        lows = []
-                        highs = []
-                        break
-                    low, high = _stat_range(stat)
-                    if low is None or high is None or float(low) >= float(high):
-                        lows = []
-                        highs = []
-                        break
-                    lows.append(float(low))
-                    highs.append(float(high))
-                if lows and highs:
-                    query["rescale"] = f"{min(lows)},{max(highs)}"
-                    self._logger.debug(
-                        f"Applied shared RGB stretch: {query}"
-                    )
-                    return query
-            rescales = []
-            valid = True
-            for i in range(1, min(3, band_count) + 1):
-                stat = stats.get(f"b{i}")
-                if not isinstance(stat, dict):
-                    valid = False
-                    break
-                low, high = _stat_range(stat)
-                if low is None or high is None or float(low) >= float(high):
-                    valid = False
-                    break
-                rescales.append(f"{float(low)},{float(high)}")
-
-            if valid and len(rescales) == 3:
-                query["rescale"] = rescales
-                self._logger.debug(
-                    f"Applied per-band true color correction: {query}"
-                )
-            else:
-                self._logger.debug(
-                    f"Skipped true color correction (missing stats), rendering raw."
-                )
-            return query
-
-        first_band = (
-            stats.get("b1")
-            if isinstance(stats.get("b1"), dict)
-            else next(iter(stats.values()))
-        )
-        if not isinstance(first_band, dict):
-            self._logger.debug(
-                f"No valid first band stats for {asset.get('file_name', '')}, final query: {query}"
-            )
-            return query
-
-        low, high = _stat_range(first_band)
-        if low is None or high is None or float(high) <= float(low):
-            self._logger.debug(
-                f"Invalid rescale values for {asset.get('file_name', '')}, final query: {query}"
-            )
-            return query
-
-        query["rescale"] = f"{float(low)},{float(high)}"
-
-        self._logger.debug(
-            f"Final raster query for {asset.get('file_name', '')}: {query}"
-        )
-        return query
+        return self._rendering.raster_render_query(asset)
 
     @staticmethod
     def _is_valid_lon_lat(lon, lat) -> bool:
-        if lon is None or lat is None:
-            return False
-        try:
-            lon_v = float(lon)
-            lat_v = float(lat)
-        except (TypeError, ValueError):
-            return False
-        return -180.0 <= lon_v <= 180.0 and -90.0 <= lat_v <= 90.0
+        return UtilityCoordinator.is_valid_lon_lat(lon, lat)
 
     @staticmethod
     def _is_near_global_bounds(bounds: dict[str, float] | None) -> bool:
-        if not isinstance(bounds, dict):
-            return False
-        try:
-            west = float(bounds.get("west"))
-            south = float(bounds.get("south"))
-            east = float(bounds.get("east"))
-            north = float(bounds.get("north"))
-        except (TypeError, ValueError):
-            return False
-        return west <= -179.5 and east >= 179.5 and south <= -84.5 and north >= 84.5
+        return UtilityCoordinator.is_near_global_bounds(bounds)
 
     @staticmethod
     def _normalize_path_for_compare(path: str) -> str:
-        if not path:
-            return ""
-        try:
-            normalized = str(Path(path).expanduser().resolve(strict=False))
-        except Exception:
-            normalized = str(path)
-        return normalized.replace("\\", "/").casefold()
+        return UtilityCoordinator.normalize_path_for_compare(path)
 
     def _paths_equivalent(self, path_a: str, path_b: str) -> bool:
-        return self._normalize_path_for_compare(
-            path_a
-        ) == self._normalize_path_for_compare(path_b)
+        return self._utility.paths_equivalent(path_a, path_b)
+
+    def _asset_path_accessible_locally(self, asset: dict) -> bool:
+        return self._utility.asset_path_accessible_locally(asset)
+
+    def _validate_offline_endpoints(self) -> bool:
+        return self._utility.validate_offline_endpoints()
+
+    def _require_offline_endpoints(self, action: str) -> bool:
+        return self._utility.require_offline_endpoints(action)
+
+    @staticmethod
+    def _is_offline_safe_url(url: str) -> bool:
+        return UtilityCoordinator.is_offline_safe_url(url)
+
+    def _set_layer_loading(self, active: bool, message: str) -> None:
+        self._utility.set_layer_loading(active, message)
+
+    def _on_layer_loading_timeout(self) -> None:
+        self._utility.on_layer_loading_timeout()
+
+    def _asset_centroid(self, asset: dict) -> dict[str, float] | None:
+        return self._utility.asset_centroid(asset)
+
+    def _asset_bounds(self, asset: dict) -> dict[str, float] | None:
+        return self._utility.asset_bounds(asset)
+
+    @staticmethod
+    def _utm_epsg_for_lon_lat(lon: float, lat: float) -> int:
+        return UtilityCoordinator.utm_epsg_for_lon_lat(lon, lat)
+
+    @staticmethod
+    def _line_length_m(coords: list[list[float]]) -> float:
+        return UtilityCoordinator.line_length_m(coords)
 
     def on_js_log(self, level: str, message: str) -> None:
         normalized = level.lower().strip()

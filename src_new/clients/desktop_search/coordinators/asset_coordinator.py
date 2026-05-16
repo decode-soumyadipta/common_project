@@ -317,3 +317,48 @@ class AssetCoordinator:
             c.panel.log("Ingest polling stopped manually")
             c.panel.ingest_status_value.setText("STOPPED")
             c.panel.ingest_step_value.setText("Polling stopped by user")
+
+    def create_raster_asset_from_path(self, file_path: str) -> dict | None:
+        """Create a raster asset from a file path."""
+        c = self._controller
+        path = Path(str(file_path)).expanduser()
+        if not path.exists():
+            c.panel.log(f"Raster not found: {path}")
+            return None
+        if c.api.api_ready():
+            try:
+                from src_new.clients.desktop_search.tile_url_builder import build_xyz_url
+                asset = c.api.register_raster(str(path))
+                if isinstance(asset, dict):
+                    if "tile_url" not in asset:
+                        asset["tile_url"] = build_xyz_url(str(path))
+                    return asset
+            except Exception as exc:
+                c.panel.log(f"Raster registration failed: {path.name}. {exc}")
+                c._logger.warning("Raster registration failed: %s", exc)
+        try:
+            from src_new.services.ingestion.gdal_pipelines.metadata_extractor import (
+                MetadataExtractorError,
+                extract_metadata,
+            )
+            from src_new.clients.desktop_search.tile_url_builder import build_xyz_url
+            metadata = extract_metadata(path)
+        except Exception as exc:
+            c.panel.log(f"Metadata extraction failed: {path.name}. {exc}")
+            c._logger.warning("Metadata extraction failed: %s", exc)
+            return None
+
+        bounds_wkt = metadata.bounds.to_wkt_polygon()
+        return {
+            "file_path": str(metadata.file_path),
+            "file_name": metadata.file_name,
+            "kind": metadata.kind.value,
+            "crs": metadata.crs or "-",
+            "bounds_wkt": bounds_wkt,
+            "resolution_x": metadata.resolution_x,
+            "resolution_y": metadata.resolution_y,
+            "width": metadata.width,
+            "height": metadata.height,
+            "tile_url": build_xyz_url(str(metadata.file_path)),
+            "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        }

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+
+from PySide6.QtCore import QSignalBlocker
 
 
 class ComparatorCoordinator:
@@ -207,6 +210,78 @@ class ComparatorCoordinator:
 
     def _toolbar_toggle_swipe_comparator(self, enabled: bool | None = None) -> bool:
         return self._toolbar_toggle_comparator(enabled=enabled)
+
+    @staticmethod
+    def _set_slider_from_float_value(
+        slider, raw_value: object, scale: float = 1.0
+    ) -> None:
+        if not isinstance(raw_value, (int, float)):
+            return
+        scaled = int(round(float(raw_value) * scale))
+        slider.setValue(max(slider.minimum(), min(slider.maximum(), scaled)))
+
+    def on_comparator_pane_state(self, payload_json: str) -> None:
+        c = self._controller
+        try:
+            payload = json.loads(payload_json)
+        except json.JSONDecodeError:
+            c._logger.warning(
+                "Invalid comparator pane state payload JSON: %s", payload_json
+            )
+            return
+
+        if not isinstance(payload, dict):
+            c._logger.warning(
+                "Invalid comparator pane state payload type: %s", type(payload).__name__
+            )
+            return
+
+        pane = str(payload.get("pane") or "").strip().lower()
+        layer_type = str(payload.get("layer_type") or "").strip().lower()
+        if pane not in {"left", "right"}:
+            pane = "left"
+        c._comparator_selected_pane = pane
+        c._comparator_selected_layer_type = (
+            layer_type if layer_type in {"dem", "imagery"} else None
+        )
+
+        imagery = (
+            payload.get("imagery") if isinstance(payload.get("imagery"), dict) else {}
+        )
+        dem = payload.get("dem") if isinstance(payload.get("dem"), dict) else {}
+
+        blockers = [
+            QSignalBlocker(c.panel.brightness_slider),
+            QSignalBlocker(c.panel.contrast_slider),
+            QSignalBlocker(c.panel.dem_hillshade_slider),
+            QSignalBlocker(c.panel.dem_color_mode_combo),
+        ]
+        try:
+            self._set_slider_from_float_value(
+                c.panel.brightness_slider, imagery.get("brightness"), scale=100.0
+            )
+            self._set_slider_from_float_value(
+                c.panel.contrast_slider, imagery.get("contrast"), scale=100.0
+            )
+            self._set_slider_from_float_value(
+                c.panel.dem_hillshade_slider, dem.get("hillshade_alpha"), scale=100.0
+            )
+
+            color_mode = str(dem.get("color_mode") or "").strip().lower()
+            if color_mode:
+                color_mode_index = c.panel.dem_color_mode_combo.findData(color_mode)
+                if color_mode_index >= 0:
+                    c.panel.dem_color_mode_combo.setCurrentIndex(color_mode_index)
+        finally:
+            del blockers
+
+        c.panel._update_display_value_labels()
+        c._apply_display_control_mode()
+        c._logger.debug(
+            "Comparator pane selected pane=%s type=%s",
+            c._comparator_selected_pane,
+            c._comparator_selected_layer_type,
+        )
 
 
 __all__ = ["ComparatorCoordinator"]

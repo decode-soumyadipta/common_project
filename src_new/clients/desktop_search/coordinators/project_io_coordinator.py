@@ -17,6 +17,116 @@ class ProjectIoCoordinator:
     def _panel(self):
         return self._controller.panel
 
+    def build_project_payload(self) -> dict:
+        """Build project payload for saving."""
+        c = self._controller
+        now = dt.datetime.now(dt.timezone.utc).isoformat()
+        order_registry = getattr(c.panel, "_layer_order_registry", {}) or {}
+
+        raster_layers: list[dict[str, object]] = []
+        for path, asset in c._search_result_assets_by_path.items():
+            normalized_path = str(path or "").replace("\\", "/")
+            if not normalized_path:
+                continue
+            entry = order_registry.get(normalized_path, {})
+            raster_layers.append(
+                {
+                    "file_path": normalized_path,
+                    "file_name": asset.get("file_name"),
+                    "kind": asset.get("kind"),
+                    "crs": asset.get("crs"),
+                    "bounds_wkt": asset.get("bounds_wkt"),
+                    "tile_url": asset.get("tile_url"),
+                    "resolution_x": asset.get("resolution_x"),
+                    "resolution_y": asset.get("resolution_y"),
+                    "width": asset.get("width"),
+                    "height": asset.get("height"),
+                    "created_at": asset.get("created_at"),
+                    "is_visible": bool(
+                        c._search_layer_visibility.get(normalized_path, True)
+                    ),
+                    "order": entry.get("order", 0),
+                    "source": "user"
+                    if normalized_path in c._user_added_assets
+                    else "search",
+                }
+            )
+
+        vector_layers = [dict(layer) for layer in c._vector_layers.values()]
+
+        layer_order = [
+            path
+            for path, entry in sorted(
+                order_registry.items(), key=lambda item: item[1].get("order", 0)
+            )
+        ]
+
+        return {
+            "version": 1,
+            "saved_at": now,
+            "selected_asset_path": (
+                c.state.selected_asset.get("file_path")
+                if isinstance(c.state.selected_asset, dict)
+                else None
+            ),
+            "clicked_points": list(c.state.clicked_points),
+            "search": {
+                "geometry_type": c.state.search_geometry_type,
+                "geometry_payload": c.state.search_geometry_payload,
+                "visibility": dict(c._search_layer_visibility),
+                "layer_order": layer_order,
+                "active_dem": c._active_dem_search_layer_key,
+            },
+            "annotations": {
+                "points": list(c._annotation_records),
+                "lines": list(c._annotation_line_records),
+                "polygons": list(c._annotation_polygon_records),
+                "icons": list(c._annotation_icon_records),
+                "text_labels": list(c._annotation_text_records),
+            },
+            "raster_stretch": dict(c._raster_stretch_settings),
+            "layers": {
+                "rasters": raster_layers,
+                "vectors": vector_layers,
+            },
+        }
+
+    def clear_project_state(self) -> None:
+        """Clear all project state and reset to defaults."""
+        c = self._controller
+        c._run_js_call("clearAllLayers")
+        c._run_js_call("clearVectorLayers")
+        c._run_js_call("clearSearchGeometry")
+        c._run_js_call("clearAnnotations")
+        c._run_js_call("resetDefaultView")
+
+        c._search_result_assets_by_path = {}
+        c._search_layer_visibility = {}
+        c._loaded_search_layer_keys = set()
+        c._last_synced_visibility = {}
+        c._active_dem_search_layer_key = None
+        c._explicit_imagery_layer_visible = False
+        c._explicit_dem_layer_visible = False
+        c._user_added_assets = {}
+        c._vector_layers = {}
+        c._annotation_records = []
+        c._annotation_line_records = []
+        c._annotation_polygon_records = []
+        c._annotation_icon_records = []
+        c._annotation_text_records = []
+        c._raster_stretch_settings = {}
+        c.state.selected_asset = None
+        c.state.clicked_points = []
+        c.state.search_geometry_type = None
+        c.state.search_geometry_payload = None
+        c.panel.assets_combo.clear()
+        if hasattr(c.panel, "_layer_order_registry"):
+            c.panel._layer_order_registry = {}
+        c.panel.update_search_results([], {})
+        c.panel.update_vector_layers([])
+        c.clear_all_measurement_results()
+        c._apply_display_control_mode()
+
     def export_profile_csv(self) -> None:
         controller = self._controller
         if not controller._last_profile_values:
@@ -335,7 +445,7 @@ class ProjectIoCoordinator:
             self.save_project_as()
             return
         try:
-            payload = controller.build_project_payload()
+            payload = self.build_project_payload()
             controller._project_path.write_text(
                 json.dumps(payload, indent=2), encoding="utf-8"
             )
@@ -363,7 +473,7 @@ class ProjectIoCoordinator:
         if not file_path:
             return
         try:
-            payload = controller.build_project_payload()
+            payload = self.build_project_payload()
             target = Path(file_path)
             target.write_text(json.dumps(payload, indent=2), encoding="utf-8")
             controller._project_path = target
@@ -395,7 +505,164 @@ class ProjectIoCoordinator:
         except Exception as exc:
             controller.panel.log(f"Failed to open project: {exc}")
             return
-        controller.apply_project_payload(payload, source_path=Path(file_path))
+        self.apply_project_payload(payload, source_path=Path(file_path))
+
+    def apply_project_payload(self, payload: dict, source_path: Path | None = None) -> None:
+        """Apply project payload to restore project state."""
+        c = self._controller
+        self.clear_project_state()
+        if source_path:
+            c._project_path = source_path
+
+        search_payload = payload.get("search") if isinstance(payload, dict) else {}
+        if not isinstance(search_payload, dict):
+            search_payload = {}
+        geometry_type = search_payload.get("geometry_type")
+        geometry_payload = search_payload.get("geometry_payload")
+        c.state.search_geometry_type = geometry_type
+        c.state.search_geometry_payload = geometry_payload
+        if geometry_type == "polygon" and isinstance(geometry_payload, dict):
+            points = geometry_payload.get("points", [])
+            if isinstance(points, list):
+                c._run_js_call("loadSearchPolygon", points)
+                c._update_coordinate_inputs_from_polygon({"points": points})
+
+        annotations = payload.get("annotations") if isinstance(payload, dict) else {}
+        if isinstance(annotations, dict):
+            c._annotation_records = list(annotations.get("points") or [])
+            c._annotation_line_records = list(annotations.get("lines") or [])
+            c._annotation_polygon_records = list(annotations.get("polygons") or [])
+            c._annotation_icon_records = list(annotations.get("icons") or [])
+            c._annotation_text_records = list(annotations.get("text_labels") or [])
+        else:
+            c._annotation_records = []
+            c._annotation_line_records = []
+            c._annotation_polygon_records = []
+            c._annotation_icon_records = []
+            c._annotation_text_records = []
+
+        # Load raster stretch settings
+        raster_stretch = payload.get("raster_stretch") if isinstance(payload, dict) else {}
+        if isinstance(raster_stretch, dict):
+            c._raster_stretch_settings = dict(raster_stretch)
+        else:
+            c._raster_stretch_settings = {}
+
+        layers_payload = payload.get("layers") if isinstance(payload, dict) else {}
+        raster_layers = []
+        if isinstance(layers_payload, dict):
+            raster_layers = layers_payload.get("rasters") or []
+        if not isinstance(raster_layers, list):
+            raster_layers = []
+
+        c._search_result_assets_by_path = {}
+        c._search_layer_visibility = {}
+        c._loaded_search_layer_keys = set()
+        c._last_synced_visibility = {}
+        c._user_added_assets = {}
+
+        from src_new.clients.desktop_search.tile_url_builder import build_xyz_url
+
+        order_registry = {}
+        for entry in raster_layers:
+            if not isinstance(entry, dict):
+                continue
+            file_path = str(entry.get("file_path") or "").replace("\\", "/")
+            if not file_path:
+                continue
+            file_name = str(entry.get("file_name") or Path(file_path).name)
+            tile_url = entry.get("tile_url") or build_xyz_url(file_path)
+            asset = {
+                "file_path": file_path,
+                "file_name": file_name,
+                "kind": entry.get("kind") or "unknown",
+                "crs": entry.get("crs") or "-",
+                "bounds_wkt": entry.get("bounds_wkt") or "",
+                "tile_url": tile_url,
+                "resolution_x": entry.get("resolution_x"),
+                "resolution_y": entry.get("resolution_y"),
+                "width": entry.get("width"),
+                "height": entry.get("height"),
+                "created_at": entry.get("created_at"),
+            }
+            c._search_result_assets_by_path[file_path] = asset
+            c._search_layer_visibility[file_path] = bool(
+                entry.get("is_visible", True)
+            )
+            if str(entry.get("source") or "") == "user":
+                c._user_added_assets[file_path] = asset
+            order_registry[file_path] = {
+                "file_name": file_name,
+                "kind": str(asset.get("kind") or "-"),
+                "crs": str(asset.get("crs") or "-"),
+                "created_at": str(entry.get("created_at") or "-"),
+                "is_visible": bool(entry.get("is_visible", True)),
+                "order": int(entry.get("order", 0)),
+            }
+
+        c.panel._layer_order_registry = order_registry
+        c._active_dem_search_layer_key = search_payload.get("active_dem")
+        if (
+            c._active_dem_search_layer_key
+            and c._active_dem_search_layer_key not in c._search_result_assets_by_path
+        ):
+            c._active_dem_search_layer_key = None
+
+        c._sync_search_visibility_layers()
+
+        layer_order = search_payload.get("layer_order")
+        if isinstance(layer_order, list) and layer_order:
+            ordered_keys = [
+                str(p).replace("\\", "/")
+                for p in layer_order
+                if str(p or "").strip()
+            ]
+            if ordered_keys:
+                c._run_js_call("enforceLayerDisplayOrder", ordered_keys)
+
+        c.panel.update_search_results(
+            list(c._search_result_assets_by_path.values()),
+            c._search_layer_visibility,
+        )
+
+        vectors = []
+        if isinstance(layers_payload, dict):
+            vectors = layers_payload.get("vectors") or []
+        if not isinstance(vectors, list):
+            vectors = []
+
+        c._vector_layers = {}
+        c._run_js_call("clearVectorLayers")
+        for entry in vectors:
+            if not isinstance(entry, dict):
+                continue
+            layer_key = str(entry.get("layer_key") or "").strip()
+            label = str(entry.get("label") or "Vector")
+            geojson = entry.get("geojson")
+            if not layer_key or not isinstance(geojson, dict):
+                continue
+            c._run_js_call("addVectorLayer", layer_key, label, geojson, {})
+            is_visible = bool(entry.get("is_visible", True))
+            if not is_visible:
+                c._run_js_call("setVectorLayerVisibility", layer_key, False)
+            c._vector_layers[layer_key] = dict(entry)
+            c._vector_layers[layer_key]["is_visible"] = is_visible
+
+        c._restore_annotations_on_map()
+        c._refresh_vector_layers_ui()
+
+        selected_path = payload.get("selected_asset_path")
+        if isinstance(selected_path, str) and selected_path:
+            selected_asset = c._search_result_assets_by_path.get(
+                selected_path.replace("\\", "/")
+            )
+            if selected_asset:
+                c.state.selected_asset = selected_asset
+
+        c.state.clicked_points = list(payload.get("clicked_points") or [])
+
+        c.panel.log("Project loaded.")
+        c._set_project_modified(False)
 
 
 __all__ = ["ProjectIoCoordinator"]
