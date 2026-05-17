@@ -40,6 +40,8 @@ from src_new.clients.desktop_search.coordinators import (
     RenderingCoordinator,
     DisplaySettingsCoordinator,
     UtilityCoordinator,
+    SignalCoordinator,
+    EventCoordinator,
 )
 from src_new.clients.desktop_search.coordinators.elevation_profile_coordinator import (
     ElevationProfileCoordinator,
@@ -209,8 +211,10 @@ class DesktopController(QObject):
         self._rendering = RenderingCoordinator(self)
         self._display_settings = DisplaySettingsCoordinator(self)
         self._utility = UtilityCoordinator(self)
+        self._signal = SignalCoordinator(self)
+        self._event = EventCoordinator(self)
         self._logger.info("Controller initialized mode=%s", self.app_mode.value)
-        self._connect_signals()
+        self._signal.connect_all_signals()
         self._apply_display_control_mode()
         # Defer startup network and process work so the main window can render
         # immediately instead of appearing as a silent/no-window launch.
@@ -422,125 +426,6 @@ class DesktopController(QObject):
         except Exception:  # noqa: BLE001
             body = (exc.response.text or "").strip()
             return body[:300]
-
-    def _connect_signals(self) -> None:
-        # File selection buttons
-        self._connect_button(
-            self.panel.browse_files_btn.clicked, "Browse Files", self.browse_files
-        )
-        self._connect_button(
-            self.panel.clear_selection_btn.clicked,
-            "Clear Selection",
-            self.clear_file_selection,
-        )
-        self._connect_button(
-            self.panel.ingest_btn.clicked, "Ingest Files", self.enqueue_selected_files
-        )
-
-        # Asset management
-        self._connect_button(
-            self.panel.refresh_assets_btn.clicked, "Refresh Assets", self.refresh_assets
-        )
-        # add_layer_btn was removed; no connection needed
-
-        # Asset deletion
-        self.panel.asset_delete_requested.connect(self.delete_asset)
-
-        # Display controls
-        self.panel.brightness_slider.valueChanged.connect(
-            self._on_visual_slider_changed
-        )
-        self.panel.contrast_slider.valueChanged.connect(self._on_visual_slider_changed)
-        self.panel.stretch_mode_combo.currentIndexChanged.connect(
-            self._on_stretch_mode_changed
-        )
-        if hasattr(self.panel, "dem_stretch_mode_combo"):
-            self.panel.dem_stretch_mode_combo.currentIndexChanged.connect(
-                self._on_dem_stretch_mode_changed
-            )
-        self.panel.dem_hillshade_slider.valueChanged.connect(
-            self._on_dem_slider_changed
-        )
-        self.panel.dem_color_mode_combo.currentIndexChanged.connect(
-            self._on_dem_color_mode_changed
-        )
-        self._connect_button(
-            self.panel.apply_rgb_view_mode_btn.clicked,
-            "Apply RGB View Mode",
-            self.apply_rgb_view_mode,
-        )
-        self._connect_button(
-            self.panel.rotate_left_btn.clicked,
-            "Rotate Left",
-            lambda: self.rotate_camera(-10.0),
-        )
-        self._connect_button(
-            self.panel.rotate_right_btn.clicked,
-            "Rotate Right",
-            lambda: self.rotate_camera(10.0),
-        )
-        self.panel.pitch_slider.valueChanged.connect(self.set_pitch)
-        self._connect_button(
-            self.panel.search_point_btn.clicked,
-            "Search by Coordinate",
-            self.search_assets_by_coordinate,
-        )
-        self._connect_button(
-            self.panel.search_draw_polygon_btn.clicked,
-            "Draw Search Polygon",
-            self.set_search_draw_mode,
-        )
-        self._connect_button(
-            self.panel.search_finish_polygon_btn.clicked,
-            "Finish Search Polygon",
-            self.finish_search_polygon,
-        )
-        self._connect_button(
-            self.panel.search_clear_geometry_btn.clicked,
-            "Clear Search Geometry",
-            self.clear_search_geometry,
-        )
-        self._connect_button(
-            self.panel.search_from_draw_btn.clicked,
-            "Search from Drawn Geometry",
-            self.search_assets_from_drawn_geometry,
-        )
-        self.panel.search_result_visibility_toggled.connect(
-            self.toggle_search_result_visibility
-        )
-        self.panel.search_layers_reordered.connect(self.reorder_search_result_layers)
-        self.panel.asset_focus_requested.connect(self._toolbar_zoom_to_asset)
-        self.panel.vector_layer_visibility_toggled.connect(
-            self.set_vector_layer_visibility
-        )
-        self.panel.vector_layer_delete_requested.connect(self.remove_vector_layer)
-        self.bridge.mapClicked.connect(self.on_map_click)
-        self.bridge.measurementUpdated.connect(self.on_measurement)
-        self.bridge.jsLogReceived.connect(self.on_js_log)
-        self.bridge.searchGeometryChanged.connect(self.on_search_geometry)
-        self.bridge.comparatorPaneStateChanged.connect(self.on_comparator_pane_state)
-        self.panel.uploaded_assets_list.itemSelectionChanged.connect(
-            self.preview_selected_uploaded_asset
-        )
-        self.panel.measurement_result_clear_selected_requested.connect(
-            self.clear_selected_measurement_result
-        )
-        self.panel.measurement_result_clear_all_requested.connect(
-            self.clear_all_measurement_results
-        )
-        self.panel.uploaded_assets_refresh_requested.connect(self._clear_asset_caches)
-        self.panel.search_layer_delete_requested.connect(self.remove_search_layer)
-
-    def _connect_button(
-        self, signal, label: str, callback: Callable[..., object]
-    ) -> None:
-        signal.connect(
-            lambda *args, _label=label, _callback=callback: self._on_button_invoked(
-                _label,
-                _callback,
-                *args,
-            )
-        )
 
     def _on_button_invoked(
         self, label: str, callback: Callable[..., object], *args
@@ -994,57 +879,10 @@ class DesktopController(QObject):
 
 
     def on_map_click(self, lon: float, lat: float) -> None:
-        self.state.clicked_points.append((lon, lat))
-        self.state.clicked_points = self.state.clicked_points[-2:]
-        self.panel.click_label.setText(f"Last click: lon={lon:.6f}, lat={lat:.6f}")
-
-        # Route to elevation profile coordinator first (it manages its own click state)
-        if self._elevation_profile.active:
-            self._elevation_profile.on_map_click(lon, lat)
-            return
-
-        if self._add_text_mode_enabled:
-            self._add_text_label_at(lon, lat, "Label")
-            return
-
-        if self._add_line_mode_enabled:
-            if self._annotation_line_start is None:
-                self._annotation_line_start = (lon, lat)
-                self._run_js_call("setLineDrawStart", lon, lat)
-                self.panel.log("Line start set. Click the end point to finish.")
-                return
-            start_lon, start_lat = self._annotation_line_start
-            self._annotation_line_start = None
-            self._add_line_annotation_between((start_lon, start_lat), (lon, lat))
-            self._run_js_call("clearLineDrawPreview")
-            return
-
-        if self._add_point_mode_enabled:
-            self._add_annotation_at(lon, lat)
-            return
-
-        if self._viewshed_mode_enabled:
-            self.panel.log(
-                f"Observer point selected at lon={lon:.6f}, lat={lat:.6f}. Computing viewshed..."
-            )
-            self._toolbar_measure_viewshed()
-            self.state.clicked_points.clear()
-            return
-
-        if self._shadow_height_mode_enabled:
-            if len(self.state.clicked_points) < 2:
-                self.panel.log(
-                    "Shadow Height: base point captured. Click shadow tip point."
-                )
-                return
-            self._toolbar_measure_shadow_height()
-            self.state.clicked_points.clear()
+        self._event.on_map_click(lon, lat)
 
     def on_measurement(self, meters: float) -> None:
-        self.panel.measure_label.setText(f"Last distance: {meters:.2f} m")
-        self._logger.info("Measurement updated distance_m=%.2f", meters)
-        if not self._distance_measure_mode_enabled:
-            return
+        self._event.on_measurement(meters)
         if len(self.state.clicked_points) < 2:
             return
         (lon1, lat1), (lon2, lat2) = (
@@ -1171,41 +1009,8 @@ class DesktopController(QObject):
         return activated
 
     def extract_dem_profile(self) -> None:
-        asset = self._selected_asset()
-        if not asset:
-            self.panel.log("Select a DEM asset first.")
-            self._logger.warning("Profile requested without selected asset")
-            return
-        if len(self.state.clicked_points) < 2:
-            self.panel.log("Click two points on the globe to define transect.")
-            self._logger.warning("Profile requested without two clicks")
-            return
-        samples = int(self._default_profile_samples)
-        try:
-            result = self.api.extract_profile(
-                asset["file_path"], self.state.clicked_points[-2:], samples=samples
-            )
-        except httpx.HTTPError as exc:
-            self.panel.log(f"Profile extraction failed: {exc}")
-            self._logger.exception(
-                "Profile extraction failed path=%s", asset["file_path"]
-            )
-            return
-        values = result.get("values", [])
-        if not values:
-            self.panel.log("Profile extraction returned no values.")
-            self._logger.warning(
-                "Profile returned empty values path=%s", asset["file_path"]
-            )
-            return
-        self._last_profile_values = [float(v) for v in values]
-        preview = ", ".join(f"{v:.2f}" for v in values[:10])
-        self.panel.log(
-            f"Profile extracted ({len(values)} samples). First values: {preview}"
-        )
-        self._logger.info(
-            "Profile extracted samples=%s path=%s", len(values), asset["file_path"]
-        )
+        # Legacy method - functionality moved to ElevationProfileCoordinator
+        self._elevation_profile.activate()
 
     def on_toolbar_group_disabled(self, group_name: str) -> None:
         if group_name == "measurement":
@@ -1840,40 +1645,7 @@ class DesktopController(QObject):
         return UtilityCoordinator.line_length_m(coords)
 
     def on_js_log(self, level: str, message: str) -> None:
-        normalized = level.lower().strip()
-        msg_lower = message.lower()
-        if self._layer_loading_active and (
-            "fly-through started" in msg_lower
-            or "fly-to bounds" in msg_lower
-            or "fly-to lon=" in msg_lower
-            or "fly-to: complete" in msg_lower
-            or "flight started" in msg_lower
-        ):
-            self._set_layer_loading(False, "Layer ready")
-
-        if normalized == "debug" and (
-            "SCENE_DEBUG" in message
-            or "addTileLayer request" in message
-            or "addDemLayer request" in message
-            or "Imagery provider configured" in message
-        ):
-            self._logger.info("JS(debug): %s", message)
-            return
-
-        if "Tile provider error for" in message:
-            self._logger.warning("JS: %s", message)
-            return
-        if normalized == "debug":
-            return
-        if normalized in {"warn", "warning"}:
-            self._logger.warning("JS: %s", message)
-            return
-        if normalized == "error":
-            self._logger.error("JS: %s", message)
-            if self._layer_loading_active:
-                self._set_layer_loading(False, "Layer load failed")
-            return
-        self._logger.info("JS: %s", message)
+        self._event.on_js_log(level, message)
 
     def _set_layer_loading(self, active: bool, message: str) -> None:
         self._layer_loading_active = active

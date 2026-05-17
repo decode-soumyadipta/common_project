@@ -52,6 +52,12 @@ from src_new.clients.desktop_search.coordinators.display_settings_coordinator im
 from src_new.clients.desktop_search.coordinators.utility_coordinator import (
     UtilityCoordinator,
 )
+from src_new.clients.desktop_search.coordinators.signal_coordinator import (
+    SignalCoordinator,
+)
+from src_new.clients.desktop_search.coordinators.event_coordinator import (
+    EventCoordinator,
+)
 
 __all__ = [
     "ComparatorCoordinator",
@@ -72,4 +78,6 @@ __all__ = [
     "RenderingCoordinator",
     "DisplaySettingsCoordinator",
     "UtilityCoordinator",
+    "SignalCoordinator",
+    "EventCoordinator",
 ]
