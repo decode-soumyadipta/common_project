@@ -1,4 +1,3 @@
-(function () {
   window.offlineGIS = window.offlineGIS || {};
   Object.assign(window.offlineGIS, {
       addIconAnnotation: function (lon, lat, iconName, text) {
@@ -132,4 +131,59 @@
         log("info", "Icon annotation added: " + iconName + " at lon=" + lon + " lat=" + lat);
       },
   });
-})();
+
+  function setAnnotationEditIconHoverState(editEntity, hovered) {
+    if (!editEntity || !editEntity.billboard) {
+      return;
+    }
+    editEntity.billboard.color = hovered ? Cesium.Color.WHITE.withAlpha(0.96) : Cesium.Color.WHITE.withAlpha(0.42);
+  }
+
+  function setAnnotationDeleteIconHoverState(deleteEntity, hovered) {
+    if (!deleteEntity || !deleteEntity.billboard) return;
+    deleteEntity.billboard.color = hovered ? Cesium.Color.WHITE.withAlpha(0.96) : Cesium.Color.WHITE.withAlpha(0.62);
+  }
+
+  function renameAnnotationFromEditIcon(editEntity) {
+    if (!editEntity || editEntity._annotationRole !== "edit") {
+      return false;
+    }
+    const labelEntity = editEntity._annotationLabelEntity || null;
+    if (!labelEntity || !labelEntity.label) {
+      return false;
+    }
+    const currentText = readLabelText(labelEntity) || "Point";
+    const nextText = window.prompt("Rename annotation", currentText);
+    if (nextText === null) {
+      return true;
+    }
+    const cleaned = String(nextText).trim();
+    if (!cleaned) {
+      return true;
+    }
+    labelEntity.label.text = cleaned;
+    setStatus("Point renamed: " + cleaned);
+    requestSceneRender();
+    return true;
+  }
+
+  function updateAnnotationHover(screenPosition) {
+    if (!viewer || !screenPosition) {
+      return;
+    }
+    const picked = viewer.scene.pick(screenPosition);
+    const nextHover = picked && picked.id && picked.id._annotationRole === "edit" ? picked.id : null;
+    if (hoveredAnnotationEditEntity !== nextHover) {
+      if (hoveredAnnotationEditEntity) setAnnotationEditIconHoverState(hoveredAnnotationEditEntity, false);
+      hoveredAnnotationEditEntity = nextHover;
+      if (hoveredAnnotationEditEntity) setAnnotationEditIconHoverState(hoveredAnnotationEditEntity, true);
+    }
+    const nextDelHover = picked && picked.id && picked.id._annotationRole === "delete" ? picked.id : null;
+    if (hoveredAnnotationDeleteEntity !== nextDelHover) {
+      if (hoveredAnnotationDeleteEntity) setAnnotationDeleteIconHoverState(hoveredAnnotationDeleteEntity, false);
+      hoveredAnnotationDeleteEntity = nextDelHover;
+      if (hoveredAnnotationDeleteEntity) setAnnotationDeleteIconHoverState(hoveredAnnotationDeleteEntity, true);
+    }
+    requestSceneRender();
+  }
+

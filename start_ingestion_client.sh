@@ -8,4 +8,7 @@ echo "Use this to upload raster files to the system."
 echo ""
 
 cd "$PROJECT_DIR"
-python -m src_new.clients.desktop_ingestion.main
+# Activate conda environment
+source $(conda info --base)/etc/profile.d/conda.sh
+conda activate offline-3d-gis
+python -m src_new.clients.desktop_ingestion

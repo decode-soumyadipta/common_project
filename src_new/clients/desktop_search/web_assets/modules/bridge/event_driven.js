@@ -1,4 +1,3 @@
-(function () {
   window.offlineGIS = window.offlineGIS || {};
   Object.assign(window.offlineGIS, {
       addTileLayerEventDriven: async function (name, xyzUrl, kind, options) {
@@ -153,4 +152,3 @@
         viewer.scene.requestRender();
       },
   });
-})();

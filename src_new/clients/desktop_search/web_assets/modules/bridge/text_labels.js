@@ -1,4 +1,3 @@
-(function () {
   window.offlineGIS = window.offlineGIS || {};
   Object.assign(window.offlineGIS, {
       addTextLabel: function (lon, lat, text) {
@@ -643,4 +642,3 @@
         log("info", "Fill volumes drawn: " + regions.length + " regions");
       },
   });
-})();

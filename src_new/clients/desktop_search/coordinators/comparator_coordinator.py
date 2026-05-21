@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from PySide6.QtCore import QSignalBlocker
+from qtpy.QtCore import QSignalBlocker
 
 
 class ComparatorCoordinator:

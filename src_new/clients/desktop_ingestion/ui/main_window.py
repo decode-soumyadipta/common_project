@@ -215,7 +215,9 @@ class MainWindow(QMainWindow):
     def _check_service_health(self) -> None:
         """Check the health of ingestion and tile services."""
         # Check ingestion service
-        if self.api_client.ingestion_service_ready():
+        ingestion_ok = self.api_client.ingestion_service_ready()
+        logger.debug("Ingestion service ready=%s", ingestion_ok)
+        if ingestion_ok:
             self._ingestion_status_label.setText("Ingestion Service: ✓ Healthy")
             self._ingestion_status_label.setStyleSheet(
                 "color: #2d7a2d; font-weight: 600; padding: 2px 8px;"
@@ -227,7 +229,9 @@ class MainWindow(QMainWindow):
             )
 
         # Check tile service
-        if self.api_client.tile_service_ready():
+        tile_ok = self.api_client.tile_service_ready()
+        logger.debug("Tile service ready=%s", tile_ok)
+        if tile_ok:
             self._tile_status_label.setText("Tile Service: ✓ Healthy")
             self._tile_status_label.setStyleSheet(
                 "color: #2d7a2d; font-weight: 600; padding: 2px 8px;"

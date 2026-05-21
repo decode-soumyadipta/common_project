@@ -1,4 +1,3 @@
-(function () {
   window.offlineGIS = window.offlineGIS || {};
   Object.assign(window.offlineGIS, {
       focusBoundsWithPadding: function (west, south, east, north, paddingFactor) {
@@ -1119,4 +1118,3 @@
         log("info", "Line annotation added with " + cleanCoords.length + " point(s)");
       },
   });
-})();

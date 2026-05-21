@@ -281,9 +281,14 @@ class IngestionApiClient:
         """
         try:
             health = self.get_health(timeout=3.0)
+            logger.debug("Ingestion Service health: %s", health)
             return health.get("status") in {"healthy", "degraded"}
         except httpx.HTTPError as exc:
-            logger.debug("Ingestion Service not reachable: %s", exc)
+            logger.warning(
+                "Ingestion Service health check failed url=%s error=%s",
+                f"{self._ingestion_url}/health",
+                exc,
+            )
             return False
 
     # ------------------------------------------------------------------
@@ -346,9 +351,14 @@ class IngestionApiClient:
         """
         try:
             health = self.get_tile_service_health(timeout=3.0)
+            logger.debug("Tile Service health: %s", health)
             return health.get("status") in {"healthy", "degraded"}
         except httpx.HTTPError as exc:
-            logger.debug("Tile Service not reachable: %s", exc)
+            logger.warning(
+                "Tile Service health check failed url=%s error=%s",
+                f"{self._tile_url}/health",
+                exc,
+            )
             return False
 
 

@@ -861,7 +861,7 @@ class DesktopController(QObject):
         # on the JS thread AFTER the user has stopped — causing camera jumps.
         self._pending_pitch_degrees = int(degrees)
         if not hasattr(self, "_pitch_debounce_timer"):
-            from PyQt5.QtCore import QTimer
+            from qtpy.QtCore import QTimer
             self._pitch_debounce_timer = QTimer()
             self._pitch_debounce_timer.setSingleShot(True)
             self._pitch_debounce_timer.timeout.connect(self._flush_pitch)
@@ -980,7 +980,6 @@ class DesktopController(QObject):
         self.panel.log(f"Line annotation added ({length_m:.1f} m)")
         self._set_project_modified(True)
 
-    @staticmethod
     @staticmethod
     def _line_length_m(coords: list[list[float]]) -> float:
         from src_new.clients.desktop_search.coordinators.utility_coordinator import UtilityCoordinator
