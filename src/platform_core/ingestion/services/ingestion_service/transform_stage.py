@@ -30,16 +30,16 @@ class TransformToEPSG3857Stage(IngestionStage):
 
         current_crs = context.metadata.crs
 
-        LOGGER.info(f"=" * 80)
+        LOGGER.info("=" * 80)
         LOGGER.info(f"REPROJECTION STAGE: {context.working_path.name}")
-        LOGGER.info(f"=" * 80)
+        LOGGER.info("=" * 80)
         LOGGER.info(f"Source CRS: {current_crs}")
-        LOGGER.info(f"Target CRS: EPSG:3857 (Web Mercator)")
+        LOGGER.info("Target CRS: EPSG:3857 (Web Mercator)")
 
         if current_crs == "EPSG:3857":
             context.report("Already in EPSG:3857, skipping reprojection")
-            LOGGER.info(f"✓ Already in EPSG:3857 - no reprojection needed")
-            LOGGER.info(f"=" * 80)
+            LOGGER.info("✓ Already in EPSG:3857 - no reprojection needed")
+            LOGGER.info("=" * 80)
             return
 
         # Warn about distortion for high-latitude data
@@ -72,20 +72,20 @@ class TransformToEPSG3857Stage(IngestionStage):
             warp_options = self._get_warp_options(context.working_path)
 
             context.report(f"Reprojecting from {current_crs} to EPSG:3857")
-            LOGGER.info(f"")
-            LOGGER.info(f"REPROJECTION PARAMETERS:")
-            LOGGER.info(f"  Algorithm: bilinear (smooth interpolation)")
-            LOGGER.info(f"  Error threshold: 0.125 pixels (sub-pixel accuracy)")
-            LOGGER.info(f"  Densification: 21 points (accurate curve transformation)")
-            LOGGER.info(f"  Multithreading: ALL_CPUS")
+            LOGGER.info("")
+            LOGGER.info("REPROJECTION PARAMETERS:")
+            LOGGER.info("  Algorithm: bilinear (smooth interpolation)")
+            LOGGER.info("  Error threshold: 0.125 pixels (sub-pixel accuracy)")
+            LOGGER.info("  Densification: 21 points (accurate curve transformation)")
+            LOGGER.info("  Multithreading: ALL_CPUS")
             LOGGER.info(f"  Output: {output_path.name}")
-            LOGGER.info(f"")
+            LOGGER.info("")
 
             # Use string paths to avoid issues with Path objects and GDAL on Windows
             input_path_str = str(context.working_path).replace("\\", "/")
             output_path_str = str(output_path).replace("\\", "/")
 
-            LOGGER.info(f"Starting reprojection...")
+            LOGGER.info("Starting reprojection...")
             ds = gdal.Warp(output_path_str, input_path_str, options=warp_options)
             if ds is None:
                 # Get the last GDAL error
@@ -114,11 +114,11 @@ class TransformToEPSG3857Stage(IngestionStage):
                     f"⚠ Output file has no projection information: {output_path}"
                 )
             else:
-                LOGGER.info(f"✓ Output projection verified: EPSG:3857")
+                LOGGER.info("✓ Output projection verified: EPSG:3857")
 
             # Log output file info
             output_size_mb = output_path.stat().st_size / (1024 * 1024)
-            LOGGER.info(f"✓ Reprojection successful")
+            LOGGER.info("✓ Reprojection successful")
             LOGGER.info(f"  Output file: {output_path.name}")
             LOGGER.info(f"  File size: {output_size_mb:.2f} MB")
             LOGGER.info(
@@ -130,11 +130,11 @@ class TransformToEPSG3857Stage(IngestionStage):
 
             context.working_path = output_path
             context.report("Reprojection complete")
-            LOGGER.info(f"=" * 80)
+            LOGGER.info("=" * 80)
 
         except Exception as e:
             LOGGER.error(f"Transform stage failed for {context.working_path}: {e}")
-            LOGGER.info(f"=" * 80)
+            LOGGER.info("=" * 80)
             # Clean up partial output file if it exists
             if output_path.exists():
                 try:

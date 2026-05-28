@@ -591,7 +591,6 @@ def extract_metadata(path: Path) -> RasterMetadata:
             # Approximate coverage area
             width_deg = bounds.max_x - bounds.min_x
             height_deg = bounds.max_y - bounds.min_y
-            lat_center = (bounds.min_y + bounds.max_y) / 2.0
             km_per_deg_lon = (
                 111.32 * abs(float(dataset.res[0])) * 0.001
                 if dataset.res

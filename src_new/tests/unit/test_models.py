@@ -10,7 +10,6 @@ Tests all models in src_new/shared/models/ including:
 **Validates: Requirements 19.2**
 """
 from datetime import datetime
-from typing import List
 
 import pytest
 from pydantic import ValidationError

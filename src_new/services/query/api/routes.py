@@ -38,7 +38,6 @@ from src_new.services.query.api.dependencies import get_db, get_raster_repositor
 from src_new.services.query.repositories.raster_repository import RasterRepository
 from src_new.shared.models.query_result import QueryResult
 from src_new.shared.models.raster_metadata import RasterMetadata
-from src_new.shared.utils.error_handlers import RasterNotFoundError
 
 # Pydantic request schemas defined locally (no dependency on legacy src/)
 from pydantic import BaseModel, Field

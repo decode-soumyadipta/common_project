@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import logging
 import sys
-from pathlib import Path
 
 # CRITICAL: Import QtWebEngineWidgets FIRST before QApplication
 # This is required for proper OpenGL context sharing

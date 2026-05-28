@@ -20,7 +20,6 @@ from qtpy.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
-    QLabel,
     QLineEdit,
     QPushButton,
     QScrollArea,
@@ -29,7 +28,7 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
-from src_new.shared.config import Settings, settings
+from src_new.shared.config import settings
 
 logger = logging.getLogger(__name__)
 

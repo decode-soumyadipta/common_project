@@ -16,7 +16,6 @@ class VisualizationCoordinator:
         c.panel.log(f"RGB view mode applied: {mode_label}")
 
         # Log pitch slider state for debugging
-        is_2d_mode = mode == "2d"
         pitch_enabled = c.panel.pitch_slider.isEnabled()
         c._logger.info(
             "Scene mode changed: mode=%s pitch_slider_enabled=%s", mode, pitch_enabled

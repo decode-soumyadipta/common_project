@@ -31,14 +31,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
-from sqlalchemy import text as sa_text
+from sqlalchemy import bindparam, text as sa_text
 from sqlalchemy.orm import Session
+from src_new.services.ingestion.gdal_pipelines.cog_converter import CogConverter
 
 from src_new.services.ingestion.api.dependencies import (
-    AppSettings,
-    DbSession,
     get_data_root,
     get_db,
     get_format_handler,
@@ -80,7 +79,7 @@ class UploadResponse(BaseModel):
         {raster_id, status, message, bbox}
     """
 
-    raster_id: str = Field(description="UUID assigned to the ingested raster.")
+    raster_id: str = Field(description="Original file name used as raster id.")
     status: Literal["processing", "cataloged", "failed"] = Field(
         description="Current ingestion status."
     )
@@ -98,7 +97,7 @@ class IngestionStatus(BaseModel):
         {raster_id, status, progress, error}
     """
 
-    raster_id: str = Field(description="UUID of the raster asset.")
+    raster_id: str = Field(description="Raster id (original file name).")
     status: str = Field(description="Current ingestion status string.")
     progress: float = Field(
         ge=0.0,
@@ -109,6 +108,28 @@ class IngestionStatus(BaseModel):
         default=None,
         description="Error message if ingestion failed, otherwise None.",
     )
+
+
+class UploadedAsset(BaseModel):
+    """Response item for GET /assets."""
+
+    raster_id: str
+    file_name: str
+    kind: str
+    upload_date: str
+
+
+class DeleteAssetsRequest(BaseModel):
+    """Request body for DELETE /assets."""
+
+    raster_ids: list[str] = Field(default_factory=list, min_length=1)
+
+
+class DeleteAssetsResponse(BaseModel):
+    """Response body for DELETE /assets."""
+
+    deleted: list[str]
+    missing: list[str]
 
 
 # ---------------------------------------------------------------------------
@@ -300,6 +321,8 @@ def _catalog_raster_in_db(metadata: RasterMetadata, db: Session) -> None:
 )
 async def upload_raster(
     file: UploadFile = File(..., description="Geospatial raster file to ingest."),
+    sidecar_json: Optional[str] = Form(None, alias="metadata", description="JSON with optional sidecar file contents."),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
     db: Session = Depends(get_db),
     cfg: Settings = Depends(get_settings),
     data_root: Path = Depends(get_data_root),
@@ -346,7 +369,21 @@ async def upload_raster(
             detail=f"Failed to save uploaded file: {exc}",
         ) from exc
 
-    raster_id = str(uuid.uuid4())
+    raster_id = saved_path.name
+
+    # Write any uploaded sidecar files (e.g. .prj, .j2w, .tfw, .jgw)
+    if sidecar_json:
+        try:
+            import json as _json
+            meta_dict = _json.loads(sidecar_json)
+            for key, val in meta_dict.items():
+                if key.startswith("sidecar_") and val:
+                    suffix = "." + key.split("_", 1)[1]
+                    sidecar_path = saved_path.with_suffix(suffix)
+                    sidecar_path.write_text(val)
+                    logger.info("Saved sidecar file during upload: %s", sidecar_path)
+        except Exception as exc:
+            logger.warning("Failed to parse sidecar_json Form parameter: %s", exc)
 
     # Record initial status
     _ingestion_status[raster_id] = {
@@ -388,11 +425,24 @@ async def upload_raster(
 
     _ingestion_status[raster_id]["progress"] = 0.3
 
+    # --- 3.5. Schedule COG conversion as a background task ---
+    # Fires AFTER the HTTP response is returned so it never blocks or
+    # causes 500s. COG files will be available for fast tiling on next request.
+    if ext in {".tif", ".tiff", ".jp2", ".j2k"}:
+        _cog_path = saved_path  # capture snapshot before any mutation
+        def _bg_cog(p: Path = _cog_path) -> None:
+            try:
+                res = CogConverter().convert(p)
+                logger.info("BG COG: %s converted=%s", p.name, res.converted)
+            except Exception as _exc:
+                logger.warning("BG COG failed for %s: %s", p.name, _exc)
+        background_tasks.add_task(_bg_cog)
+
     # --- 4. GDAL metadata extraction ---
     extract_metadata = get_metadata_extractor()
     try:
         metadata = extract_metadata(saved_path)
-        # Assign the raster_id we generated (extractor creates its own UUID)
+        # Assign the raster_id we generated (extractor creates its own id)
         metadata = metadata.model_copy(
             update={
                 "raster_id": raster_id,
@@ -478,7 +528,7 @@ def get_ingestion_status(raster_id: str) -> IngestionStatus:
     """Return ingestion progress and status for a raster.
 
     Args:
-        raster_id: UUID of the raster asset (path parameter).
+        raster_id: Raster id of the asset (path parameter).
 
     Returns:
         ``IngestionStatus`` with status, progress (0.0–1.0), and optional error.
@@ -499,6 +549,78 @@ def get_ingestion_status(raster_id: str) -> IngestionStatus:
         )
 
     return IngestionStatus(**status_record)
+
+
+@router.get(
+    "/assets",
+    response_model=list[UploadedAsset],
+    summary="List cataloged assets",
+    description="Return cataloged assets ordered by upload date (newest first).",
+)
+def list_assets(db: Session = Depends(get_db)) -> list[UploadedAsset]:
+    """Return cataloged assets ordered by upload date (newest first)."""
+    query = sa_text(
+        """
+        SELECT raster_id, file_name, kind, upload_date
+        FROM raster_assets
+        ORDER BY upload_date DESC
+        """
+    )
+    rows = db.execute(query).fetchall()
+    return [
+        UploadedAsset(
+            raster_id=str(row[0]),
+            file_name=str(row[1]),
+            kind=str(row[2]),
+            upload_date=str(row[3]),
+        )
+        for row in rows
+    ]
+
+
+@router.delete(
+    "/assets",
+    response_model=DeleteAssetsResponse,
+    summary="Delete cataloged assets",
+    description="Delete cataloged assets by raster_id and remove stored files.",
+)
+def delete_assets(
+    payload: DeleteAssetsRequest,
+    db: Session = Depends(get_db),
+    data_root: Path = Depends(get_data_root),
+) -> DeleteAssetsResponse:
+    """Delete cataloged assets and remove stored files."""
+    raster_ids = [rid for rid in payload.raster_ids if rid]
+    if not raster_ids:
+        raise HTTPException(status_code=400, detail="No raster_ids provided.")
+
+    select_sql = sa_text(
+        """
+        SELECT raster_id, file_path
+        FROM raster_assets
+        WHERE raster_id IN :ids
+        """
+    ).bindparams(bindparam("ids", expanding=True))
+
+    rows = db.execute(select_sql, {"ids": raster_ids}).fetchall()
+    found_ids = {str(row[0]) for row in rows}
+    missing = [rid for rid in raster_ids if rid not in found_ids]
+
+    delete_sql = sa_text(
+        """
+        DELETE FROM raster_assets
+        WHERE raster_id IN :ids
+        """
+    ).bindparams(bindparam("ids", expanding=True))
+
+    if found_ids:
+        db.execute(delete_sql, {"ids": list(found_ids)})
+        db.commit()
+
+    for raster_id, file_path in rows:
+        _ingestion_status.pop(str(raster_id), None)
+
+    return DeleteAssetsResponse(deleted=sorted(found_ids), missing=missing)
 
 
 @router.get(

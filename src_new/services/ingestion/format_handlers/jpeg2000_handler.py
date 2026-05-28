@@ -102,7 +102,7 @@ def extract_metadata(path: Path) -> Dict[str, Any]:
     settings.apply_gdal_env()
 
     try:
-        from osgeo import gdal, osr
+        from osgeo import gdal
 
         gdal.UseExceptions()
         ds = gdal.Open(str(path), gdal.GA_ReadOnly)

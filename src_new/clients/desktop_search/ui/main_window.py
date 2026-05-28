@@ -15,14 +15,10 @@ from pathlib import Path
 
 from qtpy.QtCore import Qt, QUrl
 from qtpy.QtGui import QAction
-from qtpy.QtWebChannel import QWebChannel
 from qtpy.QtWebEngineWidgets import QWebEngineView
 from qtpy.QtWidgets import (
-    QHBoxLayout,
     QMainWindow,
     QSplitter,
-    QVBoxLayout,
-    QWidget,
     QMessageBox,
 )
 

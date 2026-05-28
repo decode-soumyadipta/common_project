@@ -15,13 +15,9 @@ import time
 from qtpy.QtCore import QSize, Qt, QUrl
 from qtpy.QtGui import (
     QAction,
-    QColor,
     QCursor,
     QGuiApplication,
     QIcon,
-    QPainter,
-    QPen,
-    QPixmap,
 )
 from qtpy.QtGui import QDesktopServices
 from qtpy.QtWebChannel import QWebChannel
@@ -567,7 +563,7 @@ class MainWindow(QMainWindow):
         self.panel_scroll.setWidgetResizable(True)
         self.panel_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.panel_scroll.setWidget(self.panel)
-        from qtpy.QtWebEngineWidgets import QWebEngineProfile, QWebEngineSettings
+        from qtpy.QtWebEngineWidgets import QWebEngineProfile
         
         # Create a unique profile name based on app mode to isolate caches (e.g. Ingest vs Search)
         # This prevents "Access is denied" errors in the GPUCache directory.
@@ -1279,7 +1275,6 @@ class MainWindow(QMainWindow):
 
     def _show_export_dropdown(self) -> None:
         """Show export options dropdown under the Export toolbar button."""
-        from qtpy.QtWidgets import QMenu
 
         action = self.toolbar_actions.get("Export")
         anchor = self.main_toolbar.widgetForAction(action) if action else None

@@ -47,7 +47,7 @@ class UploadResponse(BaseModel):
         ``{raster_id, status, message, bbox}``
     """
 
-    raster_id: str = Field(description="UUID assigned to the ingested raster.")
+    raster_id: str = Field(description="Original file name used as raster id.")
     status: Literal["processing", "cataloged", "failed"] = Field(
         description="Current ingestion status."
     )
@@ -65,7 +65,7 @@ class IngestionStatus(BaseModel):
         ``{raster_id, status, progress, error}``
     """
 
-    raster_id: str = Field(description="UUID of the raster asset.")
+    raster_id: str = Field(description="Raster id (original file name).")
     status: str = Field(description="Current ingestion status string.")
     progress: float = Field(
         ge=0.0,
@@ -290,6 +290,27 @@ class IngestionApiClient:
                 exc,
             )
             return False
+
+    def list_assets(self, timeout: float = 10.0) -> list[dict[str, Any]]:
+        """Return cataloged assets ordered by upload date (newest first)."""
+        logger.debug("GET /assets → %s", self._ingestion_url)
+        response = httpx.get(f"{self._ingestion_url}/assets", timeout=timeout)
+        response.raise_for_status()
+        return response.json()
+
+    def delete_assets(
+        self, raster_ids: list[str], timeout: float = 30.0
+    ) -> dict[str, Any]:
+        """Delete cataloged assets by raster_id."""
+        logger.debug("DELETE /assets → %s (%d ids)", self._ingestion_url, len(raster_ids))
+        response = httpx.request(
+            "DELETE",
+            f"{self._ingestion_url}/assets",
+            json={"raster_ids": raster_ids},
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        return response.json()
 
     # ------------------------------------------------------------------
     # Tile Service methods

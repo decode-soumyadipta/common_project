@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import base64
-import json
 import logging
 import os
 import shutil
 from pathlib import Path
 
-from qtpy.QtCore import QMargins, QRect, Qt, QSize, QMarginsF
+from qtpy.QtCore import QRect, Qt, QMarginsF
 from qtpy.QtGui import QImage, QPainter, QPageLayout, QPageSize, QPdfWriter
 from qtpy.QtWidgets import QFileDialog, QMessageBox
 

@@ -13,7 +13,6 @@ from typing import Sequence
 
 import httpx
 
-from platform_core.config_pkg.settings import settings
 
 LOGGER = logging.getLogger("desktop.titiler_manager")
 

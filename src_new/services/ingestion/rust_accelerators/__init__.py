@@ -95,7 +95,6 @@ except ImportError:
 
         # Try rasterio first — it is almost always available in the conda env
         try:
-            import numpy as np
             import rasterio.features
             import rasterio.transform as rio_transform
 

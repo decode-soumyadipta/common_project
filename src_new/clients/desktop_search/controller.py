@@ -5,16 +5,13 @@ import ipaddress
 import json
 import logging
 import math
-import re
 from pathlib import Path
 from typing import Callable
 from urllib.parse import urlparse
 
 import httpx
-from pyproj import Transformer
-from qtpy.QtCore import QObject, QSignalBlocker, QThreadPool, QTimer, Qt, Signal
+from qtpy.QtCore import QObject, QThreadPool, QTimer, Signal
 from qtpy.QtWebEngineWidgets import QWebEngineView
-from qtpy.QtWidgets import QFileDialog
 
 from src_new.clients.desktop_search.api_client import DesktopApiClient
 from src_new.clients.desktop_search.api_server_manager import ApiServerManager
@@ -51,19 +48,6 @@ from src_new.clients.desktop_search.performance_service import (
     DesktopPerformanceService,
 )
 from src_new.clients.desktop_search.state import DesktopState
-from src_new.clients.desktop_search.measurement_tools import (
-    compute_fill_volume,
-    compute_slope_aspect,
-    compute_viewshed,
-    compute_volume,
-    measure_polygon_area,
-    measure_shadow_height,
-)
-from src_new.services.ingestion.gdal_pipelines.metadata_extractor import (
-    MetadataExtractorError,
-    extract_metadata,
-)
-from src_new.clients.desktop_search.tile_url_builder import build_xyz_url
 
 
 def _fmt_vol(m3: float) -> str:
@@ -1180,7 +1164,7 @@ class DesktopController(QObject):
         if not asset:
             return
 
-        bounds = asset.get("bounds")
+        bounds = self._asset_bounds(asset)
         if bounds:
             self._run_js_call(
                 "instantFocusBounds",
@@ -1501,6 +1485,11 @@ class DesktopController(QObject):
             c = cached["centroid"]
             if self._is_valid_lon_lat(c.get("lon"), c.get("lat")):
                 return c
+        # Fallback to utility coordinator which can calculate centroid from asset["bounds"]
+        u_centroid = self._utility.asset_centroid(asset)
+        if u_centroid:
+            return u_centroid
+
         bounds_wkt = asset.get("bounds_wkt")
         if not bounds_wkt:
             return None
@@ -1513,6 +1502,11 @@ class DesktopController(QObject):
         return {"lon": lon, "lat": lat}
 
     def _asset_bounds(self, asset: dict) -> dict[str, float] | None:
+        # Fallback to utility coordinator which can extract bounds from asset["bounds"]
+        u_bounds = self._utility.asset_bounds(asset)
+        if u_bounds:
+            return u_bounds
+
         bounds_wkt = asset.get("bounds_wkt")
         if not bounds_wkt:
             return None
@@ -1532,6 +1526,7 @@ class DesktopController(QObject):
             )
             return None
         return {"west": b.min_x, "south": b.min_y, "east": b.max_x, "north": b.max_y}
+
 
     def _fly_to_asset(self, asset: dict) -> bool:
         bounds = self._asset_bounds(asset)

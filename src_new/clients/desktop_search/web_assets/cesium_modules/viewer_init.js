@@ -151,9 +151,9 @@ export function initializeViewer(containerId, options = {}) {
   viewer.scene.globe.enableLighting = false;  // Disable lighting for performance
   viewer.scene.globe.depthTestAgainstTerrain = true;  // Required for proper DEM layer sorting
   
-  // Optimize tile loading for smoother experience
-  viewer.scene.globe.maximumScreenSpaceError = 3;  // Optimized for faster loading
-  viewer.scene.globe.preloadAncestors = true;  // Preload for smoother zooming
+  // Optimize tile loading for maximum sharpness and speed
+  viewer.scene.globe.maximumScreenSpaceError = 0.5;  // Force maximum resolution loading
+  viewer.scene.globe.preloadAncestors = false;  // Do not load blurry parent tiles
   viewer.scene.globe.preloadSiblings = true;  // Preload for smoother panning
   
   // Additional performance optimizations
@@ -259,8 +259,8 @@ function applyGPUAdaptiveSettings(viewer, gpuInfo, log) {
     viewer.scene.logarithmicDepthBuffer = true;
     viewer.scene.globe.depthTestAgainstTerrain = true;
     viewer.scene.globe.tileCacheSize = 1000; // Large cache for high-fidelity assets
-    viewer.scene.globe.maximumScreenSpaceError = 0.8; // Ultra fidelity for workstation
-    viewer.scene.globe.preloadAncestors = true;
+    viewer.scene.globe.maximumScreenSpaceError = 0.5; // Ultra fidelity for workstation
+    viewer.scene.globe.preloadAncestors = false;  // Do not load blurry parent tiles
     viewer.scene.globe.preloadSiblings = true;
     viewer.scene.globe.loadingDescendantLimit = 16;
     
@@ -278,14 +278,14 @@ function applyGPUAdaptiveSettings(viewer, gpuInfo, log) {
     viewer.resolutionScale = 1.0;          // Full native resolution to maintain imagery quality
     viewer.scene.logarithmicDepthBuffer = true;
     viewer.scene.globe.depthTestAgainstTerrain = true; // Essential for true 3D fidelity
-    viewer.scene.globe.tileCacheSize = 400;  // Optimized cache for smoother panning on Windows
-    viewer.scene.globe.maximumScreenSpaceError = 3.5;  // Balanced performance/quality for Intel UHD
-    viewer.scene.globe.preloadAncestors = true; // Enabled for smoother zoom transitions
+    viewer.scene.globe.tileCacheSize = 800;  // Larger cache for smoother panning on Windows
+    viewer.scene.globe.maximumScreenSpaceError = 0.5;  // Max quality even for Intel UHD
+    viewer.scene.globe.preloadAncestors = false; // Do not load blurry parent tiles
     viewer.scene.globe.preloadSiblings = true;
-    viewer.scene.globe.loadingDescendantLimit = 2;  // Faster tile loading
+    viewer.scene.globe.loadingDescendantLimit = 8;  // Faster tile loading
     
     if (log) {
-      log("info", "[INIT SAFE INTEL CONFIG] Integrated GPU optimized for smooth performance (res=1.0 sse=3.5 cache=400)");
+      log("info", "[INIT SAFE INTEL CONFIG] Integrated GPU optimized for maximum quality (res=1.0 sse=0.5 cache=800)");
     }
   }
 }

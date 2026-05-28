@@ -19,9 +19,11 @@ class DesktopApiClient:
     """
 
     def __init__(self, base_url: str | None = None):
-        # In CLIENT mode, we connect to the Query Service for searches
         self._base_url = (base_url or settings.query_service_url).rstrip("/")
-        self._titiler_base = settings.tile_service_url.rstrip("/")
+        tile_base = settings.tile_service_url.rstrip("/")
+        if not tile_base.endswith("/titiler"):
+            tile_base = f"{tile_base}/titiler"
+        self._titiler_base = tile_base
         self._ingestion_url = settings.ingestion_service_url.rstrip("/")
 
     @property
@@ -57,7 +59,7 @@ class DesktopApiClient:
 
     def search_assets_by_point(self, lon: float, lat: float) -> list[dict[str, Any]]:
         response = httpx.post(
-            f"{self._base_url}/search/point",
+            f"{self._base_url}/query/point",
             json={"lon": lon, "lat": lat},
             timeout=20.0,
         )
@@ -69,8 +71,13 @@ class DesktopApiClient:
         self, west: float, south: float, east: float, north: float
     ) -> list[dict[str, Any]]:
         response = httpx.post(
-            f"{self._base_url}/search/bbox",
-            json={"west": west, "south": south, "east": east, "north": north},
+            f"{self._base_url}/query/bbox",
+            json={
+                "min_lon": west,
+                "min_lat": south,
+                "max_lon": east,
+                "max_lat": north,
+            },
             timeout=20.0,
         )
         response.raise_for_status()

@@ -41,8 +41,8 @@ desktop = [
   "qtawesome>=1.3,<2.0",
 ]
 geo = [
-  "gdal>=3.8.0",
-  "rasterio>=1.3,<2.0",
+  "gdal>=3.10.3",
+  "rasterio>=1.4.3,<2.0",
   "pyproj>=3.6,<4.0",
   "shapely>=2.0,<3.0",
   "scipy>=1.11,<2.0",
@@ -50,6 +50,8 @@ geo = [
 ]
 dev = [
   "pytest>=8.3,<9.0",
+  "pytest-asyncio>=0.23,<1.0",
+  "ruff>=0.5,<1.0",
 ]
 
 [tool.setuptools]
@@ -78,3 +80,7 @@ core_shared = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+  "asyncio: mark test as asyncio",
+]
+asyncio_mode = "auto"

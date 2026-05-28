@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import base64
-import json
 import logging
 import os
 import shutil
 from pathlib import Path
 
-from qtpy.QtCore import QMargins, QRect, Qt, QSize, QMarginsF
+from qtpy.QtCore import QRect, Qt, QMarginsF
 from qtpy.QtGui import QImage, QPainter, QPageLayout, QPageSize, QPdfWriter
 from qtpy.QtWidgets import QFileDialog, QMessageBox
 
@@ -276,10 +275,10 @@ class ExportCoordinator:
             schema = {'geometry': 'LineString', 'properties': {'length_m': 'float', 'type': 'str'}}
             mode = 'a' if c._annotation_records else 'w'
             with fiona.open(str(output_path), mode, driver='GPKG', layer='annotations_line', crs=crs, schema=schema) as ds:
-                for l in c._annotation_line_records:
+                for line_record in c._annotation_line_records:
                     ds.write({
-                        'geometry': {'type': 'LineString', 'coordinates': l.get('coords', [])},
-                        'properties': {'length_m': float(l.get('length_m', 0)), 'type': str(l.get('feature_type', 'road'))}
+                        'geometry': {'type': 'LineString', 'coordinates': line_record.get('coords', [])},
+                        'properties': {'length_m': float(line_record.get('length_m', 0)), 'type': str(line_record.get('feature_type', 'road'))}
                     })
         
         # Polygons

@@ -122,7 +122,7 @@ class IngestCoordinator:
 
                     # Add informative completion message
                     c.panel.append_ingest_detail(
-                        f"[COMPLETED] Job finished - check asset count for new additions"
+                        "[COMPLETED] Job finished - check asset count for new additions"
                     )
 
                     # Stop polling and clear job ID
@@ -183,7 +183,6 @@ class IngestCoordinator:
         total_items = int(job.get("total_items") or 0)
         processed_items = int(job.get("processed_items") or 0)
         failed_items = int(job.get("failed_items") or 0)
-        checkpoint = int(job.get("checkpoint_item_index") or 0)
         progress_percent = int(job.get("progress_percent") or 0)
         current_step = str(
             job.get("current_step") or self.default_step_for_status(status)

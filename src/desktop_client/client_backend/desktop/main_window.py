@@ -15,13 +15,9 @@ import time
 from qtpy.QtCore import QSize, Qt, QUrl
 from qtpy.QtGui import (
     QAction,
-    QColor,
     QCursor,
     QGuiApplication,
     QIcon,
-    QPainter,
-    QPen,
-    QPixmap,
 )
 from qtpy.QtGui import QDesktopServices
 from qtpy.QtWebChannel import QWebChannel
@@ -1256,7 +1252,6 @@ class MainWindow(QMainWindow):
 
     def _show_export_dropdown(self) -> None:
         """Show export options dropdown under the Export toolbar button."""
-        from qtpy.QtWidgets import QMenu
 
         action = self.toolbar_actions.get("Export")
         anchor = self.main_toolbar.widgetForAction(action) if action else None

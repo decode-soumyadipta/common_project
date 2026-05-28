@@ -120,7 +120,10 @@ class ComparatorCoordinator:
                 break
 
         if changed:
-            c._sync_search_visibility_layers()
+            if c._event_driven_enabled:
+                c._sync_search_visibility_layers_event_driven()
+            else:
+                c._sync_search_visibility_layers()
             c.panel.update_search_results(
                 list(c._search_result_assets_by_path.values()),
                 c._search_layer_visibility,
@@ -163,7 +166,10 @@ class ComparatorCoordinator:
         for path in c._search_result_assets_by_path:
             c._search_layer_visibility[path] = path in selected_set
 
-        c._sync_search_visibility_layers()
+        if c._event_driven_enabled:
+            c._sync_search_visibility_layers_event_driven()
+        else:
+            c._sync_search_visibility_layers()
         c.panel.update_search_results(
             list(c._search_result_assets_by_path.values()),
             c._search_layer_visibility,

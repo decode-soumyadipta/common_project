@@ -80,6 +80,11 @@ export function addImageryLayer(viewer, options) {
   layer.show = show;
   layer._layerKey = layerKey;
   layer._layerName = name;
+  layer.preloadAncestorTiles = false;
+  if (window.Cesium && window.Cesium.TextureMinificationFilter && window.Cesium.TextureMagnificationFilter) {
+    layer.minificationFilter = window.Cesium.TextureMinificationFilter.NEAREST;
+    layer.magnificationFilter = window.Cesium.TextureMagnificationFilter.NEAREST;
+  }
   
   // Register layer
   managedImageryLayers.set(layerKey, layer);

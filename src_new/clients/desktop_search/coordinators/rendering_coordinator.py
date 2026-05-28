@@ -194,7 +194,7 @@ class RenderingCoordinator:
                 self._logger.debug(f"Applied per-band true color correction: {query}")
             else:
                 self._logger.debug(
-                    f"Skipped true color correction (missing stats), rendering raw."
+                    "Skipped true color correction (missing stats), rendering raw."
                 )
             return query
 

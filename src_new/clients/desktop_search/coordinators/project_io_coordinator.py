@@ -608,7 +608,10 @@ class ProjectIoCoordinator:
         ):
             c._active_dem_search_layer_key = None
 
-        c._sync_search_visibility_layers()
+        if c._event_driven_enabled:
+            c._sync_search_visibility_layers_event_driven()
+        else:
+            c._sync_search_visibility_layers()
 
         layer_order = search_payload.get("layer_order")
         if isinstance(layer_order, list) and layer_order:

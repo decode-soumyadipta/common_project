@@ -1,46 +1,8 @@
   window.offlineGIS = window.offlineGIS || {};
   Object.assign(window.offlineGIS, {
-      focusBoundsWithPadding: function (west, south, east, north, paddingFactor) {
-        if (!viewer) return;
-        // Use custom padding factor (e.g., 1.5 = 50% padding)
-        const padFactor = Number(paddingFactor) || 1.1; // Default to 10% if not specified
-        const padLon = (east - west) * (padFactor - 1.0) * 0.5;
-        const padLat = (north - south) * (padFactor - 1.0) * 0.5;
-        const paddedWest  = Math.max(-180, west  - padLon);
-        const paddedEast  = Math.min( 180, east  + padLon);
-        const paddedSouth = Math.max( -90, south - padLat);
-        const paddedNorth = Math.min(  90, north + padLat);
-        setActiveTileBounds({ west: west, south: south, east: east, north: north });
-        // SEARCH FIX: Use 3D oblique view (-40° pitch) so search results appear on the globe
-        const rect = Cesium.Rectangle.fromDegrees(paddedWest, paddedSouth, paddedEast, paddedNorth);
-        const sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, 0.0);
-        const range = Math.max(compute3DFocusRange({ west: paddedWest, south: paddedSouth, east: paddedEast, north: paddedNorth }), sphere.radius * 1.5, 300.0);
-        const wasRequestRenderMode = viewer.scene.requestRenderMode;
-        viewer.scene.requestRenderMode = false;
-        viewer.camera.cancelFlight();
-        viewer.camera.flyToBoundingSphere(sphere, {
-          offset: new Cesium.HeadingPitchRange(
-            Cesium.Math.toRadians(0.0),
-            Cesium.Math.toRadians(-40.0),  // 40° oblique — clear 3D globe perspective
-            range
-          ),
-          duration: 1.8, // Slightly longer duration for multi-asset focus
-          complete: function() {
-            if (viewer && viewer.scene) {
-              viewer.scene.requestRenderMode = wasRequestRenderMode;
-              viewer.scene.requestRender();
-            }
-          },
-          cancel: function() {
-            if (viewer && viewer.scene) {
-              viewer.scene.requestRenderMode = wasRequestRenderMode;
-              viewer.scene.requestRender();
-            }
-          }
-        });
-        requestSceneRender();
-        log("info", "Focus bounds with padding=" + padFactor + " (3D oblique) west=" + west + " south=" + south + " east=" + east + " north=" + north);
-      },
+      // NOTE: focusBoundsWithPadding is defined further below (authoritative definition).
+      // An earlier duplicate was removed — Object.assign last-write-wins, so the first
+      // copy was dead code and has been eliminated to prevent reader confusion.
       instantFocusBounds: function (west, south, east, north) {
         if (!viewer) return;
         try {
@@ -53,17 +15,41 @@
           const rect = Cesium.Rectangle.fromDegrees(paddedWest, paddedSouth, paddedEast, paddedNorth);
           const sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, 0.0);
           const range = Math.max(compute3DFocusRange({ west: paddedWest, south: paddedSouth, east: paddedEast, north: paddedNorth }), sphere.radius * 1.5, 300.0);
+          
           viewer.camera.cancelFlight();
+          
+          // Disable requestRenderMode temporarily to let tiles stream in
+          viewer.scene.requestRenderMode = false;
+          
           // setView is instant — no animation, just teleport
           viewer.camera.viewBoundingSphere(sphere, new Cesium.HeadingPitchRange(
             Cesium.Math.toRadians(0.0),
             Cesium.Math.toRadians(-40.0),
             range
           ));
-          requestSceneRender();
+          
+          // Reset the transform so camera control/navigation is not locked to the sphere's center
+          viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+          
+          // Continuous render for 2.0s post-snap so tiles finish loading
+          var t = 0;
+          var iv = setInterval(function() {
+            if (!viewer || !viewer.scene) { clearInterval(iv); return; }
+            viewer.scene.requestRender();
+            t += 100;
+            if (t >= 2000) { 
+              clearInterval(iv); 
+              viewer.scene.requestRenderMode = true; 
+              viewer.scene.requestRender();
+            }
+          }, 100);
+          
           log("info", "Instant focus bounds west=" + west + " south=" + south + " east=" + east + " north=" + north);
         } catch(e) {
           log("error", "instantFocusBounds failed: " + e);
+          if (viewer && viewer.scene) {
+            viewer.scene.requestRenderMode = true;
+          }
         }
       },
 
@@ -261,19 +247,62 @@
         const maxLevel = options && Number.isInteger(options.maxzoom) ? options.maxzoom : 19;
         const existingLayer = managedImageryLayers.get(layerKey);
         if (existingLayer) {
-          existingLayer.show = true;
-          viewer.imageryLayers.raiseToTop(existingLayer);
-          activeImageryLayer = existingLayer;
-          layerVisibilityState.set(layerKey, true);
-          applySwipeComparatorSplit();
-          if (comparatorModeEnabled) {
-            refreshComparatorLayers();
+          if (existingLayer.imageryProvider && existingLayer.imageryProvider.url === providerUrl && !(options && options.force_rebuild === true)) {
+            existingLayer.show = true;
+            viewer.imageryLayers.raiseToTop(existingLayer);
+            activeImageryLayer = existingLayer;
+            layerVisibilityState.set(layerKey, true);
+            applySwipeComparatorSplit();
+            if (comparatorModeEnabled) {
+              refreshComparatorLayers();
+            }
+            updateBasemapBlendForCurrentMode();
+            setStatus("Layer shown: " + name);
+            log("info", "Layer shown key=" + layerKey + " name=" + name);
+            requestSceneRender();
+            return;
+          } else {
+            log("info", "Imagery URL changed or force rebuild requested. Recreating layer: " + layerKey);
+            const index = viewer.imageryLayers.indexOf(existingLayer);
+            const wasVisible = existingLayer.show;
+            const currentAlpha = existingLayer.alpha;
+            
+            viewer.imageryLayers.remove(existingLayer, true);
+            
+            const provider = new Cesium.UrlTemplateImageryProvider({
+              url: providerUrl,
+              maximumLevel: maxLevel,
+              minimumLevel: minLevel,
+              tilingScheme: new Cesium.WebMercatorTilingScheme(),
+              enablePickFeatures: false,
+              rectangle: rectangle,
+            });
+            
+            const newLayer = new Cesium.ImageryLayer(provider);
+            if (index >= 0) {
+              viewer.imageryLayers.add(newLayer, index);
+            } else {
+              viewer.imageryLayers.add(newLayer);
+            }
+            
+            newLayer.show = wasVisible;
+            newLayer.alpha = currentAlpha;
+            newLayer._layerKey = layerKey;
+            newLayer._layerName = name;
+            
+            managedImageryLayers.set(layerKey, newLayer);
+            activeImageryLayer = newLayer;
+            
+            applySwipeComparatorSplit();
+            if (comparatorModeEnabled) {
+              refreshComparatorLayers();
+            }
+            updateBasemapBlendForCurrentMode();
+            setStatus("Layer rebuilt: " + name);
+            log("info", "Layer rebuilt key=" + layerKey + " name=" + name);
+            requestSceneRender();
+            return;
           }
-          updateBasemapBlendForCurrentMode();
-          setStatus("Layer shown: " + name);
-          log("info", "Layer shown key=" + layerKey + " name=" + name);
-          requestSceneRender();
-          return;
         }
         const provider = new Cesium.UrlTemplateImageryProvider({
           url: providerUrl,
@@ -335,6 +364,11 @@
         }
         
         activeImageryLayer = viewer.imageryLayers.addImageryProvider(provider, insertionIndex);
+        activeImageryLayer.preloadAncestorTiles = false;
+        if (window.Cesium && window.Cesium.TextureMinificationFilter && window.Cesium.TextureMagnificationFilter) {
+          activeImageryLayer.minificationFilter = window.Cesium.TextureMinificationFilter.NEAREST;
+          activeImageryLayer.magnificationFilter = window.Cesium.TextureMagnificationFilter.NEAREST;
+        }
         managedImageryLayers.set(layerKey, activeImageryLayer);
         
         log("debug", "Layer added at index " + viewer.imageryLayers.indexOf(activeImageryLayer) + 

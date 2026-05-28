@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from qtpy.QtWebEngineWidgets import QWebEnginePage
+from qtpy.QtWebEngineWidgets import QWebEnginePage, QWebEngineProfile
 
 
 class LoggingWebEnginePage(QWebEnginePage):

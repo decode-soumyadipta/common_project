@@ -14,7 +14,6 @@ Requirements: 7.2, 7.6
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 
 from qtpy.QtCore import Qt, Signal, QTimer
 from qtpy.QtGui import QColor, QPalette
@@ -224,9 +223,10 @@ class SearchPanel(QWidget):
 
     def _build_search_results_table(self) -> QTableWidget:
         """Build the search results QTableWidget with drag-and-drop support."""
-        table = QTableWidget(0, 7)
+        # 6 columns: drag-handle | file | kind | CRS | visibility | delete
+        table = QTableWidget(0, 6)
         table.setHorizontalHeaderLabels(
-            ["⠿", "File", "Kind", "CRS", "Added", "View", "Del"]
+            ["⋮⋮", "File", "Kind", "CRS", "View", "Delete"]
         )
 
         # Drag-and-drop reordering
@@ -236,6 +236,8 @@ class SearchPanel(QWidget):
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
         table.setDragEnabled(True)
         table.setAcceptDrops(True)
+        table.setAutoScroll(True)
+        table.setAutoScrollMargin(35)
         table.setSortingEnabled(False)
         table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
@@ -249,35 +251,37 @@ class SearchPanel(QWidget):
         hdr.setSectionResizeMode(1, QHeaderView.Stretch)            # file name
         hdr.setSectionResizeMode(2, QHeaderView.ResizeToContents)   # kind
         hdr.setSectionResizeMode(3, QHeaderView.ResizeToContents)   # CRS
-        hdr.setSectionResizeMode(4, QHeaderView.ResizeToContents)   # added
-        hdr.setSectionResizeMode(5, QHeaderView.ResizeToContents)   # view
-        hdr.setSectionResizeMode(6, QHeaderView.ResizeToContents)   # delete
+        hdr.setSectionResizeMode(4, QHeaderView.Fixed)              # visibility btn
+        hdr.setSectionResizeMode(5, QHeaderView.Fixed)              # delete btn
 
         table.setColumnWidth(0, 30)
         table.setColumnWidth(1, 220)
-        table.setColumnWidth(2, 78)
-        table.setColumnWidth(3, 96)
-        table.setColumnWidth(4, 120)
-        table.setColumnWidth(5, 60)
-        table.setColumnWidth(6, 60)
+        table.setColumnWidth(2, 72)
+        table.setColumnWidth(3, 90)
+        table.setColumnWidth(4, 44)
+        table.setColumnWidth(5, 36)
 
         table.verticalHeader().setVisible(False)
-        table.verticalHeader().setDefaultSectionSize(22)
+        table.verticalHeader().setDefaultSectionSize(30)
         table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         table.setSelectionMode(QAbstractItemView.SingleSelection)
         table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        table.setAlternatingRowColors(True)
+        # All rows white; only the actively selected row turns blue.
+        # macOS QMacStyle ignores CSS `background` on ::item and uses QPalette instead.
+        # AlternatingRowColors=True + system palette = persistent blue on all odd rows.
+        # Fix: disable alternating colors + set palette with fully opaque colors
+        # (macOS ignores rgba alpha in palette, so use opaque hex values only).
+        table.setAlternatingRowColors(False)
         table.setWordWrap(False)
         table.setTextElideMode(Qt.TextElideMode.ElideMiddle)
 
-        # Force black text even when selected
         palette = table.palette()
-        palette.setColor(QPalette.ColorRole.Text, QColor(0, 0, 0))
-        palette.setColor(QPalette.ColorRole.HighlightedText, QColor(0, 0, 0))
-        palette.setColor(QPalette.ColorRole.Highlight, QColor(232, 244, 255, 180))
-        palette.setColor(QPalette.ColorRole.AlternateBase, QColor(250, 250, 250))
-        palette.setColor(QPalette.ColorRole.Base, QColor(255, 255, 255))
+        palette.setColor(QPalette.ColorRole.Base, QColor(255, 255, 255))           # rows: white
+        palette.setColor(QPalette.ColorRole.AlternateBase, QColor(255, 255, 255)) # alt rows: also white
+        palette.setColor(QPalette.ColorRole.Highlight, QColor(204, 228, 255))     # selected: light blue
+        palette.setColor(QPalette.ColorRole.HighlightedText, QColor(0, 0, 0))    # selected text: black
+        palette.setColor(QPalette.ColorRole.Text, QColor(0, 0, 0))               # normal text: black
         table.setPalette(palette)
 
         table.setStyleSheet(
@@ -286,25 +290,40 @@ class SearchPanel(QWidget):
                 background: #ffffff;
                 border: 1px solid #d0d0d0;
                 border-radius: 3px;
-                gridline-color: #f0f0f0;
+                gridline-color: #ebebeb;
                 font-size: 11px;
                 color: #000000;
             }
             QTableWidget::item {
-                padding: 2px;
+                background: #ffffff;
+                padding: 2px 4px;
                 border: none;
                 color: #000000;
             }
+            QTableWidget::item:hover {
+                background: #f0f7ff;
+                color: #000000;
+            }
             QTableWidget::item:selected {
-                background: rgba(232, 244, 255, 0.7);
+                background: #cce4ff;
+                color: #000000;
+            }
+            QTableWidget::item:selected:active {
+                background: #cce4ff;
+                color: #000000;
+            }
+            QTableWidget::item:selected:!active {
+                background: #e5f0ff;
                 color: #000000;
             }
             QTableWidget QHeaderView::section {
                 background: #f5f5f5;
                 color: #333333;
                 font-weight: 600;
-                padding: 4px;
-                border: 1px solid #d0d0d0;
+                padding: 4px 6px;
+                border: none;
+                border-right: 1px solid #d8d8d8;
+                border-bottom: 1px solid #d0d0d0;
                 font-size: 11px;
             }
             QTableWidget::item:focus {

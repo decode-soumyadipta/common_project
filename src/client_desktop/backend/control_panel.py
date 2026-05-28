@@ -17,7 +17,6 @@ from qtpy.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
@@ -674,7 +673,6 @@ class ControlPanel(QWidget):
 
         # Set palette for proper text colors (more reliable than CSS for selection)
         # CRITICAL: Force black text even when selected to prevent blue bar from hiding text
-        from qtpy.QtGui import QPalette
 
         palette = self.search_results_table.palette()
         palette.setColor(QPalette.ColorRole.Text, QColor(0, 0, 0))  # Normal text: black
@@ -1190,7 +1188,7 @@ class ControlPanel(QWidget):
         if visibility_by_path:
             print(f"DEBUG: Visibility map provided: {visibility_by_path}")
         else:
-            print(f"DEBUG: No visibility map provided")
+            print("DEBUG: No visibility map provided")
         print(f"{'=' * 80}\n")
 
         self.search_results_table.setRowCount(0)
@@ -1257,7 +1255,7 @@ class ControlPanel(QWidget):
                 }
         self._layer_order_registry = new_registry
 
-        print(f"DEBUG: Sorted assets order:")
+        print("DEBUG: Sorted assets order:")
         for i, asset in enumerate(sorted_assets):
             kind = str(asset.get("kind") or "").upper()
             file_name = str(asset.get("file_name") or "-")
@@ -1345,7 +1343,7 @@ class ControlPanel(QWidget):
 
             if not file_path:
                 toggle_button.setEnabled(False)
-                print(f"  Button disabled (no file path)")
+                print("  Button disabled (no file path)")
             else:
                 # Normalize path to match controller's format
                 normalized_path = file_path.replace("\\", "/")
@@ -1364,7 +1362,7 @@ class ControlPanel(QWidget):
                     def handler():
                         current_visible = btn.property("is_visible")
                         new_visible = not current_visible
-                        print(f"\nDEBUG: Toggle button clicked!")
+                        print("\nDEBUG: Toggle button clicked!")
                         print(f"  path: {path}")
                         print(f"  current_visible: {current_visible}")
                         print(f"  new_visible: {new_visible}")
@@ -2809,7 +2807,7 @@ class ControlPanel(QWidget):
             reordered.insert(drop_row, moved)
 
             event.acceptProposedAction()
-            print(f"DEBUG: Drop completed, triggering reorder handler")
+            print("DEBUG: Drop completed, triggering reorder handler")
             self._on_search_results_reordered_with_data(
                 self._drag_captured_data, forced_order=reordered
             )
@@ -2830,7 +2828,7 @@ class ControlPanel(QWidget):
         We use pre-captured data to rebuild the table with the correct order.
         """
         print(f"\n{'=' * 80}")
-        print(f"DEBUG: _on_search_results_reordered_with_data called!")
+        print("DEBUG: _on_search_results_reordered_with_data called!")
         print(f"{'=' * 80}\n")
         try:
             table = self.search_results_table
@@ -2888,9 +2886,9 @@ class ControlPanel(QWidget):
                     for layer in reordered_layers
                     if layer.get("file_path")
                 }
-                print(f"DEBUG: Starting debounce timer (150ms)")
+                print("DEBUG: Starting debounce timer (150ms)")
                 self._reorder_debounce_timer.start(150)
-                print(f"DEBUG: _on_search_results_reordered_with_data completed\n")
+                print("DEBUG: _on_search_results_reordered_with_data completed\n")
                 return
 
             # Build a map of file_path -> full row data (use file_path as key for uniqueness)
@@ -2926,7 +2924,7 @@ class ControlPanel(QWidget):
                     f"  Table corrupted or incomplete: extracted {len(current_order)} paths but expected {len(pre_drop_row_data)}"
                 )
                 print(
-                    f"  Rebuilding table completely from pre-drop data in current order"
+                    "  Rebuilding table completely from pre-drop data in current order"
                 )
 
                 # Get the current row order by examining which rows are where
@@ -2950,7 +2948,7 @@ class ControlPanel(QWidget):
 
                 # If we still don't have a complete order, use the original order
                 if len(new_order) != len(pre_drop_row_data):
-                    print(f"  Could not determine new order, using original order")
+                    print("  Could not determine new order, using original order")
                     new_order = [data["file_path"] for data in pre_drop_row_data]
 
                 # Clear and rebuild the table with the determined order
@@ -3035,9 +3033,9 @@ class ControlPanel(QWidget):
                 for layer in reordered_layers
                 if layer.get("file_path")
             }
-            print(f"DEBUG: Starting debounce timer (150ms)")
+            print("DEBUG: Starting debounce timer (150ms)")
             self._reorder_debounce_timer.start(150)  # 150ms debounce
-            print(f"DEBUG: _on_search_results_reordered_with_data completed\n")
+            print("DEBUG: _on_search_results_reordered_with_data completed\n")
 
         except Exception as e:
             print(f"ERROR: Failed to handle search results reordering: {e}")
@@ -3300,7 +3298,7 @@ class ControlPanel(QWidget):
     def _process_pending_reorder(self) -> None:
         """Process the pending reorder operation after debounce delay."""
         print(f"\n{'=' * 80}")
-        print(f"DEBUG: _process_pending_reorder called!")
+        print("DEBUG: _process_pending_reorder called!")
         print(f"  _pending_reorder_data: {self._pending_reorder_data}")
         print(f"{'=' * 80}\n")
 
@@ -3315,12 +3313,12 @@ class ControlPanel(QWidget):
                     f"DEBUG: Emitting search_layers_reordered signal with {len(self._pending_reorder_data)} layers"
                 )
                 self.search_layers_reordered.emit(self._pending_reorder_data)
-                print(f"DEBUG: Signal emitted successfully")
+                print("DEBUG: Signal emitted successfully")
             else:
                 print("ERROR: search_layers_reordered signal not found!")
 
             self._pending_reorder_data = None
-            print(f"DEBUG: _process_pending_reorder completed\n")
+            print("DEBUG: _process_pending_reorder completed\n")
 
         except Exception as e:
             print(f"ERROR: Failed to process pending reorder: {e}")

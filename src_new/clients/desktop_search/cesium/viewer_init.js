@@ -203,7 +203,8 @@ export function initializeViewer(containerId, options = {}) {
 function detectGPU(log) {
   const gpuInfo = {
     renderer: "Unknown",
-    isHighEnd: false
+    isHighEnd: false,
+    isEntryWorkstation: false
   };
   
   try {
@@ -217,9 +218,24 @@ function detectGPU(log) {
           gpuInfo.renderer = renderer;
           const r = renderer.toLowerCase();
           // Detect dedicated GPUs (NVIDIA, AMD Radeon RX/Pro)
-          if (r.indexOf("nvidia") !== -1 || r.indexOf("rtx") !== -1 || r.indexOf("gtx") !== -1 || 
+          if (r.indexOf("nvidia") !== -1 || r.indexOf("rtx") !== -1 || r.indexOf("gtx") !== -1 ||
               r.indexOf("quadro") !== -1 || (r.indexOf("amd") !== -1 && r.indexOf("radeon rx") !== -1)) {
             gpuInfo.isHighEnd = true;
+          }
+          if (r.indexOf("quadro") !== -1) {
+            const entryModels = [
+              "quadro 1000",
+              "quadro p1000",
+              "quadro t1000",
+              "quadro p620",
+              "quadro p600",
+              "quadro t600",
+              "quadro t400",
+              "quadro k620",
+              "quadro k1200",
+              "quadro m1200",
+            ];
+            gpuInfo.isEntryWorkstation = entryModels.some((model) => r.indexOf(model) !== -1);
           }
         }
       }
@@ -231,7 +247,8 @@ function detectGPU(log) {
   }
   
   if (log) {
-    log("info", "GPU Detected: " + gpuInfo.renderer + " (High-End: " + gpuInfo.isHighEnd + ")");
+    const tier = gpuInfo.isEntryWorkstation ? "Entry Workstation" : (gpuInfo.isHighEnd ? "High-End" : "Integrated/Unknown");
+    log("info", "GPU Detected: " + gpuInfo.renderer + " (" + tier + ")");
   }
   
   return gpuInfo;
@@ -253,16 +270,30 @@ function applyGPUAdaptiveSettings(viewer, gpuInfo, log) {
   viewer.scene.globe.enableLighting = false;
   viewer.scene.globe.showGroundAtmosphere = false;
   
-  if (gpuInfo.isHighEnd) {
-    // ── MAX CONFIG (NVIDIA / Quadro) ──────────────────────────────────────
+  if (gpuInfo.isEntryWorkstation) {
+    // ── BALANCED WORKSTATION (Entry Quadro) ──────────────────────────────
+    viewer.resolutionScale = 1.0;
+    viewer.scene.logarithmicDepthBuffer = true;
+    viewer.scene.globe.depthTestAgainstTerrain = true;
+    viewer.scene.globe.tileCacheSize = 650;
+    viewer.scene.globe.maximumScreenSpaceError = 1.6;
+    viewer.scene.globe.preloadAncestors = true;
+    viewer.scene.globe.preloadSiblings = true;
+    viewer.scene.globe.loadingDescendantLimit = 8;
+
+    if (log) {
+      log("info", "[INIT BALANCED GPU CONFIG] Entry Quadro detected — balanced fidelity for smooth GPU performance");
+    }
+  } else if (gpuInfo.isHighEnd) {
+    // ── MAX CONFIG (NVIDIA / Quadro RTX / AMD RX) ────────────────────────
     viewer.resolutionScale = 1.0;          // Full native resolution
     viewer.scene.logarithmicDepthBuffer = true;
     viewer.scene.globe.depthTestAgainstTerrain = true;
-    viewer.scene.globe.tileCacheSize = 1000; // Large cache for high-fidelity assets
-    viewer.scene.globe.maximumScreenSpaceError = 0.8; // Ultra fidelity for workstation
+    viewer.scene.globe.tileCacheSize = 900; // Large cache for high-fidelity assets
+    viewer.scene.globe.maximumScreenSpaceError = 1.1; // High fidelity for workstation
     viewer.scene.globe.preloadAncestors = true;
     viewer.scene.globe.preloadSiblings = true;
-    viewer.scene.globe.loadingDescendantLimit = 16;
+    viewer.scene.globe.loadingDescendantLimit = 12;
     
     // NVIDIA GL hint
     if (viewer.scene.context && viewer.scene.context._gl) {

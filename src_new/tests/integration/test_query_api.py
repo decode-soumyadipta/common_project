@@ -15,11 +15,6 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import MagicMock, patch
-import sys
-import os
-
-# Mock uvicorn before importing modules to avoid import errors
-sys.modules['uvicorn'] = MagicMock()
 
 from src_new.shared.models.raster_metadata import RasterMetadata, RasterKind
 from src_new.shared.models.bounding_box import BoundingBox
@@ -48,23 +43,18 @@ def test_client(test_app, mock_raster_repository, mock_db_session) -> TestClient
     to avoid authentication and database issues in tests.
     """
     # Override the dependencies to use mocks
-    from src_new.services.query.api import dependencies
-    
-    # Store original functions
-    original_get_db = dependencies.get_db
-    original_get_repo = dependencies.get_raster_repository
-    
-    # Replace with mocks
-    dependencies.get_db = lambda: mock_db_session
-    dependencies.get_raster_repository = lambda db=None: mock_raster_repository
-    
+    from src_new.services.query.api import routes as query_routes
+
+    test_app.dependency_overrides[query_routes.get_db] = lambda: mock_db_session
+    test_app.dependency_overrides[
+        query_routes.get_raster_repository
+    ] = lambda: mock_raster_repository
+
     client = TestClient(test_app)
-    
+
     yield client
-    
-    # Restore original functions
-    dependencies.get_db = original_get_db
-    dependencies.get_raster_repository = original_get_repo
+
+    test_app.dependency_overrides.clear()
 
 
 @pytest.fixture

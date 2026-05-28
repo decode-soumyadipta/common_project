@@ -18,7 +18,8 @@ class SyncFocusCoordinator:
             is_dem_asset = c._is_dem_asset(asset)
 
             if not should_show:
-                c._run_js_call("setLayerVisibility", file_path, False)
+                if file_path in c._loaded_search_layer_keys:
+                    c._run_js_call("setLayerVisibility", file_path, False)
                 if is_dem_asset and c._active_dem_search_layer_key == file_path:
                     c.state.active_layer_is_dem = False
                     c._active_dem_search_layer_key = None
@@ -63,6 +64,19 @@ class SyncFocusCoordinator:
 
             c._loaded_search_layer_keys.add(file_path)
 
+        # Enforce layer stack order matching the UI list for event-driven mode
+        order_registry = getattr(c.panel, "_layer_order_registry", {}) or {}
+        ordered_keys = sorted(
+            [
+                p.replace("\\", "/")
+                for p in c._search_result_assets_by_path.keys()
+                if c._search_layer_visibility.get(p, False)
+            ],
+            key=lambda p: order_registry.get(p, {}).get("order", 9999),
+        )
+        if ordered_keys:
+            c._run_js_call("enforceLayerDisplayOrder", ordered_keys)
+
         c._apply_display_control_mode()
 
     def load_asset_layer_event_driven(
@@ -90,6 +104,12 @@ class SyncFocusCoordinator:
         options["apply_scene_mode"] = apply_scene_mode
         options["event_driven"] = True
 
+        # Store bounds from TiTiler back into the asset dict so that
+        # _fly_to_asset / asset_bounds can find them later without an extra HTTP call.
+        # utility_coordinator.asset_bounds checks asset["bounds"] first.
+        if "bounds" in options and isinstance(options["bounds"], dict):
+            asset["bounds"] = options["bounds"]
+
         if c._add_layer_event_driven(asset, options):
             if auto_fly_to:
                 c._fly_through_asset_event_driven(asset)
@@ -101,11 +121,12 @@ class SyncFocusCoordinator:
         c.state.selected_asset = asset
         return asset
 
+
     def sync_search_visibility_layers(self) -> None:
         """Sync layer visibility between UI and globe with debug logging - optimized to only update changed layers."""
         c = self._controller
         print(f"\n{'=' * 80}")
-        print(f"DEBUG: _sync_search_visibility_layers called")
+        print("DEBUG: _sync_search_visibility_layers called")
         print(f"  Current visibility map: {c._search_layer_visibility}")
         print(f"  Last synced visibility: {c._last_synced_visibility}")
         print(f"  Loaded layer keys: {c._loaded_search_layer_keys}")
@@ -135,26 +156,26 @@ class SyncFocusCoordinator:
 
             if not should_show:
                 if is_loaded:  # Only hide if it's actually loaded
-                    print(f"  ACTION: Hiding layer via setLayerVisibility")
+                    print("  ACTION: Hiding layer via setLayerVisibility")
                     c._run_js_call("setLayerVisibility", file_path, False)
                     c._last_synced_visibility[file_path] = False
                     if is_dem_asset and c._active_dem_search_layer_key == file_path:
                         c.state.active_layer_is_dem = False
                         c._active_dem_search_layer_key = None
                         c._apply_display_control_mode()
-                        print(f"  DEM deactivated")
+                        print("  DEM deactivated")
                 else:
-                    print(f"  SKIP: Layer not loaded, no need to hide")
+                    print("  SKIP: Layer not loaded, no need to hide")
                 continue
 
             if is_dem_asset and is_loaded:
-                print(f"  ACTION: Showing DEM layer via setLayerVisibility")
+                print("  ACTION: Showing DEM layer via setLayerVisibility")
                 c._run_js_call("setLayerVisibility", file_path, True)
                 c._last_synced_visibility[file_path] = True
                 c.state.active_layer_is_dem = True
                 c._active_dem_search_layer_key = file_path
                 c._apply_display_control_mode()
-                print(f"  DEM activated")
+                print("  DEM activated")
                 continue
 
             if (
@@ -162,7 +183,7 @@ class SyncFocusCoordinator:
                 and c._active_dem_search_layer_key
                 and c._active_dem_search_layer_key != file_path
             ):
-                print(f"  ACTION: Hiding DEM (another DEM is active)")
+                print("  ACTION: Hiding DEM (another DEM is active)")
                 c._search_layer_visibility[file_path] = False
                 if is_loaded:
                     c._run_js_call("setLayerVisibility", file_path, False)
@@ -170,17 +191,17 @@ class SyncFocusCoordinator:
                 continue
 
             if is_dem_asset and c._active_dem_search_layer_key == file_path:
-                print(f"  SKIP: DEM already active")
+                print("  SKIP: DEM already active")
                 continue
 
             if (not is_dem_asset) and is_loaded:
-                print(f"  ACTION: Showing imagery layer via setLayerVisibility")
+                print("  ACTION: Showing imagery layer via setLayerVisibility")
                 c._run_js_call("setLayerVisibility", file_path, True)
                 c._last_synced_visibility[file_path] = True
                 continue
 
             if not is_loaded:
-                print(f"  ACTION: Loading new layer")
+                print("  ACTION: Loading new layer")
                 loaded = c._load_asset_layer(
                     asset,
                     replace_existing=False,
@@ -190,16 +211,29 @@ class SyncFocusCoordinator:
                     show_loading=False,
                 )
                 if not loaded:
-                    print(f"  ERROR: Failed to load layer")
+                    print("  ERROR: Failed to load layer")
                     c._search_layer_visibility[file_path] = False
                     continue
 
                 c._loaded_search_layer_keys.add(file_path)
                 c._last_synced_visibility[file_path] = True
-                print(f"  SUCCESS: Layer loaded and added to loaded keys")
+                print("  SUCCESS: Layer loaded and added to loaded keys")
+
+        # Enforce layer stack order matching the UI list
+        order_registry = getattr(c.panel, "_layer_order_registry", {}) or {}
+        ordered_keys = sorted(
+            [
+                p.replace("\\", "/")
+                for p in c._search_result_assets_by_path.keys()
+                if c._search_layer_visibility.get(p, False)
+            ],
+            key=lambda p: order_registry.get(p, {}).get("order", 9999),
+        )
+        if ordered_keys:
+            c._run_js_call("enforceLayerDisplayOrder", ordered_keys)
 
         c._apply_display_control_mode()
-        print(f"DEBUG: _sync_search_visibility_layers completed\n")
+        print("DEBUG: _sync_search_visibility_layers completed\n")
 
     def focus_visible_search_assets(self, *, force: bool) -> None:
         """Legacy focus function - delegates to enhanced version."""
@@ -220,12 +254,17 @@ class SyncFocusCoordinator:
             for path, asset in c._search_result_assets_by_path.items()
             if c._search_layer_visibility.get(path, False)
         ]
-        if not visible_assets:
+        
+        # Fallback: Zoom/focus to all search results if none are visible, satisfying the requirement:
+        # "after searching..it must auto zoom focus automatically to the aoi......setview../flyto"
+        assets_to_focus = visible_assets if visible_assets else list(c._search_result_assets_by_path.values())
+        
+        if not assets_to_focus:
             c._last_visible_focus_signature = None
             return
 
         union_bounds: dict[str, float] | None = None
-        for asset in visible_assets:
+        for asset in assets_to_focus:
             bounds = c._asset_bounds(asset)
             if bounds is None:
                 continue
@@ -250,17 +289,17 @@ class SyncFocusCoordinator:
 
             # Enhanced behavior for multiple assets and first search
             if is_first_search:
-                if len(visible_assets) == 1:
+                if len(assets_to_focus) == 1:
                     # Single asset: fly to it with appropriate zoom
                     self._logger.info("First search: Flying to single asset")
-                    c._fly_to_asset(visible_assets[0])
+                    c._fly_to_asset(assets_to_focus[0])
                     c.panel.log(
-                        f"Focused on search result: {visible_assets[0].get('file_name', 'asset')}"
+                        f"Focused on search result: {assets_to_focus[0].get('file_name', 'asset')}"
                     )
                 else:
                     # Multiple assets: fit all in view with padding
                     self._logger.info(
-                        f"First search: Fitting {len(visible_assets)} assets in view"
+                        f"First search: Fitting {len(assets_to_focus)} assets in view"
                     )
                     c._run_js_call(
                         "focusBoundsWithPadding",
@@ -270,7 +309,7 @@ class SyncFocusCoordinator:
                         union_bounds["north"],
                         1.5,  # 50% padding to ensure all assets are visible
                     )
-                    c.panel.log(f"Focused on {len(visible_assets)} search results")
+                    c.panel.log(f"Focused on {len(assets_to_focus)} search results")
             else:
                 # Subsequent searches: use standard focus without animation
                 c._run_js_call(
@@ -282,111 +321,53 @@ class SyncFocusCoordinator:
                 )
             return
 
-        # Fallback: focus on first visible asset
-        c._fly_to_asset(visible_assets[0])
+        # Fallback: focus on first asset
+        c._fly_to_asset(assets_to_focus[0])
 
     def reorder_layers_event_driven(self, reordered_assets: list[dict]) -> None:
-        """Reorder layers using event-driven approach for optimal performance.
+        """Reorder loaded layers in Cesium using the order stored in _layer_order_registry.
 
-        CRITICAL: We reorder ALL layers that are loaded, regardless of current visibility.
-        The visibility state is managed separately by the toggle buttons.
+        The registry is updated by _on_search_results_reordered_with_data immediately
+        after a drag-drop, so by the time this method is called (after the 150ms debounce)
+        it always reflects the exact new UI row order.
+
+        Strategy: call enforceLayerDisplayOrder with all loaded layer paths sorted by
+        their registry display_order. This is the same mechanism used by
+        sync_search_visibility_layers_event_driven and produces the correct Cesium
+        imagery stack order regardless of how many invisible layers were moved.
         """
         c = self._controller
         try:
-            print(f"\n{'=' * 80}")
-            print(
-                f"DEBUG: _reorder_layers_event_driven called with {len(reordered_assets)} assets"
+            order_registry = getattr(c.panel, "_layer_order_registry", {}) or {}
+
+            # Sort all loaded layer paths by their new display_order from the registry.
+            # Invisible layers that aren't in _loaded_search_layer_keys are excluded —
+            # they are not present in the Cesium stack so can't be repositioned.
+            loaded_paths_sorted = sorted(
+                [
+                    p
+                    for p in c._loaded_search_layer_keys
+                    if p in c._search_result_assets_by_path
+                ],
+                key=lambda p: order_registry.get(p, {}).get("order", 9999),
             )
-            print(
-                f"DEBUG: Current _loaded_search_layer_keys: {c._loaded_search_layer_keys}"
-            )
-            print(
-                f"DEBUG: Current _search_result_assets_by_path keys: {list(c._search_result_assets_by_path.keys())}"
-            )
-            print(f"{'=' * 80}\n")
 
-            # Build layer reorder commands for the JavaScript bridge
-            layer_commands = []
-            for i, asset in enumerate(reordered_assets):
-                file_path = str(asset.get("file_path", "")).replace("\\", "/")
-                if not file_path:
-                    print(f"  WARNING: Asset {i} has no file_path")
-                    continue
-
-                print(
-                    f"  Processing asset {i}: {asset.get('file_name', 'Unknown')} - {file_path}"
-                )
-
-                # Check if this layer is actually loaded on the map
-                if file_path not in c._loaded_search_layer_keys:
-                    print(
-                        f"  SKIP: Layer not in _loaded_search_layer_keys: {file_path}"
-                    )
-                    self._logger.debug(
-                        "Skipping layer reorder for %s: not loaded on map",
-                        asset.get("file_name", ""),
-                    )
-                    continue
-
-                print(
-                    f"  INCLUDE: Layer found in _loaded_search_layer_keys: {file_path}"
-                )
-
-                # Include the layer in reordering regardless of visibility state
-                # The visibility is controlled by the toggle button, not by reordering
-                layer_commands.append(
-                    {
-                        "layer_key": file_path,
-                        "file_name": asset.get("file_name", ""),
-                        "kind": asset.get("kind", ""),
-                        "new_order": i,
-                        "is_dem": c._is_dem_asset(asset),
-                    }
-                )
-
-            print(f"DEBUG: Built {len(layer_commands)} layer commands")
-
-            if layer_commands:
-                # Log the reordering plan for debugging
-                print(f"DEBUG: EVENT_DRIVEN Layer reordering plan:")
-                for cmd in layer_commands:
-                    print(
-                        f"  Order {cmd['new_order']}: {cmd['file_name']} ({cmd['kind']}) - key={cmd['layer_key']}"
-                    )
-
-                # Send batch reorder command to Cesium
-                print(f"DEBUG: Sending reorderLayersEventDriven command to JavaScript")
-                c._run_js_call("reorderLayersEventDriven", layer_commands)
+            if not loaded_paths_sorted:
                 self._logger.info(
-                    "EVENT_DRIVEN: Sent %d layer reorder commands", len(layer_commands)
+                    "reorder: no loaded layers in Cesium stack yet — deferred"
                 )
+                return
 
-                # Force additional render after reordering
-                c._run_js_call("requestSceneRender")
-                print(f"DEBUG: Reorder commands sent successfully")
-            else:
-                print(f"WARNING: No loaded layers found to reorder")
-                self._logger.warning("EVENT_DRIVEN: No loaded layers found to reorder")
-                c.panel.log("Layer reordering: No loaded layers found on map")
+            c._run_js_call("enforceLayerDisplayOrder", loaded_paths_sorted)
+            c._run_js_call("requestSceneRender")
 
-                # Debug: Show what layers we have vs what we're looking for
-                print(
-                    f"DEBUG: Available loaded layer keys: {c._loaded_search_layer_keys}"
-                )
-                print(
-                    f"DEBUG: Requested asset paths: {[asset.get('file_path', '') for asset in reordered_assets]}"
-                )
+            self._logger.info(
+                "EVENT_DRIVEN: Sent %d layer reorder commands", len(loaded_paths_sorted)
+            )
 
         except Exception as e:
-            print(f"ERROR: Event-driven layer reordering failed: {e}")
-            import traceback
-
-            traceback.print_exc()
             self._logger.warning(
                 "Event-driven layer reordering failed, falling back to standard: %s", e
-            )
-            c.panel.log(
-                f"Layer reordering: Event-driven approach failed, using fallback"
             )
             self.reorder_layers_standard(reordered_assets)
 
@@ -417,10 +398,9 @@ class SyncFocusCoordinator:
                 self._logger.warning("STANDARD: No loaded layers found to reorder")
                 return
 
-            # Reorder loaded layers from bottom to top (reverse order)
+            # Reorder loaded layers using enforceLayerDisplayOrder
             self._logger.info("STANDARD: Reordering %d layers", len(loaded_layers))
-            for layer_key in reversed(loaded_layers):
-                c._run_js_call("raiseLayerToTop", layer_key)
+            c._run_js_call("enforceLayerDisplayOrder", loaded_layers)
 
         except Exception as e:
             self._logger.error("Standard layer reordering failed: %s", e)

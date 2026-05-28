@@ -338,7 +338,6 @@ class AssetCoordinator:
                 c._logger.warning("Raster registration failed: %s", exc)
         try:
             from src_new.services.ingestion.gdal_pipelines.metadata_extractor import (
-                MetadataExtractorError,
                 extract_metadata,
             )
             from src_new.clients.desktop_search.tile_url_builder import build_xyz_url

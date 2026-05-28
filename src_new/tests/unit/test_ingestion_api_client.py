@@ -8,7 +8,7 @@ Requirements: 7.1, 7.3, 7.5
 from __future__ import annotations
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 from pathlib import Path
 
 from src_new.clients.desktop_ingestion.api_client import (
@@ -16,7 +16,6 @@ from src_new.clients.desktop_ingestion.api_client import (
     UploadResponse,
     IngestionStatus,
 )
-from src_new.shared.models.bounding_box import BoundingBox
 
 
 class TestIngestionApiClient:

@@ -8,13 +8,11 @@ Requirements: 16.6, 19.2
 from __future__ import annotations
 
 import logging
-from typing import Callable
 from unittest.mock import Mock, patch
 
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
-from starlette.responses import JSONResponse
 
 from src_new.shared.auth.lan_security import (
     LANSecurityMiddleware,

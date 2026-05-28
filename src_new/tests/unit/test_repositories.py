@@ -16,10 +16,10 @@ from __future__ import annotations
 import pytest
 from datetime import datetime
 from typing import Generator
-from unittest.mock import Mock, MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, AsyncMock, patch
 from uuid import uuid4
 
-from sqlalchemy import create_engine, text, Column, String, Float, Integer, DateTime
+from sqlalchemy import create_engine, Column, String, Float, Integer, DateTime
 from sqlalchemy.orm import Session, sessionmaker, declarative_base
 from sqlalchemy.pool import StaticPool
 
@@ -426,13 +426,12 @@ class TestRasterRepository:
             # Attempt SQL injection in find_by_point
             # If not parameterized, this could execute malicious SQL
             malicious_lon = "72.5; DROP TABLE raster_assets; --"
-            malicious_lat = "18.5' OR '1'='1"
 
             # These should be safely handled as invalid float values
             # and return empty results, not cause errors
             try:
                 # Convert to float will fail, but should be caught gracefully
-                results = repo.find_by_point(lon=float(malicious_lon), lat=18.5)
+                repo.find_by_point(lon=float(malicious_lon), lat=18.5)
                 # Should not reach here due to float conversion error
                 assert False, "Expected ValueError for invalid float"
             except ValueError:

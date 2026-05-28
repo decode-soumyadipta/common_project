@@ -30,6 +30,7 @@ from uuid import uuid4
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from src_new.services.query.repositories._orm_import import RasterAsset
 from src_new.shared.models.bounding_box import BoundingBox
 from src_new.shared.models.raster_metadata import RasterKind, RasterMetadata
 
@@ -191,8 +192,6 @@ class RasterRepository:
         Returns:
             A ``RasterMetadata`` instance, or ``None`` if not found.
         """
-        from src_new.services.query.repositories._orm_import import RasterAsset  # lazy
-
         stmt = select(RasterAsset).where(RasterAsset.id == raster_id)
         asset = self._session.scalar(stmt)
         if asset is None:
@@ -207,8 +206,6 @@ class RasterRepository:
             List of ``RasterMetadata`` objects ordered by created_at DESC.
             Returns empty list if no rasters are found.
         """
-        from src_new.services.query.repositories._orm_import import RasterAsset  # lazy
-
         try:
             stmt = select(RasterAsset).order_by(RasterAsset.created_at.desc())
             assets = self._session.scalars(stmt).all()
@@ -237,8 +234,6 @@ class RasterRepository:
         import time
         start_time = time.time()
         
-        from src_new.services.query.repositories._orm_import import RasterAsset  # lazy
-
         if self._is_postgresql():
             # Parameterized PostGIS point-in-polygon query.
             # Uses ST_SetSRID(ST_Point(:lon, :lat), 4326) — no string interpolation.
@@ -296,22 +291,39 @@ class RasterRepository:
             }
         )
         
-        stmt_all = select(
-            RasterAsset.id, 
-            RasterAsset.min_lon, 
-            RasterAsset.min_lat, 
-            RasterAsset.max_lon, 
-            RasterAsset.max_lat
-        ).order_by(RasterAsset.created_at.desc())
-        
-        matching_ids: list[str] = []
-        for asset_id, min_lon, min_lat, max_lon, max_lat in self._session.execute(stmt_all):
-            try:
-                # Check if point is within bounding box
-                if min_lon <= lon <= max_lon and min_lat <= lat <= max_lat:
+        if all(hasattr(RasterAsset, attr) for attr in ("min_lon", "min_lat", "max_lon", "max_lat")):
+            stmt_all = select(
+                RasterAsset.id,
+                RasterAsset.min_lon,
+                RasterAsset.min_lat,
+                RasterAsset.max_lon,
+                RasterAsset.max_lat,
+            ).order_by(RasterAsset.created_at.desc())
+
+            matching_ids: list[str] = []
+            for asset_id, min_lon, min_lat, max_lon, max_lat in self._session.execute(
+                stmt_all
+            ):
+                try:
+                    # Check if point is within bounding box
+                    if min_lon <= lon <= max_lon and min_lat <= lat <= max_lat:
+                        matching_ids.append(str(asset_id))
+                except Exception:
+                    pass
+        else:
+            stmt_all = select(
+                RasterAsset.id,
+                RasterAsset.bounds_wkt,
+            ).order_by(RasterAsset.created_at.desc())
+
+            matching_ids = []
+            for asset_id, bounds_wkt in self._session.execute(stmt_all):
+                try:
+                    bbox = _bbox_from_wkt(str(bounds_wkt))
+                except Exception:
+                    continue
+                if bbox.contains_point(lon, lat):
                     matching_ids.append(str(asset_id))
-            except Exception:
-                pass
 
         assets = self._load_assets_by_ids(matching_ids)
         
@@ -356,8 +368,6 @@ class RasterRepository:
         Returns:
             List of ``RasterMetadata`` objects ordered by ingestion date (newest first).
         """
-        from src_new.services.query.repositories._orm_import import RasterAsset  # lazy
-
         west, south, east, north = _normalized_bounds(min_lon, min_lat, max_lon, max_lat)
 
         if self._is_postgresql():
@@ -386,24 +396,46 @@ class RasterRepository:
             return [_row_to_raster_metadata(a) for a in assets]
 
         # SQLite fallback: load id + bounding box coordinates, then filter in Python
-        stmt_all = select(
-            RasterAsset.id,
-            RasterAsset.min_lon,
-            RasterAsset.min_lat,
-            RasterAsset.max_lon,
-            RasterAsset.max_lat
-        ).order_by(RasterAsset.created_at.desc())
-        
-        matching_ids = []
-        for asset_id, asset_min_lon, asset_min_lat, asset_max_lon, asset_max_lat in self._session.execute(stmt_all):
-            try:
-                # Check if bounding boxes intersect
-                # Two boxes intersect if they overlap in both X and Y dimensions
-                if not (asset_max_lon < west or asset_min_lon > east or 
-                        asset_max_lat < south or asset_min_lat > north):
+        if all(hasattr(RasterAsset, attr) for attr in ("min_lon", "min_lat", "max_lon", "max_lat")):
+            stmt_all = select(
+                RasterAsset.id,
+                RasterAsset.min_lon,
+                RasterAsset.min_lat,
+                RasterAsset.max_lon,
+                RasterAsset.max_lat,
+            ).order_by(RasterAsset.created_at.desc())
+
+            matching_ids = []
+            for asset_id, asset_min_lon, asset_min_lat, asset_max_lon, asset_max_lat in self._session.execute(
+                stmt_all
+            ):
+                try:
+                    # Check if bounding boxes intersect
+                    # Two boxes intersect if they overlap in both X and Y dimensions
+                    if not (
+                        asset_max_lon < west
+                        or asset_min_lon > east
+                        or asset_max_lat < south
+                        or asset_min_lat > north
+                    ):
+                        matching_ids.append(str(asset_id))
+                except Exception:
+                    pass
+        else:
+            stmt_all = select(
+                RasterAsset.id,
+                RasterAsset.bounds_wkt,
+            ).order_by(RasterAsset.created_at.desc())
+
+            matching_ids = []
+            query_bbox = BoundingBox(min_lon=west, min_lat=south, max_lon=east, max_lat=north)
+            for asset_id, bounds_wkt in self._session.execute(stmt_all):
+                try:
+                    bbox = _bbox_from_wkt(str(bounds_wkt))
+                except Exception:
+                    continue
+                if bbox.intersects(query_bbox):
                     matching_ids.append(str(asset_id))
-            except Exception:
-                pass
 
         assets = self._load_assets_by_ids(matching_ids)
         logger.debug(
@@ -436,8 +468,6 @@ class RasterRepository:
             ValueError: If a record with the same ``file_path`` already exists.
             RuntimeError: On any database error (original exception is chained).
         """
-        from src_new.services.query.repositories._orm_import import RasterAsset  # lazy
-
         raster_id = metadata.raster_id or str(uuid4())
 
         # Check for duplicate path using a parameterized SELECT
@@ -499,8 +529,6 @@ class RasterRepository:
         Raises:
             RuntimeError: On any database error (original exception is chained).
         """
-        from src_new.services.query.repositories._orm_import import RasterAsset  # lazy
-
         stmt = select(RasterAsset).where(RasterAsset.id == raster_id)
         asset = self._session.scalar(stmt)
         if asset is None:
@@ -544,8 +572,6 @@ class RasterRepository:
 
     def _load_assets_by_ids(self, ids: list[str]) -> list[Any]:
         """Load full ORM objects for the given id list, preserving order."""
-        from src_new.services.query.repositories._orm_import import RasterAsset  # lazy
-
         if not ids:
             return []
         stmt = select(RasterAsset).where(RasterAsset.id.in_(ids))

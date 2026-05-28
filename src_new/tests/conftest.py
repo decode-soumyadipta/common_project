@@ -7,7 +7,6 @@ This module provides shared fixtures for:
 - Sample geospatial test data paths
 """
 
-import os
 import pytest
 import tempfile
 from pathlib import Path

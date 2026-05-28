@@ -86,7 +86,7 @@ class DisplaySettingsCoordinator:
                 continue
             loaded = c._load_asset_layer_event_driven(
                 asset,
-                replace_existing=True,
+                replace_existing=False,
                 layer_key=path,
                 auto_fly_to=False,
                 apply_scene_mode=False,
@@ -113,7 +113,7 @@ class DisplaySettingsCoordinator:
                 ):
                     loaded = c._load_asset_layer_event_driven(
                         asset,
-                        replace_existing=True,
+                        replace_existing=False,
                         layer_key=None,
                         auto_fly_to=False,
                         apply_scene_mode=False,
@@ -145,7 +145,7 @@ class DisplaySettingsCoordinator:
         if asset:
             c._load_asset_layer_event_driven(
                 asset,
-                replace_existing=True,
+                replace_existing=False,
                 layer_key=layer_key,
                 auto_fly_to=False,
                 apply_scene_mode=False,
@@ -165,7 +165,7 @@ class DisplaySettingsCoordinator:
             if asset:
                 c._load_asset_layer_event_driven(
                     asset,
-                    replace_existing=True,
+                    replace_existing=False,
                     layer_key=layer_key,
                     auto_fly_to=False,
                     apply_scene_mode=False,
@@ -183,7 +183,7 @@ class DisplaySettingsCoordinator:
             if asset:
                 c._load_asset_layer_event_driven(
                     asset,
-                    replace_existing=True,
+                    replace_existing=False,
                     layer_key=layer_key,
                     auto_fly_to=False,
                     apply_scene_mode=False,

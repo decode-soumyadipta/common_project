@@ -22,4 +22,10 @@ def build_xyz_url(file_path: str, tile_service_url: str = "http://127.0.0.1:8002
         file_path = f"file://{file_path}"
     
     encoded_path = quote(file_path, safe="/:")
-    return f"{tile_service_url}/cog/WebMercatorQuad/tiles/{{z}}/{{x}}/{{y}}.png?url={encoded_path}"
+    
+    # Ensure tile_service_url ends with /titiler for the new microservices mounting
+    base_url = tile_service_url.rstrip("/")
+    if not base_url.endswith("/titiler"):
+        base_url = f"{base_url}/titiler"
+        
+    return f"{base_url}/cog/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}.png?url={encoded_path}"

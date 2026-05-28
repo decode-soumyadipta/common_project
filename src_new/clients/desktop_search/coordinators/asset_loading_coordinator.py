@@ -40,7 +40,7 @@ class AssetLoadingCoordinator:
         if best_file_path != original_file_path:
             asset = dict(asset)  # Don't mutate the original
             asset["file_path"] = best_file_path
-            asset["tile_url"] = build_xyz_url(best_file_path)
+            asset["tile_url"] = build_xyz_url(best_file_path, tile_service_url=c.api.titiler_base_url)
             self._logger.info(
                 f"Updated asset to use optimized file: {Path(best_file_path).name}"
             )
@@ -93,7 +93,7 @@ class AssetLoadingCoordinator:
                 if cog_result.working_path != src_path:
                     asset = dict(asset)  # don't mutate the original
                     asset["file_path"] = str(cog_result.working_path)
-                    asset["tile_url"] = build_xyz_url(str(cog_result.working_path))
+                    asset["tile_url"] = build_xyz_url(str(cog_result.working_path), tile_service_url=c.api.titiler_base_url)
                     self._logger.info("COG tile_url updated to: %s", asset["tile_url"])
                     if cog_result.converted:
                         c.panel.log(f"COG ready: {cog_result.working_path.name}")
@@ -270,7 +270,6 @@ class AssetLoadingCoordinator:
         self, assets: list[dict], limit: int = 5
     ) -> list[dict]:
         """Get recent assets sorted by server-side metadata timestamps."""
-        c = self._controller
         # Sort by server-provided created_at timestamp instead of file system access
         sorted_assets = sorted(
             assets, key=lambda a: a.get("created_at", ""), reverse=True

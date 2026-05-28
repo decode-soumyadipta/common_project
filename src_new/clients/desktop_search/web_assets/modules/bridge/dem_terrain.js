@@ -178,6 +178,11 @@
       
       log("info", "DEM_RENDER: Adding drape layer to viewer");
       activeDemDrapeLayer = viewer.imageryLayers.addImageryProvider(drapeProvider);
+      activeDemDrapeLayer.preloadAncestorTiles = false;
+      if (window.Cesium && window.Cesium.TextureMinificationFilter && window.Cesium.TextureMagnificationFilter) {
+        activeDemDrapeLayer.minificationFilter = window.Cesium.TextureMinificationFilter.NEAREST;
+        activeDemDrapeLayer.magnificationFilter = window.Cesium.TextureMagnificationFilter.NEAREST;
+      }
       activeDemDrapeLayer.alpha = 1.0;
       activeDemDrapeLayer.show = demVisible;
       activeDemDrapeUrl = drapeUrl;
@@ -233,6 +238,11 @@
       });
       attachTileErrorHandler(hillshadeProvider, activeDemContext.name + "-hillshade");
       activeDemHillshadeLayer = viewer.imageryLayers.addImageryProvider(hillshadeProvider);
+      activeDemHillshadeLayer.preloadAncestorTiles = false;
+      if (window.Cesium && window.Cesium.TextureMinificationFilter && window.Cesium.TextureMagnificationFilter) {
+        activeDemHillshadeLayer.minificationFilter = window.Cesium.TextureMinificationFilter.NEAREST;
+        activeDemHillshadeLayer.magnificationFilter = window.Cesium.TextureMagnificationFilter.NEAREST;
+      }
       activeDemHillshadeUrl = hillshadeUrl;
       
       // CRITICAL FIX: Tag DEM hillshade layer with key for reordering functionality
@@ -524,6 +534,11 @@
           rectangle: rectangle,
         });
         activeDemDrapeLayer = viewer.imageryLayers.addImageryProvider(drapeProvider);
+        activeDemDrapeLayer.preloadAncestorTiles = false;
+        if (window.Cesium && window.Cesium.TextureMinificationFilter && window.Cesium.TextureMagnificationFilter) {
+          activeDemDrapeLayer.minificationFilter = window.Cesium.TextureMinificationFilter.NEAREST;
+          activeDemDrapeLayer.magnificationFilter = window.Cesium.TextureMagnificationFilter.NEAREST;
+        }
         activeDemDrapeLayer.alpha = 1.0;
         activeDemDrapeLayer.show = activeDemContext.visible !== false;
         activeDemDrapeUrl = newDrapeUrl;
@@ -661,9 +676,8 @@
       if (!scene.globe) {
         return;
       }
-      // Keep tile preloading enabled during interaction to reduce choppy pans/zooms
-      // without lowering imagery or terrain quality.
-      scene.globe.preloadAncestors = true;
+      // Disable preloading of blurry parent tiles during interaction
+      scene.globe.preloadAncestors = false;
       scene.globe.preloadSiblings = true;
     }
 

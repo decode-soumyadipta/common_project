@@ -134,7 +134,7 @@ class SpatialIndexRepository:
 
         Requirements: 10.3, 10.4, 10.5
         """
-        limit_clause = f"LIMIT :limit" if limit is not None else ""
+        limit_clause = "LIMIT :limit" if limit is not None else ""
         stmt = text(
             f"""
             SELECT

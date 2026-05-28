@@ -14,22 +14,16 @@ Requirements: 7.1, 7.3, 7.5, 7.6
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 from qtpy.QtCore import Qt, QTimer, QSize
-from qtpy.QtGui import QIcon
 from qtpy.QtWidgets import (
     QAction,
-    QHBoxLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
-    QPushButton,
     QScrollArea,
-    QSplitter,
     QStatusBar,
     QToolBar,
-    QVBoxLayout,
     QWidget,
 )
 

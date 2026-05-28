@@ -25,7 +25,6 @@ from src_new.shared.config import settings
 from src_new.shared.constants import (
     COG_BLOCKSIZE,
     COG_COMPRESSION,
-    COG_OVERVIEW_RESAMPLING,
 )
 
 LOGGER = logging.getLogger("services.ingestion.gdal_pipelines.cog_converter")

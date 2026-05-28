@@ -367,9 +367,9 @@ def extract_metadata(path: Path) -> RasterMetadata:
             import logging
 
             logger = logging.getLogger("services.metadata")
-            logger.info(f"=" * 80)
+            logger.info("=" * 80)
             logger.info(f"GEOSPATIAL METADATA EXTRACTION: {path.name}")
-            logger.info(f"=" * 80)
+            logger.info("=" * 80)
 
             external_crs = _read_auxiliary_crs_and_log(path, logger)
 
@@ -378,8 +378,8 @@ def extract_metadata(path: Path) -> RasterMetadata:
             x_res, y_res = dataset.res
 
             # Log extracted metadata
-            logger.info(f"")
-            logger.info(f"EXTRACTED METADATA:")
+            logger.info("")
+            logger.info("EXTRACTED METADATA:")
             logger.info(f"  Source CRS: {crs_text}")
             logger.info(f"  Dimensions: {dataset.width} × {dataset.height} pixels")
             logger.info(f"  Resolution: {abs(x_res):.6f} × {abs(y_res):.6f} units/pixel")
@@ -387,8 +387,8 @@ def extract_metadata(path: Path) -> RasterMetadata:
             logger.info(
                 f"  Data type: {dataset.dtypes[0] if dataset.count > 0 else 'Unknown'}"
             )
-            logger.info(f"")
-            logger.info(f"BOUNDS (EPSG:4326 - WGS84 Lat/Lon):")
+            logger.info("")
+            logger.info("BOUNDS (EPSG:4326 - WGS84 Lat/Lon):")
             logger.info(f"  West:  {bounds.min_x:.8f}°")
             logger.info(f"  South: {bounds.min_y:.8f}°")
             logger.info(f"  East:  {bounds.max_x:.8f}°")
@@ -405,16 +405,16 @@ def extract_metadata(path: Path) -> RasterMetadata:
             km_per_deg_lat = 110.57
             area_km2 = (width_deg * km_per_deg_lon) * (height_deg * km_per_deg_lat)
             logger.info(f"  Coverage: ~{area_km2:.2f} km²")
-            logger.info(f"")
+            logger.info("")
 
             # Finalize CRS: Prefer .prj if internal CRS is missing or generic
             if (crs_text is None or crs_text == "") and external_crs:
-                logger.info(f"Applying external CRS from .prj file")
+                logger.info("Applying external CRS from .prj file")
                 crs_text = normalize_crs(external_crs)
 
             # Accuracy warnings
             if crs_text is None or crs_text == "":
-                logger.warning(f"⚠ WARNING: No CRS defined! Assuming EPSG:4326")
+                logger.warning("⚠ WARNING: No CRS defined! Assuming EPSG:4326")
                 crs_text = "EPSG:4326"
 
             if abs(bounds.min_y) > 60 or abs(bounds.max_y) > 60:
@@ -422,7 +422,7 @@ def extract_metadata(path: Path) -> RasterMetadata:
                     f"⚠ WARNING: High latitude data (>{60}°) - EPSG:3857 will have significant distortion"
                 )
 
-            logger.info(f"=" * 80)
+            logger.info("=" * 80)
 
             return RasterMetadata(
                 file_path=path.resolve(),

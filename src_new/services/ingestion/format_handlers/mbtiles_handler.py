@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from src_new.shared.config import settings
 from src_new.shared.utils.file_validation import is_mbtiles

@@ -133,6 +133,8 @@ class LayerCoordinator:
             c.state.active_layer_is_dem = False
         if hasattr(c.panel, "_layer_order_registry"):
             c.panel._layer_order_registry.pop(normalized_path, None)
+        if c.state.selected_asset and str(c.state.selected_asset.get("file_path") or "").replace("\\", "/") == normalized_path:
+            c.state.selected_asset = None
 
         c._apply_display_control_mode()
         c.panel.update_search_results(
@@ -165,190 +167,139 @@ class LayerCoordinator:
         c._refresh_vector_layers_ui()
 
     def toggle_search_result_visibility(self, file_path: str, visible: bool) -> None:
-        """Toggle visibility of a search result layer with debug logging."""
+        """Toggle visibility of a search result layer on the map."""
         c = self._controller
-        print(f"\n{'=' * 80}")
-        print(f"DEBUG: toggle_search_result_visibility called")
-        print(f"  file_path: {file_path}")
-        print(f"  visible (requested): {visible}")
-        print(f"  Current visibility map: {c._search_layer_visibility}")
-        print(f"{'=' * 80}\n")
 
         normalized_path = str(file_path or "").strip().replace("\\", "/")
         if not normalized_path:
-            print("DEBUG: Visibility toggle ignored: missing asset path")
             c.panel.log("Visibility toggle ignored: missing asset path.")
             return
 
         asset = c._search_result_assets_by_path.get(normalized_path)
         if not isinstance(asset, dict):
-            print(
-                f"DEBUG: Visibility toggle ignored: asset not in search results for path={normalized_path}"
-            )
-            print(
-                f"DEBUG: Available paths in search results: {list(c._search_result_assets_by_path.keys())}"
-            )
             c.panel.log(
                 "Visibility toggle ignored: asset is no longer in current search results."
             )
             return
 
         next_visible = bool(visible)
-        print(
-            f"DEBUG: Asset found: {asset.get('file_name')}, kind={asset.get('kind')}, next_visible={next_visible}"
-        )
 
+        # DEM exclusivity: only one DEM layer visible at a time
         if next_visible and c._is_dem_asset(asset):
-            print("DEBUG: Showing DEM - hiding other DEM layers")
             for path, candidate in c._search_result_assets_by_path.items():
                 if path != normalized_path and c._is_dem_asset(candidate):
                     c._search_layer_visibility[path] = False
-                    print(f"DEBUG: Hiding other DEM: {candidate.get('file_name')}")
 
         c._search_layer_visibility[normalized_path] = next_visible
-        print(f"DEBUG: Updated visibility map: {normalized_path} = {next_visible}")
-        print(
-            f"DEBUG: Full visibility map after update: {c._search_layer_visibility}"
-        )
 
-        c._sync_search_visibility_layers()
+        if c._event_driven_enabled:
+            c._sync_search_visibility_layers_event_driven()
+        else:
+            c._sync_search_visibility_layers()
 
         if c._search_layer_visibility.get(normalized_path, False):
             c.panel.log(f"Shown on map: {asset.get('file_name', 'asset')}")
-            print(f"DEBUG: Layer shown: {asset.get('file_name')}")
+            # Use instantFocusBounds (snap camera immediately) so Cesium requests
+            # tiles at the correct zoom level from the very first render frame.
+            # flyToBounds (animated, 2s) causes the camera to be at a high altitude
+            # during the animation where minzoom=11 tiles aren't requested → blank globe.
+            from qtpy.QtCore import QTimer
+            QTimer.singleShot(150, lambda: c._toolbar_zoom_to_asset(normalized_path))
         else:
             c.panel.log(f"Hidden from map: {asset.get('file_name', 'asset')}")
-            print(f"DEBUG: Layer hidden: {asset.get('file_name')}")
 
-        print(f"DEBUG: Calling panel.update_search_results to refresh UI")
         c.panel.update_search_results(
             list(c._search_result_assets_by_path.values()),
             c._search_layer_visibility,
         )
-        print(f"DEBUG: toggle_search_result_visibility completed\n")
 
     def reorder_search_result_layers(self, reordered_layers: list[dict]) -> None:
         """Handle drag-and-drop reordering of search result layers with real-time globe updates."""
         c = self._controller
-        print(f"\n{'=' * 80}")
-        print(f"DEBUG: reorder_search_result_layers called in coordinator!")
-        print(f"  reordered_layers: {reordered_layers}")
-        print(f"{'=' * 80}\n")
         try:
             if not reordered_layers:
-                print("DEBUG: No reordered layers, returning")
                 return
 
-            print(f"DEBUG: Processing {len(reordered_layers)} layers")
-
-            # Track performance for event-driven architecture
             start_time = time.time()
 
-            # Find corresponding assets using file_path (not file_name, to handle duplicates)
+            # Resolve file_path → asset objects from the current search result registry
             reordered_assets = []
             for layer_info in reordered_layers:
                 file_path = layer_info.get("file_path", "")
                 if not file_path:
-                    print(f"WARNING: Layer info missing file_path: {layer_info}")
                     continue
-
-                # Normalize path for lookup
                 normalized_path = file_path.replace("\\", "/")
-
-                # Find the asset with matching file path
-                if normalized_path in c._search_result_assets_by_path:
-                    asset = c._search_result_assets_by_path[normalized_path]
-                    # Add visibility info from the layer_info
-                    asset_with_visibility = asset.copy()
-                    asset_with_visibility["is_visible"] = layer_info.get(
-                        "is_visible", True
-                    )
-                    reordered_assets.append(asset_with_visibility)
-                    print(
-                        f"  Matched asset: {asset.get('file_name', 'Unknown')} at {normalized_path} (visible={layer_info.get('is_visible', True)})"
-                    )
+                asset = c._search_result_assets_by_path.get(normalized_path)
+                if asset:
+                    asset_with_vis = asset.copy()
+                    asset_with_vis["is_visible"] = layer_info.get("is_visible", True)
+                    reordered_assets.append(asset_with_vis)
                 else:
-                    print(f"  WARNING: No asset found for path: {normalized_path}")
+                    c._logger.debug(
+                        "reorder: no asset found for path=%s", normalized_path
+                    )
 
             if not reordered_assets:
-                c.panel.log("Layer reordering failed: No matching assets found")
-                print(
-                    "ERROR: No matching assets found in _search_result_assets_by_path"
-                )
-                print(
-                    f"DEBUG: Available asset paths: {list(c._search_result_assets_by_path.keys())}"
-                )
-                print(
-                    f"DEBUG: Requested paths: {[layer_info.get('file_path', '') for layer_info in reordered_layers]}"
+                c.panel.log("Layer reordering failed: no matching assets found")
+                c._logger.warning(
+                    "reorder_search_result_layers: none of the %d requested paths "
+                    "matched _search_result_assets_by_path",
+                    len(reordered_layers),
                 )
                 return
 
-            print(f"DEBUG: Found {len(reordered_assets)} matching assets")
+            # REORDER-ONLY — never load layers here.
+            #
+            # _loaded_search_layer_keys tracks which assets have been sent to Cesium.
+            # Assets loaded via the search-results sync flow are added to this set by
+            # sync_focus_coordinator (lines ~65 and ~211).  Assets not yet in the set
+            # are simply not present in the Cesium imagery stack yet; telling Cesium to
+            # reorder them would be a no-op at best and a full re-render at worst.
+            #
+            # Previously this block attempted to load every "missing" layer, which caused
+            # ALL assets to be re-rendered on every drag-and-drop reorder (because the set
+            # was empty for layers loaded through the search path), freezing the application.
+            loaded_for_reorder = [
+                asset
+                for asset in reordered_assets
+                if str(asset.get("file_path", "")).replace("\\", "/")
+                in c._loaded_search_layer_keys
+            ]
 
-            # CRITICAL FIX: Ensure all layers are actually loaded before reordering
-            # Sometimes the reorder happens before layers are fully loaded
-            missing_layers = []
-            for asset in reordered_assets:
-                file_path = str(asset.get("file_path", "")).replace("\\", "/")
-                if file_path not in c._loaded_search_layer_keys:
-                    missing_layers.append(asset)
-
-            if missing_layers:
-                print(
-                    f"WARNING: {len(missing_layers)} layers not yet loaded, attempting to load them first"
+            skipped_count = len(reordered_assets) - len(loaded_for_reorder)
+            if skipped_count:
+                c._logger.debug(
+                    "reorder: skipping %d asset(s) not yet in Cesium stack "
+                    "(will be ordered correctly on next visibility sync)",
+                    skipped_count,
                 )
-                for asset in missing_layers:
-                    file_path = str(asset.get("file_path", "")).replace("\\", "/")
-                    print(
-                        f"  Loading missing layer: {asset.get('file_name', 'Unknown')} - {file_path}"
-                    )
 
-                    # Try to load the layer
-                    loaded = c._load_asset_layer_event_driven(
-                        asset,
-                        replace_existing=False,
-                        layer_key=file_path,
-                        auto_fly_to=False,
-                        apply_scene_mode=False,
-                        show_loading=False,
-                    )
+            if not loaded_for_reorder:
+                c._logger.info(
+                    "reorder: no loaded assets yet — reorder deferred until layers are ready"
+                )
+                return
 
-                    if loaded:
-                        c._loaded_search_layer_keys.add(file_path)
-                        print(f"  Successfully loaded missing layer: {file_path}")
-                    else:
-                        print(f"  Failed to load missing layer: {file_path}")
-
-                # Small delay to allow layers to initialize
-                time.sleep(0.1)
-
-            # Update the Cesium layer stack order using event-driven approach
+            # Issue the reorder to the Cesium bridge (pure stack rearrangement, no reload)
             if c._event_driven_enabled:
-                c._reorder_layers_event_driven(reordered_assets)
+                c._reorder_layers_event_driven(loaded_for_reorder)
             else:
-                c._reorder_layers_standard(reordered_assets)
+                c._reorder_layers_standard(loaded_for_reorder)
 
-            # Track performance metrics
-            elapsed_time = time.time() - start_time
+            elapsed = time.time() - start_time
             c._track_performance_metric(
-                "layer_reorder_times", elapsed_time, f"layers={len(reordered_layers)}"
+                "layer_reorder_times", elapsed, f"layers={len(loaded_for_reorder)}"
             )
 
-            # Log the successful reordering
-            layer_names = [
-                asset.get("file_name", "Unknown") for asset in reordered_assets
-            ]
-            if len(layer_names) <= 3:
-                c.panel.log(f"Layers reordered: {', '.join(layer_names)}")
-            else:
-                c.panel.log(
-                    f"Layers reordered: {', '.join(layer_names[:3])} and {len(layer_names) - 3} more"
-                )
-
+            names = [a.get("file_name", "?") for a in loaded_for_reorder]
+            summary = (
+                ", ".join(names)
+                if len(names) <= 3
+                else f"{', '.join(names[:3])} and {len(names) - 3} more"
+            )
+            c.panel.log(f"Layers reordered: {summary}")
             c._logger.info(
-                "Search result layers reordered: %d layers in %.3fs",
-                len(reordered_layers),
-                elapsed_time,
+                "Layers reordered: %d in %.3fs", len(loaded_for_reorder), elapsed
             )
 
         except Exception as e:

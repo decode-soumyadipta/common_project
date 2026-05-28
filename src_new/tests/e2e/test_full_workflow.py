@@ -97,7 +97,7 @@ class TestFullWorkflow:
         # Request tile at zoom level 0, tile (0, 0)
         async with AsyncClient(base_url=tile_url) as client:
             response = await client.get(
-                f"/tiles/0/0/0.png",
+                "/tiles/0/0/0.png",
                 params={"raster_id": raster_id}
             )
             assert response.status_code == 200

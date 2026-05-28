@@ -20,7 +20,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple, Union
+from typing import List, Optional, Tuple
 
 from platform_core.ingestion.services.metadata_extractor import (
     extract_metadata,

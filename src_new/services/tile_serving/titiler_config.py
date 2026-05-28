@@ -44,8 +44,6 @@ os.environ.setdefault("GDAL_HTTP_MERGE_CONSECUTIVE_RANGES", settings.gdal_http_m
 # installed (e.g. in CI or lightweight environments).
 # ---------------------------------------------------------------------------
 try:
-    import uvicorn
-    from starlette.middleware.base import BaseHTTPMiddleware
     from titiler.application.main import app as _titiler_app  # type: ignore[import]
 
     _TITILER_AVAILABLE = True

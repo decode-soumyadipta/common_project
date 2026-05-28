@@ -42,7 +42,6 @@ from client_desktop.client_backend.measurement_tools import (
     compute_fill_volume,
     compute_slope_aspect,
     compute_viewshed,
-    compute_volume,
     measure_polygon_area,
     measure_shadow_height,
 )
@@ -1119,7 +1118,7 @@ class DesktopController(QObject):
     def toggle_search_result_visibility(self, file_path: str, visible: bool) -> None:
         """Toggle visibility of a search result layer with debug logging."""
         print(f"\n{'=' * 80}")
-        print(f"DEBUG: toggle_search_result_visibility called")
+        print("DEBUG: toggle_search_result_visibility called")
         print(f"  file_path: {file_path}")
         print(f"  visible (requested): {visible}")
         print(f"  Current visibility map: {self._search_layer_visibility}")
@@ -1171,17 +1170,17 @@ class DesktopController(QObject):
             self.panel.log(f"Hidden from map: {asset.get('file_name', 'asset')}")
             print(f"DEBUG: Layer hidden: {asset.get('file_name')}")
 
-        print(f"DEBUG: Calling panel.update_search_results to refresh UI")
+        print("DEBUG: Calling panel.update_search_results to refresh UI")
         self.panel.update_search_results(
             list(self._search_result_assets_by_path.values()),
             self._search_layer_visibility,
         )
-        print(f"DEBUG: toggle_search_result_visibility completed\n")
+        print("DEBUG: toggle_search_result_visibility completed\n")
 
     def _sync_search_visibility_layers(self) -> None:
         """Sync layer visibility between UI and globe with debug logging - optimized to only update changed layers."""
         print(f"\n{'=' * 80}")
-        print(f"DEBUG: _sync_search_visibility_layers called")
+        print("DEBUG: _sync_search_visibility_layers called")
         print(f"  Current visibility map: {self._search_layer_visibility}")
         print(f"  Last synced visibility: {self._last_synced_visibility}")
         print(f"  Loaded layer keys: {self._loaded_search_layer_keys}")
@@ -1211,26 +1210,26 @@ class DesktopController(QObject):
 
             if not should_show:
                 if is_loaded:  # Only hide if it's actually loaded
-                    print(f"  ACTION: Hiding layer via setLayerVisibility")
+                    print("  ACTION: Hiding layer via setLayerVisibility")
                     self._run_js_call("setLayerVisibility", file_path, False)
                     self._last_synced_visibility[file_path] = False
                     if is_dem_asset and self._active_dem_search_layer_key == file_path:
                         self.state.active_layer_is_dem = False
                         self._active_dem_search_layer_key = None
                         self._apply_display_control_mode()
-                        print(f"  DEM deactivated")
+                        print("  DEM deactivated")
                 else:
-                    print(f"  SKIP: Layer not loaded, no need to hide")
+                    print("  SKIP: Layer not loaded, no need to hide")
                 continue
 
             if is_dem_asset and is_loaded:
-                print(f"  ACTION: Showing DEM layer via setLayerVisibility")
+                print("  ACTION: Showing DEM layer via setLayerVisibility")
                 self._run_js_call("setLayerVisibility", file_path, True)
                 self._last_synced_visibility[file_path] = True
                 self.state.active_layer_is_dem = True
                 self._active_dem_search_layer_key = file_path
                 self._apply_display_control_mode()
-                print(f"  DEM activated")
+                print("  DEM activated")
                 continue
 
             if (
@@ -1238,7 +1237,7 @@ class DesktopController(QObject):
                 and self._active_dem_search_layer_key
                 and self._active_dem_search_layer_key != file_path
             ):
-                print(f"  ACTION: Hiding DEM (another DEM is active)")
+                print("  ACTION: Hiding DEM (another DEM is active)")
                 self._search_layer_visibility[file_path] = False
                 if is_loaded:
                     self._run_js_call("setLayerVisibility", file_path, False)
@@ -1246,17 +1245,17 @@ class DesktopController(QObject):
                 continue
 
             if is_dem_asset and self._active_dem_search_layer_key == file_path:
-                print(f"  SKIP: DEM already active")
+                print("  SKIP: DEM already active")
                 continue
 
             if (not is_dem_asset) and is_loaded:
-                print(f"  ACTION: Showing imagery layer via setLayerVisibility")
+                print("  ACTION: Showing imagery layer via setLayerVisibility")
                 self._run_js_call("setLayerVisibility", file_path, True)
                 self._last_synced_visibility[file_path] = True
                 continue
 
             if not is_loaded:
-                print(f"  ACTION: Loading new layer")
+                print("  ACTION: Loading new layer")
                 loaded = self._load_asset_layer(
                     asset,
                     replace_existing=False,
@@ -1266,16 +1265,16 @@ class DesktopController(QObject):
                     show_loading=False,
                 )
                 if not loaded:
-                    print(f"  ERROR: Failed to load layer")
+                    print("  ERROR: Failed to load layer")
                     self._search_layer_visibility[file_path] = False
                     continue
 
                 self._loaded_search_layer_keys.add(file_path)
                 self._last_synced_visibility[file_path] = True
-                print(f"  SUCCESS: Layer loaded and added to loaded keys")
+                print("  SUCCESS: Layer loaded and added to loaded keys")
 
         self._apply_display_control_mode()
-        print(f"DEBUG: _sync_search_visibility_layers completed\n")
+        print("DEBUG: _sync_search_visibility_layers completed\n")
 
     def _focus_visible_search_assets(self, *, force: bool) -> None:
         """Legacy focus function - delegates to enhanced version."""
@@ -1362,7 +1361,7 @@ class DesktopController(QObject):
     def reorder_search_result_layers(self, reordered_layers: list[dict]) -> None:
         """Handle drag-and-drop reordering of search result layers with real-time globe updates."""
         print(f"\n{'=' * 80}")
-        print(f"DEBUG: reorder_search_result_layers called in controller!")
+        print("DEBUG: reorder_search_result_layers called in controller!")
         print(f"  reordered_layers: {reordered_layers}")
         print(f"{'=' * 80}\n")
         try:
@@ -1554,14 +1553,14 @@ class DesktopController(QObject):
 
             if layer_commands:
                 # Log the reordering plan for debugging
-                print(f"DEBUG: EVENT_DRIVEN Layer reordering plan:")
+                print("DEBUG: EVENT_DRIVEN Layer reordering plan:")
                 for cmd in layer_commands:
                     print(
                         f"  Order {cmd['new_order']}: {cmd['file_name']} ({cmd['kind']}) - key={cmd['layer_key']}"
                     )
 
                 # Send batch reorder command to Cesium
-                print(f"DEBUG: Sending reorderLayersEventDriven command to JavaScript")
+                print("DEBUG: Sending reorderLayersEventDriven command to JavaScript")
                 self._run_js_call("reorderLayersEventDriven", layer_commands)
                 self._logger.info(
                     "EVENT_DRIVEN: Sent %d layer reorder commands", len(layer_commands)
@@ -1569,9 +1568,9 @@ class DesktopController(QObject):
 
                 # Force additional render after reordering
                 self._run_js_call("requestSceneRender")
-                print(f"DEBUG: Reorder commands sent successfully")
+                print("DEBUG: Reorder commands sent successfully")
             else:
-                print(f"WARNING: No loaded layers found to reorder")
+                print("WARNING: No loaded layers found to reorder")
                 self._logger.warning("EVENT_DRIVEN: No loaded layers found to reorder")
                 self.panel.log("Layer reordering: No loaded layers found on map")
 
@@ -1592,7 +1591,7 @@ class DesktopController(QObject):
                 "Event-driven layer reordering failed, falling back to standard: %s", e
             )
             self.panel.log(
-                f"Layer reordering: Event-driven approach failed, using fallback"
+                "Layer reordering: Event-driven approach failed, using fallback"
             )
             self._reorder_layers_standard(reordered_assets)
 
@@ -2632,7 +2631,7 @@ class DesktopController(QObject):
 
                     # Add informative completion message
                     self.panel.append_ingest_detail(
-                        f"[COMPLETED] Job finished - check asset count for new additions"
+                        "[COMPLETED] Job finished - check asset count for new additions"
                     )
 
                     # Stop polling and clear job ID
@@ -5375,7 +5374,7 @@ class DesktopController(QObject):
                 )
             else:
                 self._logger.debug(
-                    f"Skipped true color correction (missing stats), rendering raw."
+                    "Skipped true color correction (missing stats), rendering raw."
                 )
             return query
 

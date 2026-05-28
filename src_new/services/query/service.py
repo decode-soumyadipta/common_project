@@ -28,7 +28,6 @@ Requirements: 6.3, 6.6, 16.1, 16.2
 from __future__ import annotations
 
 import logging
-import os
 import time
 
 import uvicorn
