@@ -27,14 +27,6 @@ class ControlPanelSearchMixin:
         self, assets: list[dict], visibility_by_path: dict[str, bool] | None = None
     ) -> None:
         """Update search results table with proper ordering: Imagery first (top), then DEM (bottom)."""
-        print(f"\n{'=' * 80}")
-        print(f"DEBUG: update_search_results called with {len(assets)} assets")
-        if visibility_by_path:
-            print(f"DEBUG: Visibility map provided: {visibility_by_path}")
-        else:
-            print("DEBUG: No visibility map provided")
-        print(f"{'=' * 80}\n")
-
         visibility_map = visibility_by_path or {}
 
         # Sort assets: Imagery first (top of list), DEM last (bottom of list)
@@ -112,7 +104,6 @@ class ControlPanelSearchMixin:
                     break
 
         if can_update_in_place:
-            print("DEBUG: Performing in-place update of search results table")
             # Update summary text
             self.search_results_summary.setText(
                 f"Matches: {total_matches} | DEM: {dem_count} | Imagery: {imagery_count} | Visible: {visible_count} | CRS: {crs_summary} | Latest: {latest_date}"

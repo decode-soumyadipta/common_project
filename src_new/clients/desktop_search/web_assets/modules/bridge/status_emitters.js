@@ -661,7 +661,6 @@
                 color: Cesium.Color.fromCssColorString("#00e5ff"),
                 outlineColor: Cesium.Color.WHITE,
                 outlineWidth: 2,
-                disableDepthTestDistance: Number.POSITIVE_INFINITY,
               },
             });
             requestSceneRender();

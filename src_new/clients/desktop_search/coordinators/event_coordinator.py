@@ -90,7 +90,10 @@ class EventCoordinator:
         msg_lower = message.lower()
         
         if c._layer_loading_active and (
-            "fly-through started" in msg_lower
+            "Imagery provider configured" in message
+            or "Layer added" in message
+            or "Tile layer loaded" in message
+            or "fly-through started" in msg_lower
             or "fly-to bounds" in msg_lower
             or "fly-to lon=" in msg_lower
             or "fly-to: complete" in msg_lower

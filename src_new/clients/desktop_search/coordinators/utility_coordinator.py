@@ -176,6 +176,8 @@ class UtilityCoordinator:
         if not isinstance(asset, dict):
             return None
         bounds = asset.get("bounds")
+        if bounds is None:
+            bounds = asset.get("bbox")
         if isinstance(bounds, dict):
             try:
                 return {
@@ -186,6 +188,17 @@ class UtilityCoordinator:
                 }
             except (KeyError, TypeError, ValueError):
                 pass
+        if isinstance(bounds, (list, tuple)) and len(bounds) >= 4:
+            try:
+                west, south, east, north = map(float, bounds[:4])
+                return {
+                    "west": west,
+                    "south": south,
+                    "east": east,
+                    "north": north,
+                }
+            except (TypeError, ValueError):
+                pass
         try:
             return {
                 "west": float(asset["min_lon"]),
@@ -194,6 +207,41 @@ class UtilityCoordinator:
                 "north": float(asset["max_lat"]),
             }
         except (KeyError, TypeError, ValueError):
+            pass
+
+        file_path = str(asset.get("file_path") or "").strip()
+        if not file_path:
+            return None
+
+        try:
+            from src_new.services.ingestion.gdal_pipelines.metadata_extractor import (
+                extract_metadata,
+            )
+
+            metadata = extract_metadata(Path(file_path))
+            bbox = getattr(metadata, "bbox", None) or getattr(metadata, "bounds", None)
+            if bbox is None:
+                return None
+
+            computed_bounds = {
+                "west": float(getattr(bbox, "min_lon", getattr(bbox, "left", 0.0))),
+                "south": float(getattr(bbox, "min_lat", getattr(bbox, "bottom", 0.0))),
+                "east": float(getattr(bbox, "max_lon", getattr(bbox, "right", 0.0))),
+                "north": float(getattr(bbox, "max_lat", getattr(bbox, "top", 0.0))),
+            }
+            asset.setdefault("bounds", computed_bounds)
+            to_wkt_polygon = getattr(bbox, "to_wkt_polygon", None)
+            if callable(to_wkt_polygon):
+                asset.setdefault("bounds_wkt", to_wkt_polygon())
+            if not asset.get("crs") and getattr(metadata, "crs", None):
+                asset["crs"] = metadata.crs
+            return computed_bounds
+        except Exception as exc:
+            self._logger.info(
+                "Unable to derive bounds from file metadata for %s: %s",
+                file_path,
+                exc,
+            )
             return None
 
     @staticmethod

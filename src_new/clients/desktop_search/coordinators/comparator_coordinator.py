@@ -128,6 +128,7 @@ class ComparatorCoordinator:
                 list(c._search_result_assets_by_path.values()),
                 c._search_layer_visibility,
             )
+            c._refresh_search_result_markers()
             c.panel.log(
                 "Comparator: enabled an additional visible raster layer for comparison."
             )
@@ -174,6 +175,7 @@ class ComparatorCoordinator:
             list(c._search_result_assets_by_path.values()),
             c._search_layer_visibility,
         )
+        c._refresh_search_result_markers()
         return self._toolbar_toggle_comparator(enabled=True)
 
     def apply_swipe_comparator_selection(self, selected_paths: list[str]) -> bool:

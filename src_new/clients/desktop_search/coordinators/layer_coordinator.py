@@ -60,6 +60,7 @@ class LayerCoordinator:
                 list(c._search_result_assets_by_path.values()),
                 c._search_layer_visibility,
             )
+            c._refresh_search_result_markers()
             c._set_project_modified(True)
 
         else:
@@ -247,6 +248,7 @@ class LayerCoordinator:
                 list(c._search_result_assets_by_path.values()),
                 c._search_layer_visibility,
             )
+            c._refresh_search_result_markers()
         finally:
             # Always clear the in-progress flag
             c._visibility_sync_in_progress = False

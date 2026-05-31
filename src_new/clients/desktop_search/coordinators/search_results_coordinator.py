@@ -4,6 +4,8 @@ import logging
 import re
 from pathlib import Path
 
+from qtpy.QtCore import QTimer
+
 
 class SearchResultsCoordinator:
     """Encapsulate search results processing and management for desktop controller."""
@@ -100,25 +102,32 @@ class SearchResultsCoordinator:
             for path in c._search_result_assets_by_path
         }
 
-        marker_payloads = []
-        for asset in assets:
-            payload = c._search_result_marker_payload(asset)
-            if payload:
-                marker_payloads.append(payload)
-        c._run_js_call("setSearchResultMarkers", marker_payloads)
+        c._logger.info(
+            "Search results applied: assets=%d visible=%d event_driven=%s label=%s",
+            len(c._search_result_assets_by_path),
+            sum(1 for visible in c._search_layer_visibility.values() if visible),
+            event_driven,
+            label,
+        )
 
-        aoi_visible = True
-        if hasattr(c.panel, "search_aoi_visible_check"):
-            aoi_visible = bool(c.panel.search_aoi_visible_check.isChecked())
-        c._run_js_call("setSearchOverlayVisible", aoi_visible)
-
-        c._run_js_call("setSearchOverlayVisible", aoi_visible)
+        c._set_search_aoi_visible(True)
 
         # Event-driven layer synchronization
         if event_driven:
             c._sync_search_visibility_layers_event_driven()
         else:
             c._sync_search_visibility_layers()
+
+        c._refresh_search_result_markers()
+        c._logger.info(
+            "Search markers refreshed after layer sync: assets=%d",
+            len(c._search_result_assets_by_path),
+        )
+        c._logger.info(
+            "Search marker refresh queued again after settle: event_driven=%s label=%s",
+            event_driven,
+            label,
+        )
 
         # FIX 1 — Layer order: enforce display order matching the UI list.
         # UI display sort: imagery (non-DEM) at row 0 = visually ON TOP in Cesium.
@@ -149,6 +158,11 @@ class SearchResultsCoordinator:
         c.panel.update_search_results(
             list(c._search_result_assets_by_path.values()),
             c._search_layer_visibility,
+        )
+        QTimer.singleShot(0, c._refresh_search_result_markers)
+        QTimer.singleShot(250, c._refresh_search_result_markers)
+        c.panel.log(
+            f"Marker refresh scheduled for {len(c._search_result_assets_by_path)} search result(s)."
         )
 
         # Enhanced logging for event-driven mode

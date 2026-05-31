@@ -6,7 +6,7 @@
   // ═══════════════════════════════════════════════════════════════════════════
 
   function updatePolygonPreviewVisibility() {
-    const visible = polygonVisibilityEnabled && searchOverlayVisible;
+    const visible = polygonVisibilityEnabled;
     // Note: show properties for preview entities are managed via CallbackProperty in the controller
     // to ensure high-frequency updates during drawing. Static overrides here are avoided.
     if (searchCursorEntity) {
@@ -388,7 +388,6 @@
     
     if (distanceMeasureModeEnabled && searchDrawMode === "polygon") {
       searchDrawMode = "none";
-      searchOverlayVisible = false;
       setSearchCursorEnabled(false);
       updatePolygonPreviewVisibility();
     }
@@ -417,7 +416,6 @@
       }
       if (searchDrawMode === "polygon") {
         searchDrawMode = "none";
-        searchOverlayVisible = false;
         setSearchCursorEnabled(false);
         updatePolygonPreviewVisibility();
       }
@@ -496,23 +494,23 @@
       const pt1 = viewer.entities.add({
           position: start,
           point: {
-              pixelSize: 10,
-              color: Cesium.Color.fromCssColorString("#4da8da"),
-              outlineColor: Cesium.Color.WHITE,
-              outlineWidth: 2,
+            pixelSize: 3,
+              color: Cesium.Color.fromCssColorString("#00e5ff"),
+              outlineColor: Cesium.Color.TRANSPARENT,
+            outlineWidth: 0,
               heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-              disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
           }
       });
       const pt2 = viewer.entities.add({
           position: end,
           point: {
-              pixelSize: 10,
-              color: Cesium.Color.fromCssColorString("#4da8da"),
-              outlineColor: Cesium.Color.WHITE,
-              outlineWidth: 2,
+            pixelSize: 3,
+              color: Cesium.Color.fromCssColorString("#00e5ff"),
+              outlineColor: Cesium.Color.TRANSPARENT,
+            outlineWidth: 0,
               heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-              disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
           }
       });
 

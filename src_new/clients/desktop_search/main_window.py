@@ -15,6 +15,8 @@ from qtpy.QtGui import (
     QCursor,
     QGuiApplication,
     QIcon,
+    QKeySequence,
+    QShortcut,
 )
 from qtpy.QtGui import QDesktopServices
 from qtpy.QtWebChannel import QWebChannel
@@ -325,6 +327,12 @@ class MainWindow(QMainWindow):
         self.controller._elevation_profile.set_panel(self.elevation_profile_panel)
         # Wire fill volume job completion → uncheck toolbar button
         self.controller._on_fill_volume_done = self._on_fill_volume_done
+
+        self._escape_cancel_action = QAction("Cancel Active Draw", self)
+        self._escape_cancel_action.setShortcut("Esc")
+        self._escape_cancel_action.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        self._escape_cancel_action.triggered.connect(self._cancel_active_draw)
+        self.addAction(self._escape_cancel_action)
 
         for label, action in self.toolbar_actions.items():
             if action.isCheckable():
@@ -1214,6 +1222,12 @@ class MainWindow(QMainWindow):
                     if obj is self.web_view or obj is self.web_view.focusProxy():
                         self._apply_crosshair_to_webview()
         return super().eventFilter(obj, event)
+
+    def _cancel_active_draw(self) -> None:
+        if hasattr(self, "controller") and self.controller:
+            cancelled = self.controller.cancel_active_draw()
+            if cancelled:
+                logging.getLogger("desktop").info("Escape cancelled active draw")
 
     def _toolbar_icon(self, tool_name: str, fallback: QStyle.StandardPixmap) -> QIcon:
         """Get icon for toolbar action.

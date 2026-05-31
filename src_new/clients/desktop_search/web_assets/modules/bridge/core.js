@@ -896,10 +896,6 @@
             : searchOverlayVisible;
         },
         setSearchDrawMode: function (value) {
-          log(
-            "debug",
-            "setSearchDrawMode value=" + value + " previous=" + searchDrawMode + " polygonPoints=" + searchPolygonPoints.length + " cursorPoint=" + (searchCursorPoint ? "yes" : "no")
-          );
           searchDrawMode = value;
         },
         setSearchCursorPoint: function (value) {

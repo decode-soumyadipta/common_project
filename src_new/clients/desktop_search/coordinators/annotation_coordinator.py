@@ -233,9 +233,13 @@ class AnnotationCoordinator:
         if enabled is False:
             # Just disable draw mode — polygons stay visible.
             c._polygon_draw_mode_enabled = False
+            c._logger.debug(
+                "toolbar_add_polygon_annotation disabled polygon_draw=%s line_draw=%s line_start=%s",
+                c._polygon_draw_mode_enabled,
+                getattr(c, "_add_line_mode_enabled", None),
+                getattr(c, "_annotation_line_start", None),
+            )
             c._run_js_call("setAnnotationDrawingMode", False)
-            c._run_js_call("setLineDrawMode", False)
-            c._run_js_call("clearLineDrawPreview")
             c._run_js_call("setSearchDrawMode", "none")
             c._set_measurement_cursor_enabled(False)
             c.panel.log("Polygon draw disabled.")
@@ -256,7 +260,6 @@ class AnnotationCoordinator:
         c._run_js_call("setLineDrawMode", False)
         c._run_js_call("clearLineDrawPreview")
         c._run_js_call("setAnnotationDrawingMode", True)
-        c._run_js_call("setSearchOverlayVisible", True)
         c._run_js_call("clearSearchResultMarkers")
         if hasattr(c, "_set_fly_through_overlay_active"):
             c._set_fly_through_overlay_active(False)

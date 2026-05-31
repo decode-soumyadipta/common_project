@@ -1,6 +1,9 @@
   window.offlineGIS = window.offlineGIS || {};
   const searchResultMarkerEntities = [];
 
+  const SEARCH_RESULT_MARKER_RED = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath fill='%23e74c3c' d='M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z'/%3E%3C/svg%3E";
+  const SEARCH_RESULT_MARKER_YELLOW = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath fill='%23f1c40f' d='M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z'/%3E%3C/svg%3E";
+
   function getSearchOverlayVisible() {
     return typeof window._offlineGISSearchOverlayVisible === "boolean"
       ? window._offlineGISSearchOverlayVisible
@@ -34,8 +37,8 @@
       setSearchResultMarkers: function (markers) {
         if (!viewer) return;
         clearSearchResultMarkerEntities();
-        const iconImage = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath fill='%23e74c3c' d='M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z'/%3E%3C/svg%3E";
         const items = Array.isArray(markers) ? markers : [];
+        let validCount = 0;
         for (let index = 0; index < items.length; index += 1) {
           const marker = items[index] || {};
           const lon = Number(marker.lon);
@@ -45,13 +48,15 @@
           }
           const labelText = String(marker.text || marker.file_name || "Tile").trim() || "Tile";
           const position = Cesium.Cartesian3.fromDegrees(lon, lat, 0.0);
+          const displayed = Boolean(marker.displayed);
+          validCount += 1;
           const iconEntity = viewer.entities.add({
             position: position,
             show: new Cesium.CallbackProperty(function () {
               return getSearchOverlayVisible();
             }, false),
             billboard: {
-              image: iconImage,
+              image: displayed ? SEARCH_RESULT_MARKER_YELLOW : SEARCH_RESULT_MARKER_RED,
               width: 26,
               height: 26,
               verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
@@ -271,25 +276,66 @@
           setStatus("Undo: removed measurement start point.");
           log("info", "Undo distance start");
         }
-        if (!undid && drawnPolygons.length > 0) {
-          const poly = drawnPolygons.pop();
-          if (poly) {
-            if (poly.lineEntity) viewer.entities.remove(poly.lineEntity);
-            if (poly.polygonEntity) viewer.entities.remove(poly.polygonEntity);
-            if (poly.areaLabelEntity) viewer.entities.remove(poly.areaLabelEntity);
-            if (poly.nameLabelEntity) viewer.entities.remove(poly.nameLabelEntity);
-            if (poly.editEntity) viewer.entities.remove(poly.editEntity);
-            if (poly.deleteEntity) viewer.entities.remove(poly.deleteEntity);
-            for (const ve of poly.vertexEntities || []) {
-              if (ve) viewer.entities.remove(ve);
-            }
-            undid = true;
-            setStatus("Undo: removed last drawn polygon.");
-            log("info", "Undo drawn polygon id=" + String(poly.id));
-          }
-        }
         requestSceneRender();
         return undid;
+      },
+      cancelActiveDraw: function () {
+        let cancelled = false;
+        if (lineDrawModeEnabled || lineDrawStart) {
+          lineDrawStart = null;
+          clearLineDrawPreview();
+          setStatus("Line draw cancelled. Click start point to begin again.");
+          log("info", "Cancel active line draw");
+          cancelled = true;
+        }
+        if (distanceMeasureModeEnabled && distanceMeasureAnchor) {
+          distanceMeasureAnchor = null;
+          clearMeasurementPreviewEntities();
+          setStatus("Distance draw cancelled. Click first point to begin again.");
+          log("info", "Cancel active distance draw");
+          cancelled = true;
+        }
+        if (searchDrawMode === "polygon" && !searchPolygonLocked && searchPolygonPoints.length > 0) {
+          searchPolygonPoints.length = 0;
+          searchCursorPoint = null;
+          if (window.OfflineGISRuntime && typeof window.OfflineGISRuntime.setSearchCursorPoint === "function") {
+            window.OfflineGISRuntime.setSearchCursorPoint(null);
+          }
+          updateSearchPolygonPreview();
+          setStatus("Polygon draw cancelled. Click points to start again.");
+          log("info", "Cancel active polygon draw");
+          cancelled = true;
+        }
+        if (searchDrawMode === "rectangle" && !searchRectangleLocked && (searchRectangleStartPoint || searchRectangleCurrentPoint)) {
+          searchRectangleStartPoint = null;
+          searchRectangleCurrentPoint = null;
+          searchRectangleLocked = false;
+          if (typeof searchRectangleEntity !== "undefined" && searchRectangleEntity && viewer) {
+            viewer.entities.remove(searchRectangleEntity);
+            searchRectangleEntity = null;
+          }
+          requestSceneRender();
+          setStatus("Box draw cancelled. Drag to start again.");
+          log("info", "Cancel active rectangle draw");
+          cancelled = true;
+        }
+        if (flyThroughModeEnabled && flyThroughPoints.length > 0) {
+          flyThroughPoints.length = 0;
+          flyThroughPreviewEnd = null;
+          if (flyThroughPreviewLineEntity) {
+            viewer.entities.remove(flyThroughPreviewLineEntity);
+            flyThroughPreviewLineEntity = null;
+          }
+          if (flyThroughPathEntity) {
+            viewer.entities.remove(flyThroughPathEntity);
+            flyThroughPathEntity = null;
+          }
+          requestSceneRender();
+          setStatus("Fly Through cancelled. Click to add a new path.");
+          log("info", "Cancel active fly through draw");
+          cancelled = true;
+        }
+        return cancelled;
       },
       zoomIn: function () {
         log("debug", "=== ZOOM IN BUTTON PRESSED ===");
@@ -583,7 +629,6 @@
           return;
         }
         searchDrawMode = mode;
-        searchOverlayVisible = true;
         polygonVisibilityEnabled = true;
         searchCursorPoint = null;
         searchRectangleStartPoint = null;
@@ -620,11 +665,9 @@
           viewer.entities.remove(searchRectangleEntity);
           searchRectangleEntity = null;
         }
-        searchOverlayVisible = true;
-        polygonVisibilityEnabled = true;
         clearSearchEntities();
-        if (typeof searchPolygonController !== "undefined" && searchPolygonController && typeof searchPolygonController.clearAoiData === "function") {
-          searchPolygonController.clearAoiData();
+        if (typeof searchPolygonController !== "undefined" && searchPolygonController && typeof searchPolygonController.clearAllData === "function") {
+          searchPolygonController.clearAllData();
         }
         clearSearchResultMarkerEntities();
         emitSearchGeometry("none", {});

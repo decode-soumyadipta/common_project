@@ -463,6 +463,42 @@ class DesktopController(QObject):
     def _set_annotation_overlay_visible(self, visible: bool) -> None:
         self._run_js_call("setAnnotationVisibility", bool(visible))
 
+    def _set_search_aoi_visible(self, visible: bool) -> None:
+        checked = bool(visible)
+        self._logger.debug(
+            "_set_search_aoi_visible checked=%s checkbox_checked=%s",
+            checked,
+            bool(self.panel.search_aoi_visible_check.isChecked()) if hasattr(self.panel, "search_aoi_visible_check") else None,
+        )
+        if hasattr(self.panel, "search_aoi_visible_check"):
+            check_box = self.panel.search_aoi_visible_check
+            if check_box.isChecked() != checked:
+                check_box.blockSignals(True)
+                check_box.setChecked(checked)
+                check_box.blockSignals(False)
+        self._logger.debug("_set_search_aoi_visible -> calling JS setSearchOverlayVisible(%s)", checked)
+        self._run_js_call("setSearchOverlayVisible", checked)
+        if checked:
+            self._refresh_search_result_markers()
+
+    def _refresh_search_result_markers(self) -> None:
+        marker_payloads = []
+        for asset in self._search_result_assets_by_path.values():
+            payload = self._search_result_marker_payload(asset)
+            if payload:
+                marker_payloads.append(payload)
+        self._logger.info(
+            "_refresh_search_result_markers asset_count=%d payload_count=%d",
+            len(self._search_result_assets_by_path),
+            len(marker_payloads),
+        )
+        if marker_payloads:
+            self._logger.info(
+                "_refresh_search_result_markers sample_payload=%s",
+                marker_payloads[0],
+            )
+        self._run_js_call("setSearchResultMarkers", marker_payloads)
+
     def _set_measurement_cursor_enabled(self, enabled: bool) -> None:
         # Set cursor via JavaScript (for Cesium canvas cursor)
         self._logger.debug("_set_measurement_cursor_enabled called: enabled=%s", enabled)
@@ -1262,7 +1298,6 @@ class DesktopController(QObject):
             self._add_line_mode_enabled = False
             self._add_text_mode_enabled = False
             self._annotation_line_start = None
-            self._set_annotation_overlay_visible(False)
             self._shadow_height_mode_enabled = False
         self._pan_mode_enabled = not self._distance_measure_mode_enabled
         self._last_distance_measurement_signature = None
@@ -1270,19 +1305,44 @@ class DesktopController(QObject):
             # Disable pan mode in JS so clicks reach the distance tool handler
             self._run_js_call("setPanMode", False)
             self._run_js_call("setSearchDrawMode", "none")
+            self._logger.debug(
+                "Distance mode enabled without hiding annotation overlay; preserving existing drawings"
+            )
         self._run_js_call("setDistanceMeasureMode", self._distance_measure_mode_enabled)
         if not self._distance_measure_mode_enabled:
             self.panel.log("Distance tool disabled.")
             self._logger.info("Distance measure mode disabled")
             return False
         self.state.clicked_points.clear()
-        self._run_js_call("clearMeasurementEntities")
+        self._run_js_call("clearMeasurementPreviewEntities")
         self.panel.log(
             "Distance tool enabled. Click first point, move cursor to preview, click second point to measure. "
             "Right-click to stop drawing."
         )
         self._logger.info("Distance measure mode enabled")
         return True
+
+    def cancel_active_draw(self) -> bool:
+        """Cancel only the current in-progress draw without deleting committed drawings."""
+        cancelled = bool(
+            self._add_line_mode_enabled
+            or self._annotation_line_start is not None
+            or self._distance_measure_mode_enabled
+            or self._polygon_draw_mode_enabled
+            or self._shadow_height_mode_enabled
+            or self._fly_through_mode_enabled
+        )
+        if cancelled:
+            self.state.clicked_points.clear()
+        self._run_js_call("cancelActiveDraw")
+        if self._annotation_line_start is not None:
+            self._annotation_line_start = None
+        if not cancelled and self._shadow_height_mode_enabled:
+            self._shadow_height_mode_enabled = False
+            self.panel.log("Shadow Height tool cancelled.")
+            self._logger.info("Cancelled active shadow height tool")
+            cancelled = True
+        return cancelled
 
     def _toolbar_set_pan_mode(self, enabled: bool | None = None) -> bool:
         next_state = (not self._pan_mode_enabled) if enabled is None else bool(enabled)
@@ -1419,12 +1479,14 @@ class DesktopController(QObject):
         self._fly_through_mode_enabled = False
         self._add_point_mode_enabled = False
         self._add_text_mode_enabled = False
+        self._polygon_draw_mode_enabled = False
         self._annotation_line_start = None
         self._run_js_call("setDistanceMeasureMode", False)
         self._run_js_call("setPanMode", False)
         self._run_js_call("setFlyThroughMode", False)
         self._set_fly_through_overlay_active(False)
         self._run_js_call("setSearchDrawMode", "none")
+        self._run_js_call("setAnnotationDrawingMode", True)
 
         self._logger.info("Add Line mode enabled, setting measurement cursor")
         self._set_measurement_cursor_enabled(True)
@@ -1592,9 +1654,18 @@ class DesktopController(QObject):
         return {"west": b.min_x, "south": b.min_y, "east": b.max_x, "north": b.max_y}
 
     def _search_result_marker_payload(self, asset: dict) -> dict[str, object] | None:
-        if getattr(self, "_polygon_draw_mode_enabled", False):
-            return None
         centroid = self._asset_centroid(asset)
+        if not centroid:
+            bounds = self._utility.asset_bounds(asset)
+            if bounds:
+                centroid = {
+                    "lon": (float(bounds["west"]) + float(bounds["east"])) / 2.0,
+                    "lat": (float(bounds["south"]) + float(bounds["north"])) / 2.0,
+                }
+                self._logger.info(
+                    "_search_result_marker_payload using bounds fallback file=%s",
+                    asset.get("file_name"),
+                )
         if not centroid:
             return None
         lon = centroid.get("lon")
@@ -1602,12 +1673,15 @@ class DesktopController(QObject):
         if not self._is_valid_lon_lat(lon, lat):
             return None
         file_name = str(asset.get("file_name") or asset.get("file_path") or "Tile")
-        return {
+        file_path = str(asset.get("file_path") or "").replace("\\", "/")
+        payload = {
             "lon": float(lon),
             "lat": float(lat),
             "text": file_name,
             "file_name": file_name,
+            "displayed": bool(self._search_layer_visibility.get(file_path, False)),
         }
+        return payload
 
 
     def _fly_to_asset(self, asset: dict) -> bool:

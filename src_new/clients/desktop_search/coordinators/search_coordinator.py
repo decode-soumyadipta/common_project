@@ -102,7 +102,6 @@ class SearchCoordinator:
 
     def set_search_draw_mode(self, mode: str | bool | None = None) -> None:
         c = self._controller
-        c._logger.debug("SearchCoordinator.set_search_draw_mode called: mode=%s", mode)
         normalized_mode = "polygon"
         if isinstance(mode, str):
             lowered = mode.strip().lower()
@@ -113,7 +112,6 @@ class SearchCoordinator:
         elif mode is False:
             normalized_mode = "none"
 
-        c._logger.debug("Search draw mode normalized=%s", normalized_mode)
         if hasattr(c.panel, "_set_search_draw_mode") and normalized_mode != "none":
             c.panel._set_search_draw_mode(normalized_mode)
 
@@ -135,7 +133,6 @@ class SearchCoordinator:
         c._pan_mode_enabled = False
         c._run_js_call("setSearchDrawMode", normalized_mode)
         # Always enable crosshair for drawing activities
-        c._logger.info("Search draw mode enabled, setting measurement cursor")
         c._set_measurement_cursor_enabled(True)
         c._set_search_draw_button_checked(True)
         if normalized_mode == "rectangle":

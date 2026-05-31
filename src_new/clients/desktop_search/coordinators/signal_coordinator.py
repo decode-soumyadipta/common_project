@@ -126,7 +126,7 @@ class SignalCoordinator:
         c.panel.search_layer_delete_requested.connect(c.remove_search_layer)
         if hasattr(c.panel, "aoi_visibility_changed"):
             c.panel.aoi_visibility_changed.connect(
-                lambda visible: c._run_js_call("setSearchOverlayVisible", visible)
+                lambda visible: c._set_search_aoi_visible(visible)
             )
 
     def _connect_button(

@@ -932,10 +932,7 @@
       setLineDrawMode: function (enabled) {
         lineDrawModeEnabled = Boolean(enabled);
         log("debug", "setLineDrawMode called enabled=" + lineDrawModeEnabled + " start=" + (lineDrawStart ? (lineDrawStart.lon + "," + lineDrawStart.lat) : "none"));
-        if (!lineDrawModeEnabled) {
-          lineDrawStart = null;
-          clearLineDrawPreview();
-        }
+        clearLineDrawPreview();
         log("info", "Line draw mode set: " + lineDrawModeEnabled);
       },
       setLineDrawStart: function (lon, lat) {
@@ -946,6 +943,17 @@
         }
         lineDrawStart = { lon: Number(lon), lat: Number(lat) };
         log("debug", "setLineDrawStart lon=" + lineDrawStart.lon.toFixed(6) + " lat=" + lineDrawStart.lat.toFixed(6));
+        if (typeof lastMousePosition !== "undefined" && lastMousePosition && typeof getLonLatFromScreen === "function") {
+          try {
+            const hoverLonLat = getLonLatFromScreen(lastMousePosition);
+            if (hoverLonLat) {
+              log("debug", "setLineDrawStart preview seed hover=" + hoverLonLat.lon.toFixed(6) + "," + hoverLonLat.lat.toFixed(6));
+              updateLineDrawPreview(lineDrawStart.lon, lineDrawStart.lat, hoverLonLat.lon, hoverLonLat.lat);
+            }
+          } catch (e) {
+            log("debug", "setLineDrawStart preview seed failed: " + e.message);
+          }
+        }
       },
       clearLineDrawPreview: function () {
         lineDrawStart = null;
