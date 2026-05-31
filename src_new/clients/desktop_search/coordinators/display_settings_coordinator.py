@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from qtpy.QtCore import QSignalBlocker
+
 if TYPE_CHECKING:
     from src_new.clients.desktop_search.controller import DesktopController
 
