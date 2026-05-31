@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 from qtpy.QtCore import Qt
 from qtpy.QtWidgets import (
     QComboBox,
-    QLabel,
     QVBoxLayout,
     QWidget,
 )
@@ -74,12 +73,12 @@ class MapOverlayControls(QWidget):
         self._special_mode_active = bool(active)
 
     def update_position(self) -> None:
-        """Update the overlay position to top-right corner of parent widget."""
-        parent_widget = self.parentWidget()
-        if parent_widget and parent_widget.isVisible():
-            top_right_global = parent_widget.mapToGlobal(parent_widget.rect().topRight())
-            x_pos = top_right_global.x() - self.width() - 10
-            y_pos = top_right_global.y() + 10
+        """Update the overlay position to the top-right inside the map viewport."""
+        target_widget = getattr(self.controller, "web_view", None) or self.parentWidget()
+        if target_widget and target_widget.isVisible():
+            top_right_global = target_widget.mapToGlobal(target_widget.rect().topRight())
+            x_pos = top_right_global.x() - self.width() - 14
+            y_pos = top_right_global.y() + 18
             self.move(x_pos, y_pos)
             self.raise_()
 

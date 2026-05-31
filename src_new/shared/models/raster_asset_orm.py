@@ -12,9 +12,8 @@ The schema includes columns for:
 This ORM model is used by the Query Service repository to query assets
 from the raster_assets table.
 """
-from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Float, Integer, String, Text
+from sqlalchemy import Column, DateTime, Float, Integer, String
 from sqlalchemy.ext.declarative import declarative_base
 
 Base = declarative_base()

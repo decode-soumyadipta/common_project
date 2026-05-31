@@ -339,12 +339,12 @@
       },
       zoomIn: function () {
         log("debug", "=== ZOOM IN BUTTON PRESSED ===");
-        zoomBy(0.65);
+        zoomBy(0.82);
         log("debug", "Zoom in button completed");
       },
       zoomOut: function () {
         log("debug", "=== ZOOM OUT BUTTON PRESSED ===");
-        zoomBy(1.35);
+        zoomBy(1.18);
         log("debug", "Zoom out button completed");
       },
       zoomToExtent: function () {

@@ -15,14 +15,11 @@ from qtpy.QtGui import (
     QCursor,
     QGuiApplication,
     QIcon,
-    QKeySequence,
-    QShortcut,
 )
 from qtpy.QtGui import QDesktopServices
 from qtpy.QtWebChannel import QWebChannel
 from qtpy.QtWebEngineWidgets import QWebEngineSettings, QWebEngineView
 from qtpy.QtWidgets import (
-    QCheckBox,
     QComboBox,
     QDialog,
     QHBoxLayout,
@@ -33,12 +30,10 @@ from qtpy.QtWidgets import (
     QMainWindow,
     QPushButton,
     QScrollArea,
-    QSizePolicy,
     QSplitter,
     QStyle,
     QToolBar,
     QVBoxLayout,
-    QWidget,
 )
 
 from src_new.clients.desktop_search.app_mode import DesktopAppMode
@@ -85,7 +80,6 @@ class MainWindow(QMainWindow):
         "Distance / Azimuth",
         "Elevation Profile",
         "Fill Volume",
-        "Pan",
         "Add Point",
         "Add Line",
         "Add Polygon",
@@ -122,7 +116,6 @@ class MainWindow(QMainWindow):
         (
             "navigation",
             (
-                ("Pan", "pan"),
                 ("Zoom In", "zoom_in"),
                 ("Zoom Out", "zoom_out"),
                 ("Zoom to Extent", "zoom_extent"),
@@ -131,7 +124,6 @@ class MainWindow(QMainWindow):
         (
             "file",
             (
-                ("Data Source Manager", "data_source_manager"),
                 ("Add Vector", "open_vector"),
                 ("Add Raster Layer", "open_raster"),
                 ("Save Project", "save_project"),
@@ -179,8 +171,6 @@ class MainWindow(QMainWindow):
         self.visualization_actions: list[QAction] = []
         self.measurement_actions: list[QAction] = []
         self.action_group_by_label: dict[str, str] = {}
-        self.visualization_tools_switch: QCheckBox | None = None
-        self.measurement_tools_switch: QCheckBox | None = None
 
         if app_mode != DesktopAppMode.SERVER:
             (
@@ -189,8 +179,6 @@ class MainWindow(QMainWindow):
                 self.visualization_actions,
                 self.measurement_actions,
                 self.action_group_by_label,
-                self.visualization_tools_switch,
-                self.measurement_tools_switch,
             ) = self._create_main_toolbar()
             self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.main_toolbar)
 
@@ -347,23 +335,6 @@ class MainWindow(QMainWindow):
                         self._on_toolbar_action_triggered(action_label, False)
                     )
                 )
-
-        if (
-            self.visualization_tools_switch is not None
-            and self.measurement_tools_switch is not None
-        ):
-            self.visualization_tools_switch.toggled.connect(
-                self._set_visualization_tools_visible
-            )
-            self.measurement_tools_switch.toggled.connect(
-                self._set_measurement_tools_visible
-            )
-            self._set_visualization_tools_visible(
-                bool(self.visualization_tools_switch.isChecked())
-            )
-            self._set_measurement_tools_visible(
-                bool(self.measurement_tools_switch.isChecked())
-            )
 
         # Path to web_assets/index.html in the same directory as this file
         base_path = Path(__file__).resolve().parent / "web_assets" / "index.html"
@@ -573,7 +544,6 @@ class MainWindow(QMainWindow):
         # --- Interaction Exclusivity ---
         # If an interaction tool was just ENABLED, uncheck all OTHER interaction tools.
         interaction_toggles = {
-            "Pan",
             "Distance / Azimuth",
             "Elevation Profile",
             "Fill Volume",
@@ -585,8 +555,6 @@ class MainWindow(QMainWindow):
         if action_label in interaction_toggles and action.isChecked():
             for other_label in interaction_toggles:
                 if other_label == action_label:
-                    continue
-                if action_label == "Pan" and other_label == "Elevation Profile":
                     continue
                 other_action = self.toolbar_actions.get(other_label)
                 if other_action and other_action.isCheckable() and other_action.isChecked():
@@ -1252,8 +1220,6 @@ class MainWindow(QMainWindow):
         list[QAction],
         list[QAction],
         dict[str, str],
-        QCheckBox,
-        QCheckBox,
     ]:
         """Create and configure the main toolbar.
 
@@ -1264,8 +1230,6 @@ class MainWindow(QMainWindow):
                 - list[QAction]: List of visualization actions
                 - list[QAction]: List of measurement actions
                 - dict[str, str]: Mapping of action labels to group names
-                - QCheckBox: Visualization tools toggle checkbox
-                - QCheckBox: Measurement tools toggle checkbox
         """
         toolbar = QToolBar("Main")
         toolbar.setObjectName("desktopMainToolbar")
@@ -1311,26 +1275,6 @@ class MainWindow(QMainWindow):
                 background: transparent;
                 border: none;
             }
-            QToolBar#desktopMainToolbar QCheckBox#toolbarModuleToggle {
-                spacing: 6px;
-                margin-left: 8px;
-                margin-right: 4px;
-                color: #2c3e50;
-                font-size: 10px;
-                font-weight: bold;
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
-            }
-            QToolBar#desktopMainToolbar QCheckBox#toolbarModuleToggle::indicator {
-                width: 14px;
-                height: 14px;
-                border: 1.5px solid #bdc3c7;
-                border-radius: 3px;
-            }
-            QToolBar#desktopMainToolbar QCheckBox#toolbarModuleToggle::indicator:checked {
-                background-color: #0078d4;
-                border-color: #0078d4;
-            }
             """
         )
 
@@ -1366,31 +1310,12 @@ class MainWindow(QMainWindow):
             if group_index < len(self.TOOLBAR_GROUPS) - 1:
                 toolbar.addSeparator()
 
-        spacer = QWidget(self)
-        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        toolbar.addWidget(spacer)
-        toolbar.addSeparator()
-
-        visualization_switch = QCheckBox("Show Visualization Tools", self)
-        visualization_switch.setObjectName("toolbarModuleToggle")
-        visualization_switch.setChecked(True)
-        visualization_switch.setToolTip("Show or hide visualization toolbar actions")
-        toolbar.addWidget(visualization_switch)
-
-        measurement_switch = QCheckBox("Show Measurement Tools", self)
-        measurement_switch.setObjectName("toolbarModuleToggle")
-        measurement_switch.setChecked(True)
-        measurement_switch.setToolTip("Show or hide measurement toolbar actions")
-        toolbar.addWidget(measurement_switch)
-
         return (
             toolbar,
             actions,
             visualization_actions,
             measurement_actions,
             action_group_by_label,
-            visualization_switch,
-            measurement_switch,
         )
 
     @staticmethod

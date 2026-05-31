@@ -199,6 +199,16 @@ class ComparatorCoordinator:
 
         c._swipe_comparator_enabled = next_state
         c._run_js_call("setComparator", c._swipe_comparator_enabled)
+
+        # Keep AOI/search marker visibility aligned with the checkbox state.
+        # Comparator mode transitions can trigger re-renders that otherwise surface stale marker visibility.
+        desired_aoi_visible = (
+            bool(c.panel.search_aoi_visible_check.isChecked())
+            if hasattr(c.panel, "search_aoi_visible_check")
+            else True
+        )
+        c._set_search_aoi_visible(desired_aoi_visible)
+
         if c._swipe_comparator_enabled:
             c._run_js_call("setComparatorPosition", 0.5)
             c._run_js_call("requestComparatorPaneState")

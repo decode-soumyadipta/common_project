@@ -110,7 +110,12 @@ class SearchResultsCoordinator:
             label,
         )
 
-        c._set_search_aoi_visible(True)
+        desired_aoi_visible = (
+            bool(c.panel.search_aoi_visible_check.isChecked())
+            if hasattr(c.panel, "search_aoi_visible_check")
+            else True
+        )
+        c._set_search_aoi_visible(desired_aoi_visible)
 
         # Event-driven layer synchronization
         if event_driven:

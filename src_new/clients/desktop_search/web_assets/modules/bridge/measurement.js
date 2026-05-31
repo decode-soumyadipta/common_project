@@ -663,13 +663,28 @@
     }
     const bounds = activeTileBounds || lastLoadedBounds;
     if (!bounds) {
+      try {
+        if (viewer.camera && typeof viewer.camera.flyHome === "function") {
+          viewer.camera.flyHome(0.9);
+        }
+      } catch (_) {}
       return;
     }
-    if (currentSceneMode === "3d" || currentSceneMode === "morphing") {
-      focusLoadedRegion3D(1.2);
-    } else {
-      focusLoadedRegion(0.8);
+    try {
+      if (currentSceneMode === "3d" || currentSceneMode === "morphing") {
+        focusLoadedRegion3D(0.95);
+      } else if (typeof focusLoadedRegion2D === "function") {
+        focusLoadedRegion2D(0.65);
+      } else {
+        focusLoadedRegion(0.65);
+      }
+    } catch (err) {
+      // Final fallback path to avoid dead zoom-to-extent behavior.
+      try {
+        focusLoadedRegion(0.7);
+      } catch (_) {}
     }
+    requestSceneRender();
   }
 
   // ═══════════════════════════════════════════════════════════════════════════

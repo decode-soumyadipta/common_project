@@ -26,11 +26,9 @@ class ToolbarActionCoordinator:
             "Add Polygon": c._toolbar_add_polygon_annotation,
             "Add Text Label": c._toolbar_toggle_add_text_mode,
             "Fly Through": c._toolbar_fly_through,
-            "Pan": c._toolbar_set_pan_mode,
             "Zoom In": lambda: c._run_js_call("zoomIn"),
             "Zoom Out": lambda: c._run_js_call("zoomOut"),
             "Zoom to Extent": lambda: c._run_js_call("zoomToExtent"),
-            "Data Source Manager": c.browse_files,
             "Add Vector": c.add_vector_layers,
             "Add Raster Layer": c.add_raster_layers,
             "Save Project": c._toolbar_save_project,
@@ -50,8 +48,6 @@ class ToolbarActionCoordinator:
                 return c._toolbar_toggle_comparator(enabled=checked)
             if action_label == "Distance / Azimuth":
                 return c._toolbar_measure_distance(enabled=checked)
-            if action_label == "Pan":
-                return c._toolbar_set_pan_mode(enabled=checked)
             if action_label == "Add Point":
                 return c._toolbar_toggle_add_point_mode(enabled=checked)
             if action_label == "Add Line":

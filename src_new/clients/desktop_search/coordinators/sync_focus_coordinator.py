@@ -164,7 +164,7 @@ class SyncFocusCoordinator:
 
                 # OPTIMIZATION: Skip if visibility hasn't changed since last sync
                 if last_synced is not None and last_synced == should_show and is_loaded:
-                    print(f"  SKIP: Visibility unchanged")
+                    print("  SKIP: Visibility unchanged")
                     continue
 
                 if not should_show:
