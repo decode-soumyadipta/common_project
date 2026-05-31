@@ -66,6 +66,36 @@ class DisplaySettingsCoordinator:
             "DEM stretch set mode=%s (no active raster layers)", mode_label
         )
 
+    def _set_dem_slope_option_enabled(self, enabled: bool) -> None:
+        c = self._controller
+        combo = c.panel.dem_color_mode_combo
+        slope_index = combo.findData("slope")
+        if slope_index < 0:
+            return
+
+        model = combo.model()
+        item = getattr(model, "item", None)
+        if callable(item):
+            try:
+                model_item = item(slope_index)
+            except Exception:  # pragma: no cover - defensive Qt model access
+                model_item = None
+            if model_item is not None:
+                model_item.setEnabled(enabled)
+
+        if enabled or str(combo.currentData() or "gray") != "slope":
+            return
+
+        fallback_index = combo.findData("terrain")
+        if fallback_index < 0:
+            fallback_index = combo.findData("gray")
+        if fallback_index < 0:
+            return
+
+        with QSignalBlocker(combo):
+            combo.setCurrentIndex(fallback_index)
+        c._viz.apply_dem_color_mode(log_to_panel=False)
+
     def refresh_raster_layers_for_stretch(self, layer_kind: str | None = None) -> int:
         """Refresh raster layers to apply new stretch settings."""
         c = self._controller
@@ -214,12 +244,14 @@ class DisplaySettingsCoordinator:
             dem_visible = c._comparator_selected_layer_type == "dem"
             imagery_visible = c._comparator_selected_layer_type == "imagery"
 
+        comparator_active = c._swipe_comparator_enabled
+
         for widget in (
             c.panel.brightness_slider,
             c.panel.contrast_slider,
             c.panel.stretch_mode_combo,
         ):
-            widget.setEnabled(imagery_visible)
+            widget.setEnabled(imagery_visible and not comparator_active if widget is c.panel.stretch_mode_combo else imagery_visible)
 
         # CRITICAL FIX: Determine current scene mode from RGB view mode combo
         current_scene_mode = str(
@@ -234,7 +266,12 @@ class DisplaySettingsCoordinator:
             getattr(c.panel, "dem_stretch_mode_combo", None),
         ):
             if widget is not None:
-                widget.setEnabled(dem_visible)
+                if widget is c.panel.dem_hillshade_slider or widget is c.panel.dem_color_mode_combo:
+                    widget.setEnabled(dem_visible)
+                else:
+                    widget.setEnabled(dem_visible and not comparator_active)
+
+        self._set_dem_slope_option_enabled(not comparator_active)
 
         # Camera controls: pitch slider enabled in ALL 3D modes with any layer
         # Rotation works in both 2D and 3D (heading rotation valid in 2D Cesium)

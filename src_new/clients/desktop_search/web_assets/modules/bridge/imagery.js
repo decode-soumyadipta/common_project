@@ -279,6 +279,22 @@
     requestSceneRender();
   }
 
+  function syncSceneModeForDemVisibility() {
+    if (!viewer || typeof setSceneModeInternal !== "function") {
+      return;
+    }
+    const demVisible = !!(activeDemContext && activeDemContext.visible !== false);
+    if (demVisible) {
+      if (currentSceneMode !== "3d") {
+        setSceneModeInternal("3d");
+      }
+      return;
+    }
+    if (currentSceneMode !== "2d") {
+      setSceneModeInternal("2d");
+    }
+  }
+
   function clearVectorLayers() {
     if (!viewer || !viewer.dataSources) {
       vectorLayerSources.clear();
@@ -336,6 +352,9 @@
             viewer.scene.verticalExaggeration = Math.max(0.1, demVisual.exaggeration);
           }
           log("debug", "DEM show: re-applied terrainExaggeration=" + demVisual.exaggeration.toFixed(2));
+        }
+        if (currentSceneMode !== "3d") {
+          setSceneModeInternal("3d");
         }
       } else {
         hideDemColorbar();

@@ -18,8 +18,22 @@ from httpx import AsyncClient
 import io
 from PIL import Image
 
-# Mark all tests in this module as async
-pytestmark = pytest.mark.asyncio
+import socket
+
+def _are_services_running() -> bool:
+    for port in (8001, 8002, 8003):
+        try:
+            with socket.create_connection(("localhost", port), timeout=0.5):
+                pass
+        except OSError:
+            return False
+    return True
+
+# Mark all tests in this module as async using anyio, and skip if services aren't running
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.skipif(not _are_services_running(), reason="E2E test requires running services on ports 8001, 8002, and 8003")
+]
 
 
 class TestFullWorkflow:
@@ -56,9 +70,6 @@ class TestFullWorkflow:
         tile_url = "http://localhost:8002"
         query_url = "http://localhost:8003"
         
-        # Skip if services are not running
-        pytest.skip("E2E test requires running services - implement after deployment")
-        
         # Step 1: Upload sample.tif
         async with AsyncClient(base_url=ingestion_url) as client:
             with open(sample_tif_path, "rb") as f:
@@ -83,15 +94,36 @@ class TestFullWorkflow:
             assert status_data["progress"] == 1.0
             assert status_data["error"] is None
         
-        # Step 3: Verify raster exists in PostGIS
-        # Query the database directly to confirm the raster was cataloged
-        result = db_session.execute(
-            "SELECT raster_id, file_path, crs FROM raster_assets WHERE raster_id = :rid",
-            {"rid": raster_id}
-        )
-        row = result.fetchone()
-        assert row is not None
-        assert row[0] == raster_id
+        # Step 3: Verify raster exists in PostGIS/SQLite
+        # If db_session is a MagicMock, let's query the actual database using the settings URL!
+        from unittest.mock import MagicMock
+        if hasattr(db_session, "execute") and not isinstance(db_session, MagicMock):
+            actual_db = db_session
+        else:
+            from sqlalchemy import create_engine, text
+            from src_new.shared.config import settings
+            engine = create_engine(settings.database_url)
+            actual_db = engine.connect()
+
+        try:
+            try:
+                result = actual_db.execute(
+                    text("SELECT raster_id, file_path, crs FROM raster_assets WHERE raster_id = :rid"),
+                    {"rid": raster_id}
+                )
+                row = result.fetchone()
+            except Exception:
+                result = actual_db.execute(
+                    text("SELECT id, file_path, crs FROM raster_assets WHERE id = :rid"),
+                    {"rid": raster_id}
+                )
+                row = result.fetchone()
+            
+            assert row is not None
+            assert row[0] == raster_id
+        finally:
+            if not hasattr(db_session, "execute") or isinstance(db_session, MagicMock):
+                actual_db.close()
         
         # Step 4: Request tile from Tile Service
         # Request tile at zoom level 0, tile (0, 0)
@@ -155,8 +187,6 @@ class TestFullWorkflow:
         
         Requirements: 14.5
         """
-        pytest.skip("E2E test requires running services - implement after deployment")
-        
         ingestion_url = "http://localhost:8001"
         tile_url = "http://localhost:8002"
         
@@ -191,8 +221,6 @@ class TestFullWorkflow:
         
         Requirements: 14.5
         """
-        pytest.skip("E2E test requires running services - implement after deployment")
-        
         ingestion_url = "http://localhost:8001"
         tile_url = "http://localhost:8002"
         
@@ -234,8 +262,6 @@ class TestFullWorkflow:
         
         Requirements: 14.2
         """
-        pytest.skip("E2E test requires running services - implement after deployment")
-        
         ingestion_url = "http://localhost:8001"
         query_url = "http://localhost:8003"
         
@@ -280,8 +306,6 @@ class TestFullWorkflow:
         
         Requirements: 18.5
         """
-        pytest.skip("E2E test requires running services - implement after deployment")
-        
         services = [
             ("Ingestion Service", "http://localhost:8001"),
             ("Tile Service", "http://localhost:8002"),

@@ -222,55 +222,47 @@ class AnnotationCoordinator:
 
     def toolbar_add_polygon_annotation(self, enabled: bool | None = None) -> bool:
         c = self._controller
+        c._logger.debug(
+            "toolbar_add_polygon_annotation enabled=%s polygon_draw_active=%s search_mode=%s search_points=%s",
+            enabled,
+            getattr(c, "_polygon_draw_mode_enabled", None),
+            getattr(c.panel, "search_draw_mode", None),
+            len((c.state.search_geometry_payload or {}).get("points") or []),
+        )
+
         if enabled is False:
-            # Just disable draw mode — polygons stay visible
+            # Just disable draw mode — polygons stay visible.
+            c._polygon_draw_mode_enabled = False
+            c._run_js_call("setAnnotationDrawingMode", False)
+            c._run_js_call("setLineDrawMode", False)
+            c._run_js_call("clearLineDrawPreview")
             c._run_js_call("setSearchDrawMode", "none")
             c._set_measurement_cursor_enabled(False)
             c.panel.log("Polygon draw disabled.")
             return False
 
-        polygon = self._current_polygon_lonlat()
-        if not polygon:
-            c._distance_measure_mode_enabled = False
-            c._add_point_mode_enabled = False # Enforce exclusivity
-            c._add_line_mode_enabled = False
-            c._add_text_mode_enabled = False
-            c._annotation_line_start = None
-            c._fly_through_mode_enabled = False # Strict exclusivity
-            c._set_annotation_overlay_visible(True)
-            c._run_js_call("setAnnotationDrawingMode", True)
-            c._shadow_height_mode_enabled = False
-            c._pan_mode_enabled = False
-            c._run_js_call("setDistanceMeasureMode", False)
-            c._run_js_call("setPanMode", False)
-            c._run_js_call("setFlyThroughMode", False) # Sync JS state
-            
-            c.set_search_draw_mode()
-            c._set_measurement_cursor_enabled(True)
-            c.panel.log(
-                "Polygon draw enabled. Click points, right-click to finish."
-            )
-            return True
-        area, perimeter, orientation = self._polygon_metrics_for_export(polygon)
-        c._annotation_polygon_records.append(
-            {
-                "coords": polygon,
-                "feature_type": "building",
-                "condition": "intact",
-                "area_m2": area,
-                "perimeter_m": perimeter,
-                "orientation_deg": orientation,
-                "notes": "",
-                "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-            }
-        )
-        c._set_project_modified(True)
-        c.panel.log(
-            "Polygon annotation saved: "
-            f"area={area:.2f} m2, perimeter={perimeter:.2f} m, orientation={orientation:.1f} deg"
-        )
-        # Polygon stays visible — don't clear geometry
-        c._run_js_call("setSearchDrawMode", "none")
-        c._set_measurement_cursor_enabled(False)
-        return False
+        c._polygon_draw_mode_enabled = True
+        c._distance_measure_mode_enabled = False
+        c._add_point_mode_enabled = False  # Enforce exclusivity
+        c._add_line_mode_enabled = False
+        c._add_text_mode_enabled = False
+        c._annotation_line_start = None
+        c._fly_through_mode_enabled = False  # Strict exclusivity
+        c._shadow_height_mode_enabled = False
+        c._pan_mode_enabled = False
+        c._run_js_call("setDistanceMeasureMode", False)
+        c._run_js_call("setPanMode", False)
+        c._run_js_call("setFlyThroughMode", False)  # Sync JS state
+        c._run_js_call("setLineDrawMode", False)
+        c._run_js_call("clearLineDrawPreview")
+        c._run_js_call("setAnnotationDrawingMode", True)
+        c._run_js_call("setSearchOverlayVisible", True)
+        c._run_js_call("clearSearchResultMarkers")
+        if hasattr(c, "_set_fly_through_overlay_active"):
+            c._set_fly_through_overlay_active(False)
+
+        c.set_search_draw_mode("polygon")
+        c._set_measurement_cursor_enabled(True)
+        c.panel.log("Polygon draw enabled. Click points, right-click to finish.")
+        return True
 

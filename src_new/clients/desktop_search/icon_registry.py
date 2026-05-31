@@ -7,7 +7,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import urlretrieve
 
 from qtpy.QtCore import QSize, Qt
-from qtpy.QtGui import QColor, QIcon, QPainter, QPixmap
+from qtpy.QtGui import QColor, QIcon, QPainter, QPainterPath, QPixmap
 
 try:
     from qtpy.QtSvg import QSvgRenderer
@@ -29,7 +29,7 @@ ICON_MANIFEST: dict[str, str] = {
     "layer_compositor": "mActionShowAllLayers.svg",
     "comparator": "mActionSplitFeatures.svg",
     "swipe_comparator": "mActionSplitFeatures.svg",
-    "fly_through": "mActionMapTips.svg",
+    "fly_through": "mActionCaptureLine.svg",
     # Measurement tools
     "measure_distance": "mActionMeasure.svg",
     "measure_polygon_area": "mActionMeasureArea.svg",
@@ -110,6 +110,11 @@ class IconRegistry:
         if cache_key in cls._cache:
             return cls._cache[cache_key]
 
+        if tool_name == "fly_through":
+            icon = cls._make_fly_through_icon(size, color)
+            cls._cache[cache_key] = icon
+            return icon
+
         filename = ICON_MANIFEST.get(tool_name)
         if not filename:
             icon = cls._make_placeholder(tool_name[:2].upper(), size)
@@ -173,6 +178,41 @@ class IconRegistry:
         font.setBold(True)
         painter.setFont(font)
         painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, label[:2])
+        painter.end()
+        return QIcon(pixmap)
+
+    @staticmethod
+    def _make_fly_through_icon(size: int, color: Optional[str]) -> QIcon:
+        pixmap = QPixmap(QSize(size, size))
+        pixmap.fill(Qt.GlobalColor.transparent)
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+
+        trail_color = QColor(color or "#2f8de4")
+        body_color = QColor("#f5fbff") if not color else QColor(color)
+
+        painter.setBrush(trail_color)
+        trail = QPainterPath()
+        trail.moveTo(size * 0.10, size * 0.70)
+        trail.cubicTo(size * 0.28, size * 0.62, size * 0.42, size * 0.46, size * 0.58, size * 0.36)
+        trail.cubicTo(size * 0.68, size * 0.30, size * 0.78, size * 0.28, size * 0.90, size * 0.24)
+        painter.drawPath(trail)
+
+        painter.setBrush(body_color)
+        plane = QPainterPath()
+        plane.moveTo(size * 0.30, size * 0.58)
+        plane.lineTo(size * 0.66, size * 0.43)
+        plane.lineTo(size * 0.75, size * 0.35)
+        plane.lineTo(size * 0.80, size * 0.39)
+        plane.lineTo(size * 0.69, size * 0.48)
+        plane.lineTo(size * 0.76, size * 0.58)
+        plane.lineTo(size * 0.70, size * 0.62)
+        plane.lineTo(size * 0.58, size * 0.53)
+        plane.lineTo(size * 0.36, size * 0.61)
+        plane.closeSubpath()
+        painter.drawPath(plane)
         painter.end()
         return QIcon(pixmap)
 

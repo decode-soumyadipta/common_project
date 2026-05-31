@@ -20,6 +20,11 @@
     
     const bounds = activeDemContext.options && activeDemContext.options.bounds ? activeDemContext.options.bounds : null;
     const rasterQuery = activeDemContext.options && activeDemContext.options.query ? activeDemContext.options.query : {};
+    const queryAlgorithm = String(rasterQuery.algorithm || "").toLowerCase();
+    const queryColorMode = String(rasterQuery.colormap_name || "terrain").toLowerCase();
+    const currentMode = queryAlgorithm === "slope" ? "slope" : (queryAlgorithm === "aspect" ? "aspect" : queryColorMode);
+    demVisual.colorMode = currentMode;
+    activeDemContext.colorMode = currentMode;
 
     // Snapshot the original server rescale on FIRST load (before any user color-mode changes).
     // When user returns to gray/terrain we restore this so colors exactly match the colorbar.
@@ -80,6 +85,7 @@
       bounds: normalizeBounds(bounds),
       hillshadeAlpha: demVisual.hillshadeAlpha,
     });
+    activeDemContext.colorMode = String(demVisual.colorMode || activeDemContext.colorMode || "terrain").toLowerCase();
     layerVisibilityState.set(activeDemContext.layerKey, demVisible);
 
     // ── 3D DEM Rendering Pipeline ──────────────────────────────────────────
@@ -213,10 +219,12 @@
     }
 
     const clampedHillshadeAlpha = Math.max(0.0, Math.min(1.0, demVisual.hillshadeAlpha));
+    log("info", "DEM_RENDER: HILLSHADE DEBUG: desiredAlpha=" + demVisual.hillshadeAlpha + " clamped=" + clampedHillshadeAlpha + " demVisible=" + demVisible);
     
     // Always create the hillshade layer, even if alpha is 0.
     // This allows the slider to update alpha in real-time without needing a full DEM rebuild.
     if (activeDemHillshadeLayer && activeDemHillshadeUrl !== hillshadeUrl) {
+      log("info", "DEM_RENDER: HILLSHADE DEBUG: URL changed, removing old layer");
       viewer.imageryLayers.remove(activeDemHillshadeLayer, false);
       
       // CRITICAL FIX: Remove old DEM hillshade layer from managedImageryLayers map
@@ -228,6 +236,7 @@
       activeDemHillshadeUrl = null;
     }
     if (!activeDemHillshadeLayer) {
+      log("info", "DEM_RENDER: HILLSHADE DEBUG: Creating NEW hillshade layer url=" + hillshadeUrl.substring(0, 80) + "...");
       const hillshadeProvider = new Cesium.UrlTemplateImageryProvider({
         url: hillshadeUrl,
         maximumLevel: imageryMaxLevel,
@@ -236,8 +245,10 @@
         enablePickFeatures: false,
         rectangle: rectangle,
       });
+      log("info", "DEM_RENDER: HILLSHADE DEBUG: UrlTemplateImageryProvider created, ready=" + hillshadeProvider.ready);
       attachTileErrorHandler(hillshadeProvider, activeDemContext.name + "-hillshade");
       activeDemHillshadeLayer = viewer.imageryLayers.addImageryProvider(hillshadeProvider);
+      log("info", "DEM_RENDER: HILLSHADE DEBUG: Layer added to viewer, index=" + viewer.imageryLayers.indexOf(activeDemHillshadeLayer) + " totalLayers=" + viewer.imageryLayers.length);
       activeDemHillshadeLayer.preloadAncestorTiles = false;
       if (window.Cesium && window.Cesium.TextureMinificationFilter && window.Cesium.TextureMagnificationFilter) {
         activeDemHillshadeLayer.minificationFilter = window.Cesium.TextureMinificationFilter.NEAREST;
@@ -254,10 +265,15 @@
       // CRITICAL FIX: Add DEM hillshade layer to managedImageryLayers for reordering
       managedImageryLayers.set(hillshadeKey, activeDemHillshadeLayer);
       
+      log("info", "DEM_RENDER: HILLSHADE DEBUG: Layer fully configured, imageryProvider.ready=" + (activeDemHillshadeLayer.imageryProvider ? activeDemHillshadeLayer.imageryProvider.ready : "N/A"));
       log("info", "DEM_RENDER: Hillshade layer added at index " + viewer.imageryLayers.indexOf(activeDemHillshadeLayer));
+    } else {
+      log("info", "DEM_RENDER: HILLSHADE DEBUG: Reusing existing layer, NOT creating new one");
     }
+    log("info", "DEM_RENDER: HILLSHADE DEBUG: BEFORE set alpha=" + activeDemHillshadeLayer.alpha + " show=" + activeDemHillshadeLayer.show);
     activeDemHillshadeLayer.alpha = clampedHillshadeAlpha;
     activeDemHillshadeLayer.show = demVisible;
+    log("info", "DEM_RENDER: HILLSHADE DEBUG: AFTER set alpha=" + activeDemHillshadeLayer.alpha + " show=" + activeDemHillshadeLayer.show);
 
     applyDemSceneSettings();
     
@@ -330,6 +346,14 @@
     // CRITICAL FIX: Ensure layer display order is reapplied after any DEM rebuild
     // to maintain sync with the user's UI list order.
     reapplyLayerOrderIfKnown();
+    
+    // CRITICAL FIX: Mark tile loading complete after DEM layer is fully rendered
+    if (typeof emitLoadingProgress === "function") {
+      emitLoadingProgress(100, "Complete");
+    }
+    if (typeof _tileLoadingActive !== "undefined") {
+      _tileLoadingActive = false;
+    }
     
     requestSceneRender();
   }
@@ -484,24 +508,27 @@
 
     const normalized = String(colormapName || "gray").toLowerCase();
     const query = activeDemContext.options.query;
+    const currentStretch = activeDemDrapeLayer && activeDemDrapeLayer._stretchSettings;
+    const activeRange = getDemRescaleRangeForColorMode(normalized);
 
     if (normalized === "slope") {
       query.algorithm = "slope";
       query.colormap_name = "viridis";
-      query.rescale = "0,90";
+      query.rescale = `${activeRange.min.toFixed(1)},${activeRange.max.toFixed(1)}`;
     } else {
       // Returning to gray/terrain: preserve current rescale if it exists, otherwise use original
       delete query.algorithm;
       query.colormap_name = normalized;
-      
-      // SYNC FIX: If a stretch is already applied, keep it!
-      const currentStretch = activeDemDrapeLayer && activeDemDrapeLayer._stretchSettings;
       if (currentStretch && currentStretch.params && currentStretch.params.min !== undefined) {
         query.rescale = currentStretch.params.min.toFixed(1) + "," + currentStretch.params.max.toFixed(1);
-      } else if (_demOriginalRescale) {
-        query.rescale = _demOriginalRescale;
+      } else {
+        query.rescale = `${activeRange.min.toFixed(1)},${activeRange.max.toFixed(1)}`;
       }
     }
+
+    demVisual.colorMode = normalized;
+    activeDemContext.colorMode = normalized;
+    log("info", "setDemColorMode: Starting color mode change from " + (demVisual.colorMode || "unknown") + " to " + normalized);
 
     // In-place URL swap — no terrain rebuild, no camera jump.
     if (activeDemDrapeLayer && activeDemContext) {
@@ -533,6 +560,21 @@
           enablePickFeatures: false,
           rectangle: rectangle,
         });
+        // Attach tile error handler and readiness logging for debugging slope/symbol tiles
+        try {
+          attachTileErrorHandler(drapeProvider, activeDemContext.name + "-drape");
+          if (drapeProvider.readyPromise && typeof drapeProvider.readyPromise.then === 'function') {
+            drapeProvider.readyPromise.then(function() {
+              log("info", "DRAPE_DEBUG: provider.ready for " + activeDemContext.name + " newDrapeUrl=" + (String(newDrapeUrl).substring(0,200) + "..."));
+              // Force a render once provider is ready so newly-styled tiles appear immediately
+              if (viewer && viewer.scene) viewer.scene.requestRender();
+            }, function(err) {
+              log("error", "DRAPE_DEBUG: provider.ready FAILED for " + activeDemContext.name + " err=" + String(err));
+            });
+          }
+        } catch (e) {
+          log("warn", "DRAPE_DEBUG: attachTileErrorHandler failed: " + e.message);
+        }
         activeDemDrapeLayer = viewer.imageryLayers.addImageryProvider(drapeProvider);
         activeDemDrapeLayer.preloadAncestorTiles = false;
         if (window.Cesium && window.Cesium.TextureMinificationFilter && window.Cesium.TextureMagnificationFilter) {
@@ -559,11 +601,18 @@
         // Clean up the old layer quickly — 200ms is enough for 2-3 new tiles to arrive
         // avoiding the black flash while still feeling near-instant to the user
         if (oldDrapeLayer) {
+          // Wait longer to ensure a few tiles arrive for the new provider before removing the old one.
+          // Short timeouts caused brief gaps or the new tiles not appearing on slower machines.
           setTimeout(() => {
-            if (viewer && viewer.imageryLayers && viewer.imageryLayers.contains(oldDrapeLayer)) {
-              viewer.imageryLayers.remove(oldDrapeLayer, false);
+            try {
+              if (viewer && viewer.imageryLayers && viewer.imageryLayers.contains(oldDrapeLayer)) {
+                viewer.imageryLayers.remove(oldDrapeLayer, false);
+                log("debug", "DRAPE_DEBUG: removed old drape layer for " + activeDemContext.name);
+              }
+            } catch (e) {
+              log("warn", "DRAPE_DEBUG: error removing old drape layer: " + e.message);
             }
-          }, 120); // Faster cleanup for "fast" requirement
+          }, 800); // Slightly longer to allow tile arrival
         }
 
         // Re-apply the last known layer display order so imagery stays on top (or below)
@@ -578,6 +627,7 @@
           }, 0);
         } else {
           // Fallback: raise hillshade and managed imagery layers above new drape
+          if (activeDemDrapeLayer) viewer.imageryLayers.raiseToTop(activeDemDrapeLayer);
           if (activeDemHillshadeLayer) viewer.imageryLayers.raiseToTop(activeDemHillshadeLayer);
           for (const layer of managedImageryLayers.values()) {
             if (layer && layer.show && viewer.imageryLayers.indexOf(layer) >= 0) {
@@ -586,10 +636,32 @@
           }
         }
 
+        if (normalized === "slope" || normalized === "aspect") {
+          if (osmBasemapLayer) osmBasemapLayer.show = false;
+          if (defaultEarthLayer) defaultEarthLayer.show = false;
+          if (viewer && Array.isArray(comparatorViewers)) {
+            comparatorViewers.forEach(function (comparatorViewer) {
+              if (!comparatorViewer) return;
+              if (comparatorViewer.__osmBasemapLayer) comparatorViewer.__osmBasemapLayer.show = false;
+              if (comparatorViewer.__defaultEarthLayer) comparatorViewer.__defaultEarthLayer.show = false;
+            });
+          }
+          if (activeDemDrapeLayer) {
+            activeDemDrapeLayer.show = true;
+            activeDemDrapeLayer.alpha = 1.0;
+          }
+          if (activeDemHillshadeLayer) {
+            activeDemHillshadeLayer.show = activeDemHillshadeLayer.alpha > 0.01;
+          }
+        }
+
         // Removed camera locking to prevent jumping when changing color modes
 
-        requestSceneRender();
-        log("debug", "setDemColorMode: in-place drape swap colormap=" + normalized);
+        // OPTIMIZATION: Only render the affected viewer, not all comparator panes
+        if (viewer && viewer.scene) {
+          viewer.scene.requestRender();
+        }
+        log("info", "setDemColorMode: Color mode swap complete, rendering main viewer only, colormap=" + normalized);
 
         // SYNC FIX: Update colorbar gradient to match new color mode AND current stretch
         // Use the actual rescale from the query (which includes stretch if applied)
@@ -598,8 +670,15 @@
         
         // SYNC FIX: Also update activeDemContext.options.query to keep it in sync
         activeDemContext.options.query = query;
+
+        if (typeof emitLoadingProgress === "function") {
+          emitLoadingProgress(100, "Complete");
+        }
+        if (typeof _tileLoadingActive !== "undefined") {
+          _tileLoadingActive = false;
+        }
         
-        log("info", "DEM color mode changed to " + normalized + " with rescale=" + query.rescale);
+        log("info", "DEM color mode changed to " + normalized + " with rescale=" + query.rescale + " newDrapeUrl=" + (String(newDrapeUrl).substring(0,200) + "..."));
       }
     } else {
       // No active drape layer yet — do a full apply with camera lock
@@ -626,6 +705,12 @@
       }
     }
   }
+          if (typeof emitLoadingProgress === "function") {
+            emitLoadingProgress(100, "Complete");
+          }
+          if (typeof _tileLoadingActive !== "undefined") {
+            _tileLoadingActive = false;
+          }
 
   function initBridge() {
     if (typeof QWebChannel === "undefined" || !window.qt || !qt.webChannelTransport) {
@@ -736,15 +821,16 @@
     // Fix: Disable Cesium's built-in wheel zoom entirely and replace it with a custom handler
     // that computes a SYMMETRIC zoom amount = currentAltitude × STEP_FRACTION for BOTH in and out.
     // We move along the camera direction to avoid pick-distance jitter while tiles refine.
-    if (viewer && viewer.scene && viewer.scene.screenSpaceCameraController) {
-      viewer.scene.screenSpaceCameraController.enableZoom = false;
-    }
+    const zoomController = viewer && viewer.scene ? viewer.scene.screenSpaceCameraController : null;
 
     const WHEEL_ZOOM_STEP = 0.15;  // 15% of current altitude per tick — snappier
     let wheelZoomImpulse = 0;
     let wheelZoomRaf = null;
 
     canvas.addEventListener("wheel", function (event) {
+      if (zoomController && zoomController.enableZoom) {
+        return; // Let Cesium's native zoom handle the wheel.
+      }
       event.preventDefault();
       if (!targetViewer || !targetViewer.scene || !targetViewer.camera) {
         return;
@@ -1350,6 +1436,47 @@
     wireClickHandlers();
     wireStatusBarListeners();
     installSmoothInteractionManager(viewer);
+    
+    // Real-time mouse coordinate updates in NORMAL mode (non-comparator)
+    // In comparator mode, the comparator pane listeners handle this.
+    // In normal mode, we need canvas-level mousemove to update coordinates in real-time.
+    let lastMouseUpdateTime = 0;
+    const MOUSE_UPDATE_THROTTLE_MS = 16; // ~60 FPS for smooth updates
+    viewer.canvas.addEventListener('mousemove', function(event) {
+      // Skip if comparator mode (it handles its own coordinates via comparator pane listeners)
+      if (typeof comparatorModeEnabled !== 'undefined' && comparatorModeEnabled) return;
+      
+      const now = Date.now();
+      if (now - lastMouseUpdateTime < MOUSE_UPDATE_THROTTLE_MS) return;
+      lastMouseUpdateTime = now;
+      
+      try {
+        const rect = viewer.canvas.getBoundingClientRect();
+        const localX = event.clientX - rect.left;
+        const localY = event.clientY - rect.top;
+        const screenPos = new Cesium.Cartesian2(localX, localY);
+        
+        // Try to get terrain-corrected position first, fallback to ray-picking
+        let lonLat = null;
+        if (typeof getCartesianFromViewer === 'function') {
+          const cartesian = getCartesianFromViewer(viewer, screenPos);
+          if (cartesian && typeof cartesianToLonLat === 'function') {
+            lonLat = cartesianToLonLat(cartesian);
+          }
+        }
+        
+        if (!lonLat && typeof getLonLatFromViewer === 'function') {
+          lonLat = getLonLatFromViewer(viewer, screenPos);
+        }
+        
+        if (lonLat && typeof emitMouseCoordinates === 'function') {
+          emitMouseCoordinates(Number(lonLat.lon), Number(lonLat.lat));
+        }
+      } catch (e) {
+        log('warn', 'mousemove handler error: ' + e.message);
+      }
+    }, { passive: true });
+    log('info', 'Real-time mouse coordinate updates enabled for main viewer (normal mode)');
 
     // Force a few initial renders to ensure the globe paints
     viewer.scene.requestRender();

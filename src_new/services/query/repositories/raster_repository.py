@@ -79,13 +79,13 @@ def _row_to_raster_metadata(row: Any) -> RasterMetadata:
     """
     # asyncpg Record — supports dict-style access
     if hasattr(row, "keys"):
-        raster_id = str(row["id"])
+        raster_id = str(row.get("raster_id") or row.get("id"))
         file_path = str(row["file_path"])
         file_name = str(row["file_name"])
-        kind_raw = str(row["raster_kind"])
+        kind_raw = str(row.get("raster_kind") or row.get("kind"))
         crs = str(row["crs"])
         # Handle both old schema (min_lon, etc.) and new schema (bounds_wkt)
-        if "bounds_wkt" in row.keys():
+        if "bounds_wkt" in row.keys() and row.get("bounds_wkt") is not None:
             bounds_wkt = str(row["bounds_wkt"])
         else:
             # Construct WKT from bounding box coordinates
@@ -110,18 +110,33 @@ def _row_to_raster_metadata(row: Any) -> RasterMetadata:
         updated_at: Optional[datetime] = row.get("updated_at")
     else:
         # SQLAlchemy ORM RasterAsset
-        raster_id = str(row.id)
+        raster_id = str(getattr(row, "raster_id", None) or getattr(row, "id", None))
         file_path = str(row.file_path)
         file_name = str(row.file_name)
-        kind_raw = str(row.raster_kind.value if hasattr(row.raster_kind, "value") else row.raster_kind)
+        kind_raw = str(getattr(row, "kind", None) or getattr(row, "raster_kind", None))
         crs = str(row.crs)
-        # Use the bounds_wkt property which constructs WKT from coordinates
-        bounds_wkt = row.bounds_wkt
+        # Reconstruct WKT bounds from database columns
+        if hasattr(row, "bounds_wkt") and getattr(row, "bounds_wkt") is not None:
+            bounds_wkt = str(row.bounds_wkt)
+        else:
+            min_lon = float(row.min_lon)
+            min_lat = float(row.min_lat)
+            max_lon = float(row.max_lon)
+            max_lat = float(row.max_lat)
+            bounds_wkt = (
+                f"POLYGON(("
+                f"{min_lon} {min_lat}, "
+                f"{max_lon} {min_lat}, "
+                f"{max_lon} {max_lat}, "
+                f"{min_lon} {max_lat}, "
+                f"{min_lon} {min_lat}"
+                f"))"
+            )
         resolution_x = float(row.resolution_x)
         resolution_y = float(row.resolution_y)
         width = int(row.width)
         height = int(row.height)
-        upload_date = getattr(row, "created_at", None)
+        upload_date = getattr(row, "upload_date", None) or getattr(row, "created_at", None)
         updated_at = getattr(row, "updated_at", None)
 
     try:
@@ -192,7 +207,8 @@ class RasterRepository:
         Returns:
             A ``RasterMetadata`` instance, or ``None`` if not found.
         """
-        stmt = select(RasterAsset).where(RasterAsset.id == raster_id)
+        pk_attr = "id" if hasattr(RasterAsset, "id") else "raster_id"
+        stmt = select(RasterAsset).where(getattr(RasterAsset, pk_attr) == raster_id)
         asset = self._session.scalar(stmt)
         if asset is None:
             return None
@@ -203,11 +219,12 @@ class RasterRepository:
         """Return all rasters ordered by ingestion date (newest first).
 
         Returns:
-            List of ``RasterMetadata`` objects ordered by created_at DESC.
+            List of ``RasterMetadata`` objects ordered by upload_date DESC.
             Returns empty list if no rasters are found.
         """
         try:
-            stmt = select(RasterAsset).order_by(RasterAsset.created_at.desc())
+            sort_attr = "created_at" if hasattr(RasterAsset, "created_at") else "upload_date"
+            stmt = select(RasterAsset).order_by(getattr(RasterAsset, sort_attr).desc())
             assets = self._session.scalars(stmt).all()
             logger.debug("find_all: found %d rasters", len(assets))
             return [_row_to_raster_metadata(asset) for asset in assets]
@@ -234,18 +251,22 @@ class RasterRepository:
         import time
         start_time = time.time()
         
+        # Determine schema columns dynamically
+        pk_col = "id" if hasattr(RasterAsset, "id") else "raster_id"
+        sort_col = "created_at" if hasattr(RasterAsset, "created_at") else "upload_date"
+        
         if self._is_postgresql():
             # Parameterized PostGIS point-in-polygon query.
             # Uses ST_SetSRID(ST_Point(:lon, :lat), 4326) — no string interpolation.
             stmt = text(
-                """
-                SELECT id
+                f"""
+                SELECT {pk_col}
                 FROM raster_assets
                 WHERE ST_Intersects(
                     ST_GeomFromText(bounds_wkt, 4326),
                     ST_SetSRID(ST_Point(:lon, :lat), 4326)
                 )
-                ORDER BY created_at DESC
+                ORDER BY {sort_col} DESC
                 """
             )
             
@@ -293,12 +314,12 @@ class RasterRepository:
         
         if all(hasattr(RasterAsset, attr) for attr in ("min_lon", "min_lat", "max_lon", "max_lat")):
             stmt_all = select(
-                RasterAsset.id,
+                getattr(RasterAsset, pk_col),
                 RasterAsset.min_lon,
                 RasterAsset.min_lat,
                 RasterAsset.max_lon,
                 RasterAsset.max_lat,
-            ).order_by(RasterAsset.created_at.desc())
+            ).order_by(getattr(RasterAsset, sort_col).desc())
 
             matching_ids: list[str] = []
             for asset_id, min_lon, min_lat, max_lon, max_lat in self._session.execute(
@@ -312,9 +333,9 @@ class RasterRepository:
                     pass
         else:
             stmt_all = select(
-                RasterAsset.id,
+                getattr(RasterAsset, pk_col),
                 RasterAsset.bounds_wkt,
-            ).order_by(RasterAsset.created_at.desc())
+            ).order_by(getattr(RasterAsset, sort_col).desc())
 
             matching_ids = []
             for asset_id, bounds_wkt in self._session.execute(stmt_all):
@@ -370,18 +391,22 @@ class RasterRepository:
         """
         west, south, east, north = _normalized_bounds(min_lon, min_lat, max_lon, max_lat)
 
+        # Determine schema columns dynamically
+        pk_col = "id" if hasattr(RasterAsset, "id") else "raster_id"
+        sort_col = "created_at" if hasattr(RasterAsset, "created_at") else "upload_date"
+
         if self._is_postgresql():
             # Parameterized PostGIS bbox intersection query.
             # ST_MakeEnvelope(:west, :south, :east, :north, 4326) — no interpolation.
             stmt = text(
-                """
-                SELECT id
+                f"""
+                SELECT {pk_col}
                 FROM raster_assets
                 WHERE ST_Intersects(
                     ST_GeomFromText(bounds_wkt, 4326),
                     ST_MakeEnvelope(:west, :south, :east, :north, 4326)
                 )
-                ORDER BY created_at DESC
+                ORDER BY {sort_col} DESC
                 """
             )
             ids = self._select_asset_ids(
@@ -395,15 +420,15 @@ class RasterRepository:
             )
             return [_row_to_raster_metadata(a) for a in assets]
 
-        # SQLite fallback: load id + bounding box coordinates, then filter in Python
+        # SQLite fallback: load raster_id + bounding box coordinates, then filter in Python
         if all(hasattr(RasterAsset, attr) for attr in ("min_lon", "min_lat", "max_lon", "max_lat")):
             stmt_all = select(
-                RasterAsset.id,
+                getattr(RasterAsset, pk_col),
                 RasterAsset.min_lon,
                 RasterAsset.min_lat,
                 RasterAsset.max_lon,
                 RasterAsset.max_lat,
-            ).order_by(RasterAsset.created_at.desc())
+            ).order_by(getattr(RasterAsset, sort_col).desc())
 
             matching_ids = []
             for asset_id, asset_min_lon, asset_min_lat, asset_max_lon, asset_max_lat in self._session.execute(
@@ -423,9 +448,9 @@ class RasterRepository:
                     pass
         else:
             stmt_all = select(
-                RasterAsset.id,
+                getattr(RasterAsset, pk_col),
                 RasterAsset.bounds_wkt,
-            ).order_by(RasterAsset.created_at.desc())
+            ).order_by(getattr(RasterAsset, sort_col).desc())
 
             matching_ids = []
             query_bbox = BoundingBox(min_lon=west, min_lat=south, max_lon=east, max_lat=north)
@@ -476,24 +501,44 @@ class RasterRepository:
         )
         existing = self._session.scalar(existing_stmt)
         if existing is not None:
+            existing_id = getattr(existing, "id", None) or getattr(existing, "raster_id", None)
             raise ValueError(
                 f"A raster with file_path '{metadata.file_path}' already exists "
-                f"(id={existing.id}). Use update_metadata() to modify it."
+                f"(id={existing_id}). Use update_metadata() to modify it."
             )
 
         try:
-            asset = RasterAsset(
-                id=raster_id,
-                file_path=metadata.file_path,
-                file_name=metadata.file_name,
-                raster_kind=metadata.kind.value,
-                crs=metadata.crs,
-                bounds_wkt=metadata.bbox.to_wkt_polygon(),
-                resolution_x=metadata.resolution_x,
-                resolution_y=metadata.resolution_y,
-                width=metadata.width,
-                height=metadata.height,
-            )
+            # Polymorphically instantiate RasterAsset
+            asset_kwargs = {}
+            if hasattr(RasterAsset, "id"):
+                asset_kwargs["id"] = raster_id
+            else:
+                asset_kwargs["raster_id"] = raster_id
+
+            asset_kwargs["file_path"] = metadata.file_path
+            asset_kwargs["file_name"] = metadata.file_name
+
+            if hasattr(RasterAsset, "raster_kind"):
+                asset_kwargs["raster_kind"] = metadata.kind.value
+            else:
+                asset_kwargs["kind"] = metadata.kind.value
+
+            asset_kwargs["crs"] = metadata.crs
+
+            if hasattr(RasterAsset, "bounds_wkt"):
+                asset_kwargs["bounds_wkt"] = metadata.bbox.to_wkt_polygon()
+            else:
+                asset_kwargs["min_lon"] = metadata.bbox.min_lon
+                asset_kwargs["min_lat"] = metadata.bbox.min_lat
+                asset_kwargs["max_lon"] = metadata.bbox.max_lon
+                asset_kwargs["max_lat"] = metadata.bbox.max_lat
+
+            asset_kwargs["resolution_x"] = metadata.resolution_x
+            asset_kwargs["resolution_y"] = metadata.resolution_y
+            asset_kwargs["width"] = metadata.width
+            asset_kwargs["height"] = metadata.height
+
+            asset = RasterAsset(**asset_kwargs)
             self._session.add(asset)
             self._session.commit()
             self._session.refresh(asset)
@@ -529,7 +574,8 @@ class RasterRepository:
         Raises:
             RuntimeError: On any database error (original exception is chained).
         """
-        stmt = select(RasterAsset).where(RasterAsset.id == raster_id)
+        pk_attr = "id" if hasattr(RasterAsset, "id") else "raster_id"
+        stmt = select(RasterAsset).where(getattr(RasterAsset, pk_attr) == raster_id)
         asset = self._session.scalar(stmt)
         if asset is None:
             logger.warning("update_metadata: raster %s not found", raster_id)
@@ -537,12 +583,21 @@ class RasterRepository:
 
         try:
             asset.crs = metadata.crs
-            asset.bounds_wkt = metadata.bbox.to_wkt_polygon()
+            if hasattr(asset, "bounds_wkt"):
+                asset.bounds_wkt = metadata.bbox.to_wkt_polygon()
+            else:
+                asset.min_lon = metadata.bbox.min_lon
+                asset.min_lat = metadata.bbox.min_lat
+                asset.max_lon = metadata.bbox.max_lon
+                asset.max_lat = metadata.bbox.max_lat
             asset.resolution_x = metadata.resolution_x
             asset.resolution_y = metadata.resolution_y
             asset.width = metadata.width
             asset.height = metadata.height
-            asset.raster_kind = metadata.kind.value
+            if hasattr(asset, "raster_kind"):
+                asset.raster_kind = metadata.kind.value
+            else:
+                asset.kind = metadata.kind.value
             self._session.add(asset)
             self._session.commit()
             self._session.refresh(asset)
@@ -574,9 +629,10 @@ class RasterRepository:
         """Load full ORM objects for the given id list, preserving order."""
         if not ids:
             return []
-        stmt = select(RasterAsset).where(RasterAsset.id.in_(ids))
+        pk_attr = "id" if hasattr(RasterAsset, "id") else "raster_id"
+        stmt = select(RasterAsset).where(getattr(RasterAsset, pk_attr).in_(ids))
         rows = list(self._session.scalars(stmt))
-        by_id = {row.id: row for row in rows}
+        by_id = {str(getattr(row, pk_attr)): row for row in rows}
         return [by_id[item_id] for item_id in ids if item_id in by_id]
 
 

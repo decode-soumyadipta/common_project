@@ -65,9 +65,15 @@
   function setMeasureCursorOverlayVisible() { /* no-op */ }
 
   function setMeasurementCursorEnabled(enabled) {
+    const nextEnabled = Boolean(enabled);
+    if (setMeasurementCursorEnabled._lastEnabled === nextEnabled) {
+      return;
+    }
+    setMeasurementCursorEnabled._lastEnabled = nextEnabled;
+
     const bridge = getBridge();
     if (bridge && bridge.on_measure_cursor) {
-      bridge.on_measure_cursor(Boolean(enabled));
+      bridge.on_measure_cursor(nextEnabled);
     }
     if (!measureCursorStyleEl) {
       measureCursorStyleEl = document.createElement("style");
@@ -75,7 +81,7 @@
       document.head.appendChild(measureCursorStyleEl);
     }
     // Ensure all Cesium interaction elements respect the crosshair when enabled
-    if (enabled) {
+    if (nextEnabled) {
       measureCursorStyleEl.textContent = ".cesium-viewer { cursor: crosshair !important; }";
     } else {
       measureCursorStyleEl.textContent = "";

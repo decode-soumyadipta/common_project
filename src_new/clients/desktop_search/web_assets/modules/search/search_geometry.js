@@ -52,18 +52,23 @@
     if (!Array.isArray(points) || points.length === 0) {
       return null;
     }
-    const positions = points.map((point) => Cesium.Cartesian3.fromDegrees(point.lon, point.lat));
-    if (!positions.length) {
+    let sumLon = 0.0;
+    let sumLat = 0.0;
+    let count = 0;
+    for (let i = 0; i < points.length; i++) {
+      const p = points[i];
+      if (p && typeof p.lon === "number" && typeof p.lat === "number" && !Number.isNaN(p.lon) && !Number.isNaN(p.lat)) {
+        sumLon += p.lon;
+        sumLat += p.lat;
+        count++;
+      }
+    }
+    if (count === 0) {
       return null;
     }
-    const sphere = Cesium.BoundingSphere.fromPoints(positions);
-    const cartographic = Cesium.Cartographic.fromCartesian(sphere.center);
-    if (!cartographic) {
-      return { lon: points[0].lon, lat: points[0].lat };
-    }
     return {
-      lon: Cesium.Math.toDegrees(cartographic.longitude),
-      lat: Cesium.Math.toDegrees(cartographic.latitude),
+      lon: sumLon / count,
+      lat: sumLat / count,
     };
   }
 

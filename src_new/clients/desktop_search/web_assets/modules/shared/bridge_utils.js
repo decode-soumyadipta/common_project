@@ -1,5 +1,8 @@
 (function () {
   const runtime = (window.OfflineGISRuntime = window.OfflineGISRuntime || {});
+  if (typeof window.lonLat === "undefined") {
+    window.lonLat = null;
+  }
 
   function getBridge() {
     return runtime.bridge || null;
@@ -203,6 +206,83 @@
     return `${value.toFixed(2)} m`;
   }
 
+  const rubberBandLineStates = new Map();
+
+  function ensureRubberBandLine(key, positionsGetter, options) {
+    const viewer = getViewer();
+    if (!viewer || !viewer.entities) {
+      return null;
+    }
+
+    const normalizedKey = String(key || "default");
+    let state = rubberBandLineStates.get(normalizedKey);
+    if (!state) {
+      state = {
+        entity: null,
+        positionsGetter: null,
+      };
+      rubberBandLineStates.set(normalizedKey, state);
+    }
+
+    state.positionsGetter = typeof positionsGetter === "function" ? positionsGetter : function () {
+      return [];
+    };
+
+    if (state.entity && !viewer.entities.contains(state.entity)) {
+      state.entity = null;
+    }
+
+    const style = Object.assign(
+      {
+        width: 2,
+        color: "#00e5ff",
+        alpha: 0.85,
+        clampToGround: true,
+        arcType: window.Cesium ? window.Cesium.ArcType.GEODESIC : undefined,
+      },
+      options || {}
+    );
+
+    if (!state.entity) {
+      state.entity = viewer.entities.add({
+        polyline: {
+          positions: new Cesium.CallbackProperty(function () {
+            try {
+              const positions = state.positionsGetter ? state.positionsGetter() : [];
+              return Array.isArray(positions) ? positions.filter(Boolean) : [];
+            } catch (_) {
+              return [];
+            }
+          }, false),
+          width: style.width,
+          arcType: style.arcType || Cesium.ArcType.GEODESIC,
+          material: Cesium.Color.fromCssColorString(style.color).withAlpha(style.alpha),
+          clampToGround: Boolean(style.clampToGround),
+          depthFailMaterial: Cesium.Color.fromCssColorString(style.color).withAlpha(style.alpha),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      });
+    }
+
+    requestSceneRender();
+    return state.entity;
+  }
+
+  function clearRubberBandLine(key) {
+    const viewer = getViewer();
+    const normalizedKey = String(key || "default");
+    const state = rubberBandLineStates.get(normalizedKey);
+    if (state && state.entity && viewer && viewer.entities) {
+      try {
+        if (viewer.entities.contains(state.entity)) {
+          viewer.entities.remove(state.entity);
+        }
+      } catch (_) {}
+    }
+    rubberBandLineStates.delete(normalizedKey);
+    requestSceneRender();
+  }
+
   window.OfflineGISUtils = {
     log: log,
     setStatus: setStatus,
@@ -218,5 +298,7 @@
     parseDemHeightRange: parseDemHeightRange,
     buildUrlWithQuery: buildUrlWithQuery,
     formatDistance: formatDistance,
+    ensureRubberBandLine: ensureRubberBandLine,
+    clearRubberBandLine: clearRubberBandLine,
   };
 })();

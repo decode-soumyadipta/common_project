@@ -13,71 +13,83 @@ class SyncFocusCoordinator:
     def sync_search_visibility_layers_event_driven(self) -> None:
         """Synchronize search visibility layers with event-driven optimization."""
         c = self._controller
-        for file_path, asset in c._search_result_assets_by_path.items():
-            should_show = bool(c._search_layer_visibility.get(file_path, False))
-            is_dem_asset = c._is_dem_asset(asset)
+        
+        # CRITICAL FIX: Prevent concurrent visibility syncs
+        if c._event_driven_sync_in_progress:
+            print("DEBUG: Event-driven visibility sync already in progress, skipping")
+            return
+        
+        c._event_driven_sync_in_progress = True
+        
+        try:
+            for file_path, asset in c._search_result_assets_by_path.items():
+                should_show = bool(c._search_layer_visibility.get(file_path, False))
+                is_dem_asset = c._is_dem_asset(asset)
 
-            if not should_show:
-                if file_path in c._loaded_search_layer_keys:
-                    c._run_js_call("setLayerVisibility", file_path, False)
-                if is_dem_asset and c._active_dem_search_layer_key == file_path:
-                    c.state.active_layer_is_dem = False
-                    c._active_dem_search_layer_key = None
+                if not should_show:
+                    if file_path in c._loaded_search_layer_keys:
+                        c._run_js_call("setLayerVisibility", file_path, False)
+                    if is_dem_asset and c._active_dem_search_layer_key == file_path:
+                        c.state.active_layer_is_dem = False
+                        c._active_dem_search_layer_key = None
+                        c._apply_display_control_mode()
+                    continue
+
+                if is_dem_asset and file_path in c._loaded_search_layer_keys:
+                    c._run_js_call("setLayerVisibility", file_path, True)
+                    c.state.active_layer_is_dem = True
+                    c._active_dem_search_layer_key = file_path
                     c._apply_display_control_mode()
-                continue
+                    continue
 
-            if is_dem_asset and file_path in c._loaded_search_layer_keys:
-                c._run_js_call("setLayerVisibility", file_path, True)
-                c.state.active_layer_is_dem = True
-                c._active_dem_search_layer_key = file_path
-                c._apply_display_control_mode()
-                continue
+                if (
+                    is_dem_asset
+                    and c._active_dem_search_layer_key
+                    and c._active_dem_search_layer_key != file_path
+                ):
+                    c._search_layer_visibility[file_path] = False
+                    c._run_js_call("setLayerVisibility", file_path, False)
+                    continue
 
-            if (
-                is_dem_asset
-                and c._active_dem_search_layer_key
-                and c._active_dem_search_layer_key != file_path
-            ):
-                c._search_layer_visibility[file_path] = False
-                c._run_js_call("setLayerVisibility", file_path, False)
-                continue
+                if is_dem_asset and c._active_dem_search_layer_key == file_path:
+                    continue
 
-            if is_dem_asset and c._active_dem_search_layer_key == file_path:
-                continue
+                if (not is_dem_asset) and file_path in c._loaded_search_layer_keys:
+                    c._run_js_call("setLayerVisibility", file_path, True)
+                    continue
 
-            if (not is_dem_asset) and file_path in c._loaded_search_layer_keys:
-                c._run_js_call("setLayerVisibility", file_path, True)
-                continue
+                # Event-driven layer loading with server optimization
+                loaded = c._load_asset_layer_event_driven(
+                    asset,
+                    replace_existing=False,
+                    layer_key=file_path,
+                    auto_fly_to=False,
+                    apply_scene_mode=False,
+                    show_loading=False,
+                )
+                if not loaded:
+                    c._search_layer_visibility[file_path] = False
+                    continue
 
-            # Event-driven layer loading with server optimization
-            loaded = c._load_asset_layer_event_driven(
-                asset,
-                replace_existing=False,
-                layer_key=file_path,
-                auto_fly_to=False,
-                apply_scene_mode=False,
-                show_loading=False,
+                c._loaded_search_layer_keys.add(file_path)
+
+            # Enforce layer stack order matching the UI list for event-driven mode
+            order_registry = getattr(c.panel, "_layer_order_registry", {}) or {}
+            ordered_keys = sorted(
+                [
+                    p.replace("\\", "/")
+                    for p in c._search_result_assets_by_path.keys()
+                    if c._search_layer_visibility.get(p, False)
+                ],
+                key=lambda p: order_registry.get(p, {}).get("order", 9999),
             )
-            if not loaded:
-                c._search_layer_visibility[file_path] = False
-                continue
+            if ordered_keys:
+                c._run_js_call("enforceLayerDisplayOrder", ordered_keys)
 
-            c._loaded_search_layer_keys.add(file_path)
-
-        # Enforce layer stack order matching the UI list for event-driven mode
-        order_registry = getattr(c.panel, "_layer_order_registry", {}) or {}
-        ordered_keys = sorted(
-            [
-                p.replace("\\", "/")
-                for p in c._search_result_assets_by_path.keys()
-                if c._search_layer_visibility.get(p, False)
-            ],
-            key=lambda p: order_registry.get(p, {}).get("order", 9999),
-        )
-        if ordered_keys:
-            c._run_js_call("enforceLayerDisplayOrder", ordered_keys)
-
-        c._apply_display_control_mode()
+            c._apply_display_control_mode()
+        finally:
+            # Always clear the in-progress flag
+            c._event_driven_sync_in_progress = False
 
     def load_asset_layer_event_driven(
         self,
@@ -125,115 +137,124 @@ class SyncFocusCoordinator:
     def sync_search_visibility_layers(self) -> None:
         """Sync layer visibility between UI and globe with debug logging - optimized to only update changed layers."""
         c = self._controller
-        print(f"\n{'=' * 80}")
-        print("DEBUG: _sync_search_visibility_layers called")
-        print(f"  Current visibility map: {c._search_layer_visibility}")
-        print(f"  Last synced visibility: {c._last_synced_visibility}")
-        print(f"  Loaded layer keys: {c._loaded_search_layer_keys}")
-        print(f"  Active DEM layer key: {c._active_dem_search_layer_key}")
-        print(f"{'=' * 80}\n")
+        
+        # CRITICAL FIX: Prevent concurrent visibility syncs
+        if c._standard_sync_in_progress:
+            print("DEBUG: Standard visibility sync already in progress, skipping")
+            return
+        
+        c._standard_sync_in_progress = True
+        
+        try:
+            print(f"\n{'=' * 80}")
+            print("DEBUG: _sync_search_visibility_layers called")
+            print(f"  Loaded layer keys: {len(c._loaded_search_layer_keys)}")
+            print(f"  Active DEM layer key: {c._active_dem_search_layer_key}")
+            print(f"{'=' * 80}\n")
 
-        for file_path, asset in c._search_result_assets_by_path.items():
-            should_show = bool(c._search_layer_visibility.get(file_path, False))
-            last_synced = c._last_synced_visibility.get(file_path, None)
-            is_dem_asset = c._is_dem_asset(asset)
-            file_name = asset.get("file_name", "unknown")
-            is_loaded = file_path in c._loaded_search_layer_keys
+            for file_path, asset in c._search_result_assets_by_path.items():
+                should_show = bool(c._search_layer_visibility.get(file_path, False))
+                last_synced = c._last_synced_visibility.get(file_path, None)
+                is_dem_asset = c._is_dem_asset(asset)
+                file_name = asset.get("file_name", "unknown")
+                is_loaded = file_path in c._loaded_search_layer_keys
 
-            print(f"DEBUG: Processing layer: {file_name}")
-            print(f"  file_path: {file_path}")
-            print(f"  should_show: {should_show}")
-            print(f"  last_synced: {last_synced}")
-            print(f"  is_dem: {is_dem_asset}")
-            print(f"  is_loaded: {is_loaded}")
+                print(f"DEBUG: Processing layer: {file_name} (DEM: {is_dem_asset}, Loaded: {is_loaded})")
+                print(f"  should_show={should_show}, last_synced={last_synced}")
 
-            # OPTIMIZATION: Skip if visibility hasn't changed since last sync
-            if last_synced is not None and last_synced == should_show and is_loaded:
-                print(
-                    f"  SKIP: Visibility unchanged (already {'visible' if should_show else 'hidden'})"
-                )
-                continue
-
-            if not should_show:
-                if is_loaded:  # Only hide if it's actually loaded
-                    print("  ACTION: Hiding layer via setLayerVisibility")
-                    c._run_js_call("setLayerVisibility", file_path, False)
-                    c._last_synced_visibility[file_path] = False
-                    if is_dem_asset and c._active_dem_search_layer_key == file_path:
-                        c.state.active_layer_is_dem = False
-                        c._active_dem_search_layer_key = None
-                        c._apply_display_control_mode()
-                        print("  DEM deactivated")
-                else:
-                    print("  SKIP: Layer not loaded, no need to hide")
-                continue
-
-            if is_dem_asset and is_loaded:
-                print("  ACTION: Showing DEM layer via setLayerVisibility")
-                c._run_js_call("setLayerVisibility", file_path, True)
-                c._last_synced_visibility[file_path] = True
-                c.state.active_layer_is_dem = True
-                c._active_dem_search_layer_key = file_path
-                c._apply_display_control_mode()
-                print("  DEM activated")
-                continue
-
-            if (
-                is_dem_asset
-                and c._active_dem_search_layer_key
-                and c._active_dem_search_layer_key != file_path
-            ):
-                print("  ACTION: Hiding DEM (another DEM is active)")
-                c._search_layer_visibility[file_path] = False
-                if is_loaded:
-                    c._run_js_call("setLayerVisibility", file_path, False)
-                    c._last_synced_visibility[file_path] = False
-                continue
-
-            if is_dem_asset and c._active_dem_search_layer_key == file_path:
-                print("  SKIP: DEM already active")
-                continue
-
-            if (not is_dem_asset) and is_loaded:
-                print("  ACTION: Showing imagery layer via setLayerVisibility")
-                c._run_js_call("setLayerVisibility", file_path, True)
-                c._last_synced_visibility[file_path] = True
-                continue
-
-            if not is_loaded:
-                print("  ACTION: Loading new layer")
-                loaded = c._load_asset_layer(
-                    asset,
-                    replace_existing=False,
-                    layer_key=file_path,
-                    auto_fly_to=False,
-                    apply_scene_mode=False,
-                    show_loading=False,
-                )
-                if not loaded:
-                    print("  ERROR: Failed to load layer")
-                    c._search_layer_visibility[file_path] = False
+                # OPTIMIZATION: Skip if visibility hasn't changed since last sync
+                if last_synced is not None and last_synced == should_show and is_loaded:
+                    print(f"  SKIP: Visibility unchanged")
                     continue
 
-                c._loaded_search_layer_keys.add(file_path)
-                c._last_synced_visibility[file_path] = True
-                print("  SUCCESS: Layer loaded and added to loaded keys")
+                if not should_show:
+                    if is_loaded:  # Only hide if it's actually loaded
+                        print("  ACTION: Hiding layer")
+                        c._run_js_call("setLayerVisibility", file_path, False)
+                        c._last_synced_visibility[file_path] = False
+                        if is_dem_asset and c._active_dem_search_layer_key == file_path:
+                            c.state.active_layer_is_dem = False
+                            c._active_dem_search_layer_key = None
+                            c._apply_display_control_mode()
+                            print("  DEM deactivated")
+                    else:
+                        print("  SKIP: Layer not loaded, no need to hide")
+                    continue
 
-        # Enforce layer stack order matching the UI list
-        order_registry = getattr(c.panel, "_layer_order_registry", {}) or {}
-        ordered_keys = sorted(
-            [
-                p.replace("\\", "/")
-                for p in c._search_result_assets_by_path.keys()
-                if c._search_layer_visibility.get(p, False)
-            ],
-            key=lambda p: order_registry.get(p, {}).get("order", 9999),
-        )
-        if ordered_keys:
-            c._run_js_call("enforceLayerDisplayOrder", ordered_keys)
+                if is_dem_asset and is_loaded:
+                    print("  ACTION: Showing DEM layer")
+                    c._run_js_call("setLayerVisibility", file_path, True)
+                    c._last_synced_visibility[file_path] = True
+                    c.state.active_layer_is_dem = True
+                    c._active_dem_search_layer_key = file_path
+                    c._apply_display_control_mode()
+                    print("  DEM activated")
+                    continue
 
-        c._apply_display_control_mode()
-        print("DEBUG: _sync_search_visibility_layers completed\n")
+                if (
+                    is_dem_asset
+                    and c._active_dem_search_layer_key
+                    and c._active_dem_search_layer_key != file_path
+                ):
+                    print("  ACTION: Hiding DEM (another DEM is active)")
+                    c._search_layer_visibility[file_path] = False
+                    if is_loaded:
+                        c._run_js_call("setLayerVisibility", file_path, False)
+                        c._last_synced_visibility[file_path] = False
+                    continue
+
+                if is_dem_asset and c._active_dem_search_layer_key == file_path:
+                    print("  SKIP: DEM already active")
+                    continue
+
+                if (not is_dem_asset) and is_loaded:
+                    print("  ACTION: Showing imagery layer")
+                    c._run_js_call("setLayerVisibility", file_path, True)
+                    c._last_synced_visibility[file_path] = True
+                    continue
+
+                if not is_loaded:
+                    print("  ACTION: Loading new layer")
+                    try:
+                        loaded = c._load_asset_layer(
+                            asset,
+                            replace_existing=False,
+                            layer_key=file_path,
+                            auto_fly_to=False,
+                            apply_scene_mode=False,
+                            show_loading=False,
+                        )
+                        if not loaded:
+                            print("  ERROR: Failed to load layer")
+                            c._search_layer_visibility[file_path] = False
+                            continue
+
+                        c._loaded_search_layer_keys.add(file_path)
+                        c._last_synced_visibility[file_path] = True
+                        print("  SUCCESS: Layer loaded and added to loaded keys")
+                    except Exception as e:
+                        print(f"  ERROR: Exception while loading layer: {e}")
+                        c._search_layer_visibility[file_path] = False
+                        continue
+
+            # Enforce layer stack order matching the UI list
+            order_registry = getattr(c.panel, "_layer_order_registry", {}) or {}
+            ordered_keys = sorted(
+                [
+                    p.replace("\\", "/")
+                    for p in c._search_result_assets_by_path.keys()
+                    if c._search_layer_visibility.get(p, False)
+                ],
+                key=lambda p: order_registry.get(p, {}).get("order", 9999),
+            )
+            if ordered_keys:
+                c._run_js_call("enforceLayerDisplayOrder", ordered_keys)
+
+            c._apply_display_control_mode()
+            print("DEBUG: _sync_search_visibility_layers completed\n")
+        finally:
+            # Always clear the in-progress flag
+            c._standard_sync_in_progress = False
 
     def focus_visible_search_assets(self, *, force: bool) -> None:
         """Legacy focus function - delegates to enhanced version."""

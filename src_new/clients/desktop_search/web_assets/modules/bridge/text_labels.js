@@ -1,5 +1,95 @@
   window.offlineGIS = window.offlineGIS || {};
+  const searchResultMarkerEntities = [];
+
+  function getSearchOverlayVisible() {
+    return typeof window._offlineGISSearchOverlayVisible === "boolean"
+      ? window._offlineGISSearchOverlayVisible
+      : true;
+  }
+
+  function clearSearchResultMarkerEntities() {
+    if (!viewer || !viewer.entities) {
+      searchResultMarkerEntities.length = 0;
+      return;
+    }
+    while (searchResultMarkerEntities.length > 0) {
+      const entity = searchResultMarkerEntities.pop();
+      try {
+        viewer.entities.remove(entity);
+      } catch (_) {}
+    }
+  }
+
+  function syncSearchResultMarkerVisibility() {
+    const visible = getSearchOverlayVisible();
+    for (let index = 0; index < searchResultMarkerEntities.length; index += 1) {
+      const entity = searchResultMarkerEntities[index];
+      if (entity) {
+        entity.show = visible;
+      }
+    }
+  }
+
   Object.assign(window.offlineGIS, {
+      setSearchResultMarkers: function (markers) {
+        if (!viewer) return;
+        clearSearchResultMarkerEntities();
+        const iconImage = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath fill='%23e74c3c' d='M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z'/%3E%3C/svg%3E";
+        const items = Array.isArray(markers) ? markers : [];
+        for (let index = 0; index < items.length; index += 1) {
+          const marker = items[index] || {};
+          const lon = Number(marker.lon);
+          const lat = Number(marker.lat);
+          if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
+            continue;
+          }
+          const labelText = String(marker.text || marker.file_name || "Tile").trim() || "Tile";
+          const position = Cesium.Cartesian3.fromDegrees(lon, lat, 0.0);
+          const iconEntity = viewer.entities.add({
+            position: position,
+            show: new Cesium.CallbackProperty(function () {
+              return getSearchOverlayVisible();
+            }, false),
+            billboard: {
+              image: iconImage,
+              width: 26,
+              height: 26,
+              verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+              horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+              disableDepthTestDistance: Number.POSITIVE_INFINITY,
+              scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.55),
+            },
+            label: {
+              text: labelText,
+              font: "600 11px 'Segoe UI', 'Helvetica Neue', sans-serif",
+              fillColor: Cesium.Color.WHITE,
+              outlineColor: Cesium.Color.BLACK,
+              outlineWidth: 2,
+              style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+              showBackground: true,
+              backgroundColor: Cesium.Color.BLACK.withAlpha(0.72),
+              backgroundPadding: new Cesium.Cartesian2(5, 3),
+              pixelOffset: new Cesium.Cartesian2(0, -32),
+              horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+              verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+              disableDepthTestDistance: Number.POSITIVE_INFINITY,
+              scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.6),
+              translucencyByDistance: new Cesium.NearFarScalar(3000.0, 1.0, 2400000.0, 0.75),
+            },
+          });
+
+          iconEntity._searchResultMarker = true;
+          iconEntity._searchResultMarkerIndex = index;
+          searchResultMarkerEntities.push(iconEntity);
+        }
+        requestSceneRender();
+      },
+      clearSearchResultMarkers: function () {
+        clearSearchResultMarkerEntities();
+        requestSceneRender();
+      },
       addTextLabel: function (lon, lat, text) {
         if (!viewer) return;
         annotationCounter += 1;
@@ -40,6 +130,7 @@
             pixelOffset: new Cesium.Cartesian2(0, 0),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.2, 1800000.0, 0.6),
             translucencyByDistance: new Cesium.NearFarScalar(3000.0, 1.0, 2400000.0, 0.7),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
@@ -60,6 +151,7 @@
             pixelOffset: new Cesium.Cartesian2(-35, -25),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
@@ -80,6 +172,7 @@
             pixelOffset: new Cesium.Cartesian2(35, -25),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
@@ -93,16 +186,9 @@
         annotationEntities.push(labelEntity);
         annotationEntities.push(editEntity);
         annotationEntities.push(deleteEntity);
+        syncSearchResultMarkerVisibility();
         requestSceneRender();
         log("info", "Text label added at lon=" + lon + " lat=" + lat);
-      },
-      
-      clearAnnotations: function () {
-        clearAnnotationEntities();
-        log("info", "Annotations cleared");
-      },
-      setAnnotationVisibility: function (visible) {
-        setAnnotationVisibility(Boolean(visible));
       },
       clearMeasurements: function () {
         setDistanceMeasureMode(false);
@@ -162,10 +248,21 @@
         }
         if (!undid && searchDrawMode === "polygon" && !searchPolygonLocked && searchPolygonPoints.length > 0) {
           searchPolygonPoints.pop();
+          searchCursorPoint = null;
+          if (window.OfflineGISRuntime && typeof window.OfflineGISRuntime.setSearchCursorPoint === "function") {
+            window.OfflineGISRuntime.setSearchCursorPoint(null);
+          }
           updateSearchPolygonPreview();
           undid = true;
           setStatus("Undo: removed last polygon point. " + searchPolygonPoints.length + " points remain.");
           log("info", "Undo polygon point");
+        }
+        if (!undid && searchDrawMode === "rectangle" && !searchRectangleLocked && searchRectangleStartPoint) {
+          searchRectangleStartPoint = null;
+          searchRectangleCurrentPoint = null;
+          undid = true;
+          setStatus("Undo: cleared search box in progress.");
+          log("info", "Undo rectangle draw");
         }
         if (!undid && distanceMeasureModeEnabled && distanceMeasureAnchor) {
           distanceMeasureAnchor = null;
@@ -173,6 +270,23 @@
           undid = true;
           setStatus("Undo: removed measurement start point.");
           log("info", "Undo distance start");
+        }
+        if (!undid && drawnPolygons.length > 0) {
+          const poly = drawnPolygons.pop();
+          if (poly) {
+            if (poly.lineEntity) viewer.entities.remove(poly.lineEntity);
+            if (poly.polygonEntity) viewer.entities.remove(poly.polygonEntity);
+            if (poly.areaLabelEntity) viewer.entities.remove(poly.areaLabelEntity);
+            if (poly.nameLabelEntity) viewer.entities.remove(poly.nameLabelEntity);
+            if (poly.editEntity) viewer.entities.remove(poly.editEntity);
+            if (poly.deleteEntity) viewer.entities.remove(poly.deleteEntity);
+            for (const ve of poly.vertexEntities || []) {
+              if (ve) viewer.entities.remove(ve);
+            }
+            undid = true;
+            setStatus("Undo: removed last drawn polygon.");
+            log("info", "Undo drawn polygon id=" + String(poly.id));
+          }
         }
         requestSceneRender();
         return undid;
@@ -249,6 +363,24 @@
           flyThroughCursorCartesian = null;
         }
         reapplyLayerOrderIfKnown();
+      },
+      stopFlyThrough: function () {
+        stopFlyThrough();
+      },
+      endFlyThrough: function () {
+        stopFlyThrough();
+      },
+      toggleFlyThroughPlayback: function () {
+        toggleFlyThroughPlayback();
+      },
+      setFlyThroughPlaybackProgress: function (value) {
+        setFlyThroughPlaybackProgress(value);
+      },
+      setFlyThroughPitch: function (value) {
+        setFlyThroughPitch(value);
+      },
+      setFlyThroughSpeed: function (value) {
+        setFlyThroughSpeed(value);
       },
       setComparatorMode: function (enabled) {
         setSwipeComparatorEnabled(Boolean(enabled));
@@ -438,8 +570,9 @@
       setPanMode: function (enabled) {
         setPanMode(Boolean(enabled));
         log("info", "Pan mode=" + String(Boolean(enabled)));
-      },    setSearchDrawMode: function (mode) {
-        if (mode !== "polygon") {
+      },
+      setSearchDrawMode: function (mode) {
+        if (mode !== "polygon" && mode !== "rectangle") {
           searchDrawMode = "none";
           searchOverlayVisible = false;
           setSearchCursorEnabled(false);
@@ -449,18 +582,27 @@
           requestSceneRender();
           return;
         }
-        searchDrawMode = "polygon";
+        searchDrawMode = mode;
         searchOverlayVisible = true;
         polygonVisibilityEnabled = true;
         searchCursorPoint = null;
-        setPolygonPreviewVisible(true);
-        setSearchCursorEnabled(!searchPolygonLocked);
-        // Removed DOM update
-        if (searchPolygonLocked) {
-          setStatus("Polygon restored. Clear geometry to start a new polygon.");
+        searchRectangleStartPoint = null;
+        searchRectangleCurrentPoint = null;
+        searchRectangleLocked = false;
+        if (mode === "rectangle") {
+          setPolygonPreviewVisible(false);
+          setSearchCursorEnabled(false);
+          setStatus("Box draw: drag on the map to define a search box");
         } else {
-          setStatus("Polygon draw: click points, right-click or Finish to close");
+          setPolygonPreviewVisible(true);
+          setSearchCursorEnabled(!searchPolygonLocked);
+          if (searchPolygonLocked) {
+            setStatus("Polygon restored. Clear geometry to start a new polygon.");
+          } else {
+            setStatus("Polygon draw: click points, right-click or Finish to close");
+          }
         }
+        // Removed DOM update
         requestSceneRender();
       },
       finishSearchPolygon: function () {
@@ -471,9 +613,20 @@
         searchPolygonLocked = false;
         searchCursorPoint = null;
         searchPolygonPoints.length = 0;
+        searchRectangleStartPoint = null;
+        searchRectangleCurrentPoint = null;
+        searchRectangleLocked = false;
+        if (typeof searchRectangleEntity !== "undefined" && searchRectangleEntity && viewer) {
+          viewer.entities.remove(searchRectangleEntity);
+          searchRectangleEntity = null;
+        }
         searchOverlayVisible = true;
         polygonVisibilityEnabled = true;
         clearSearchEntities();
+        if (typeof searchPolygonController !== "undefined" && searchPolygonController && typeof searchPolygonController.clearAoiData === "function") {
+          searchPolygonController.clearAoiData();
+        }
+        clearSearchResultMarkerEntities();
         emitSearchGeometry("none", {});
         setPolygonPreviewVisible(true);
         setSearchCursorEnabled(false);
@@ -483,6 +636,13 @@
       },
       setPolygonPreviewVisible: function (visible) {
         setPolygonPreviewVisible(Boolean(visible));
+      },
+      setSearchOverlayVisible: function (visible) {
+        searchOverlayVisible = Boolean(visible);
+        window._offlineGISSearchOverlayVisible = searchOverlayVisible;
+        syncSearchResultMarkerVisibility();
+        updatePolygonPreviewVisibility();
+        requestSceneRender();
       },
       clearFillVolumes: function () {
         _clearFillVolumeEntities();

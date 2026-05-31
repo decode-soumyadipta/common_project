@@ -133,7 +133,7 @@
     // Use Cesium default input mapping
     controller.enableInputs = true;
     controller.enableTranslate = true;
-    controller.enableZoom = false;
+    controller.enableZoom = true;
     // In pan mode keep rotate ON (required for 3D surface dragging) but disable tilt/look
     controller.enableRotate = !is2d;
     controller.enableTilt = !(is2d || isPan);
@@ -527,6 +527,11 @@
     const range = Math.max(compute3DFocusRange(paddedBounds), sphere.radius * 1.3);
     const duration = Number.isFinite(durationSeconds) ? durationSeconds : 1.0;
     const heading = Number.isFinite(viewer.camera.heading) ? viewer.camera.heading : 0.0;
+    const lastClickAt = Number(window._offlineGISLastMapClickAt || 0);
+    const anchorCenter = lastMapClickCartesian && Number.isFinite(lastClickAt) && (Date.now() - lastClickAt) <= 1200
+      ? Cesium.Cartesian3.clone(lastMapClickCartesian)
+      : null;
+    const focusSphere = anchorCenter ? new Cesium.BoundingSphere(anchorCenter, range) : sphere;
     sceneDebug(
       "focusLoadedRegion3D flyTo bounds=" +
         JSON.stringify(paddedBounds) +
@@ -538,7 +543,7 @@
         String(duration)
     );
     viewer.camera.cancelFlight();
-    viewer.camera.flyToBoundingSphere(sphere, {
+    viewer.camera.flyToBoundingSphere(focusSphere, {
       offset: new Cesium.HeadingPitchRange(
         heading,
         Cesium.Math.toRadians(-35),

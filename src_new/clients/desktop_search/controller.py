@@ -129,6 +129,7 @@ class DesktopController(QObject):
         self._shadow_height_mode_enabled = False
         self._pan_mode_enabled = True
         self._polygon_area_mode_enabled = False
+        self._polygon_draw_mode_enabled = False
         self._volume_mode_enabled = False
         self._viewshed_mode_enabled = False
         self._fly_through_mode_enabled = False
@@ -157,6 +158,11 @@ class DesktopController(QObject):
         self._project_path: Path | None = None
         self._is_project_modified = False
 
+        # CRITICAL FIX: Layer visibility and rendering state management
+        self._visibility_sync_in_progress = False  # Prevent concurrent visibility syncs
+        self._visibility_toggle_debounce: dict[str, float] = {}  # Track last toggle time per path
+        self._event_driven_sync_in_progress = False  # Prevent concurrent event-driven syncs
+        self._standard_sync_in_progress = False  # Prevent concurrent standard syncs
 
         # Event-driven architecture performance tracking
         self._event_driven_enabled = False
@@ -178,6 +184,7 @@ class DesktopController(QObject):
         )
         self._search = SearchCoordinator(self)
         self._comparator = ComparatorCoordinator(self)
+        self._comparator_coordinator = self._comparator
         self._project_io = ProjectIoCoordinator(self)
         self._export = ExportCoordinator(self)
         self._toolbar_actions = ToolbarActionCoordinator(self)
@@ -444,8 +451,8 @@ class DesktopController(QObject):
             button.setChecked(checked)
             button.blockSignals(False)
 
-    def set_search_draw_mode(self, enabled: bool | None = None) -> None:
-        self._search.set_search_draw_mode(enabled)
+    def set_search_draw_mode(self, mode: str | bool | None = None) -> None:
+        self._search.set_search_draw_mode(mode)
 
     def finish_search_polygon(self) -> None:
         self._search.finish_search_polygon()
@@ -486,7 +493,7 @@ class DesktopController(QObject):
         self._search.on_search_geometry(geometry_type, payload_json)
 
     def on_comparator_pane_state(self, payload_json: str) -> None:
-        self._comparator_coordinator.on_comparator_pane_state(payload_json)
+        self._comparator.on_comparator_pane_state(payload_json)
 
     def _apply_search_results(self, assets: list[dict], label: str) -> None:
         """Apply search results with standard processing."""
@@ -1031,6 +1038,31 @@ class DesktopController(QObject):
     def available_swipe_layer_options(self) -> list[dict[str, object]]:
         return self._comparator.available_swipe_layer_options()
 
+    def available_layer_opacity_options(
+        self, kind: str | None = None
+    ) -> list[dict[str, object]]:
+        options: list[dict[str, object]] = []
+        normalized_kind = str(kind or "").strip().lower() or None
+        for path, asset in self._search_result_assets_by_path.items():
+            if not isinstance(asset, dict):
+                continue
+            is_dem = self._is_dem_asset(asset)
+            asset_kind = "dem" if is_dem else "imagery"
+            if normalized_kind and asset_kind != normalized_kind:
+                continue
+            label = str(asset.get("file_name") or Path(path).name or "Layer")
+            if asset_kind:
+                label = f"{label} [{asset_kind.upper()}]"
+            options.append(
+                {
+                    "path": path,
+                    "label": label,
+                    "visible": bool(self._search_layer_visibility.get(path, False)),
+                    "kind": asset_kind,
+                }
+            )
+        return options
+
     def apply_comparator_selection(self, selected_paths: list[str]) -> bool:
         return self._comparator.apply_comparator_selection(selected_paths)
 
@@ -1175,6 +1207,27 @@ class DesktopController(QObject):
             )
             self.panel.log(f"Focused on: {asset.get('file_name', 'asset')}")
 
+    def _set_fly_through_overlay_active(self, active: bool) -> None:
+        window = self.panel.window()
+        if hasattr(window, "set_fly_through_active"):
+            window.set_fly_through_active(active)
+
+    def _set_fly_through_speed(self, value: float) -> None:
+        self._run_js_call("setFlyThroughSpeed", float(value))
+
+    def _seek_fly_through_progress(self, value: float) -> None:
+        self._run_js_call("setFlyThroughPlaybackProgress", float(value))
+
+    def _set_fly_through_pitch(self, value: float) -> None:
+        self._run_js_call("setFlyThroughPitch", float(value))
+
+    def _toggle_fly_through_playback(self) -> None:
+        self._run_js_call("toggleFlyThroughPlayback")
+
+    def _end_fly_through(self) -> None:
+        self._run_js_call("endFlyThrough")
+        self._toolbar_fly_through(enabled=False)
+
     def _toolbar_fly_through(self, enabled: bool | None = None) -> bool:
         """Toggle fly-through path drawing mode."""
         next_state = (
@@ -1185,13 +1238,15 @@ class DesktopController(QObject):
             # Disable other visualization modes in JS
             self._run_js_call("setComparatorMode", False)
             self._run_js_call("setFlyThroughMode", True)
+            self._set_fly_through_overlay_active(True)
             self._set_measurement_cursor_enabled(True)
             self.panel.log(
-                "Fly Through mode enabled. Click to draw a path, Right-Click to finish."
+                "Fly Through mode enabled. Click to draw a path, Right-Click to finish, or use Stop Fly Through."
             )
         else:
             self._run_js_call("stopFlyThrough")
             self._run_js_call("setFlyThroughMode", False)
+            self._set_fly_through_overlay_active(False)
             self._set_measurement_cursor_enabled(False)
             self.panel.log("Fly Through mode disabled.")
         return next_state
@@ -1314,8 +1369,9 @@ class DesktopController(QObject):
         self._logger.debug("Add Point mode next_state=%s", next_state)
         if not next_state:
             # Don't hide placed annotations — they are persistent data
-            self._set_measurement_cursor_enabled(False)
-            self._run_js_call("setAnnotationDrawingMode", False)
+            if not self._polygon_draw_active():
+                self._set_measurement_cursor_enabled(False)
+                self._run_js_call("setAnnotationDrawingMode", False)
             self.panel.log("Add Point tool disabled.")
             return False
 
@@ -1331,6 +1387,7 @@ class DesktopController(QObject):
         self._run_js_call("setDistanceMeasureMode", False)
         self._run_js_call("setPanMode", False)
         self._run_js_call("setFlyThroughMode", False) # Sync JS state
+        self._set_fly_through_overlay_active(False)
         self._run_js_call("setSearchDrawMode", "none") # Disable Polygon Draw
         self._run_js_call("setAnnotationDrawingMode", True)
         
@@ -1351,7 +1408,8 @@ class DesktopController(QObject):
             self._annotation_line_start = None
             self._run_js_call("setLineDrawMode", False)
             self._run_js_call("clearLineDrawPreview")
-            self._set_measurement_cursor_enabled(False)
+            if not self._polygon_draw_active():
+                self._set_measurement_cursor_enabled(False)
             self.panel.log("Add Line tool disabled.")
             return False
 
@@ -1365,6 +1423,7 @@ class DesktopController(QObject):
         self._run_js_call("setDistanceMeasureMode", False)
         self._run_js_call("setPanMode", False)
         self._run_js_call("setFlyThroughMode", False)
+        self._set_fly_through_overlay_active(False)
         self._run_js_call("setSearchDrawMode", "none")
 
         self._logger.info("Add Line mode enabled, setting measurement cursor")
@@ -1380,8 +1439,9 @@ class DesktopController(QObject):
         )
         self._add_text_mode_enabled = next_state
         if not next_state:
-            self._set_measurement_cursor_enabled(False)
-            self._run_js_call("setAnnotationDrawingMode", False)
+            if not self._polygon_draw_active():
+                self._set_measurement_cursor_enabled(False)
+                self._run_js_call("setAnnotationDrawingMode", False)
             self.panel.log("Add Text Label tool disabled.")
             return False
 
@@ -1395,6 +1455,7 @@ class DesktopController(QObject):
         self._run_js_call("setDistanceMeasureMode", False)
         self._run_js_call("setPanMode", False)
         self._run_js_call("setFlyThroughMode", False)
+        self._set_fly_through_overlay_active(False)
         self._run_js_call("setSearchDrawMode", "none")
         self._run_js_call("setAnnotationDrawingMode", True)
 
@@ -1436,6 +1497,9 @@ class DesktopController(QObject):
     def _utm_epsg_for_lon_lat(lon: float, lat: float) -> int:
         zone = int((lon + 180.0) // 6.0) + 1
         return 32600 + zone if lat >= 0 else 32700 + zone
+
+    def _polygon_draw_active(self) -> bool:
+        return bool(self._polygon_draw_mode_enabled)
 
     def _toolbar_add_polygon_annotation(self, enabled: bool | None = None) -> bool:
         return self._annotation.toolbar_add_polygon_annotation(enabled)
@@ -1526,6 +1590,24 @@ class DesktopController(QObject):
             )
             return None
         return {"west": b.min_x, "south": b.min_y, "east": b.max_x, "north": b.max_y}
+
+    def _search_result_marker_payload(self, asset: dict) -> dict[str, object] | None:
+        if getattr(self, "_polygon_draw_mode_enabled", False):
+            return None
+        centroid = self._asset_centroid(asset)
+        if not centroid:
+            return None
+        lon = centroid.get("lon")
+        lat = centroid.get("lat")
+        if not self._is_valid_lon_lat(lon, lat):
+            return None
+        file_name = str(asset.get("file_name") or asset.get("file_path") or "Tile")
+        return {
+            "lon": float(lon),
+            "lat": float(lat),
+            "text": file_name,
+            "file_name": file_name,
+        }
 
 
     def _fly_to_asset(self, asset: dict) -> bool:

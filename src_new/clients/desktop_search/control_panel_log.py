@@ -6,29 +6,35 @@ from qtpy.QtWidgets import QApplication, QListWidgetItem, QProgressDialog, QWidg
 
 class ControlPanelLogMixin:
     def log(self, message: str) -> None:
-        """Append a message to the Activity Log with coloured tags for warnings/errors."""
+        """Append a message to the Activity Log in a compact, readable format."""
         import html as _html
         from datetime import datetime as _dt
         ts = _dt.now().strftime("%H:%M:%S")
         msg_lower = message.lower()
         safe_msg = _html.escape(message)
         if "error" in msg_lower or "failed" in msg_lower or "exception" in msg_lower:
-            line = (
-                f'<span style="color:#6e7681">[{ts}]</span> '
-                f'<span style="background:#3d0c0c;color:#ff7b7b;border-radius:3px;padding:1px 5px;font-weight:bold;">ERR</span> '
-                f'<span style="color:#ffa6a6">{safe_msg}</span>'
-            )
+            accent = "#cc2936"
+            badge = "ERROR"
+            message_color = "#5f2124"
+            background = "#fff5f5"
         elif "warn" in msg_lower:
-            line = (
-                f'<span style="color:#6e7681">[{ts}]</span> '
-                f'<span style="background:#3d2a00;color:#f0b429;border-radius:3px;padding:1px 5px;font-weight:bold;">WRN</span> '
-                f'<span style="color:#f0d080">{safe_msg}</span>'
-            )
+            accent = "#b47d00"
+            badge = "WARN"
+            message_color = "#5c4a15"
+            background = "#fffaf0"
         else:
-            line = (
-                f'<span style="color:#6e7681">[{ts}]</span> '
-                f'<span style="color:#c9d1d9">{safe_msg}</span>'
-            )
+            accent = "#6b7280"
+            badge = "INFO"
+            message_color = "#1f2937"
+            background = "#f8fafc"
+        line = (
+            f'<div style="margin:0 0 4px 0;padding:4px 8px;border-left:3px solid {accent};'
+            f'background:{background};border-radius:4px;line-height:1.35;">'
+            f'<span style="color:#6b7280">[{ts}]</span> '
+            f'<span style="color:{accent};font-weight:600;">{badge}</span> '
+            f'<span style="color:{message_color}">{safe_msg}</span>'
+            f'</div>'
+        )
         self.status_box.append(line)
         # Auto-scroll to bottom
         sb = self.status_box.verticalScrollBar()

@@ -30,10 +30,23 @@ class EventCoordinator:
             if c._annotation_line_start is None:
                 c._annotation_line_start = (lon, lat)
                 c._run_js_call("setLineDrawStart", lon, lat)
+                c._logger.debug(
+                    "Add Line anchor set lon=%.6f lat=%.6f line_mode=%s",
+                    lon,
+                    lat,
+                    c._add_line_mode_enabled,
+                )
                 c.panel.log("Line start set. Click the end point to finish.")
                 return
             start_lon, start_lat = c._annotation_line_start
             c._annotation_line_start = None
+            c._logger.debug(
+                "Add Line finalize start_lon=%.6f start_lat=%.6f end_lon=%.6f end_lat=%.6f",
+                start_lon,
+                start_lat,
+                lon,
+                lat,
+            )
             c._add_line_annotation_between((start_lon, start_lat), (lon, lat))
             c._run_js_call("clearLineDrawPreview")
             return

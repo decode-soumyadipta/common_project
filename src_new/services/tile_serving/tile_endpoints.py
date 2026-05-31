@@ -111,7 +111,7 @@ def _resolve_raster_path(raster_id: str) -> Path:
 
     # 3. Recursive search (slower, used as fallback)
     for found in data_root.rglob("*"):
-        if found.is_file() and found.stem == raster_id:
+        if found.is_file() and (found.stem == raster_id or found.name == raster_id):
             return found.resolve()
 
     raise HTTPException(

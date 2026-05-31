@@ -545,8 +545,13 @@
             return;
           }
           paneState.dem.colorMode = mode;
+          if (typeof setSearchBusy === "function") {
+            setSearchBusy(true, "Applying DEM style...");
+          }
           if (getComparatorPaneLayerType(comparatorSelectedPane) === "dem") {
             scheduleComparatorDemRefresh(comparatorSelectedPane);
+          } else if (typeof setSearchBusy === "function") {
+            setSearchBusy(false, "");
           }
           notifyComparatorPaneState(comparatorSelectedPane);
           requestSceneRender();
@@ -583,8 +588,6 @@
       setSearchPolygonVisibility: function (visible) {
         polygonVisibilityEnabled = Boolean(visible);
         updatePolygonPreviewVisibility();
-        toggleAllDrawnPolygonsVisibility(visible);
-        updateComparatorPolygons(visible);
         log("debug", "All polygons visibility set to " + String(visible));
       },
       loadSearchPolygon: function (points) {
@@ -608,7 +611,6 @@
         flyThroughPoints.length = 0;
         if (flyThroughPathEntity) { viewer.entities.remove(flyThroughPathEntity); flyThroughPathEntity = null; }
         if (flyThroughPreviewLineEntity) { viewer.entities.remove(flyThroughPreviewLineEntity); flyThroughPreviewLineEntity = null; }
-        if (flyThroughStartButtonEntity) { viewer.entities.remove(flyThroughStartButtonEntity); flyThroughStartButtonEntity = null; }
         _lastKnownLayerOrder = null;
         setStatus("Project cleared.");
         requestSceneRender();
@@ -691,20 +693,10 @@
                 
                 if (isMain) osmBasemapLayer = targetViewer.__osmBasemapLayer;
             } else {
-                if (targetViewer.__osmBasemapLayer) targetViewer.__osmBasemapLayer.show = false;
-                
-                if (isMain && defaultEarthLayer) {
-                    defaultEarthLayer.show = true;
-                    if (targetViewer.imageryLayers.indexOf(defaultEarthLayer) !== 0) {
-                        targetViewer.imageryLayers.lowerToBottom(defaultEarthLayer);
-                    }
-                }
-                if (targetViewer.__defaultEarthLayer) {
-                    targetViewer.__defaultEarthLayer.show = true;
-                    if (targetViewer.imageryLayers.indexOf(targetViewer.__defaultEarthLayer) !== 0) {
-                        targetViewer.imageryLayers.lowerToBottom(targetViewer.__defaultEarthLayer);
-                    }
-                }
+              // Hide OSM basemap and restore the default Earth imagery as the base layer
+              if (targetViewer.__osmBasemapLayer) targetViewer.__osmBasemapLayer.show = false;
+              if (isMain && defaultEarthLayer) defaultEarthLayer.show = true;
+              if (targetViewer.__defaultEarthLayer) targetViewer.__defaultEarthLayer.show = false;
             }
         };
 
@@ -728,7 +720,7 @@
         // Reset the in-progress flag immediately (no need to wait for render)
         window._basemapToggleInProgress = false;
         
-        log("info", "Basemap visibility set to " + (shouldShow ? "SHOW (OSM at index 0)" : "HIDE (default Earth at index 0)"));
+        log("debug", "Basemap visibility set to " + (shouldShow ? "SHOW (OSM at index 0)" : "HIDE (default Earth at index 0)"));
       },
       setDemProperties: function (hillshadeAlpha) {
         const nextHillshadeAlpha = Math.max(0.0, Math.min(1.0, Number(hillshadeAlpha) || 0.0));
@@ -793,20 +785,13 @@
             }
           }
           
-          if (osmBasemapLayer && osmBasemapLayer.show) {
-            osmBasemapLayer.brightness = nextBrightness;
-            osmBasemapLayer.contrast = nextContrast;
-          }
-          if (defaultEarthLayer && defaultEarthLayer.show) {
-            defaultEarthLayer.brightness = nextBrightness;
-            defaultEarthLayer.contrast = nextContrast;
-          }
-
-          const layer = activeImageryLayer || viewer.imageryLayers.get(0);
-          if (layer) {
-            layer.brightness = nextBrightness;
-            layer.contrast = nextContrast;
-          }
+          // Only update managed imagery asset layers (those added via the
+          // Python event-driven flow). Avoid modifying the global basemap
+          // layers (osmBasemapLayer/defaultEarthLayer) or using a generic
+          // viewer layer fallback, which would change the whole globe.
+          // This ensures brightness/contrast affect only asset tiles in-place.
+          // Note: comparator mode handles its own pane visual state above.
+          // No further per-globe changes here.
 
           requestSceneRender();
         }, VISUAL_UPDATE_DEBOUNCE_MS);
@@ -831,31 +816,41 @@
           log("info", "rotateCamera: no surface found, rotating camera directly");
           viewer.camera.rotateRight(Cesium.Math.toRadians(degrees));
         }
-        // Apply to all active comparator DEM panes (skip 2D imagery panes)
-        // Use lookAt locked to DEM bounds so camera stays focused on the layer
+        // Apply to the selected comparator DEM pane using its focused bounds.
         if (comparatorModeEnabled && Array.isArray(comparatorViewers)) {
-          comparatorViewers.forEach(function(cv, ci) {
-            if (!cv || !cv.scene) return;
-            if (cv.scene.mode !== Cesium.SceneMode.SCENE3D) {
-              log("debug", "rotateCamera: skipping comparatorViewer[" + ci + "] — imagery pane in 2D");
-              return;
-            }
-            // Accumulate heading on the viewer's current heading
-            var newHeading = cv.camera.heading + Cesium.Math.toRadians(degrees);
-            var pitch = getComparatorDemPitchRadians();
-            log("debug", "rotateCamera: comparatorViewer[" + ci + "] heading=" +
-              Cesium.Math.toDegrees(newHeading).toFixed(1) + "° pitch=" +
-              Cesium.Math.toDegrees(pitch).toFixed(1) + "°");
+          const selectedComparatorViewer = getComparatorPaneViewer(comparatorSelectedPane);
+          const selectedComparatorLayerType = getComparatorPaneLayerType(comparatorSelectedPane);
+          if (
+            selectedComparatorViewer &&
+            selectedComparatorLayerType === "dem" &&
+            selectedComparatorViewer.scene &&
+            selectedComparatorViewer.scene.mode === Cesium.SceneMode.SCENE3D &&
+            activeTileBounds
+          ) {
+            const focusRect = Cesium.Rectangle.fromDegrees(
+              activeTileBounds.west,
+              activeTileBounds.south,
+              activeTileBounds.east,
+              activeTileBounds.north
+            );
+            const currentRange =
+              selectedComparatorViewer.camera &&
+              selectedComparatorViewer.camera.positionCartographic
+                ? selectedComparatorViewer.camera.positionCartographic.height
+                : undefined;
+            const newHeading = selectedComparatorViewer.camera.heading + Cesium.Math.toRadians(degrees);
             try {
-              cv.camera.setView({
-                destination: cv.camera.position.clone(),
-                orientation: { heading: newHeading, pitch: pitch, roll: cv.camera.roll },
-              });
-            } catch(e) {
-              log("warn", "rotateCamera: comparatorViewer[" + ci + "] setView failed: " + e);
+              setComparatorDemCameraFromRectangle(
+                selectedComparatorViewer,
+                focusRect,
+                newHeading,
+                currentRange
+              );
+            } catch (e) {
+              log("warn", "rotateCamera: selected comparator DEM setView failed: " + e);
             }
-            cv.scene.requestRender();
-          });
+            selectedComparatorViewer.scene.requestRender();
+          }
         }
         requestSceneRender();
         log("info", "rotateCamera completed: degrees=" + degrees);
@@ -895,21 +890,40 @@
           });
         }
 
-        // Apply to comparator DEM panes
+        // Apply to the selected comparator DEM pane using its focused bounds.
         if (comparatorModeEnabled && Array.isArray(comparatorViewers)) {
-          comparatorViewers.forEach(function(cv, ci) {
-            if (!cv || !cv.scene) return;
-            if (cv.scene.mode !== Cesium.SceneMode.SCENE3D) return;
+          const selectedComparatorViewer = getComparatorPaneViewer(comparatorSelectedPane);
+          const selectedComparatorLayerType = getComparatorPaneLayerType(comparatorSelectedPane);
+          if (
+            selectedComparatorViewer &&
+            selectedComparatorLayerType === "dem" &&
+            selectedComparatorViewer.scene &&
+            selectedComparatorViewer.scene.mode === Cesium.SceneMode.SCENE3D &&
+            activeTileBounds
+          ) {
+            const focusRect = Cesium.Rectangle.fromDegrees(
+              activeTileBounds.west,
+              activeTileBounds.south,
+              activeTileBounds.east,
+              activeTileBounds.north
+            );
+            const currentRange =
+              selectedComparatorViewer.camera &&
+              selectedComparatorViewer.camera.positionCartographic
+                ? selectedComparatorViewer.camera.positionCartographic.height
+                : undefined;
             try {
-              cv.camera.setView({
-                destination: cv.camera.position.clone(),
-                orientation: { heading: cv.camera.heading, pitch: cameraOrbitPitch, roll: cv.camera.roll },
-              });
-            } catch(e) {
-              log("warn", "setPitch: comparatorViewer[" + ci + "] setView failed: " + e);
+              setComparatorDemCameraFromRectangle(
+                selectedComparatorViewer,
+                focusRect,
+                selectedComparatorViewer.camera.heading,
+                currentRange
+              );
+            } catch (e) {
+              log("warn", "setPitch: selected comparator DEM setView failed: " + e);
             }
-            cv.scene.requestRender();
-          });
+            selectedComparatorViewer.scene.requestRender();
+          }
         }
 
         requestSceneRender();
@@ -917,6 +931,7 @@
       },
       setLineDrawMode: function (enabled) {
         lineDrawModeEnabled = Boolean(enabled);
+        log("debug", "setLineDrawMode called enabled=" + lineDrawModeEnabled + " start=" + (lineDrawStart ? (lineDrawStart.lon + "," + lineDrawStart.lat) : "none"));
         if (!lineDrawModeEnabled) {
           lineDrawStart = null;
           clearLineDrawPreview();
@@ -930,6 +945,7 @@
           return;
         }
         lineDrawStart = { lon: Number(lon), lat: Number(lat) };
+        log("debug", "setLineDrawStart lon=" + lineDrawStart.lon.toFixed(6) + " lat=" + lineDrawStart.lat.toFixed(6));
       },
       clearLineDrawPreview: function () {
         lineDrawStart = null;

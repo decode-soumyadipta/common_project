@@ -28,9 +28,17 @@ class SearchResultsCoordinator:
         """Internal method to apply search results with optional event-driven optimization."""
         c = self._controller
         assets = self._dedupe_assets(assets)
+        
+        # Preserve the catalog view when search returns 0 results.
+        previous_assets = c._search_result_assets_by_path
+        if not assets:
+            c._logger.info("Search returned 0 results; preserving asset catalog")
+            c._run_js_call("clearSearchResultMarkers")
+            c.panel.log("No results in search area; showing all available assets.")
+            return
+        
         c.panel.assets_combo.clear()
         c._asset_cache = {}
-        previous_assets = c._search_result_assets_by_path
         previously_visible_paths = {
             path
             for path, is_visible in c._search_layer_visibility.items()
@@ -92,14 +100,19 @@ class SearchResultsCoordinator:
             for path in c._search_result_assets_by_path
         }
 
-        # CRITICAL FIX: Always force 3D mode when search results are found
-        if assets:
-            c._logger.info("Search results found - forcing 3D mode for consistency")
-            c._run_js_call("setSceneMode", "3d")
-            # Update the RGB view mode combo to reflect 3D mode
-            c.panel.rgb_view_mode_combo.setCurrentIndex(0)  # 0 = "3D Terrain Scene"
-            c._apply_display_control_mode()  # This will enable/disable pitch slider based on mode
-            c.panel.log("Search results displayed in 3D mode")
+        marker_payloads = []
+        for asset in assets:
+            payload = c._search_result_marker_payload(asset)
+            if payload:
+                marker_payloads.append(payload)
+        c._run_js_call("setSearchResultMarkers", marker_payloads)
+
+        aoi_visible = True
+        if hasattr(c.panel, "search_aoi_visible_check"):
+            aoi_visible = bool(c.panel.search_aoi_visible_check.isChecked())
+        c._run_js_call("setSearchOverlayVisible", aoi_visible)
+
+        c._run_js_call("setSearchOverlayVisible", aoi_visible)
 
         # Event-driven layer synchronization
         if event_driven:

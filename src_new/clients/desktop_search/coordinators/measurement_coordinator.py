@@ -22,6 +22,20 @@ class MeasurementCoordinator:
     def __init__(self, controller):
         self._controller = controller
 
+    def on_measurement_update(self, meters: float) -> None:
+        """Compatibility hook for live distance measurement updates.
+
+        The event coordinator calls this during distance mode; keep the UI
+        updated and avoid raising when the method is expected by older code.
+        """
+        c = self._controller
+        try:
+            value = float(meters)
+        except Exception:
+            value = 0.0
+        if hasattr(c, "panel") and hasattr(c.panel, "measure_label"):
+            c.panel.measure_label.setText(f"Last distance: {value:.2f} m")
+
     def enqueue_distance_measurement(
         self, lon1: float, lat1: float, lon2: float, lat2: float
     ) -> None:
@@ -327,6 +341,10 @@ class MeasurementCoordinator:
         dem_path = c._selected_dem_path()
         if not dem_path:
             c.panel.log("Select or show a DEM layer first.")
+            return False
+
+        if c._swipe_comparator_enabled:
+            c.panel.log("Slope & Aspect is unavailable in comparator mode.")
             return False
 
         # Switch DEM colour mode to slope if not already slope/aspect

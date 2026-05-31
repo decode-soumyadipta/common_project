@@ -347,7 +347,12 @@ class AssetCoordinator:
             c._logger.warning("Metadata extraction failed: %s", exc)
             return None
 
-        bounds_wkt = metadata.bounds.to_wkt_polygon()
+        bbox = getattr(metadata, "bbox", None) or getattr(metadata, "bounds", None)
+        if bbox is None:
+            c.panel.log(f"Metadata extraction failed: {path.name}. Missing bbox information")
+            c._logger.warning("Metadata extraction failed: missing bbox information")
+            return None
+        bounds_wkt = bbox.to_wkt_polygon()
         return {
             "file_path": str(metadata.file_path),
             "file_name": metadata.file_name,

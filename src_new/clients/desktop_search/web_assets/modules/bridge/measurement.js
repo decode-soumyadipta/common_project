@@ -10,7 +10,7 @@
     // Note: show properties for preview entities are managed via CallbackProperty in the controller
     // to ensure high-frequency updates during drawing. Static overrides here are avoided.
     if (searchCursorEntity) {
-      searchCursorEntity.show = visible;
+      searchCursorEntity.show = false;
     }
     if (searchPreviewLineEntity || searchPreviewPolygonEntity || searchAreaLabelEntity) {
       requestSceneRender();
@@ -24,6 +24,18 @@
 
   function getLonLatFromScreen(screenPosition) {
     return getLonLatFromViewer(viewer, screenPosition);
+  }
+
+  function getGroundHeightAtLonLat(lon, lat) {
+    if (!viewer || !viewer.scene || !viewer.scene.globe) {
+      return 0;
+    }
+    try {
+      const height = viewer.scene.globe.getHeight(Cesium.Cartographic.fromDegrees(lon, lat));
+      return Number.isFinite(height) ? height : 0;
+    } catch (_) {
+      return 0;
+    }
   }
 
   function clearSearchEntities() {
@@ -42,6 +54,15 @@
     if (searchAreaLabelEntity) {
       viewer.entities.remove(searchAreaLabelEntity);
       searchAreaLabelEntity = null;
+    }
+    if (typeof searchRectangleEntity !== "undefined" && searchRectangleEntity) {
+      viewer.entities.remove(searchRectangleEntity);
+      searchRectangleEntity = null;
+    }
+    if (typeof searchAoiEntity !== "undefined" && searchAoiEntity) {
+      viewer.entities.remove(searchAoiEntity);
+      searchAoiEntity = null;
+      searchAoiBounds = null;
     }
     // Clear vertex marker entities
     while (searchVertexEntities.length > 0) {
@@ -260,8 +281,8 @@
       return;
     }
     try {
-      let startHeight = startHeightOpt !== undefined ? startHeightOpt : (viewer.scene.globe.getHeight(Cesium.Cartographic.fromDegrees(startLon, startLat)) || 0);
-      let endHeight = endHeightOpt !== undefined ? endHeightOpt : (viewer.scene.globe.getHeight(Cesium.Cartographic.fromDegrees(endLon, endLat)) || 0);
+      let startHeight = startHeightOpt !== undefined ? startHeightOpt : getGroundHeightAtLonLat(startLon, startLat);
+      let endHeight = endHeightOpt !== undefined ? endHeightOpt : getGroundHeightAtLonLat(endLon, endLat);
 
       // Update shared mutable positions — the CallbackProperty reads these every frame
       measurementPreviewStart = Cesium.Cartesian3.fromDegrees(startLon, startLat, startHeight);
@@ -295,6 +316,10 @@
       return;
     }
     try {
+      log(
+        "debug",
+        "updateLineDrawPreview start=" + Number(startLon).toFixed(6) + "," + Number(startLat).toFixed(6) + " end=" + Number(endLon).toFixed(6) + "," + Number(endLat).toFixed(6) + " lineMode=" + String(lineDrawModeEnabled) + " hasStart=" + Boolean(lineDrawStart)
+      );
       // CRITICAL FIX: Match distance measurement tool exactly for proper terrain draping
       // Use same height calculation approach as measurement preview
       let startHeight = viewer.scene.globe.getHeight(Cesium.Cartographic.fromDegrees(startLon, startLat)) || 0;
@@ -319,6 +344,9 @@
             arcType: Cesium.ArcType.GEODESIC,
             material: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.85),
             clampToGround: true,
+            show: new Cesium.CallbackProperty(function () {
+              return Boolean(lineDrawModeEnabled && lineDrawPreviewStart && lineDrawPreviewEnd);
+            }, false),
           },
         });
         log("debug", "Line draw preview entity created");
@@ -334,6 +362,7 @@
       return;
     }
     try {
+      log("debug", "clearLineDrawPreview invoked");
       if (lineDrawPreviewLineEntity) {
         viewer.entities.remove(lineDrawPreviewLineEntity);
         lineDrawPreviewLineEntity = null;
@@ -458,6 +487,7 @@
           horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
           verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
           pixelOffset: new Cesium.Cartesian2(0, -14),
+          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
           scale: 1.0,
         },
@@ -470,6 +500,7 @@
               color: Cesium.Color.fromCssColorString("#4da8da"),
               outlineColor: Cesium.Color.WHITE,
               outlineWidth: 2,
+              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
               disableDepthTestDistance: Number.POSITIVE_INFINITY,
           }
       });
@@ -480,6 +511,7 @@
               color: Cesium.Color.fromCssColorString("#4da8da"),
               outlineColor: Cesium.Color.WHITE,
               outlineWidth: 2,
+              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
               disableDepthTestDistance: Number.POSITIVE_INFINITY,
           }
       });
@@ -561,16 +593,47 @@
   }
 
   function stopFlyThrough() {
+    if (typeof cancelFlyThroughPlaybackFrame === "function") {
+      cancelFlyThroughPlaybackFrame();
+    }
+    flyThroughIsPlaying = false;
+    flyThroughPlaybackPaused = false;
+    flyThroughPlaybackProgress = 0.0;
+    flyThroughPlaybackLastTimestamp = 0;
     if (viewer && viewer.camera) {
       viewer.camera.cancelFlight();
     }
+    if (viewer && viewer.scene && viewer.scene.screenSpaceCameraController) {
+      viewer.scene.screenSpaceCameraController.enableInputs = true;
+    }
+    flyThroughStopRequested = true;
     flyThroughModeEnabled = false;
+    if (flyThroughOriginalView && viewer && viewer.camera) {
+      try {
+        viewer.camera.setView({
+          destination: flyThroughOriginalView.destination,
+          orientation: flyThroughOriginalView.orientation,
+        });
+        viewer.camera.frustum.fov = flyThroughOriginalView.fov;
+      } catch (_) {}
+      flyThroughOriginalView = null;
+    }
     if (flyThroughPreviewLineEntity) {
       viewer.entities.remove(flyThroughPreviewLineEntity);
       flyThroughPreviewLineEntity = null;
     }
+    if (flyThroughPathEntity) {
+      viewer.entities.remove(flyThroughPathEntity);
+      flyThroughPathEntity = null;
+    }
     flyThroughPoints.length = 0;
     flyThroughPreviewEnd = null;
+    if (typeof notifyFlyThroughPlaybackState === "function") {
+      notifyFlyThroughPlaybackState("ended");
+    }
+    if (typeof notifyFlyThroughPlaybackProgress === "function") {
+      notifyFlyThroughPlaybackProgress(0.0);
+    }
     setStatus("Fly Through stopped.");
     log("info", "Fly Through stopped manually");
     requestSceneRender();

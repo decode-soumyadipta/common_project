@@ -77,7 +77,12 @@ class SignalCoordinator:
         self._connect_button(
             c.panel.search_draw_polygon_btn.clicked,
             "Draw Search Polygon",
-            c.set_search_draw_mode,
+            lambda: c.set_search_draw_mode(
+                c.panel.search_draw_mode if c.panel.search_draw_polygon_btn.isChecked() else "none"
+            ),
+        )
+        c.panel.search_draw_mode_changed.connect(
+            lambda mode: c.set_search_draw_mode(mode)
         )
         self._connect_button(
             c.panel.search_finish_polygon_btn.clicked,
@@ -119,6 +124,10 @@ class SignalCoordinator:
         )
         c.panel.uploaded_assets_refresh_requested.connect(c._clear_asset_caches)
         c.panel.search_layer_delete_requested.connect(c.remove_search_layer)
+        if hasattr(c.panel, "aoi_visibility_changed"):
+            c.panel.aoi_visibility_changed.connect(
+                lambda visible: c._run_js_call("setSearchOverlayVisible", visible)
+            )
 
     def _connect_button(
         self, signal, label: str, callback: Callable[..., object]

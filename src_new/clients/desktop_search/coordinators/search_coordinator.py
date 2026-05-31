@@ -19,6 +19,13 @@ class SearchCoordinator:
         lon = float(c.panel.search_coord_lon.value())
         lat = float(c.panel.search_coord_lat.value())
         buffer_meters = float(c.panel.search_buffer_m.value())
+
+        c._logger.info(
+            "Event-driven coordinate search requested: lon=%s lat=%s buffer=%s",
+            lon,
+            lat,
+            buffer_meters,
+        )
         c.panel.set_search_busy(True, "Searching around coordinate...", progress=8)
         try:
             c.panel.set_search_busy(True, "Preparing query...", progress=18)
@@ -93,16 +100,28 @@ class SearchCoordinator:
         finally:
             c.panel.set_search_busy(False)
 
-    def set_search_draw_mode(self, enabled: bool | None = None) -> None:
+    def set_search_draw_mode(self, mode: str | bool | None = None) -> None:
         c = self._controller
-        c._logger.debug("SearchCoordinator.set_search_draw_mode called: enabled=%s", enabled)
-        next_state = True if enabled is None else bool(enabled)
-        c._logger.debug("Search draw mode next_state=%s", next_state)
-        if not next_state:
+        c._logger.debug("SearchCoordinator.set_search_draw_mode called: mode=%s", mode)
+        normalized_mode = "polygon"
+        if isinstance(mode, str):
+            lowered = mode.strip().lower()
+            if lowered in {"rectangle", "box", "bbox"}:
+                normalized_mode = "rectangle"
+            elif lowered in {"none", "off", "false", "0"}:
+                normalized_mode = "none"
+        elif mode is False:
+            normalized_mode = "none"
+
+        c._logger.debug("Search draw mode normalized=%s", normalized_mode)
+        if hasattr(c.panel, "_set_search_draw_mode") and normalized_mode != "none":
+            c.panel._set_search_draw_mode(normalized_mode)
+
+        if normalized_mode == "none":
             if c._polygon_drawing_context == "measurement":
                 c._set_measurement_cursor_enabled(False)
             c.clear_search_geometry()
-            c.panel.log("Polygon draw disabled.")
+            c.panel.log("Search draw disabled.")
             c._set_search_draw_button_checked(False)
             return
         if c._distance_measure_mode_enabled:
@@ -114,12 +133,15 @@ class SearchCoordinator:
         if c._shadow_height_mode_enabled:
             c._shadow_height_mode_enabled = False
         c._pan_mode_enabled = False
-        c._run_js_call("setSearchDrawMode", "polygon")
+        c._run_js_call("setSearchDrawMode", normalized_mode)
         # Always enable crosshair for drawing activities
         c._logger.info("Search draw mode enabled, setting measurement cursor")
         c._set_measurement_cursor_enabled(True)
         c._set_search_draw_button_checked(True)
-        c.panel.log("Polygon draw mode enabled.")
+        if normalized_mode == "rectangle":
+            c.panel.log("Box draw mode enabled.")
+        else:
+            c.panel.log("Polygon draw mode enabled.")
 
     def finish_search_polygon(self) -> None:
         c = self._controller
@@ -144,19 +166,24 @@ class SearchCoordinator:
         c._set_search_draw_button_checked(False)
         c.panel.log("Search geometry cleared.")
 
-    def on_search_geometry(self, geometry_type: str, payload_json: str) -> None:
+    def on_search_geometry(self, geometry_type: str, payload_json: str | dict) -> None:
         c = self._controller
-        try:
-            payload = json.loads(payload_json)
-        except json.JSONDecodeError:
-            c._logger.error("Invalid geometry payload JSON: %s", payload_json)
-            return
+        if isinstance(payload_json, dict):
+            payload = payload_json
+        else:
+            try:
+                payload = json.loads(payload_json)
+            except json.JSONDecodeError:
+                c._logger.error("Invalid geometry payload JSON: %s", payload_json)
+                return
         c.state.search_geometry_type = geometry_type
         c.state.search_geometry_payload = payload
         c.panel.log(f"Search geometry updated: type={geometry_type}")
         if geometry_type == "polygon":
             c._update_coordinate_inputs_from_polygon(payload)
-            c.panel.log("Polygon ready. Click Search to run overlap scan.")
+            c.panel.log("Polygon finalized. Click 'Search' to search.")
+        elif geometry_type in {"rectangle", "bbox"}:
+            c.panel.log("Box finalized. Click 'Search' to search.")
 
     @staticmethod
     def _coordinate_buffer_polygon(
@@ -203,15 +230,24 @@ class SearchCoordinator:
                 True, "Processing metadata on server...", progress=15
             )
 
-            if buffer_meters <= 0:
-                # Server-side point search using only metadata
-                assets = self._server_metadata_point_search(lon, lat)
-            else:
-                # Server-side polygon search using only metadata
-                polygon_points = self._coordinate_buffer_polygon(
-                    lon, lat, buffer_meters
+            # Robust search strategy:
+            # 1) Always run point query (fast, precise, resilient)
+            # 2) If buffer > 0, merge with polygon envelope query
+            # 3) If still empty, retry once with swapped lon/lat
+            assets, resolved_lon, resolved_lat, used_swapped = (
+                self._search_coordinate_assets_event_driven_with_fallback(
+                    lon=lon,
+                    lat=lat,
+                    buffer_meters=buffer_meters,
                 )
-                assets = self._server_metadata_polygon_search(polygon_points, 0.0)
+            )
+
+            if used_swapped:
+                c.panel.search_coord_lon.setValue(resolved_lon)
+                c.panel.search_coord_lat.setValue(resolved_lat)
+                c.panel.log(
+                    "Coordinate order auto-corrected to lon/lat for this search."
+                )
 
             c.panel.set_search_busy(
                 True, "Optimizing results for display...", progress=70
@@ -220,7 +256,7 @@ class SearchCoordinator:
             # Apply server-optimized results
             c._apply_search_results_event_driven(
                 assets,
-                label=f"Metadata search ({lon:.6f}, {lat:.6f}) buffer={int(buffer_meters)}m",
+                label=f"Metadata search ({resolved_lon:.6f}, {resolved_lat:.6f}) buffer={int(buffer_meters)}m",
             )
 
             c.panel.set_search_busy(
@@ -238,6 +274,129 @@ class SearchCoordinator:
             return
         finally:
             c.panel.set_search_busy(False)
+
+    def _search_coordinate_assets_event_driven_with_fallback(
+        self, *, lon: float, lat: float, buffer_meters: float
+    ) -> tuple[list[dict], float, float, bool]:
+        """Search coordinate with robust fallback for lon/lat input order mistakes."""
+        c = self._controller
+
+        c._logger.debug("Running primary event-driven coordinate search: %s,%s buffer=%s", lon, lat, buffer_meters)
+        assets = self._search_coordinate_assets_event_driven(
+            lon=lon,
+            lat=lat,
+            buffer_meters=buffer_meters,
+        )
+        if assets:
+            return assets, lon, lat, False
+
+        # Retry once with swapped coordinate order. This handles the common
+        # case where users enter lat/lon into lon/lat fields.
+        swapped_assets = self._search_coordinate_assets_event_driven(
+            lon=lat,
+            lat=lon,
+            buffer_meters=buffer_meters,
+        )
+        if swapped_assets:
+            c._logger.info(
+                "Coordinate search fallback succeeded with swapped order input_lon=%.6f input_lat=%.6f",
+                lon,
+                lat,
+            )
+            return swapped_assets, lat, lon, True
+
+        # Final fallback: if server returned no results for both orders,
+        # perform a lightweight client-side nearest-asset lookup using
+        # catalog bounds (centroid distance). This helps when metadata
+        # queries are strict but the user expects nearby assets.
+        try:
+            all_assets = c.api.list_assets()
+            if all_assets:
+                def _centroid_distance(a):
+                    from math import radians, sin, cos, asin, sqrt
+                    # bbox may come as dict {min_lon, min_lat, max_lon, max_lat}
+                    # or as a list/tuple [west, south, east, north]
+                    b = a.get("bbox") or a.get("bounds") or None
+                    if not b:
+                        return float("inf")
+                    try:
+                        if isinstance(b, dict):
+                            west  = float(b.get("min_lon", b.get("west",  float("nan"))))
+                            south = float(b.get("min_lat", b.get("south", float("nan"))))
+                            east  = float(b.get("max_lon", b.get("east",  float("nan"))))
+                            north = float(b.get("max_lat", b.get("north", float("nan"))))
+                        elif isinstance(b, (list, tuple)) and len(b) >= 4:
+                            west, south, east, north = map(float, b[:4])
+                        else:
+                            return float("inf")
+                        if any(v != v for v in (west, south, east, north)):  # NaN check
+                            return float("inf")
+                        cx = (west + east) / 2.0
+                        cy = (south + north) / 2.0
+                        lon1, lat1, lon2, lat2 = map(radians, (lon, lat, cx, cy))
+                        dlon = lon2 - lon1
+                        dlat = lat2 - lat1
+                        a_h = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
+                        c_h = 2 * asin(min(1.0, sqrt(a_h)))
+                        return 6371.0 * c_h
+                    except Exception:
+                        return float("inf")
+
+                ranked = sorted(all_assets, key=_centroid_distance)
+                # Return top 10 nearest assets within 500 km
+                nearest = [r for r in ranked[:10] if _centroid_distance(r) < 500.0]
+                if nearest:
+                    c._logger.info(
+                        "Client-side nearest-asset fallback returning %d assets", len(nearest)
+                    )
+                    c.panel.log(
+                        f"No exact match; showing {len(nearest)} nearest assets as fallback."
+                    )
+                    return nearest, lon, lat, False
+        except Exception:
+            c._logger.exception("Nearest-asset fallback failed")
+
+        return [], lon, lat, False
+
+    def _search_coordinate_assets_event_driven(
+        self, *, lon: float, lat: float, buffer_meters: float
+    ) -> list[dict]:
+        """Run point + optional buffer search and merge results deterministically."""
+        point_assets = self._server_metadata_point_search(lon, lat)
+        if buffer_meters <= 0:
+            return point_assets
+
+        polygon_points = self._coordinate_buffer_polygon(lon, lat, buffer_meters)
+        polygon_assets = self._server_metadata_polygon_search(polygon_points, 0.0)
+        return self._merge_asset_results(point_assets, polygon_assets)
+
+    @staticmethod
+    def _asset_identity_key(asset: dict) -> str:
+        """Return a stable identity key for deduplicating merged search results."""
+        file_path = str(asset.get("file_path") or "").replace("\\", "/").strip()
+        if file_path:
+            return f"path:{file_path}"
+        raster_id = str(asset.get("raster_id") or "").strip()
+        if raster_id:
+            return f"id:{raster_id}"
+        file_name = str(asset.get("file_name") or "").strip()
+        if file_name:
+            return f"name:{file_name}"
+        return f"obj:{id(asset)}"
+
+    def _merge_asset_results(
+        self, primary_assets: list[dict], secondary_assets: list[dict]
+    ) -> list[dict]:
+        """Merge two asset lists preserving order and removing duplicates."""
+        merged: list[dict] = []
+        seen: set[str] = set()
+        for asset in [*primary_assets, *secondary_assets]:
+            key = self._asset_identity_key(asset)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(asset)
+        return merged
 
     def search_assets_from_drawn_geometry_event_driven(self) -> None:
         """Search assets from drawn geometry using server-side metadata processing.
@@ -262,43 +421,65 @@ class SearchCoordinator:
             c.panel.set_search_busy(False)
             return
 
-        if geometry_type != "polygon":
-            c.panel.log("Only polygon draw search is enabled.")
-            c.panel.set_search_busy(False)
-            return
-
-        c.panel.set_search_busy(
-            True, "Server-side polygon metadata search...", progress=8
-        )
-
         try:
-            c.panel.set_search_busy(
-                True, "Processing polygon metadata on server...", progress=20
-            )
+            if geometry_type in {"rectangle", "bbox"}:
+                c.panel.set_search_busy(
+                    True, "Server-side box metadata search...", progress=8
+                )
+                bounds = self._payload_to_bounds(payload)
+                if bounds is None:
+                    c.panel.log("Invalid box geometry payload.")
+                    c._logger.exception("Invalid box geometry payload=%s", payload)
+                    return
+                min_lon, min_lat, max_lon, max_lat = self._expand_bounds_by_meters(
+                    *bounds,
+                    float(c.panel.search_buffer_m.value()),
+                )
+                c.panel.set_search_busy(
+                    True, "Processing box metadata on server...", progress=20
+                )
+                c.panel.set_search_busy(
+                    True, "Server metadata box query...", progress=40
+                )
+                assets = self._server_metadata_bbox_search(
+                    min_lon=min_lon,
+                    min_lat=min_lat,
+                    max_lon=max_lon,
+                    max_lat=max_lat,
+                )
+                search_label = "Metadata box search"
+            elif geometry_type == "polygon":
+                c.panel.set_search_busy(
+                    True, "Server-side polygon metadata search...", progress=8
+                )
+                c.panel.set_search_busy(
+                    True, "Processing polygon metadata on server...", progress=20
+                )
+                points = [
+                    (float(item["lon"]), float(item["lat"]))
+                    for item in payload.get("points", [])
+                ]
+                c.panel.set_search_busy(
+                    True, "Server metadata polygon query...", progress=40
+                )
+                assets = self._server_metadata_polygon_search(
+                    points,
+                    float(c.panel.search_buffer_m.value()),
+                )
+                search_label = "Metadata polygon search"
+            else:
+                c.panel.log("Only polygon and box draw search are enabled.")
+                c.panel.set_search_busy(False)
+                return
 
-            points = [
-                (float(item["lon"]), float(item["lat"]))
-                for item in payload.get("points", [])
-            ]
-
-            c.panel.set_search_busy(
-                True, "Server metadata polygon query...", progress=40
-            )
-
-            # Server-side metadata-only polygon search
-            assets = self._server_metadata_polygon_search(
-                points,
-                float(c.panel.search_buffer_m.value()),
-            )
-
-            c.panel.set_search_busy(True, "Optimizing polygon results...", progress=75)
+            c.panel.set_search_busy(True, "Optimizing geometry results...", progress=75)
 
             # Apply event-driven results
             c._apply_search_results_event_driven(
-                assets, label=f"Metadata {geometry_type} search"
+                assets, label=search_label
             )
 
-            c.panel.set_search_busy(True, "Finalizing polygon search...", progress=95)
+            c.panel.set_search_busy(True, "Finalizing geometry search...", progress=95)
 
             # Turn off drawing mode and pencil cursor, but keep polygon on map
             c._run_js_call("setSearchDrawMode", "none")
@@ -311,7 +492,7 @@ class SearchCoordinator:
             # Track performance
             search_time = time.time() - start_time
             c._track_performance_metric(
-                "search_times", search_time, f"polygon search: {len(assets)} results"
+                "search_times", search_time, f"{geometry_type} search: {len(assets)} results"
             )
 
         except (KeyError, ValueError, TypeError):
@@ -323,6 +504,84 @@ class SearchCoordinator:
             return
         finally:
             c.panel.set_search_busy(False)
+
+    @staticmethod
+    def _payload_to_bounds(payload: dict) -> tuple[float, float, float, float] | None:
+        if not isinstance(payload, dict):
+            return None
+        bounds = payload.get("bounds")
+        if not isinstance(bounds, dict):
+            bounds = payload
+        
+        try:
+            west = float(bounds.get("west"))
+            south = float(bounds.get("south"))
+            east = float(bounds.get("east"))
+            north = float(bounds.get("north"))
+            if west >= east or south >= north:
+                return None
+            return west, south, east, north
+        except (TypeError, ValueError):
+            pass
+
+        points = payload.get("points")
+        if not isinstance(points, list) or len(points) < 2:
+            return None
+
+        lons: list[float] = []
+        lats: list[float] = []
+        for item in points:
+            try:
+                lons.append(float(item["lon"]))
+                lats.append(float(item["lat"]))
+            except (KeyError, TypeError, ValueError):
+                return None
+
+        west = min(lons)
+        east = max(lons)
+        south = min(lats)
+        north = max(lats)
+        if west >= east or south >= north:
+            return None
+        return west, south, east, north
+
+    @staticmethod
+    def _expand_bounds_by_meters(
+        west: float, south: float, east: float, north: float, buffer_meters: float
+    ) -> tuple[float, float, float, float]:
+        if buffer_meters <= 0:
+            return west, south, east, north
+        lat_offset = buffer_meters / 111_320.0
+        center_lat = (south + north) / 2.0
+        lon_scale = max(0.1, math.cos(math.radians(center_lat)))
+        lon_offset = buffer_meters / (111_320.0 * lon_scale)
+        return (
+            max(-180.0, west - lon_offset),
+            max(-90.0, south - lat_offset),
+            min(180.0, east + lon_offset),
+            min(90.0, north + lat_offset),
+        )
+
+    def _server_metadata_bbox_search(
+        self,
+        *,
+        min_lon: float,
+        min_lat: float,
+        max_lon: float,
+        max_lat: float,
+    ) -> list[dict]:
+        c = self._controller
+        assets = c.api.search_assets_by_bbox(
+            west=min_lon,
+            south=min_lat,
+            east=max_lon,
+            north=max_lat,
+        )
+        optimized_assets = self._optimize_assets_metadata(assets)
+        c._logger.info(
+            "Server metadata bbox search completed: %d assets", len(optimized_assets)
+        )
+        return optimized_assets
 
     def _server_metadata_point_search(self, lon: float, lat: float) -> list[dict]:
         """Perform server-side metadata-only point search."""

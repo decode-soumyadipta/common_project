@@ -1,5 +1,8 @@
   window.offlineGIS = window.offlineGIS || {};
   Object.assign(window.offlineGIS, {
+      setAnnotationVisibility: function (visible) {
+        setAnnotationVisibility(Boolean(visible));
+      },
       addIconAnnotation: function (lon, lat, iconName, text) {
         if (!viewer) return;
         annotationCounter += 1;

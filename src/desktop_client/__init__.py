@@ -1,1 +1,0 @@
-"""Desktop viewer domain package."""

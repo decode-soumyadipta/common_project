@@ -77,6 +77,8 @@
       _lastKnownLayerOrder = orderedKeys.slice();
       try {
         const imageryLayers = viewer.imageryLayers;
+        const activeColorMode = String((activeDemContext && activeDemContext.colorMode) || (demVisual && demVisual.colorMode) || "terrain").toLowerCase();
+        const forceDemToTop = activeColorMode === "slope" || activeColorMode === "aspect";
 
         // ── Step 1: Determine Top Key for Logging ──
         const demKey = activeDemContext ? activeDemContext.layerKey : null;
@@ -107,18 +109,33 @@
           imageryLayers.lowerToBottom(defaultEarthLayer);
         }
 
+        if (forceDemToTop) {
+          if (activeDemDrapeLayer && imageryLayers.indexOf(activeDemDrapeLayer) >= 0) {
+            imageryLayers.raiseToTop(activeDemDrapeLayer);
+          }
+          if (activeDemHillshadeLayer && imageryLayers.indexOf(activeDemHillshadeLayer) >= 0) {
+            imageryLayers.raiseToTop(activeDemHillshadeLayer);
+          }
+        }
+
         // ── Step 4: DEM drape visibility rule ──
         // Rely exclusively on the user's explicit visibility toggles (activeDemContext.visible)
         // rather than blindly hiding the DEM just because it isn't index 0. This allows users
         // to see DEM color modes even if they have translucent or spatially-offset imagery on top.
         if (activeDemDrapeLayer) {
           activeDemDrapeLayer.show = (activeDemContext && activeDemContext.visible !== false);
+          if (forceDemToTop) {
+            activeDemDrapeLayer.show = true;
+          }
         }
         if (activeDemHillshadeLayer) {
           activeDemHillshadeLayer.show = (
             activeDemContext && activeDemContext.visible !== false &&
             activeDemHillshadeLayer.alpha > 0.01
           );
+          if (forceDemToTop && activeDemHillshadeLayer.alpha > 0.0) {
+            activeDemHillshadeLayer.show = true;
+          }
         }
 
         // CRITICAL: Ensure terrain provider matches active DEM visibility

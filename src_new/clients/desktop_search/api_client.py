@@ -6,7 +6,11 @@ from urllib.parse import quote
 
 import httpx
 
+import logging
+
 from src_new.shared.config import settings
+
+_logger = logging.getLogger(__name__)
 
 
 class DesktopApiClient:
@@ -58,14 +62,18 @@ class DesktopApiClient:
         return result.get("rasters", []) if isinstance(result, dict) else []
 
     def search_assets_by_point(self, lon: float, lat: float) -> list[dict[str, Any]]:
+        payload = {"lon": lon, "lat": lat}
+        _logger.debug("API POST %s/query/point payload=%s", self._base_url, payload)
         response = httpx.post(
             f"{self._base_url}/query/point",
-            json={"lon": lon, "lat": lat},
+            json=payload,
             timeout=20.0,
         )
         response.raise_for_status()
         result = response.json()
-        return result.get("rasters", []) if isinstance(result, dict) else []
+        rasters = result.get("rasters", []) if isinstance(result, dict) else []
+        _logger.info("API search_assets_by_point returned %d rasters for %s,%s", len(rasters), lon, lat)
+        return rasters
 
     def search_assets_by_bbox(
         self, west: float, south: float, east: float, north: float
@@ -91,12 +99,15 @@ class DesktopApiClient:
             "points": [{"lon": lon, "lat": lat} for lon, lat in points],
             "buffer_meters": buffer_meters,
         }
+        _logger.debug("API POST %s/search/polygon payload_points=%d buffer=%s", self._base_url, len(points), buffer_meters)
         response = httpx.post(
             f"{self._base_url}/search/polygon", json=payload, timeout=30.0
         )
         response.raise_for_status()
         result = response.json()
-        return result.get("rasters", []) if isinstance(result, dict) else []
+        rasters = result.get("rasters", []) if isinstance(result, dict) else []
+        _logger.info("API search_assets_by_polygon returned %d rasters for buffer=%s", len(rasters), buffer_meters)
+        return rasters
 
     def enqueue_ingest_job(self, paths: list[str]) -> dict[str, Any]:
         response = httpx.post(

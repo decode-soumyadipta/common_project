@@ -32,6 +32,16 @@ class WebBridge(QObject):
     # Emitted with cursor fraction (0–1) along the completed profile line
     profileCursorMoved = Signal(float)
 
+    # Emitted when fly-through playback changes state: idle, playing, paused, ended
+    flyThroughPlaybackStateChanged = Signal(str)
+
+    # Emitted with normalized fly-through playback progress (0–1)
+    flyThroughPlaybackProgressChanged = Signal(float)
+
+    def __init__(self, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._measure_cursor_enabled: bool | None = None
+
     # ------------------------------------------------------------------
     # Slots (called from JavaScript via QWebChannel)
     # ------------------------------------------------------------------
@@ -90,6 +100,10 @@ class WebBridge(QObject):
     def on_measure_cursor(self, enabled: bool) -> None:
         import logging
 
+        enabled = bool(enabled)
+        if self._measure_cursor_enabled is enabled:
+            return
+        self._measure_cursor_enabled = enabled
         logging.getLogger("desktop.bridge").info(
             "[CURSOR_DEBUG] on_measure_cursor slot called enabled=%s", enabled
         )
@@ -98,3 +112,11 @@ class WebBridge(QObject):
     @Slot(float)
     def on_profile_cursor(self, frac: float) -> None:
         self.profileCursorMoved.emit(float(frac))
+
+    @Slot(str)
+    def on_fly_through_playback_state(self, state: str) -> None:
+        self.flyThroughPlaybackStateChanged.emit(str(state))
+
+    @Slot(float)
+    def on_fly_through_playback_progress(self, progress: float) -> None:
+        self.flyThroughPlaybackProgressChanged.emit(float(progress))

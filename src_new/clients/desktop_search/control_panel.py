@@ -6,9 +6,12 @@ from qtpy.QtCore import Qt, Signal, QTimer
 from qtpy.QtGui import QColor, QPalette
 from qtpy.QtWidgets import (
     QAbstractItemView,
+    QButtonGroup,
+    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -52,6 +55,8 @@ class ControlPanel(
     """Desktop control panel widgets for ingest, search, display, and measurement tools."""
 
     search_result_visibility_toggled = Signal(str, bool)
+    aoi_visibility_changed = Signal(bool)
+    search_draw_mode_changed = Signal(str)
     search_layers_reordered = Signal(list)  # Signal for drag-and-drop layer reordering
     asset_focus_requested = Signal(str)
     vector_layer_visibility_toggled = Signal(str, bool)
@@ -132,6 +137,12 @@ class ControlPanel(
             }
             QPushButton:pressed {
                 background: #e2e8f0;
+            }
+            QPushButton:checked {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ebf8ff, stop:1 #bee3f8);
+                border: 1px solid #4299e1;
+                color: #2b6cb0;
+                font-weight: bold;
             }
         """)
 
@@ -250,60 +261,47 @@ class ControlPanel(
         self.ingest_details.setReadOnly(True)
         self.ingest_details.setMaximumHeight(100)
         self.ingest_details.setStyleSheet("""
-            QTextEdit { 
-                background: #fafafa; 
-                border: 1px solid #e0e0e0; 
-                border-radius: 2px; 
+            QTextEdit {
+                background: #fafafa;
+                border: 1px solid #e0e0e0;
+                border-radius: 2px;
                 font-family: 'Consolas', 'Monaco', monospace;
                 font-size: 11px;
                 padding: 4px;
             }
         """)
 
-        # Uploaded Assets table (simplified view with delete functionality)
-        self.uploaded_assets_list = QTableWidget(
-            0, 4
-        )  # Simplified: #, Type, Added, Delete
+        # Uploaded Assets table (server-side catalog view)
+        self.uploaded_assets_list = QTableWidget(0, 4)
         self.uploaded_assets_list.setMaximumHeight(200)
         self.uploaded_assets_list.setHorizontalHeaderLabels(
             ["#", "Type", "Added", "Delete"]
         )
         self.uploaded_assets_list.horizontalHeader().setSectionResizeMode(
-            0,
-            QHeaderView.ResizeToContents,  # Serial number
+            0, QHeaderView.ResizeToContents
         )
         self.uploaded_assets_list.horizontalHeader().setSectionResizeMode(
-            1,
-            QHeaderView.ResizeToContents,  # Type
+            1, QHeaderView.ResizeToContents
         )
         self.uploaded_assets_list.horizontalHeader().setSectionResizeMode(
-            2,
-            QHeaderView.Stretch,  # Added date (stretch to fill)
+            2, QHeaderView.Stretch
         )
         self.uploaded_assets_list.horizontalHeader().setSectionResizeMode(
-            3,
-            QHeaderView.ResizeToContents,  # Delete button
+            3, QHeaderView.ResizeToContents
         )
-        # Configure column widths for better display and enable horizontal scrolling
         self.uploaded_assets_list.setHorizontalScrollMode(
             QAbstractItemView.ScrollPerPixel
         )
         self.uploaded_assets_list.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAsNeeded
         )
-
-        # Set column widths for simplified table
-        self.uploaded_assets_list.setColumnWidth(0, 50)  # Serial number
-        self.uploaded_assets_list.setColumnWidth(1, 100)  # Type
-        self.uploaded_assets_list.setColumnWidth(2, 150)  # Added date
-        self.uploaded_assets_list.setColumnWidth(3, 70)  # Delete button
-
-        # Allow columns to be resized by user
+        self.uploaded_assets_list.setColumnWidth(0, 50)
+        self.uploaded_assets_list.setColumnWidth(1, 100)
+        self.uploaded_assets_list.setColumnWidth(2, 150)
+        self.uploaded_assets_list.setColumnWidth(3, 70)
         header = self.uploaded_assets_list.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        header.setStretchLastSection(False)  # Don't stretch last column
-
-        # Set minimum section size to prevent columns from becoming too narrow
+        header.setStretchLastSection(False)
         header.setMinimumSectionSize(60)
         self.uploaded_assets_list.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.uploaded_assets_list.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -315,6 +313,7 @@ class ControlPanel(
             QHeaderView::section { background: #f5f5f5; padding: 2px; border: none; border-right: 1px solid #d0d0d0; }
         """)
 
+        # Uploaded Assets table (simplified view with delete functionality)
         self.assets_refresh_btn = QPushButton("Refresh Catalog")
         self.assets_refresh_btn.setToolTip(
             "Refresh the list of uploaded assets and clear all caches."
@@ -432,33 +431,141 @@ class ControlPanel(
         search_layout.setSpacing(8)
         search_layout.setContentsMargins(8, 8, 8, 8)
 
-        # Point search
-        point_label = QLabel("<b>Point Search</b>")
-        search_layout.addWidget(point_label)
+        # Coordinate Search container
+        point_container = QFrame()
+        point_container.setObjectName("pointSearchContainer")
+        point_container.setStyleSheet("""
+            #pointSearchContainer {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #fcfdfe, stop:1 #f1f5f9);
+                border: 1px solid #cbd5e0;
+                border-radius: 8px;
+            }
+        """)
+        point_layout = QVBoxLayout(point_container)
+        point_layout.setContentsMargins(8, 8, 8, 8)
+        point_layout.setSpacing(6)
+
+        point_label = QLabel("<b>Coordinate Search</b>")
+        point_layout.addWidget(point_label)
+
         coord_row = QHBoxLayout()
         coord_row.setSpacing(6)
         coord_row.addWidget(QLabel("Lon:"))
         coord_row.addWidget(self.search_coord_lon, 1)
         coord_row.addWidget(QLabel("Lat:"))
         coord_row.addWidget(self.search_coord_lat, 1)
-        search_layout.addLayout(coord_row)
+        point_layout.addLayout(coord_row)
+
         point_buffer_row = QHBoxLayout()
         point_buffer_row.setSpacing(6)
         point_buffer_row.addWidget(QLabel("Buffer (m):"))
         point_buffer_row.addWidget(self.search_buffer_m)
         point_buffer_row.addStretch()
-        search_layout.addLayout(point_buffer_row)
+        point_layout.addLayout(point_buffer_row)
+
         point_actions_row = QHBoxLayout()
         point_actions_row.setSpacing(6)
         point_actions_row.addWidget(self.search_point_btn)
         point_actions_row.addStretch()
-        search_layout.addLayout(point_actions_row)
+        point_layout.addLayout(point_actions_row)
+
+        search_layout.addWidget(point_container)
 
         search_layout.addSpacing(6)
 
-        # Draw search
-        draw_label = QLabel("<b>Polygon Search</b>")
-        search_layout.addWidget(draw_label)
+        # Draw search (Geometric Search) container
+        self.search_draw_mode = "polygon"
+        self.search_geometry_mode_group = QButtonGroup(self)
+        self.search_geometry_mode_group.setExclusive(True)
+
+        self.search_polygon_mode_btn = QPushButton("Polygon Search")
+        self.search_polygon_mode_btn.setCheckable(True)
+        self.search_polygon_mode_btn.setChecked(True)
+        self.search_polygon_mode_btn.setObjectName("searchPolygonModeBtn")
+
+        self.search_box_mode_btn = QPushButton("Box Search")
+        self.search_box_mode_btn.setCheckable(True)
+        self.search_box_mode_btn.setObjectName("searchBoxModeBtn")
+
+        self.search_geometry_mode_group.addButton(self.search_polygon_mode_btn)
+        self.search_geometry_mode_group.addButton(self.search_box_mode_btn)
+
+        for btn in (self.search_polygon_mode_btn, self.search_box_mode_btn):
+            btn.setMinimumHeight(24)
+            btn.setMaximumHeight(28)
+
+        self.search_polygon_mode_btn.clicked.connect(
+            lambda: self._set_search_draw_mode("polygon")
+        )
+        self.search_box_mode_btn.clicked.connect(
+            lambda: self._set_search_draw_mode("rectangle")
+        )
+
+        geom_container = QFrame()
+        geom_container.setObjectName("geomSearchContainer")
+        geom_container.setStyleSheet("""
+            #geomSearchContainer {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #fcfdfe, stop:1 #f1f5f9);
+                border: 1px solid #cbd5e0;
+                border-radius: 8px;
+            }
+            #searchPolygonModeBtn {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #edf2f7);
+                border: 1px solid #cbd5e0;
+                border-right: none;
+                border-top-left-radius: 6px;
+                border-bottom-left-radius: 6px;
+                border-top-right-radius: 0px;
+                border-bottom-right-radius: 0px;
+                color: #4a5568;
+                font-weight: 600;
+            }
+            #searchPolygonModeBtn:hover {
+                background: #ffffff;
+                color: #2b6cb0;
+            }
+            #searchPolygonModeBtn:checked {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ebf8ff, stop:1 #bee3f8);
+                border: 1px solid #4299e1;
+                border-right: none;
+                color: #2b6cb0;
+                font-weight: bold;
+            }
+            #searchBoxModeBtn {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #edf2f7);
+                border: 1px solid #cbd5e0;
+                border-top-left-radius: 0px;
+                border-bottom-left-radius: 0px;
+                border-top-right-radius: 6px;
+                border-bottom-right-radius: 6px;
+                color: #4a5568;
+                font-weight: 600;
+            }
+            #searchBoxModeBtn:hover {
+                background: #ffffff;
+                color: #2b6cb0;
+            }
+            #searchBoxModeBtn:checked {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ebf8ff, stop:1 #bee3f8);
+                border: 1px solid #4299e1;
+                color: #2b6cb0;
+                font-weight: bold;
+            }
+        """)
+        geom_layout = QVBoxLayout(geom_container)
+        geom_layout.setContentsMargins(8, 8, 8, 8)
+        geom_layout.setSpacing(8)
+
+        geom_label = QLabel("<b>Geometric Search</b>")
+        geom_layout.addWidget(geom_label)
+
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(0)  # Touch side-by-side
+        mode_row.addWidget(self.search_polygon_mode_btn)
+        mode_row.addWidget(self.search_box_mode_btn)
+        mode_row.addStretch()
+        geom_layout.addLayout(mode_row)
+
         draw_actions_row = QHBoxLayout()
         draw_actions_row.setSpacing(4)
         draw_actions_row.addWidget(self.search_draw_polygon_btn)
@@ -466,7 +573,20 @@ class ControlPanel(
         draw_actions_row.addWidget(self.search_clear_geometry_btn)
         draw_actions_row.addWidget(self.search_from_draw_btn)
         draw_actions_row.addStretch()
-        search_layout.addLayout(draw_actions_row)
+        geom_layout.addLayout(draw_actions_row)
+
+        # Show AOI checkbox
+        self.search_aoi_visible_check = QCheckBox("Show AOI on map")
+        self.search_aoi_visible_check.setChecked(True)
+        self.search_aoi_visible_check.setToolTip(
+            "Show or hide the polygon / box AOI overlay on the globe."
+        )
+        self.search_aoi_visible_check.toggled.connect(
+            lambda checked: self.aoi_visibility_changed.emit(checked)
+        )
+        geom_layout.addWidget(self.search_aoi_visible_check)
+
+        search_layout.addWidget(geom_container)
 
         search_layout.addSpacing(8)
         search_layout.addWidget(QLabel("<b>Search Results</b>"))
@@ -853,29 +973,29 @@ class ControlPanel(
         self.status_box = QTextEdit()
         self.status_box.setReadOnly(True)
         self.status_box.setAcceptRichText(True)
-        self.status_box.setMinimumHeight(180)
+        self.status_box.setMinimumHeight(320)
         self.status_box.setStyleSheet("""
             QTextEdit {
-                background: #0d1117;
-                border: 1px solid #30363d;
+                background: #ffffff;
+                border: 1px solid #d0d7de;
                 border-radius: 6px;
                 font-family: 'Consolas', 'Cascadia Code', 'Monaco', monospace;
                 font-size: 11px;
-                color: #c9d1d9;
-                padding: 6px;
+                color: #24292f;
+                padding: 8px;
             }
             QScrollBar:vertical {
-                background: #161b22;
+                background: #f6f8fa;
                 width: 8px;
                 border-radius: 4px;
             }
             QScrollBar::handle:vertical {
-                background: #30363d;
+                background: #c1c7d0;
                 border-radius: 4px;
                 min-height: 20px;
             }
             QScrollBar::handle:vertical:hover {
-                background: #484f58;
+                background: #9aa4b2;
             }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
                 height: 0px;
@@ -884,8 +1004,8 @@ class ControlPanel(
 
         self.log_box = QGroupBox("Activity Log")
         log_layout = QVBoxLayout(self.log_box)
-        log_layout.setSpacing(0)
-        log_layout.setContentsMargins(8, 8, 8, 8)
+        log_layout.setSpacing(6)
+        log_layout.setContentsMargins(10, 10, 10, 10)
         log_layout.addWidget(self.status_box, 1)
 
         self.measurement_results_box = QGroupBox("Measurement Results")
@@ -947,8 +1067,7 @@ class ControlPanel(
         self._client_section_specs: list[tuple[str, QGroupBox, bool]] = [
             ("Search", self.search_box, True),
             ("Display", self.view_box, False),
-            ("Assets", self.assets_box, False),
-            ("Activity Log", self.log_box, False),
+            ("Activity Log", self.log_box, True),
         ]
         self._client_original_group_titles = {
             section: section.title()
@@ -1067,3 +1186,35 @@ class ControlPanel(
             original_title = self._client_original_group_titles.get(section_widget, "")
             section_widget.setTitle(original_title if visible else "")
             section_widget.setFlat(not visible)
+
+    def _set_search_draw_mode(self, mode: str) -> None:
+        normalized = "rectangle" if str(mode or "").lower() in {"rectangle", "box", "bbox"} else "polygon"
+        if getattr(self, "search_draw_mode", None) == normalized:
+            return
+        self.search_draw_mode = normalized
+
+        # Block signals to prevent infinite feedback loop
+        self.search_polygon_mode_btn.blockSignals(True)
+        self.search_box_mode_btn.blockSignals(True)
+
+        self.search_polygon_mode_btn.setChecked(normalized == "polygon")
+        self.search_box_mode_btn.setChecked(normalized == "rectangle")
+
+        self.search_polygon_mode_btn.blockSignals(False)
+        self.search_box_mode_btn.blockSignals(False)
+
+        # Update UI states and tooltips based on selected mode
+        if normalized == "rectangle":
+            self.search_finish_polygon_btn.setEnabled(False)
+            self.search_draw_polygon_btn.setToolTip("Start drawing a box by dragging on the map.")
+            self.search_from_draw_btn.setToolTip("Search assets overlapping the drawn box.")
+            self.search_clear_geometry_btn.setToolTip("Clear the current box from the map.")
+            self.search_finish_polygon_btn.setToolTip("Finish is only used for polygon drawing.")
+        else:
+            self.search_finish_polygon_btn.setEnabled(True)
+            self.search_draw_polygon_btn.setToolTip("Start drawing a polygon on the map.")
+            self.search_from_draw_btn.setToolTip("Search assets overlapping the drawn polygon.")
+            self.search_clear_geometry_btn.setToolTip("Clear the current polygon from the map.")
+            self.search_finish_polygon_btn.setToolTip("Complete the active polygon.")
+
+        self.search_draw_mode_changed.emit(normalized)

@@ -44,6 +44,235 @@
     } catch (_) {}
   }
 
+  function getSearchGeometryModule() {
+    return (window.OfflineGISModules &&
+      window.OfflineGISModules.search &&
+      window.OfflineGISModules.search.geometry) ||
+    {};
+  }
+
+  function getSearchOverlayVisible() {
+    return typeof window._offlineGISSearchOverlayVisible === "boolean"
+      ? window._offlineGISSearchOverlayVisible
+      : searchOverlayVisible;
+  }
+
+  function getAnnotationDrawingState() {
+    const runtime = window.OfflineGISRuntime || {};
+    if (typeof runtime.getIsAnnotationDrawing === "function") {
+      return Boolean(runtime.getIsAnnotationDrawing());
+    }
+    if (typeof window._offlineGISAnnotationDrawing === "boolean") {
+      return window._offlineGISAnnotationDrawing;
+    }
+    return false;
+  }
+
+  let searchRectangleEntity = null;
+  let searchAoiEntity = null;
+  let searchAoiBounds = null;
+
+  function rectangleBoundsFromPoints(startPoint, currentPoint) {
+    if (!startPoint || !currentPoint) {
+      return null;
+    }
+    const west = Math.min(Number(startPoint.lon), Number(currentPoint.lon));
+    const east = Math.max(Number(startPoint.lon), Number(currentPoint.lon));
+    const south = Math.min(Number(startPoint.lat), Number(currentPoint.lat));
+    const north = Math.max(Number(startPoint.lat), Number(currentPoint.lat));
+    if (!Number.isFinite(west) || !Number.isFinite(south) || !Number.isFinite(east) || !Number.isFinite(north)) {
+      return null;
+    }
+    if (west >= east || south >= north) {
+      return null;
+    }
+    return { west: west, south: south, east: east, north: north };
+  }
+
+  function rectanglePointsFromBounds(bounds) {
+    if (!bounds) {
+      return [];
+    }
+    return [
+      { lon: bounds.west, lat: bounds.south },
+      { lon: bounds.east, lat: bounds.south },
+      { lon: bounds.east, lat: bounds.north },
+      { lon: bounds.west, lat: bounds.north },
+    ];
+  }
+
+  function rectangleAreaSquareMeters(bounds) {
+    const points = rectanglePointsFromBounds(bounds);
+    const geom = getSearchGeometryModule();
+    if (!points.length || !geom.computePolygonAreaSquareMeters) {
+      return 0.0;
+    }
+    return geom.computePolygonAreaSquareMeters(points);
+  }
+
+  function getGroundHeightAtLonLat(lon, lat) {
+    if (!viewer || !viewer.scene || !viewer.scene.globe) {
+      return 0;
+    }
+    try {
+      const height = viewer.scene.globe.getHeight(Cesium.Cartographic.fromDegrees(lon, lat));
+      return Number.isFinite(height) ? height : 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  function ensureSearchRectangleEntity() {
+    if (!viewer || !viewer.entities || searchRectangleEntity) {
+      return;
+    }
+    searchRectangleEntity = viewer.entities.add({
+      position: new Cesium.CallbackProperty(function () {
+        const bounds = rectangleBoundsFromPoints(searchRectangleStartPoint, searchRectangleCurrentPoint);
+        if (!bounds) {
+          return Cesium.Cartesian3.fromDegrees(0, 0, 0);
+        }
+        return Cesium.Cartesian3.fromDegrees(
+          (bounds.west + bounds.east) * 0.5,
+          (bounds.south + bounds.north) * 0.5,
+          0.0
+        );
+      }, false),
+      rectangle: {
+        height: 5000.0,
+        coordinates: new Cesium.CallbackProperty(function () {
+          const bounds = rectangleBoundsFromPoints(searchRectangleStartPoint, searchRectangleCurrentPoint);
+          return bounds
+            ? Cesium.Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north)
+            : null;
+        }, false),
+        material: Cesium.Color.CYAN.withAlpha(0.22),
+        outline: true,
+        outlineColor: new Cesium.CallbackProperty(function () {
+          return searchRectangleLocked ? Cesium.Color.GRAY : Cesium.Color.CYAN;
+        }, false),
+        outlineWidth: 2,
+        show: new Cesium.CallbackProperty(function () {
+          return (searchDrawMode === "rectangle" || searchRectangleLocked) && getSearchOverlayVisible() && !searchRectangleLocked;
+        }, false),
+      },
+      label: {
+        text: new Cesium.CallbackProperty(function () {
+          const bounds = rectangleBoundsFromPoints(searchRectangleStartPoint, searchRectangleCurrentPoint);
+          if (!bounds) {
+            return "";
+          }
+          const area = rectangleAreaSquareMeters(bounds);
+          if (!Number.isFinite(area) || area <= 0) {
+            return "";
+          }
+          const geom = getSearchGeometryModule();
+          const areaText = geom.formatArea
+            ? geom.formatArea(area)
+            : Math.round(area) + " m\u00b2";
+          return "Box: " + areaText;
+        }, false),
+        font: "12px 'Segoe UI', sans-serif",
+        fillColor: Cesium.Color.WHITE,
+        showBackground: true,
+        backgroundColor: Cesium.Color.BLACK.withAlpha(0.85),
+        backgroundPadding: new Cesium.Cartesian2(6, 3),
+        style: Cesium.LabelStyle.FILL,
+        horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+        verticalOrigin: Cesium.VerticalOrigin.CENTER,
+        pixelOffset: new Cesium.Cartesian2(0, 0),
+        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        scale: 0.75,
+        show: new Cesium.CallbackProperty(function () {
+          return (searchDrawMode === "rectangle" || searchRectangleLocked) && getSearchOverlayVisible() && !searchRectangleLocked;
+        }, false),
+      },
+      show: new Cesium.CallbackProperty(function () {
+        return (searchDrawMode === "rectangle" || searchRectangleLocked) && getSearchOverlayVisible() && !searchRectangleLocked;
+      }, false),
+    });
+  }
+
+  function ensureSearchAoiEntity() {
+    if (!viewer || !viewer.entities || !searchAoiBounds) {
+      return;
+    }
+    if (!searchAoiEntity) {
+      searchAoiEntity = viewer.entities.add({
+        position: new Cesium.CallbackProperty(function () {
+          const bounds = searchAoiBounds;
+          if (!bounds) {
+            return Cesium.Cartesian3.fromDegrees(0, 0, 0);
+          }
+          return Cesium.Cartesian3.fromDegrees(
+            (bounds.west + bounds.east) * 0.5,
+            (bounds.south + bounds.north) * 0.5,
+            0.0
+          );
+        }, false),
+        rectangle: {
+          height: 5000.0,
+          coordinates: new Cesium.CallbackProperty(function () {
+            const bounds = searchAoiBounds;
+            return bounds
+              ? Cesium.Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north)
+              : null;
+          }, false),
+          material: Cesium.Color.fromCssColorString("#4f79b8").withAlpha(0.32),
+          outline: true,
+          outlineColor: Cesium.Color.fromCssColorString("#2f4f7f"),
+          outlineWidth: 2,
+          show: new Cesium.CallbackProperty(function () {
+            return Boolean(searchAoiBounds) && getSearchOverlayVisible();
+          }, false),
+        },
+        label: {
+          text: new Cesium.CallbackProperty(function () {
+            const bounds = searchAoiBounds;
+            if (!bounds) {
+              return "";
+            }
+            const area = rectangleAreaSquareMeters(bounds);
+            if (!Number.isFinite(area) || area <= 0) {
+              return "";
+            }
+            const geom = getSearchGeometryModule();
+            const areaText = geom.formatArea
+              ? geom.formatArea(area)
+              : Math.round(area) + " m\u00b2";
+            return "Box: " + areaText;
+          }, false),
+          font: "12px 'Segoe UI', sans-serif",
+          fillColor: Cesium.Color.WHITE,
+          showBackground: true,
+          backgroundColor: Cesium.Color.BLACK.withAlpha(0.85),
+          backgroundPadding: new Cesium.Cartesian2(6, 3),
+          style: Cesium.LabelStyle.FILL,
+          horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+          verticalOrigin: Cesium.VerticalOrigin.CENTER,
+          pixelOffset: new Cesium.Cartesian2(0, 0),
+          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          scale: 0.75,
+          show: new Cesium.CallbackProperty(function () {
+            return Boolean(searchAoiBounds) && getSearchOverlayVisible();
+          }, false),
+        },
+        show: new Cesium.CallbackProperty(function () {
+          return Boolean(searchAoiBounds) && getSearchOverlayVisible();
+        }, false),
+      });
+    }
+    requestSceneRender();
+  }
+
+  function clearSearchRectangleState() {
+    searchRectangleStartPoint = null;
+    searchRectangleCurrentPoint = null;
+    searchRectangleLocked = false;
+  }
+
   function wireStatusBarListeners() {
     if (!viewer || !viewer.scene) return;
     
@@ -204,11 +433,53 @@
           x: movement.position.x,
           y: movement.position.y
         };
+
+        if (searchDrawMode === "rectangle") {
+          if (searchRectangleStartPoint && !searchRectangleLocked) {
+            return;
+          }
+          let clickCartesian = null;
+          if (viewer.scene.pickPositionSupported) {
+            try {
+              const depthCart = viewer.scene.pickPosition(movement.position);
+              if (depthCart && Cesium.Cartesian3.magnitude(depthCart) > 1.0) {
+                clickCartesian = depthCart;
+              }
+            } catch (_) {}
+          }
+          if (!clickCartesian) {
+            const ray = viewer.camera.getPickRay(movement.position);
+            if (ray) {
+              clickCartesian = viewer.scene.globe.pick(ray, viewer.scene);
+            }
+          }
+          if (!clickCartesian) {
+            clickCartesian = viewer.camera.pickEllipsoid(
+              movement.position,
+              viewer.scene.globe.ellipsoid
+            );
+          }
+          if (clickCartesian) {
+            const lonLat = cartesianToLonLat(clickCartesian);
+            if (lonLat) {
+              searchRectangleStartPoint = { lon: lonLat.lon, lat: lonLat.lat };
+              searchRectangleCurrentPoint = { lon: lonLat.lon, lat: lonLat.lat };
+              searchRectangleLocked = false;
+              viewer.scene.screenSpaceCameraController.enableInputs = false;
+              ensureSearchRectangleEntity();
+            }
+          }
+        }
       }
     }, Cesium.ScreenSpaceEventType.LEFT_DOWN);
     
     // Handle LEFT_UP - only process as click if mouse didn't move much
     handler.setInputAction(function (movement) {
+      if (searchDrawMode === "rectangle" && searchRectangleStartPoint) {
+        // Do not auto-finish on LEFT_UP; wait for RIGHT_CLICK to complete/lock.
+        return;
+      }
+
       // Check if this was a click (minimal movement) or a drag (significant movement)
       if (mouseDownPosition && movement && movement.position) {
         const dx = Math.abs(movement.position.x - mouseDownPosition.x);
@@ -223,9 +494,6 @@
       }
       
       mouseDownPosition = null;
-      
-      // Process as click
-      if (handleFlyThroughClick(movement)) return;
       
       const picked = movement && movement.position ? viewer.scene.pick(movement.position) : null;
       if (picked && picked.id && picked.id._annotationRole === "edit") {
@@ -325,6 +593,7 @@
         if (clickCartesian) {
           lonLat = cartesianToLonLat(clickCartesian);
           lastMapClickCartesian = Cesium.Cartesian3.clone(clickCartesian);
+          window._offlineGISLastMapClickAt = Date.now();
         }
       }
 
@@ -349,14 +618,23 @@
       // Polygon draw — always fires if in polygon mode (doesn't block annotation placement below)
       if (searchDrawMode === "polygon") {
         if (searchPolygonLocked) {
+          log("debug", "polygon click ignored because polygon is locked points=" + searchPolygonPoints.length);
           setStatus("Polygon restored. Clear geometry to start a new polygon.");
           // Don't return — annotation point can still be placed
         } else {
+          log(
+            "debug",
+            "polygon click accepted lon=" + lon.toFixed(6) + " lat=" + lat.toFixed(6) + " beforePoints=" + searchPolygonPoints.length + " cursorPoint=" + (searchCursorPoint ? "yes" : "no") + " annotation=" + Boolean(getAnnotationDrawingState())
+          );
           searchPolygonPoints.push({ lon: lon, lat: lat, cartesian: clickCartesian ? Cesium.Cartesian3.clone(clickCartesian) : null });
           searchCursorPoint = null;
+          if (window.OfflineGISRuntime && typeof window.OfflineGISRuntime.setSearchCursorPoint === "function") {
+            window.OfflineGISRuntime.setSearchCursorPoint(null);
+          }
           updateSearchPolygonPreview();
+          log("debug", "polygon click applied afterPoints=" + searchPolygonPoints.length);
           setStatus("Polygon draw: continue points, right-click or Finish to close");
-          // Fall through — annotation point can also be placed simultaneously if annotationModeEnabled
+          return;
         }
       }
 
@@ -366,7 +644,7 @@
           log("info", "Distance mode click lon=" + lon.toFixed(6) + " lat=" + lat.toFixed(6));
           if (!distanceMeasureAnchor) {
             // First click: set anchor and draw a visible dot
-            distanceMeasureAnchor = { lon: lon, lat: lat, height: lonLat.height || 0 };
+            distanceMeasureAnchor = { lon: lon, lat: lat, height: getGroundHeightAtLonLat(lon, lat) };
             clickedPoints.length = 0;
             clickedPoints.push([lon, lat]);
             clearMeasurementPreviewEntities();
@@ -407,7 +685,7 @@
             geodesic.surfaceDistance,
             azDegrees,
             distanceMeasureAnchor.height,
-            lonLat.height || 0
+            getGroundHeightAtLonLat(lon, lat)
           );
           distanceMeasureAnchor = null;  // reset so next click starts fresh
           const _dist = geodesic.surfaceDistance;
@@ -446,7 +724,6 @@
     }, Cesium.ScreenSpaceEventType.LEFT_UP);
 
     handler.setInputAction(function (movement) {
-      let statusCoordEmitted = false;
       if (movement && movement.endPosition) {
         if (window.OfflineGISCursorControls) {
           window.OfflineGISCursorControls.lastSearchCursorScreenPosition = movement.endPosition;
@@ -459,28 +736,61 @@
           }
         }
 
-        // Keep status-bar lon/lat responsive during drag using a cheap ellipsoid pick.
-        let fastLonLat = null;
-        if (isInteracting) {
+        // Keep status-bar lon/lat responsive during drag and after focus operations.
+        let fastLonLat = getLonLatFromScreen(movement.endPosition);
+        if (!fastLonLat) {
           const ellipsoidCart = viewer.camera.pickEllipsoid(movement.endPosition, viewer.scene.globe.ellipsoid);
           if (ellipsoidCart) {
             fastLonLat = cartesianToLonLat(ellipsoidCart);
           }
-        } else {
-          fastLonLat = getLonLatFromScreen(movement.endPosition);
         }
         if (fastLonLat) {
           emitMouseCoordinates(fastLonLat.lon, fastLonLat.lat);
-          statusCoordEmitted = true;
         }
       }
       
+      // Update rectangle draw preview
+      if (searchDrawMode === "rectangle" && searchRectangleStartPoint && !searchRectangleLocked && movement && movement.endPosition) {
+        let currentCartesian = null;
+        if (viewer.scene.pickPositionSupported) {
+          try {
+            const depthCart = viewer.scene.pickPosition(movement.endPosition);
+            if (depthCart && Cesium.Cartesian3.magnitude(depthCart) > 1.0) {
+              currentCartesian = depthCart;
+            }
+          } catch (_) {}
+        }
+        if (!currentCartesian) {
+          const ray = viewer.camera.getPickRay(movement.endPosition);
+          if (ray) {
+            currentCartesian = viewer.scene.globe.pick(ray, viewer.scene);
+          }
+        }
+        if (!currentCartesian) {
+          currentCartesian = viewer.camera.pickEllipsoid(
+            movement.endPosition,
+            viewer.scene.globe.ellipsoid
+          );
+        }
+        if (currentCartesian) {
+          const lonLat = cartesianToLonLat(currentCartesian);
+          if (lonLat) {
+            searchRectangleCurrentPoint = { lon: lonLat.lon, lat: lonLat.lat };
+            ensureSearchRectangleEntity();
+            requestSceneRender();
+          }
+        }
+      }
+
       // During interaction (pan/rotate), we've already emitted coordinates above,
       // so we can skip the rest of the handler unless in special modes
       if (
         isInteracting &&
         searchDrawMode !== "polygon" &&
+        searchDrawMode !== "rectangle" &&
         !distanceMeasureModeEnabled &&
+        !lineDrawModeEnabled &&
+        !(flyThroughModeEnabled && flyThroughPoints.length > 0) &&
         !window._profileModeActive &&
         !window._profileLineActive
       ) {
@@ -535,15 +845,6 @@
         }
       }
       
-      // Always emit mouse coordinates for status bar (not just during polygon drawing)
-      let lonLat = null;
-      if (!statusCoordEmitted || searchDrawMode === "polygon") {
-        lonLat = getLonLatFromScreen(movement.endPosition);
-        if (lonLat && !statusCoordEmitted) {
-          emitMouseCoordinates(lonLat.lon, lonLat.lat);
-        }
-      }
-
       // Live rubber-band line for elevation profile mode — mirrors distance tool approach
       if (window._profileModeActive && window._profileStartLon !== undefined) {
         try {
@@ -629,6 +930,16 @@
       }
       // CRITICAL FIX: Throttle polygon preview updates for smooth pixel-perfect drawing
       // Update at most 60fps (every ~16ms) to prevent lag on rapid mouse movements
+      let polygonLonLat = null;
+      if (movement && movement.endPosition) {
+        polygonLonLat = getLonLatFromScreen(movement.endPosition);
+        if (!polygonLonLat) {
+          const ellipsoidCart = viewer.camera.pickEllipsoid(movement.endPosition, viewer.scene.globe.ellipsoid);
+          if (ellipsoidCart) {
+            polygonLonLat = cartesianToLonLat(ellipsoidCart);
+          }
+        }
+      }
       const now = Date.now();
       if (!window._lastPolygonPreviewUpdate) {
         window._lastPolygonPreviewUpdate = 0;
@@ -637,23 +948,83 @@
       if (timeSinceLastUpdate < 16) {
         // Skip this update - too soon after last one
         // But still update the cursor point so next update uses latest position
-        if (lonLat) {
-          searchCursorPoint = { lon: lonLat.lon, lat: lonLat.lat };
+        if (polygonLonLat) {
+          searchCursorPoint = { lon: polygonLonLat.lon, lat: polygonLonLat.lat };
+          if (window.OfflineGISRuntime && typeof window.OfflineGISRuntime.setSearchCursorPoint === "function") {
+            window.OfflineGISRuntime.setSearchCursorPoint(searchCursorPoint);
+          }
         }
         return;
       }
       window._lastPolygonPreviewUpdate = now;
       
       // Update search polygon preview during drawing
-      if (lonLat) {
-        searchCursorPoint = { lon: lonLat.lon, lat: lonLat.lat };
+      if (polygonLonLat) {
+        searchCursorPoint = { lon: polygonLonLat.lon, lat: polygonLonLat.lat };
+        if (window.OfflineGISRuntime && typeof window.OfflineGISRuntime.setSearchCursorPoint === "function") {
+          window.OfflineGISRuntime.setSearchCursorPoint(searchCursorPoint);
+        }
+        log(
+          "debug",
+          "polygon mouse move update points=" + searchPolygonPoints.length + " cursorLon=" + polygonLonLat.lon.toFixed(6) + " cursorLat=" + polygonLonLat.lat.toFixed(6)
+        );
         updateSearchPolygonPreview();
       }
     }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
-    handler.setInputAction(function () {
+    handler.setInputAction(function (movement) {
       if (searchDrawMode === "polygon") {
         window.offlineGIS.finishSearchPolygon();
+        return;
+      }
+      if (searchDrawMode === "rectangle") {
+        if (searchRectangleStartPoint) {
+          if (movement && movement.position) {
+            let releaseCartesian = null;
+            if (viewer.scene.pickPositionSupported) {
+              try {
+                const depthCart = viewer.scene.pickPosition(movement.position);
+                if (depthCart && Cesium.Cartesian3.magnitude(depthCart) > 1.0) {
+                  releaseCartesian = depthCart;
+                }
+              } catch (_) {}
+            }
+            if (!releaseCartesian) {
+              const ray = viewer.camera.getPickRay(movement.position);
+              if (ray) {
+                releaseCartesian = viewer.scene.globe.pick(ray, viewer.scene);
+              }
+            }
+            if (!releaseCartesian) {
+              releaseCartesian = viewer.camera.pickEllipsoid(
+                movement.position,
+                viewer.scene.globe.ellipsoid
+              );
+            }
+            if (releaseCartesian) {
+              const releaseLonLat = cartesianToLonLat(releaseCartesian);
+              if (releaseLonLat) {
+                searchRectangleCurrentPoint = {
+                  lon: releaseLonLat.lon,
+                  lat: releaseLonLat.lat,
+                };
+              }
+            }
+          }
+          const bounds = rectangleBoundsFromPoints(searchRectangleStartPoint, searchRectangleCurrentPoint);
+          if (bounds) {
+            searchRectangleLocked = true;
+            searchAoiBounds = bounds;
+            ensureSearchAoiEntity();
+            const geom = getSearchGeometryModule();
+            if (geom.emitSearchGeometry) {
+              geom.emitSearchGeometry("bbox", bounds);
+            }
+            setStatus("Box search geometry defined.");
+          }
+          viewer.scene.screenSpaceCameraController.enableInputs = true;
+          requestSceneRender();
+        }
         return;
       }
       if (flyThroughModeEnabled) {

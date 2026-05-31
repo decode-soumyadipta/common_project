@@ -4,6 +4,17 @@
   const geometry = search.geometry || {};
 
   function createSearchPolygonController(deps) {
+    function debugLog(message) {
+      const bridge = getBridge();
+      if (bridge && typeof bridge.log === "function") {
+        bridge.log("debug", message);
+        return;
+      }
+      if (typeof console !== "undefined" && typeof console.debug === "function") {
+        console.debug(message);
+      }
+    }
+
     function getViewer() {
       return deps.getViewer();
     }
@@ -60,12 +71,21 @@
       return deps.getComparatorLeftViewer();
     }
 
+    function getSearchPolygonLocked() {
+      return deps.getSearchPolygonLocked ? deps.getSearchPolygonLocked() : false;
+    }
+
     function getIsAnnotationDrawing() {
       return deps.getIsAnnotationDrawing();
     }
 
     function emitSearchGeometry(type, payload) {
-      deps.emitSearchGeometry(type, payload);
+      if (geometry.emitSearchGeometry) {
+        geometry.emitSearchGeometry(type, payload);
+        return;
+      }
+      var serialized = typeof payload === "string" ? payload : JSON.stringify(payload || {});
+      deps.emitSearchGeometry(type, serialized);
     }
 
     function getComparatorRightViewer() {
@@ -77,6 +97,9 @@
     }
 
     function setSearchDrawMode(value) {
+      debugLog(
+        "search_polygon_controller.setSearchDrawMode value=" + value + " current=" + getSearchDrawMode() + " polygonPoints=" + getSearchPolygonPoints().length + " cursorPoint=" + (getSearchCursorPoint() ? "yes" : "no")
+      );
       deps.setSearchDrawMode(value);
     }
 
@@ -174,6 +197,11 @@
       const viewer = getViewer();
       const cesium = getCesium();
       if (!viewer || !cesium) return;
+      const PREVIEW_LINE_HEIGHT_METERS = 3.0;
+
+      function isPolygonDrawPreviewActive() {
+        return getSearchDrawMode() === "polygon";
+      }
 
       if (!getSearchPreviewLineEntity()) {
         setSearchPreviewLineEntity(
@@ -186,7 +214,11 @@
                 if (raw.length < 2) return [];
                 const res = raw.map(function (p) {
                   try {
-                    return p.cartesian ? cesium.Cartesian3.clone(p.cartesian) : cesium.Cartesian3.fromDegrees(p.lon, p.lat);
+                    if (p.cartesian) {
+                      const lifted = cesium.Cartographic.fromCartesian(p.cartesian);
+                      return cesium.Cartesian3.fromRadians(lifted.longitude, lifted.latitude, (lifted.height || 0) + PREVIEW_LINE_HEIGHT_METERS);
+                    }
+                    return cesium.Cartesian3.fromDegrees(p.lon, p.lat, PREVIEW_LINE_HEIGHT_METERS);
                   } catch (e) { return null; }
                 }).filter(function(v) { return !!v; });
                 if (!cursor && res.length >= 3) res.push(res[0]);
@@ -194,10 +226,11 @@
               }, false),
               material: cesium.Color.CYAN,
               depthFailMaterial: cesium.Color.CYAN,
-              width: 4.0, // Thicker strict line
-              clampToGround: true, // Follow terrain
+              width: 2.5,
+              clampToGround: false,
+              disableDepthTestDistance: Number.POSITIVE_INFINITY,
               show: new cesium.CallbackProperty(function () {
-                return getPolygonVisibilityEnabled() && getSearchOverlayVisible() && getSearchPolygonPoints().length >= 1;
+                return isPolygonDrawPreviewActive() && getSearchPolygonPoints().length >= 1;
               }, false),
             },
           })
@@ -220,12 +253,12 @@
                 }).filter(function(v) { return !!v; });
                 return res.length >= 3 ? new cesium.PolygonHierarchy(res) : null;
               }, false),
-              material: cesium.Color.CYAN.withAlpha(0.3), // More visible during draw
-              fill: false, // User requested no fill during draw
-              outline: false, // Outline handled by polyline
+              material: cesium.Color.CYAN.withAlpha(0.28),
+              fill: true,
+              outline: false,
               perPositionHeight: true,
               show: new cesium.CallbackProperty(function () {
-                return getPolygonVisibilityEnabled() && getSearchOverlayVisible() && getSearchPolygonPoints().length >= 2;
+                return isPolygonDrawPreviewActive() && getSearchPolygonPoints().length >= 2;
               }, false),
             },
           })
@@ -263,11 +296,11 @@
                 getSearchCursorPoint(),
                 true
               );
-              const center = geometry.polygonLabelPosition(points);
-              if (!center) {
+              if (points.length < 3) {
                 return cesium.Cartesian3.fromDegrees(0, 0);
               }
-              return cesium.Cartesian3.fromDegrees(center.lon, center.lat);
+              const center = geometry.polygonLabelPosition(points);
+              return center ? cesium.Cartesian3.fromDegrees(center.lon, center.lat) : cesium.Cartesian3.fromDegrees(0, 0);
             }, false),
             label: {
               text: new cesium.CallbackProperty(function () {
@@ -283,26 +316,23 @@
                 if (!Number.isFinite(areaSquareMeters) || areaSquareMeters <= 0) {
                   return "";
                 }
-                return "Area " + geometry.formatArea(areaSquareMeters);
+                return "Area: " + geometry.formatArea(areaSquareMeters);
               }, false),
-              font: "13px 'Segoe UI', sans-serif",
+              font: "12px 'Segoe UI', sans-serif",
               fillColor: cesium.Color.WHITE,
               showBackground: true,
-              backgroundColor: cesium.Color.BLACK.withAlpha(0.82),
-              backgroundPadding: new cesium.Cartesian2(8, 4),
+              backgroundColor: cesium.Color.BLACK.withAlpha(0.85),
+              backgroundPadding: new cesium.Cartesian2(6, 3),
               style: cesium.LabelStyle.FILL,
               horizontalOrigin: cesium.HorizontalOrigin.CENTER,
               verticalOrigin: cesium.VerticalOrigin.CENTER,
               pixelOffset: new cesium.Cartesian2(0, 0),
               heightReference: cesium.HeightReference.CLAMP_TO_GROUND,
               disableDepthTestDistance: Number.POSITIVE_INFINITY,
-              scale: 0.8,
+              scale: 0.75,
               show: new cesium.CallbackProperty(function () {
-                return (
-                  getPolygonVisibilityEnabled() &&
-                  getSearchOverlayVisible() &&
-                  geometry.getSearchPreviewPoints(getSearchPolygonPoints(), getSearchCursorPoint(), true).length >= 3
-                );
+                const points = geometry.getSearchPreviewPoints(getSearchPolygonPoints(), getSearchCursorPoint(), true);
+                return isPolygonDrawPreviewActive() && points.length >= 3;
               }, false),
             },
           })
@@ -321,6 +351,9 @@
     }
 
     function updateSearchPolygonPreview() {
+      debugLog(
+        "updateSearchPolygonPreview drawMode=" + getSearchDrawMode() + " points=" + getSearchPolygonPoints().length + " cursorPoint=" + (getSearchCursorPoint() ? "yes" : "no") + " locked=" + Boolean(getSearchPolygonLocked()) + " annotation=" + Boolean(getIsAnnotationDrawing())
+      );
       ensureSearchPreviewEntities();
       syncSearchVertexEntities();
       requestSceneRender();
@@ -425,21 +458,21 @@
     var EDIT_ICON = "data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2720%27 height=%2720%27 viewBox=%270 0 20 20%27%3E%3Ccircle cx=%2710%27 cy=%2710%27 r=%279%27 fill=%27rgba(255%2C255%2C255%2C0.92)%27 stroke=%27rgba(0%2C0%2C0%2C0.38)%27 stroke-width=%271.1%27/%3E%3Cpath d=%27M6.1 12.9l.5-2.2L11.8 5.5a1.3 1.3 0 011.8 0l.8.8a1.3 1.3 0 010 1.8L9.1 13.3l-2.2.5a.6.6 0 01-.8-.7z%27 fill=%27%23282f39%27/%3E%3Cpath d=%27M10.9 6.4l2.7 2.7%27 stroke=%27%23ffffff%27 stroke-width=%271%27 stroke-linecap=%27round%27/%3E%3C/svg%3E";
     var DELETE_ICON = "data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2720%27 height=%2720%27 viewBox=%270 0 20 20%27%3E%3Ccircle cx=%2710%27 cy=%2710%27 r=%279%27 fill=%27rgba(220%2C50%2C50%2C0.92)%27 stroke=%27rgba(0%2C0%2C0%2C0.38)%27 stroke-width=%271.1%27/%3E%3Cpath d=%27M6 6L14 14M14 6L6 14%27 stroke=%27%23ffffff%27 stroke-width=%272%27 stroke-linecap=%27round%27/%3E%3C/svg%3E";
 
-    var activeAoiEntity = null;
-
     function finalizeSearchPolygon() {
       var cesium = getCesium();
       var viewer = getViewer();
       var searchPolygonPoints = getSearchPolygonPoints();
       if (!cesium || !viewer || searchPolygonPoints.length < 3) {
-        deps.log("warn", "Polygon draw requires at least 3 points");
         return;
       }
       setSearchCursorPoint(null);
+      if (window.offlineGIS && typeof window.offlineGIS.clearSearchResultMarkers === "function") {
+        window.offlineGIS.clearSearchResultMarkers();
+      }
       var frozenPoints = searchPolygonPoints.slice();
       
       // Emit to Python
-      emitSearchGeometry("polygon", JSON.stringify({ points: frozenPoints }));
+      emitSearchGeometry("polygon", { points: frozenPoints });
 
       var isAnnotation = getIsAnnotationDrawing();
       
@@ -495,6 +528,7 @@
               fillColor: cesium.Color.WHITE,
               showBackground: true,
               backgroundColor: cesium.Color.BLACK.withAlpha(0.82),
+              heightReference: cesium.HeightReference.CLAMP_TO_GROUND,
               disableDepthTestDistance: Number.POSITIVE_INFINITY,
               scale: 0.8,
             },
@@ -513,6 +547,7 @@
             pixelOffset: new cesium.Cartesian2(12, -8),
             horizontalOrigin: cesium.HorizontalOrigin.LEFT,
             verticalOrigin: cesium.VerticalOrigin.BOTTOM,
+            heightReference: cesium.HeightReference.CLAMP_TO_GROUND,
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
         });
@@ -529,6 +564,7 @@
           horizontalOrigin: cesium.HorizontalOrigin.LEFT,
           verticalOrigin: cesium.VerticalOrigin.BOTTOM,
           scaleByDistance: new cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
+          heightReference: cesium.HeightReference.CLAMP_TO_GROUND,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
@@ -545,6 +581,7 @@
           horizontalOrigin: cesium.HorizontalOrigin.LEFT,
           verticalOrigin: cesium.VerticalOrigin.BOTTOM,
           scaleByDistance: new cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
+          heightReference: cesium.HeightReference.CLAMP_TO_GROUND,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
@@ -574,38 +611,49 @@
         }
         var aoiPoints = frozenPoints.map(function (p) {
           try {
-            return p.cartesian ? cesium.Cartesian3.clone(p.cartesian) : cesium.Cartesian3.fromDegrees(p.lon, p.lat);
+            return cesium.Cartesian3.fromDegrees(p.lon, p.lat, 10.0);
           } catch (e) { return null; }
         }).filter(function(v) { return !!v; });
         
         if (aoiPoints.length >= 3) {
+          var flatAoiPoints = frozenPoints.map(function (p) {
+            try {
+              return cesium.Cartesian3.fromDegrees(p.lon, p.lat);
+            } catch (e) { return null; }
+          }).filter(function (v) { return !!v; });
+
           // Compute area for label
           var areaSqM = geometry.computePolygonAreaSquareMeters ? geometry.computePolygonAreaSquareMeters(frozenPoints) : 0;
           var areaText = geometry.formatArea ? geometry.formatArea(areaSqM) : "0 m\u00b2";
-          var labelPos = geometry.polygonLabelPosition ? geometry.polygonLabelPosition(frozenPoints) : aoiPoints[0];
+          var labelPos = geometry.polygonLabelPosition ? geometry.polygonLabelPosition(frozenPoints) : null;
+          var labelPosCartesian = labelPos
+            ? cesium.Cartesian3.fromDegrees(labelPos.lon, labelPos.lat)
+            : aoiPoints[0];
+          var aoiLabelText = "AOI" + (areaText ? "\n" + areaText : "");
 
           activeAoiEntity = viewer.entities.add({
-            position: labelPos,
+            position: labelPosCartesian,
             polyline: {
-              positions: aoiPoints.concat([aoiPoints[0]]),
+              positions: flatAoiPoints.concat([flatAoiPoints[0]]),
               width: 3,
               material: cesium.Color.CYAN,
               clampToGround: true,
               show: new cesium.CallbackProperty(function() {
-                return deps.getPolygonVisibilityEnabled();
+                return deps.getPolygonVisibilityEnabled() && deps.getSearchOverlayVisible();
               }, false)
             },
             polygon: {
-              hierarchy: new cesium.PolygonHierarchy(aoiPoints),
-              material: cesium.Color.CYAN.withAlpha(0.4), // Bolder final AOI
+              hierarchy: new cesium.PolygonHierarchy(flatAoiPoints),
+              material: cesium.Color.fromCssColorString("#4f79b8").withAlpha(0.34),
               fill: true,
               outline: false,
+              perPositionHeight: false,
               show: new cesium.CallbackProperty(function() {
-                return deps.getPolygonVisibilityEnabled();
+                return deps.getPolygonVisibilityEnabled() && deps.getSearchOverlayVisible();
               }, false)
             },
             label: {
-              text: areaText,
+              text: aoiLabelText,
               font: "bold 14px sans-serif",
               fillColor: cesium.Color.WHITE,
               outlineColor: cesium.Color.BLACK,
@@ -613,10 +661,11 @@
               style: cesium.LabelStyle.FILL_AND_OUTLINE,
               showBackground: true,
               backgroundColor: cesium.Color.BLACK.withAlpha(0.62),
+              heightReference: cesium.HeightReference.CLAMP_TO_GROUND,
               disableDepthTestDistance: Number.POSITIVE_INFINITY,
               show: new cesium.CallbackProperty(function() {
-                return deps.getPolygonVisibilityEnabled();
-              }, false)
+                return deps.getPolygonVisibilityEnabled() && deps.getSearchOverlayVisible();
+              }, false),
             }
           });
         }
@@ -703,6 +752,7 @@
             fillColor: cesium.Color.WHITE,
             showBackground: true,
             backgroundColor: cesium.Color.BLACK.withAlpha(0.82),
+            heightReference: cesium.HeightReference.CLAMP_TO_GROUND,
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
             scale: 0.8,
           },
@@ -721,6 +771,7 @@
           pixelOffset: new cesium.Cartesian2(12, -8),
           horizontalOrigin: cesium.HorizontalOrigin.LEFT,
           verticalOrigin: cesium.VerticalOrigin.BOTTOM,
+          heightReference: cesium.HeightReference.CLAMP_TO_GROUND,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
@@ -737,6 +788,7 @@
           horizontalOrigin: cesium.HorizontalOrigin.LEFT,
           verticalOrigin: cesium.VerticalOrigin.BOTTOM,
           scaleByDistance: new cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
+          heightReference: cesium.HeightReference.CLAMP_TO_GROUND,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
@@ -753,6 +805,7 @@
           horizontalOrigin: cesium.HorizontalOrigin.LEFT,
           verticalOrigin: cesium.VerticalOrigin.BOTTOM,
           scaleByDistance: new cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
+          heightReference: cesium.HeightReference.CLAMP_TO_GROUND,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
@@ -779,13 +832,21 @@
       deps.requestSceneRender();
     }
 
-    function clearAllData() {
+    function clearAoiData() {
       var viewer = getViewer();
       if (!viewer) return;
       if (activeAoiEntity) {
         try { viewer.entities.remove(activeAoiEntity); } catch(e) {}
         activeAoiEntity = null;
       }
+      updateAoiPanel([]);
+      deps.requestSceneRender();
+    }
+
+    function clearAllData() {
+      var viewer = getViewer();
+      if (!viewer) return;
+      clearAoiData();
       var polys = getDrawnPolygons();
       while (polys.length > 0) {
         var poly = polys.pop();
@@ -796,7 +857,6 @@
         if (poly.editEntity) { try { viewer.entities.remove(poly.editEntity); } catch(e) {} }
         if (poly.deleteEntity) { try { viewer.entities.remove(poly.deleteEntity); } catch(e) {} }
       }
-      updateAoiPanel([]);
       updatePolygonDropdownUI();
       deps.requestSceneRender();
     }
@@ -813,6 +873,7 @@
       toggleDrawnPolygonVisibility: toggleDrawnPolygonVisibility,
       toggleAllDrawnPolygonsVisibility: toggleAllDrawnPolygonsVisibility,
       updateComparatorPolygons: updateComparatorPolygons,
+      clearAoiData: clearAoiData,
       clearAllData: clearAllData,
     };
   }

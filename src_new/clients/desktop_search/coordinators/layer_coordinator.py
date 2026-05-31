@@ -167,13 +167,26 @@ class LayerCoordinator:
         c._refresh_vector_layers_ui()
 
     def toggle_search_result_visibility(self, file_path: str, visible: bool) -> None:
-        """Toggle visibility of a search result layer on the map."""
+        """Toggle visibility of a search result layer on the map with proper debouncing."""
         c = self._controller
 
         normalized_path = str(file_path or "").strip().replace("\\", "/")
         if not normalized_path:
             c.panel.log("Visibility toggle ignored: missing asset path.")
             return
+
+        # CRITICAL FIX: Prevent rapid successive clicks from queuing multiple operations
+        # and causing hangs. Use a debounce mechanism with a flag.
+        import time
+        current_time = time.time()
+        
+        # Check if this path was recently toggled (within 100ms)
+        last_toggle_time = c._visibility_toggle_debounce.get(normalized_path, 0)
+        if current_time - last_toggle_time < 0.1:  # 100ms debounce window
+            print(f"DEBUG: Ignoring rapid click on {normalized_path} (debounced)")
+            return
+        
+        c._visibility_toggle_debounce[normalized_path] = current_time
 
         asset = c._search_result_assets_by_path.get(normalized_path)
         if not isinstance(asset, dict):
@@ -184,34 +197,85 @@ class LayerCoordinator:
 
         next_visible = bool(visible)
 
-        # DEM exclusivity: only one DEM layer visible at a time
-        if next_visible and c._is_dem_asset(asset):
-            for path, candidate in c._search_result_assets_by_path.items():
-                if path != normalized_path and c._is_dem_asset(candidate):
-                    c._search_layer_visibility[path] = False
+        # CRITICAL FIX: Prevent multiple concurrent visibility operations
+        if c._visibility_sync_in_progress:
+            print(f"DEBUG: Visibility sync already in progress, queuing toggle for {normalized_path}")
+            return
+        
+        # Mark sync as in progress
+        c._visibility_sync_in_progress = True
+        
+        try:
+            # DEM exclusivity: only one DEM layer visible at a time
+            if next_visible and c._is_dem_asset(asset):
+                for path, candidate in c._search_result_assets_by_path.items():
+                    if path != normalized_path and c._is_dem_asset(candidate):
+                        c._search_layer_visibility[path] = False
 
-        c._search_layer_visibility[normalized_path] = next_visible
+            c._search_layer_visibility[normalized_path] = next_visible
 
-        if c._event_driven_enabled:
-            c._sync_search_visibility_layers_event_driven()
-        else:
-            c._sync_search_visibility_layers()
+            print(f"DEBUG: Syncing visibility for {normalized_path}: {next_visible}")
+            
+            # Determine if this is a new layer that needs loading
+            needs_loading = next_visible and normalized_path not in c._loaded_search_layer_keys
+            
+            if needs_loading:
+                # Set loading state for new layer
+                c._set_layer_loading(True, f"Loading {asset.get('file_name', 'layer')}...")
+            
+            if c._event_driven_enabled:
+                c._sync_search_visibility_layers_event_driven()
+            else:
+                c._sync_search_visibility_layers()
 
-        if c._search_layer_visibility.get(normalized_path, False):
-            c.panel.log(f"Shown on map: {asset.get('file_name', 'asset')}")
-            # Use instantFocusBounds (snap camera immediately) so Cesium requests
-            # tiles at the correct zoom level from the very first render frame.
-            # flyToBounds (animated, 2s) causes the camera to be at a high altitude
-            # during the animation where minzoom=11 tiles aren't requested → blank globe.
-            from qtpy.QtCore import QTimer
-            QTimer.singleShot(150, lambda: c._toolbar_zoom_to_asset(normalized_path))
-        else:
-            c.panel.log(f"Hidden from map: {asset.get('file_name', 'asset')}")
+            if c._search_layer_visibility.get(normalized_path, False):
+                c.panel.log(f"Shown on map: {asset.get('file_name', 'asset')}")
+                # Use instantFocusBounds (snap camera immediately) so Cesium requests
+                # tiles at the correct zoom level from the very first render frame.
+                # flyToBounds (animated, 2s) causes the camera to be at a high altitude
+                # during the animation where minzoom=11 tiles aren't requested → blank globe.
+                from qtpy.QtCore import QTimer
+                # Increased delay to ensure layer sync completes before camera movement
+                QTimer.singleShot(250, lambda: self._safe_zoom_to_asset(c, normalized_path, needs_loading))
+            else:
+                c.panel.log(f"Hidden from map: {asset.get('file_name', 'asset')}")
+                # Clear loading state when hiding a layer
+                c._set_layer_loading(False, "Ready")
 
-        c.panel.update_search_results(
-            list(c._search_result_assets_by_path.values()),
-            c._search_layer_visibility,
-        )
+            # Update UI with current visibility state
+            c.panel.update_search_results(
+                list(c._search_result_assets_by_path.values()),
+                c._search_layer_visibility,
+            )
+        finally:
+            # Always clear the in-progress flag
+            c._visibility_sync_in_progress = False
+    
+    def _safe_zoom_to_asset(self, c, file_path: str, was_loading: bool = False) -> None:
+        """Safely zoom to asset with error handling and validation."""
+        try:
+            # Verify asset still exists
+            if file_path not in c._search_result_assets_by_path:
+                print(f"DEBUG: Asset {file_path} no longer in search results, skip zoom")
+                if was_loading:
+                    c._set_layer_loading(False, "Ready")
+                return
+            
+            # Verify layer was actually loaded
+            if file_path not in c._loaded_search_layer_keys:
+                print(f"DEBUG: Asset {file_path} not loaded yet, skip zoom")
+                if was_loading:
+                    c._set_layer_loading(False, "Ready")
+                return
+            
+            c._toolbar_zoom_to_asset(file_path)
+        except Exception as e:
+            print(f"DEBUG: Error during zoom to asset {file_path}: {e}")
+            # Log but don't fail - the layer is still visible even if zoom fails
+        finally:
+            # Always clear loading state after zoom attempt
+            if was_loading:
+                c._set_layer_loading(False, "Ready")
 
     def reorder_search_result_layers(self, reordered_layers: list[dict]) -> None:
         """Handle drag-and-drop reordering of search result layers with real-time globe updates."""

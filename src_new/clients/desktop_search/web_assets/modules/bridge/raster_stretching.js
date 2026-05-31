@@ -1,5 +1,59 @@
   window.offlineGIS = window.offlineGIS || {};
   Object.assign(window.offlineGIS, {
+    _findStretchTargetLayer: function (layerKey) {
+      const normalizedKey = String(layerKey || "");
+      const searchViewers = [];
+      if (typeof comparatorModeEnabled !== "undefined" && comparatorModeEnabled && typeof comparatorViewers !== "undefined" && Array.isArray(comparatorViewers)) {
+        if (typeof comparatorSelectedPane !== "undefined" && typeof getComparatorPaneViewer === "function") {
+          const selectedViewer = getComparatorPaneViewer(comparatorSelectedPane);
+          if (selectedViewer) {
+            searchViewers.push(selectedViewer);
+          }
+        }
+        for (const candidateViewer of comparatorViewers) {
+          if (candidateViewer && searchViewers.indexOf(candidateViewer) === -1) {
+            searchViewers.push(candidateViewer);
+          }
+        }
+      }
+      if (typeof viewer !== "undefined" && viewer && searchViewers.indexOf(viewer) === -1) {
+        searchViewers.push(viewer);
+      }
+
+      for (const candidateViewer of searchViewers) {
+        if (!candidateViewer || !candidateViewer.imageryLayers) {
+          continue;
+        }
+        for (let i = 0; i < candidateViewer.imageryLayers.length; i++) {
+          const layer = candidateViewer.imageryLayers.get(i);
+          if (layer && layer._layerKey === normalizedKey) {
+            return { viewer: candidateViewer, layer: layer };
+          }
+        }
+      }
+      return { viewer: null, layer: null };
+    },
+    _getStretchColorMode: function () {
+      if (typeof getActiveDemColorMode === "function") {
+        return getActiveDemColorMode();
+      }
+      if (typeof demVisual !== "undefined" && demVisual && demVisual.colorMode) {
+        return String(demVisual.colorMode).toLowerCase();
+      }
+      if (activeDemContext && activeDemContext.colorMode) {
+        return String(activeDemContext.colorMode).toLowerCase();
+      }
+      return "terrain";
+    },
+    _getStretchRangeForMode: function (mode) {
+      if (typeof getDemRescaleRangeForColorMode === "function") {
+        return getDemRescaleRangeForColorMode(mode);
+      }
+      const normalized = String(mode || "terrain").toLowerCase();
+      if (normalized === "slope") return { min: 0.0, max: 90.0 };
+      if (normalized === "aspect") return { min: 0.0, max: 360.0 };
+      return { min: -500.0, max: 9000.0 };
+    },
     // SECTION: Raster Stretching (Imagery and DEM)
     // ═══════════════════════════════════════════════════════════════════════════
     applyRasterStretch: function (layerKey, stretchType, method, params) {
@@ -11,16 +65,9 @@
       log("info", "Applying raster stretch: layer=" + layerKey + " type=" + stretchType + " method=" + method);
       
       // Find the layer
-      const imageryLayers = viewer.imageryLayers;
-      let targetLayer = null;
-      
-      for (let i = 0; i < imageryLayers.length; i++) {
-        const layer = imageryLayers.get(i);
-        if (layer && layer._layerKey === layerKey) {
-          targetLayer = layer;
-          break;
-        }
-      }
+      const targetSearch = this._findStretchTargetLayer(layerKey);
+      const targetViewer = targetSearch.viewer;
+      const targetLayer = targetSearch.layer;
       
       if (!targetLayer) {
         log("warn", "applyRasterStretch: layer not found: " + layerKey);
@@ -51,6 +98,10 @@
         this._applyImageryStretch(targetLayer, method, params);
       } else if (stretchType === "dem") {
         this._applyDemStretch(targetLayer, method, params);
+      }
+
+      if (targetViewer && targetViewer.scene) {
+        targetViewer.scene.requestRender();
       }
       
       requestSceneRender();
@@ -105,7 +156,7 @@
       
       // Calculate new rescale range based on method
       let newMin, newMax;
-      const currentRange = _demOriginalRescale || { min: -500, max: 9000 };
+      const currentRange = this._getStretchRangeForMode(this._getStretchColorMode());
       
       if (method === "min_max") {
         // Use full data range
@@ -141,7 +192,7 @@
         // Update the drape layer URL with new rescale
         const newUrl = buildUrlWithQuery(baseUrl, {
           rescale: newRescale,
-          colormap_name: activeDemContext.colorMode || "gray"
+          colormap_name: this._getStretchColorMode()
         });
         
         // Snapshot camera and properties for smooth swap
@@ -220,17 +271,8 @@
     updateRasterStretchParams: function (layerKey, params) {
       if (!viewer) return;
       
-      // Find the layer
-      const imageryLayers = viewer.imageryLayers;
-      let targetLayer = null;
-      
-      for (let i = 0; i < imageryLayers.length; i++) {
-        const layer = imageryLayers.get(i);
-        if (layer && layer._layerKey === layerKey) {
-          targetLayer = layer;
-          break;
-        }
-      }
+      const targetSearch = this._findStretchTargetLayer(layerKey);
+      const targetLayer = targetSearch.layer;
       
       if (!targetLayer || !targetLayer._stretchSettings) {
         log("warn", "updateRasterStretchParams: layer not found or no stretch applied: " + layerKey);
@@ -250,17 +292,9 @@
     removeRasterStretch: function (layerKey) {
       if (!viewer) return;
       
-      // Find the layer
-      const imageryLayers = viewer.imageryLayers;
-      let targetLayer = null;
-      
-      for (let i = 0; i < imageryLayers.length; i++) {
-        const layer = imageryLayers.get(i);
-        if (layer && layer._layerKey === layerKey) {
-          targetLayer = layer;
-          break;
-        }
-      }
+      const targetSearch = this._findStretchTargetLayer(layerKey);
+      const targetViewer = targetSearch.viewer;
+      const targetLayer = targetSearch.layer;
       
       if (!targetLayer) {
         log("warn", "removeRasterStretch: layer not found: " + layerKey);
@@ -280,7 +314,7 @@
             
             const newUrl = buildUrlWithQuery(baseUrl, {
               rescale: originalRescale,
-              colormap_name: activeDemContext.colorMode || "gray"
+              colormap_name: this._getStretchColorMode()
             });
             
             // CRITICAL FIX: Preserve current visibility and properties
@@ -288,13 +322,13 @@
             const currentAlpha = activeDemDrapeLayer ? activeDemDrapeLayer.alpha : 1.0;
             
             if (activeDemDrapeLayer) {
-              viewer.imageryLayers.remove(activeDemDrapeLayer, false);
+              targetViewer.imageryLayers.remove(activeDemDrapeLayer, false);
             }
             
             // CRITICAL FIX: Get rectangle bounds from activeDemContext
             const rectangle = activeDemContext.bounds ? createRectangle(activeDemContext.bounds) : null;
             
-            const newDrapeLayer = viewer.imageryLayers.addImageryProvider(
+            const newDrapeLayer = targetViewer.imageryLayers.addImageryProvider(
               new Cesium.UrlTemplateImageryProvider({
                 url: newUrl,
                 maximumLevel: 18,

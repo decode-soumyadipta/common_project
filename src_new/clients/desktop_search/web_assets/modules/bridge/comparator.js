@@ -33,7 +33,7 @@
       if (idx < activeKeys.length - 1 && div) div.classList.add("active");
 
       resetComparatorViewerLayers(viewer);
-      applyLayerDefinitionToViewer(viewer, def, idx === 0 ? "left" : "right"); // mapping legacy paneKey
+      applyLayerDefinitionToViewer(viewer, def, String(idx));
       
       const title = document.getElementById("comparatorTitle" + idx);
       if (title) title.textContent = def.label || ("Layer " + (idx + 1));
@@ -54,7 +54,7 @@
       window.clearTimeout(comparatorDemRefreshTimer);
       comparatorDemRefreshTimer = null;
     }
-    const targetPane = paneKey === "right" ? "right" : "left";
+    const targetPane = getComparatorPaneKeyForIndex(resolveComparatorPaneIndex(paneKey));
     comparatorDemRefreshTimer = window.setTimeout(function () {
       comparatorDemRefreshTimer = null;
       if (!comparatorModeEnabled) {
@@ -67,7 +67,7 @@
 
       const targetViewer = getComparatorPaneViewer(targetPane);
       const paneState = getComparatorPaneVisual(targetPane);
-      const layerKey = targetPane === "right" ? swipeComparatorRightLayerKey : swipeComparatorLeftLayerKey;
+      const layerKey = targetViewer && targetViewer.__comparatorLayerKey ? targetViewer.__comparatorLayerKey : null;
       const definition = layerKey ? layerDefinitions.get(layerKey) : null;
       if (!targetViewer || !paneState || !definition || String(definition.type || "") !== "dem") {
         return;
@@ -114,10 +114,11 @@
         newHillshade.show = true;
       }
 
-      const refreshVersion = (Number(comparatorDemStyleRefreshVersion[targetPane]) || 0) + 1;
-      comparatorDemStyleRefreshVersion[targetPane] = refreshVersion;
+      const refreshKey = String(resolveComparatorPaneIndex(targetPane));
+      const refreshVersion = (Number(comparatorDemStyleRefreshVersion[refreshKey]) || 0) + 1;
+      comparatorDemStyleRefreshVersion[refreshKey] = refreshVersion;
       window.setTimeout(function () {
-        const latestVersion = Number(comparatorDemStyleRefreshVersion[targetPane]) || 0;
+        const latestVersion = Number(comparatorDemStyleRefreshVersion[refreshKey]) || 0;
         const staleRefresh = latestVersion !== refreshVersion;
         const comparatorInactive = !comparatorModeEnabled || getComparatorPaneLayerType(targetPane) !== "dem";
         if (staleRefresh || comparatorInactive) {
@@ -134,6 +135,10 @@
         targetViewer.__comparatorHillshadeLayer = newHillshade;
         applyComparatorPaneVisualState(targetPane);
 
+        if (typeof setSearchBusy === "function") {
+          setSearchBusy(false, "");
+        }
+
         if (oldHillshade && targetViewer.imageryLayers.indexOf(oldHillshade) >= 0) {
           targetViewer.imageryLayers.remove(oldHillshade, false);
         }
@@ -143,7 +148,7 @@
         enforceComparatorDemLayerOrder(targetPane, targetViewer);
         logComparatorLayerStack(targetViewer, targetPane, "post-color-refresh");
         targetViewer.scene.requestRender();
-      }, 80);
+      }, 48);
     }, COMPARATOR_DEM_REFRESH_DEBOUNCE_MS);
   }
 
@@ -193,8 +198,12 @@
         animation: false,
         terrainProvider: new Cesium.EllipsoidTerrainProvider(),
       });
+      v.resolutionScale = 1.0;
+      v.useBrowserRecommendedResolution = false;
       v.scene.globe.baseColor = Cesium.Color.BLACK;
       v.scene.backgroundColor = Cesium.Color.BLACK;
+      v.scene.globe.maximumScreenSpaceError = 1.0;
+      v.scene.fxaa = true;
       // Start in 3D — use morphTo3D so the scene graph initialises correctly
       // on Windows/ANGLE (direct scene.mode assignment can leave it in a broken state)
       if (v.scene.mode !== Cesium.SceneMode.SCENE3D) {
@@ -404,7 +413,7 @@
         var _activeKeys = resolveComparatorLayerKeys();
         var _numPanes = _activeKeys.length || 2;
 
-        log("info", "Comparator init: cwSize=" + _cwW + "x" + _cwH + " panes=" + _numPanes);
+        log("debug", "Comparator init: cwSize=" + _cwW + "x" + _cwH + " panes=" + _numPanes);
 
         ensureComparatorViewers(_numPanes);
         refreshComparatorLayers();
@@ -416,7 +425,7 @@
             var _pane = document.getElementById("comparatorPane" + _di);
             var _vdiv = document.getElementById("comparatorViewer" + _di);
             var _cv = comparatorViewers[_di] && comparatorViewers[_di].canvas;
-            log("info", "COMP_DEBUG[" + label + "] pane" + _di +
+            log("debug", "COMP_DEBUG[" + label + "] pane" + _di +
               " pane=" + (_pane ? _pane.offsetWidth + "x" + _pane.offsetHeight : "null") +
               " active=" + (_pane ? _pane.classList.contains("active") : "?") +
               " vdiv=" + (_vdiv ? _vdiv.offsetWidth + "x" + _vdiv.offsetHeight : "null") +
@@ -424,7 +433,7 @@
               " clientCanvas=" + (_cv ? _cv.clientWidth + "x" + _cv.clientHeight : "null"));
           }
           var _cw2 = document.getElementById("comparatorWindows");
-          log("info", "COMP_DEBUG[" + label + "] cwRoot=" +
+          log("debug", "COMP_DEBUG[" + label + "] cwRoot=" +
             (_cw2 ? _cw2.offsetWidth + "x" + _cw2.offsetHeight + " display=" + getComputedStyle(_cw2).display : "null"));
         }
 

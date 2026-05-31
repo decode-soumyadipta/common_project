@@ -48,6 +48,7 @@ from src_new.clients.desktop_search.status_bar import GISStatusBar
 from src_new.clients.desktop_search.titiler_manager import TiTilerManager
 from src_new.clients.desktop_search.ui.overlays import (
     BusyOverlay,
+    FlyThroughTimelineBar,
     LayerCompositorOverlay,
     MapOverlayControls,
 )
@@ -287,8 +288,9 @@ class MainWindow(QMainWindow):
             self._create_menu_bar()
 
 
-        self.compositor_overlay = LayerCompositorOverlay(self.web_view, self.controller)
-        self.map_overlay_controls = MapOverlayControls(self.web_view, self.controller)
+        self.compositor_overlay = LayerCompositorOverlay(self, self.controller)
+        self.map_overlay_controls = MapOverlayControls(self, self.controller)
+        self.fly_through_timeline_bar = FlyThroughTimelineBar(self, self.controller)
         # Show map overlay controls by default
         self.map_overlay_controls.show()
 
@@ -302,6 +304,12 @@ class MainWindow(QMainWindow):
         self.bridge.renderBusy.connect(self.gis_status_bar.on_render_busy)
         self.bridge.measureCursorChanged.connect(self._on_measure_cursor_changed)
         self.bridge.profileCursorMoved.connect(self._on_profile_cursor_moved)
+        self.bridge.flyThroughPlaybackStateChanged.connect(
+            self._on_fly_through_playback_state_changed
+        )
+        self.bridge.flyThroughPlaybackProgressChanged.connect(
+            self._on_fly_through_playback_progress_changed
+        )
         self._measure_crosshair_cursor = self._build_crosshair_cursor()
         self._measure_cursor_active = False
         # Event filter to re-apply cursor on every mouse move (QWebEngineView resets it)
@@ -670,6 +678,11 @@ class MainWindow(QMainWindow):
             and self.map_overlay_controls.isVisible()
         ):
             self.map_overlay_controls.update_position()
+        if (
+            hasattr(self, "fly_through_timeline_bar")
+            and self.fly_through_timeline_bar.isVisible()
+        ):
+            self.fly_through_timeline_bar.update_position()
 
     def set_busy_overlay(self, active: bool, message: str = "") -> None:
         """Toggle the modal busy overlay."""
@@ -678,6 +691,13 @@ class MainWindow(QMainWindow):
             self.busy_overlay.resize(self.size())
         else:
             self.busy_overlay.hide()
+
+    def set_fly_through_active(self, active: bool) -> None:
+        """Show or hide the fly-through timeline bar."""
+        if hasattr(self, "fly_through_timeline_bar"):
+            self.fly_through_timeline_bar.set_fly_through_active(active)
+            if active:
+                self.fly_through_timeline_bar.update_position()
 
     def moveEvent(self, event: object) -> None:
         """Handle window move event.
@@ -689,6 +709,11 @@ class MainWindow(QMainWindow):
         self._position_compositor_overlay()
         if hasattr(self, "map_overlay_controls") and self.map_overlay_controls.isVisible():
             self.map_overlay_controls.update_position()
+        if (
+            hasattr(self, "fly_through_timeline_bar")
+            and self.fly_through_timeline_bar.isVisible()
+        ):
+            self.fly_through_timeline_bar.update_position()
 
     def resizeEvent(self, event: object) -> None:
         """Handle window resize event.
@@ -706,16 +731,42 @@ class MainWindow(QMainWindow):
             and self.map_overlay_controls.isVisible()
         ):
             self.map_overlay_controls.update_position()
+        if (
+            hasattr(self, "fly_through_timeline_bar")
+            and self.fly_through_timeline_bar.isVisible()
+        ):
+            self.fly_through_timeline_bar.update_position()
+
+    def _on_fly_through_playback_state_changed(self, state: str) -> None:
+        if hasattr(self, "fly_through_timeline_bar"):
+            self.fly_through_timeline_bar.set_playback_state(state)
+        if str(state).lower() == "ended":
+            if hasattr(self, "fly_through_timeline_bar"):
+                self.fly_through_timeline_bar.set_fly_through_active(False)
+            self.controller._fly_through_mode_enabled = False
+            action = self.toolbar_actions.get("Fly Through")
+            if action is not None:
+                previous = action.blockSignals(True)
+                action.setChecked(False)
+                action.blockSignals(previous)
+            # Recompute toolbar enabled/disabled state now that fly-through is over.
+            # Without this refresh, annotation tools can remain greyed out until another
+            # toolbar action forces a state sync.
+            self._refresh_toolbar_action_state()
+
+    def _on_fly_through_playback_progress_changed(self, progress: float) -> None:
+        if hasattr(self, "fly_through_timeline_bar"):
+            self.fly_through_timeline_bar.set_progress(progress)
 
     def _position_compositor_overlay(self) -> None:
-        """Position the compositor overlay in the top-right corner of the web view."""
+        """Position the compositor overlay in the top-right corner of the window."""
         if (
             not hasattr(self, "compositor_overlay")
             or not self.compositor_overlay.isVisible()
         ):
             return
         w = self.compositor_overlay.width()
-        top_right = self.web_view.mapToGlobal(self.web_view.rect().topRight())
+        top_right = self.mapToGlobal(self.rect().topRight())
         y_offset = 20
         if (
             hasattr(self, "map_overlay_controls")
@@ -879,10 +930,6 @@ class MainWindow(QMainWindow):
             if success:
                 action.setChecked(True)
                 applied["done"] = True
-                if hasattr(self, "map_overlay_controls"):
-                    self.map_overlay_controls.polygon_visibility_checkbox.setChecked(
-                        False
-                    )
             else:
                 action.setChecked(False)
             self._refresh_toolbar_action_state()
@@ -1109,10 +1156,15 @@ class MainWindow(QMainWindow):
         """Set or restore the crosshair cursor on the map web view only."""
         from qtpy.QtWidgets import QApplication
         import logging
+        import sys
         logger = logging.getLogger("desktop.main_window")
-        
+
+        enabled = bool(enabled)
+        if self._measure_cursor_active == enabled:
+            return
+
         logger.debug("_on_measure_cursor_changed called: enabled=%s", enabled)
-        self._measure_cursor_active = bool(enabled)
+        self._measure_cursor_active = enabled
         # Always clear any application-level override so toolbar/panel stay normal
         while QApplication.overrideCursor():
             QApplication.restoreOverrideCursor()
@@ -1120,6 +1172,8 @@ class MainWindow(QMainWindow):
         if self._measure_cursor_active:
             logger.info("Applying crosshair cursor to web view")
             self._apply_crosshair_to_webview()
+            if sys.platform == "darwin":
+                QApplication.setOverrideCursor(self._measure_crosshair_cursor)
         else:
             logger.info("Removing crosshair cursor from web view")
             self.web_view.unsetCursor()

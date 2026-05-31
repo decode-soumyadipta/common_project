@@ -35,7 +35,6 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPExcepti
 from pydantic import BaseModel, Field
 from sqlalchemy import bindparam, text as sa_text
 from sqlalchemy.orm import Session
-from src_new.services.ingestion.gdal_pipelines.cog_converter import CogConverter
 
 from src_new.services.ingestion.api.dependencies import (
     get_data_root,
@@ -432,6 +431,7 @@ async def upload_raster(
         _cog_path = saved_path  # capture snapshot before any mutation
         def _bg_cog(p: Path = _cog_path) -> None:
             try:
+                from src_new.services.ingestion.gdal_pipelines.cog_converter import CogConverter
                 res = CogConverter().convert(p)
                 logger.info("BG COG: %s converted=%s", p.name, res.converted)
             except Exception as _exc:

@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     # 2. Database
     # -------------------------------------------------------------------------
-    database_url: str = "sqlite:///./offline_gis.db"
+    database_url: str = f"sqlite:///{_PROJECT_ROOT.as_posix()}/offline_gis.db"
     """SQLAlchemy-compatible database URL. Use postgresql+psycopg2:// for PostGIS."""
 
     # -------------------------------------------------------------------------
