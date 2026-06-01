@@ -124,6 +124,9 @@ class ProjectIoCoordinator:
         all Python-side state dictionaries and UI widgets to empty defaults.
         """
         c = self._controller
+        if not c._undo_redo_in_progress:
+            c._undo_stack.clear()
+            c._redo_stack.clear()
         # JS-side: clear in dependency order
         c._run_js_call("clearAllLayers")          # layers + annotations + markers (via updated clearAllLayers)
         c._run_js_call("clearVectorLayers")        # belt-and-suspenders for vector sources
@@ -166,6 +169,8 @@ class ProjectIoCoordinator:
         c.panel.update_vector_layers([])
         c.clear_all_measurement_results()
         c._apply_display_control_mode()
+        if not c._undo_redo_in_progress:
+            c._last_state_snapshot = c.build_project_payload()
 
     def export_profile_csv(self) -> None:
         controller = self._controller
@@ -550,6 +555,10 @@ class ProjectIoCoordinator:
     def apply_project_payload(self, payload: dict, source_path: Path | None = None) -> None:
         """Apply project payload to restore project state."""
         c = self._controller
+        if not c._undo_redo_in_progress:
+            c._undo_stack.clear()
+            c._redo_stack.clear()
+            c._last_state_snapshot = payload
         self.clear_project_state()
         if source_path:
             c._project_path = source_path

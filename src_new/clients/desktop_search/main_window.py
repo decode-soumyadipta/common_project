@@ -642,7 +642,9 @@ class MainWindow(QMainWindow):
 
         edit_menu = menu_bar.addMenu("&Edit")
         undo_action = QAction(IconRegistry.get("undo", size=16), "Undo", self)
+        undo_action.setShortcut("Ctrl+Z")
         redo_action = QAction(IconRegistry.get("redo", size=16), "Redo", self)
+        redo_action.setShortcut("Ctrl+Y")
         undo_action.triggered.connect(self.controller.undo_last_action)
         redo_action.triggered.connect(self.controller.redo_last_action)
         edit_menu.addAction(undo_action)

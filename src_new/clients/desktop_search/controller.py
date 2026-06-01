@@ -97,6 +97,10 @@ class DesktopController(QObject):
         self._toolbar_context_callback = toolbar_context_callback
         self._asset_cache: dict[str, dict] = {}
         self._dem_asset_kind_cache: dict[str, bool] = {}
+        self._undo_stack: list[dict] = []
+        self._redo_stack: list[dict] = []
+        self._undo_redo_in_progress = False
+        self._last_state_snapshot: dict | None = None
         self._search_result_assets_by_path: dict[str, dict] = {}
         self._search_layer_visibility: dict[str, bool] = {}
         self._last_synced_visibility: dict[
@@ -207,6 +211,7 @@ class DesktopController(QObject):
         self._logger.info("Controller initialized mode=%s", self.app_mode.value)
         self._signal.connect_all_signals()
         self._apply_display_control_mode()
+        self._last_state_snapshot = self.build_project_payload()
         # Defer startup network and process work so the main window can render
         # immediately instead of appearing as a silent/no-window launch.
         QTimer.singleShot(0, self._bootstrap_startup_tasks)
@@ -632,10 +637,54 @@ class DesktopController(QObject):
         self._project_io.save_project_as()
 
     def undo_last_action(self) -> None:
-        self.panel.log("Undo is not available yet.")
+        """Undo the last visual or annotation project action."""
+        if not self._undo_stack:
+            self.panel.log("Nothing to undo.")
+            return
+
+        self._undo_redo_in_progress = True
+        try:
+            previous_state = self._undo_stack.pop()
+
+            # Push current state to redo stack
+            current_state = self.build_project_payload()
+            self._redo_stack.append(current_state)
+
+            # Apply the popped state
+            self.apply_project_payload(previous_state)
+            self._last_state_snapshot = previous_state
+
+            self.panel.log("Undo successful.")
+        except Exception as e:
+            self._logger.error("Failed to undo last action: %s", e)
+            self.panel.log(f"Undo failed: {e}")
+        finally:
+            self._undo_redo_in_progress = False
 
     def redo_last_action(self) -> None:
-        self.panel.log("Redo is not available yet.")
+        """Redo the last undone project action."""
+        if not self._redo_stack:
+            self.panel.log("Nothing to redo.")
+            return
+
+        self._undo_redo_in_progress = True
+        try:
+            next_state = self._redo_stack.pop()
+
+            # Push current state to undo stack
+            current_state = self.build_project_payload()
+            self._undo_stack.append(current_state)
+
+            # Apply the popped state
+            self.apply_project_payload(next_state)
+            self._last_state_snapshot = next_state
+
+            self.panel.log("Redo successful.")
+        except Exception as e:
+            self._logger.error("Failed to redo last action: %s", e)
+            self.panel.log(f"Redo failed: {e}")
+        finally:
+            self._undo_redo_in_progress = False
 
     def build_project_payload(self) -> dict:
         return self._project_io.build_project_payload()
@@ -647,6 +696,26 @@ class DesktopController(QObject):
     def _set_project_modified(self, modified: bool = True) -> None:
         """Update modification state and notify UI."""
         self._is_project_modified = modified
+
+        if modified and not self._undo_redo_in_progress:
+            try:
+                # Capture baseline if missing
+                if self._last_state_snapshot is None:
+                    self._last_state_snapshot = self.build_project_payload()
+                else:
+                    current = self.build_project_payload()
+                    import json
+                    # Only push if states are different
+                    if json.dumps(current, sort_keys=True) != json.dumps(self._last_state_snapshot, sort_keys=True):
+                        self._undo_stack.append(self._last_state_snapshot)
+                        if len(self._undo_stack) > 50:
+                            self._undo_stack.pop(0)
+                        self._last_state_snapshot = current
+                        # Clear redo stack on new action
+                        self._redo_stack.clear()
+            except Exception as e:
+                self._logger.warning("Failed to capture undo state snapshot: %s", e)
+
         name = self._project_path.stem if self._project_path else "untitled"
         self.project_metadata_changed.emit(name, modified)
 

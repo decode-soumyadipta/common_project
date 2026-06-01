@@ -265,3 +265,94 @@ def test_layer_coordinator_vector_layers():
     mock_controller._run_js_call.assert_any_call("addVectorLayer", "vector:test.geojson", "test", dummy_geojson, {})
     mock_controller._refresh_vector_layers_ui.assert_called()
 
+
+def test_desktop_controller_undo_redo_stack():
+    from unittest.mock import patch
+    from src_new.clients.desktop_search.controller import DesktopController
+
+    # Create a subclass or instance with mocked dependencies
+    mock_panel = MagicMock()
+    mock_view = MagicMock()
+    mock_bridge = MagicMock()
+    
+    # Avoid QComboBox findData TypeError with MagicMocks
+    mock_panel.dem_color_mode_combo.findData.return_value = -1
+    mock_panel.dem_stretch_mode_combo.findData.return_value = -1
+    mock_panel.stretch_mode_combo.findData.return_value = -1
+    
+    with patch("src_new.clients.desktop_search.controller.QTimer") as mock_timer, \
+         patch("src_new.clients.desktop_search.controller.QThreadPool") as mock_pool:
+        # Instantiate DesktopController with basic mocks
+        controller = DesktopController(
+            panel=mock_panel,
+            web_view=mock_view,
+            bridge=mock_bridge,
+            api_client=MagicMock(),
+            titiler_manager=MagicMock(),
+            api_server_manager=MagicMock(),
+        )
+    
+    # Mock project IO and serialization
+    state_seq = [
+        {"version": 1, "state_id": 0, "annotations": {"points": []}},
+        {"version": 1, "state_id": 1, "annotations": {"points": [{"lon": 10.0, "lat": 20.0}]}},
+        {"version": 1, "state_id": 2, "annotations": {"points": [{"lon": 10.0, "lat": 20.0}, {"lon": 11.0, "lat": 21.0}]}},
+    ]
+    
+    current_state_idx = 0
+    
+    def mock_build_payload():
+        return state_seq[current_state_idx]
+        
+    def mock_apply_payload(payload, source_path=None):
+        nonlocal current_state_idx
+        for idx, s in enumerate(state_seq):
+            if s["state_id"] == payload["state_id"]:
+                current_state_idx = idx
+                break
+
+    controller.build_project_payload = mock_build_payload
+    controller.apply_project_payload = mock_apply_payload
+    controller._last_state_snapshot = state_seq[0]
+    
+    # Initially stacks are empty
+    assert len(controller._undo_stack) == 0
+    assert len(controller._redo_stack) == 0
+    
+    # 1. State changes to 1 (Action 1)
+    current_state_idx = 1
+    controller._set_project_modified(True)
+    # The baseline State 0 should be on the undo stack
+    assert len(controller._undo_stack) == 1
+    assert controller._undo_stack[0]["state_id"] == 0
+    assert len(controller._redo_stack) == 0
+    
+    # 2. State changes to 2 (Action 2)
+    current_state_idx = 2
+    controller._set_project_modified(True)
+    # Both State 0 and State 1 should be on the undo stack
+    assert len(controller._undo_stack) == 2
+    assert controller._undo_stack[0]["state_id"] == 0
+    assert controller._undo_stack[1]["state_id"] == 1
+    assert len(controller._redo_stack) == 0
+    
+    # 3. Undo Action
+    controller.undo_last_action()
+    # Should revert current state to 1
+    assert current_state_idx == 1
+    assert len(controller._undo_stack) == 1
+    assert controller._undo_stack[0]["state_id"] == 0
+    # Redo stack should now contain State 2
+    assert len(controller._redo_stack) == 1
+    assert controller._redo_stack[0]["state_id"] == 2
+    
+    # 4. Redo Action
+    controller.redo_last_action()
+    # Should restore state to 2
+    assert current_state_idx == 2
+    assert len(controller._undo_stack) == 2
+    assert controller._undo_stack[0]["state_id"] == 0
+    assert controller._undo_stack[1]["state_id"] == 1
+    assert len(controller._redo_stack) == 0
+
+
