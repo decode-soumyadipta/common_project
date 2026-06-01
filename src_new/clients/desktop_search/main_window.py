@@ -498,13 +498,6 @@ class MainWindow(QMainWindow):
             self.controller.on_toolbar_group_disabled("measurement")
 
     def _on_toolbar_action_triggered(self, action_label: str, checked: bool) -> None:
-        """Handle toolbar action triggers.
-
-        Args:
-            action_label: Label of the triggered action.
-            checked: Checked state for toggle actions.
-        """
-    def _on_toolbar_action_triggered(self, action_label: str, checked: bool) -> None:
         """Handle toolbar action triggers by coordinating with the controller and refreshing UI state."""
         action = self.toolbar_actions.get(action_label)
         if action is None:
