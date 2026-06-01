@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import datetime as dt
-import ipaddress
 import json
 import logging
 import math
 from pathlib import Path
 from typing import Callable
-from urllib.parse import urlparse
 
 import httpx
 from qtpy.QtCore import QObject, QThreadPool, QTimer, Signal
