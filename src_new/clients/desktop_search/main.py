@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from pathlib import Path
 
 # CRITICAL: Import QtWebEngineWidgets FIRST before QApplication
 # This is required for proper OpenGL context sharing
@@ -18,6 +19,7 @@ from qtpy import QtWebEngineWidgets  # noqa: F401
 
 from qtpy.QtWidgets import QApplication
 from qtpy.QtCore import Qt
+from qtpy.QtGui import QIcon
 
 # Configure logging
 logging.basicConfig(
@@ -41,8 +43,13 @@ def main() -> int:
         
         # Create Qt application
         app = QApplication(sys.argv)
-        app.setApplicationName("Distributed GIS - Search & Visualization Node")
-        app.setOrganizationName("Offline GIS")
+        app.setApplicationName("resGIS")
+        app.setOrganizationName("NTRO, Gov. of India")
+
+        # Set application icon (taskbar, window title bar, dock/taskbar icon)
+        _logo_path = Path(__file__).resolve().parent.parent.parent / "assets" / "resGIS_logo.png"
+        if _logo_path.exists():
+            app.setWindowIcon(QIcon(str(_logo_path)))
         
         logger.info("Starting Desktop Search Client...")
         
@@ -52,7 +59,7 @@ def main() -> int:
         
         # Create main window in CLIENT mode (Search, Viz, Analysis)
         window = MainWindow(app_mode=DesktopAppMode.CLIENT)
-        window.setWindowTitle("Distributed GIS - Search & Visualization Node")
+        window.setWindowTitle("untitled - resGIS (developed by NTRO, Gov. of India)")
         window.show()
         
         logger.info("Desktop Search Client started successfully")

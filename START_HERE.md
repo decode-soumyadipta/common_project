@@ -1,179 +1,85 @@
-# Offline 3D GIS - Quick Start Guide
+# resGIS - Quick Start & Deployment Guide
 
-## 🚀 How to Run Everything
+Welcome to the official deployment guide for **resGIS**, developed by **NTRO, Gov. of India**. This document outlines how to initialize the backend services and launch the desktop workspaces.
+
+---
+
+## 🚀 Service & Client Orchestration
 
 ### Step 1: Start Backend Services
+Launch the FastAPI microservices (Ingestion, Tile Serving, Query Services) in the background:
 ```bash
 cd /Users/soumyadiptadey/Developer/common_project
 ./start_services.sh
 ```
-This opens 3 terminal tabs with:
-- Ingestion Service (Port 8001)
-- Tile Service (Port 8002)
-- Query Service (Port 8003)
+This script initializes:
+- **Ingestion Service**: Port 8001 (Handles raster ingest and tiling optimization)
+- **Tile Serving Service**: Port 8002 (XYZ and terrain tile rendering)
+- **Query Service**: Port 8003 (Catalog search and metadata queries)
 
-**Wait 5-10 seconds** for services to start.
+*Allow 5 to 10 seconds for databases and services to initialize fully.*
 
 ---
 
-### Step 2: Start Desktop Clients
+### Step 2: Launch Workspaces
 
-#### Option A: Upload Data (Ingestion Client)
+#### Option A: Data Ingestion Workspace
+Use this tool to ingest new geospatial raster layers (GeoTIFFs, DEMs) into the local repository:
 ```bash
 ./start_ingestion_client.sh
 ```
-Use this to upload raster files.
 
-#### Option B: Search & Visualize (Search Client)
+#### Option B: Search & Visualization Workspace
+The primary application interface for map visualization, spatial analysis, and project planning:
 ```bash
 ./start_search_client.sh
 ```
-Full-featured 3D GIS with:
-- ✅ CesiumJS 3D Globe
-- ✅ All Toolbars (Display, Measurement, Visualization, Navigation, File)
-- ✅ Layer Comparator & Compositor
-- ✅ Measurement Tools (Distance, Elevation, Volume)
-- ✅ Annotation Tools (Point, Line, Polygon, Text)
-- ✅ Search & Visualization
 
 ---
 
-## 📋 Scripts Created
+## 📋 Management Scripts
 
-1. **`start_services.sh`** - Starts all 3 backend services
-2. **`start_ingestion_client.sh`** - Starts Desktop Ingestion Client
-3. **`start_search_client.sh`** - Starts Desktop Search Client (full features)
-
----
-
-## 🔍 Manual Commands (if scripts don't work)
-
-### Start Services Manually (3 separate terminals)
-
-**Terminal 1 - Ingestion Service:**
-```bash
-cd /Users/soumyadiptadey/Developer/common_project
-conda activate offline-3d-gis
-uvicorn src_new.services.ingestion.service:app --host 127.0.0.1 --port 8001 --reload
-```
-
-**Terminal 2 - Tile Service:**
-```bash
-cd /Users/soumyadiptadey/Developer/common_project
-conda activate offline-3d-gis
-uvicorn src_new.services.tile_serving.service:app --host 127.0.0.1 --port 8002 --reload
-```
-
-**Terminal 3 - Query Service:**
-```bash
-cd /Users/soumyadiptadey/Developer/common_project
-conda activate offline-3d-gis
-uvicorn src_new.services.query.service:app --host 127.0.0.1 --port 8003 --reload
-```
-
-### Start Clients Manually
-
-**Desktop Ingestion Client:**
-```bash
-cd /Users/soumyadiptadey/Developer/common_project
-conda activate offline-3d-gis
-python -m src_new.clients.desktop_ingestion.main
-```
-
-**Desktop Search Client:**
-```bash
-cd /Users/soumyadiptadey/Developer/common_project
-conda activate offline-3d-gis
-python -m src_new.clients.desktop_search.main
-```
+1. **`start_services.sh`**: Start or restart all background microservices.
+2. **`start_ingestion_client.sh`**: Launch the ingestion client to process new spatial data.
+3. **`start_search_client.sh`**: Launch the interactive 3D GIS workspace (resGIS).
 
 ---
 
-## ✅ Health Checks
+## 🛠️ Manual CLI Operations (Optional)
 
-Check if services are running:
-```bash
-curl http://127.0.0.1:8001/health  # Ingestion
-curl http://127.0.0.1:8002/health  # Tile
-curl http://127.0.0.1:8003/health  # Query
-```
+If automated scripts are bypassed, run services individually:
 
----
+### Backend Microservices
+Ensure the Conda environment `offline-3d-gis` is active before running:
 
-## 🎯 Typical Workflow
+1. **Ingestion Service**:
+   ```bash
+   uvicorn src_new.services.ingestion.service:app --host 127.0.0.1 --port 8001 --reload
+   ```
+2. **Tile Service**:
+   ```bash
+   uvicorn src_new.services.tile_serving.service:app --host 127.0.0.1 --port 8002 --reload
+   ```
+3. **Query Service**:
+   ```bash
+   uvicorn src_new.services.query.service:app --host 127.0.0.1 --port 8003 --reload
+   ```
 
-1. **Start services**: `./start_services.sh`
-2. **Upload data**: `./start_ingestion_client.sh`
-   - Browse and select raster files
-   - Click Upload
-3. **Search & visualize**: `./start_search_client.sh`
-   - Use search panel to query by coordinates
-   - Use toolbars for measurements, annotations, etc.
-   - Explore the 3D globe!
-
----
-
-## 🛠️ Troubleshooting
-
-### Port Already in Use
-```bash
-# Find what's using the port
-lsof -i :8001  # or :8002, :8003
-
-# Kill the process
-kill -9 <PID>
-```
-
-### Services Won't Start
-- Check PostgreSQL is running: `pg_ctl status`
-- Check conda environment: `conda activate offline-3d-gis`
-
-### Desktop Client Won't Start
-- Ensure all 3 services are running first
-- Check for missing dependencies: `pip install python-multipart Pillow pyproj`
+### Desktop Applications
+1. **Ingestion Client**:
+   ```bash
+   python -m src_new.clients.desktop_ingestion.main
+   ```
+2. **Search Client**:
+   ```bash
+   python -m src_new.clients.desktop_search.main
+   ```
 
 ---
 
-## 📁 Project Structure
+## 🎯 Primary Workflow
 
-```
-/Users/soumyadiptadey/Developer/common_project/
-├── start_services.sh              # Start all backend services
-├── start_ingestion_client.sh      # Start ingestion client
-├── start_search_client.sh         # Start search client (full features)
-├── src_new/                       # New microservices implementation
-│   ├── services/                  # Backend services
-│   │   ├── ingestion/             # Port 8001
-│   │   ├── tile_serving/          # Port 8002
-│   │   └── query/                 # Port 8003
-│   └── clients/                   # Desktop clients
-│       ├── desktop_ingestion/     # Upload client
-│       └── desktop_search/        # Search client (FULL FEATURES)
-└── data_test/                     # Test raster files
-```
-
----
-
-## 🎉 What's Working
-
-✅ All 3 backend services (Ingestion, Tile, Query)
-✅ Desktop Ingestion Client
-✅ Desktop Search Client with **FULL FEATURES**:
-  - Complete CesiumJS 3D globe
-  - All toolbars and tools
-  - Layer Comparator & Compositor
-  - Measurement & Annotation tools
-  - Search & Visualization
-
----
-
-## 📝 Notes
-
-- **Desktop Search Client** has the complete implementation from old `src/client_desktop/`
-- All ~10,000+ lines of code copied with full features
-- 100% feature parity with original desktop client
-- Uses new microservices architecture (3 separate backend services)
-
----
-
-That's it! Run `./start_services.sh` and then `./start_search_client.sh` to get started! 🚀
+1. **Service Initialization**: Spin up local microservices via `./start_services.sh`.
+2. **Data Processing**: Open `./start_ingestion_client.sh` to upload files, optimize projections, and register datasets.
+3. **Spatial Analysis**: Launch `./start_search_client.sh` to explore the 3D globe, calculate distances/areas, construct overlays, annotate findings, and save project sessions.
+4. **Data Export**: Export your maps and annotations to GeoPackage (GPKG) files for full cross-compatibility with other desktop GIS software.

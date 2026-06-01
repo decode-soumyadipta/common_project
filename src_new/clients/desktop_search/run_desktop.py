@@ -146,16 +146,24 @@ def run(
     app = QApplication(sys.argv)
     _write_startup_trace("run:qapplication_created")
 
+    # Set application icon from resGIS logo (taskbar, dock, all child windows)
+    from qtpy.QtGui import QIcon
+    _logo_path = Path(__file__).resolve().parent.parent.parent / "assets" / "resGIS_logo.png"
+    if _logo_path.exists():
+        app.setWindowIcon(QIcon(str(_logo_path)))
+    app.setApplicationName("resGIS")
+    app.setOrganizationName("NTRO, Gov. of India")
+
     # Show an immediate lightweight startup window so users get instant visual
     # feedback even if heavy initialization takes a few seconds.
     startup_window = QWidget()
-    startup_window.setWindowTitle("Offline 3D GIS - Loading")
+    startup_window.setWindowTitle("resGIS - Loading...")
     startup_window.setWindowFlags(
         Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint
     )
     startup_window.setMinimumSize(420, 120)
     startup_layout = QVBoxLayout(startup_window)
-    startup_layout.addWidget(QLabel("Starting Offline 3D GIS..."))
+    startup_layout.addWidget(QLabel("Starting resGIS..."))
     startup_layout.addWidget(QLabel("Loading map engine and local services"))
     startup_window.show()
     startup_window.raise_()

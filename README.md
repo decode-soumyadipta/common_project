@@ -1,46 +1,43 @@
-# Offline 3D GIS System
+# resGIS
 
-Complete offline 3D GIS system with microservices architecture and full-featured desktop clients.
+resGIS is a secure, high-performance, and completely offline 3D Geographic Information System (GIS) application suite developed by NTRO, Gov. of India. The system provides robust spatial data ingestion, tile serving, search query capabilities, and comprehensive 3D globe visualization.
 
 ## Quick Start
 
+### 1. Start Backend Services
+Start the query, tile, and ingestion microservices:
 ```bash
-# 1. Start all backend services
 ./start_services.sh
-
-# 2. Start desktop client (choose one)
-./start_ingestion_client.sh   # Upload raster data
-./start_search_client.sh       # Search & visualize (full 3D GIS)
 ```
 
-See **[START_HERE.md](START_HERE.md)** for complete documentation.
+### 2. Launch Desktop Clients
+- **Data Ingestion Client**: Launch the client to ingest and prepare raster geospatial datasets:
+  ```bash
+  ./start_ingestion_client.sh
+  ```
+- **Main GIS Client (Search & Visualization)**: Launch the main workspace to visualize, query, measure, and annotate GIS data:
+  ```bash
+  ./start_search_client.sh
+  ```
 
-## Features
+For detailed deployment instructions and workflow guidelines, please refer to **[START_HERE.md](START_HERE.md)**.
 
-- ✅ 3 Backend Services (Ingestion, Tile, Query)
-- ✅ Desktop Ingestion Client (upload rasters)
-- ✅ Desktop Search Client (full-featured 3D GIS)
-  - CesiumJS 3D Globe
-  - Layer Comparator & Compositor
-  - Measurement Tools
-  - Annotation Tools
-  - Search & Visualization
+## Core Features
 
-## Architecture
+- **Microservices Architecture**:
+  - Ingestion Service (Dataset registry and optimization)
+  - Tile Service (Efficient, localized XYZ raster tiling)
+  - Query Service (Spatial querying and metadata retrieval)
+- **resGIS Desktop Workspaces**:
+  - CesiumJS-powered offline 3D globe visualization
+  - Side-by-side Layer Comparator & Multi-layer Compositor
+  - Precision Geodetic Measurement Tools (distance, area, shadow height, elevation profile)
+  - Interactive Map Annotations (points, lines, polygons, custom icons, text labels)
+  - GeoPackage Export (for full cross-software interoperability with standard GIS platforms)
+  - Full-state serialization (`state.json`) for session recovery
 
-- **Backend**: FastAPI microservices (Python)
-- **Frontend**: Qt/PyQt5 desktop clients
-- **3D Visualization**: CesiumJS
-- **Database**: PostgreSQL + PostGIS
-- **Geospatial**: GDAL, Rasterio, TiTiler
-
-## Requirements
-
-- Python 3.11+
-- PostgreSQL 14+ with PostGIS
-- Conda environment: `offline-3d-gis`
-- PyQt5 + PyQtWebEngine
-
-## Documentation
-
-- **[START_HERE.md](START_HERE.md)** - Complete guide with all commands
+## Tech Stack
+- **Backend Services**: Python, FastAPI, GDAL, Rasterio, TiTiler
+- **Desktop Interfaces**: Qt/PyQt5, PyQtWebEngine
+- **3D Visualization Engine**: CesiumJS
+- **Data Store**: PostgreSQL + PostGIS / SQLite

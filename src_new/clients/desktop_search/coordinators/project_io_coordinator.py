@@ -61,6 +61,25 @@ class ProjectIoCoordinator:
             )
         ]
 
+        scene_mode = "3D Globe"
+        basemap_visible = True
+        main_win = c.panel.window()
+        if hasattr(main_win, "map_overlay_controls") and main_win.map_overlay_controls:
+            scene_mode = main_win.map_overlay_controls.scene_mode_combo.currentText()
+            basemap_visible = "Show" in main_win.map_overlay_controls.basemap_visibility_combo.currentText()
+
+        dem_color_mode = None
+        if hasattr(c.panel, "dem_color_mode_combo") and c.panel.dem_color_mode_combo:
+            dem_color_mode = c.panel.dem_color_mode_combo.currentData()
+
+        dem_stretch_mode = None
+        if hasattr(c.panel, "dem_stretch_mode_combo") and c.panel.dem_stretch_mode_combo:
+            dem_stretch_mode = c.panel.dem_stretch_mode_combo.currentData()
+
+        stretch_mode = None
+        if hasattr(c.panel, "stretch_mode_combo") and c.panel.stretch_mode_combo:
+            stretch_mode = c.panel.stretch_mode_combo.currentData()
+
         return {
             "version": 1,
             "saved_at": now,
@@ -70,12 +89,19 @@ class ProjectIoCoordinator:
                 else None
             ),
             "clicked_points": list(c.state.clicked_points),
+            "camera": getattr(c, "_last_camera_state", None),
+            "scene_mode": scene_mode,
+            "basemap_visible": basemap_visible,
+            "active_dem_color_mode": dem_color_mode,
+            "active_dem_stretch_mode": dem_stretch_mode,
+            "stretch_mode": stretch_mode,
             "search": {
                 "geometry_type": c.state.search_geometry_type,
                 "geometry_payload": c.state.search_geometry_payload,
                 "visibility": dict(c._search_layer_visibility),
                 "layer_order": layer_order,
                 "active_dem": c._active_dem_search_layer_key,
+                "aoi_visible": bool(c.panel.search_aoi_visible_check.isChecked()) if hasattr(c.panel, "search_aoi_visible_check") else True,
             },
             "annotations": {
                 "points": list(c._annotation_records),
@@ -92,14 +118,22 @@ class ProjectIoCoordinator:
         }
 
     def clear_project_state(self) -> None:
-        """Clear all project state and reset to defaults."""
-        c = self._controller
-        c._run_js_call("clearAllLayers")
-        c._run_js_call("clearVectorLayers")
-        c._run_js_call("clearSearchGeometry")
-        c._run_js_call("clearAnnotations")
-        c._run_js_call("resetDefaultView")
+        """Clear all project state and reset to a clean new-project baseline.
 
+        Clears JS-side layers, geometry, markers, and annotations; then resets
+        all Python-side state dictionaries and UI widgets to empty defaults.
+        """
+        c = self._controller
+        # JS-side: clear in dependency order
+        c._run_js_call("clearAllLayers")          # layers + annotations + markers (via updated clearAllLayers)
+        c._run_js_call("clearVectorLayers")        # belt-and-suspenders for vector sources
+        c._run_js_call("clearSearchGeometry")      # AOI polygon / rectangle draw state
+        c._run_js_call("clearAnnotations")         # measurement / annotation entities
+        c._run_js_call("clearSearchResultMarkers") # belt-and-suspenders for billboard pins
+        c._run_js_call("clearComparatorExplicitKeys")  # reset comparator layer selection
+        c._run_js_call("resetDefaultView")         # fly back to default camera position
+
+        # Python-side: reset all state dictionaries
         c._search_result_assets_by_path = {}
         c._search_layer_visibility = {}
         c._loaded_search_layer_keys = set()
@@ -115,10 +149,16 @@ class ProjectIoCoordinator:
         c._annotation_icon_records = []
         c._annotation_text_records = []
         c._raster_stretch_settings = {}
+        # Reset comparator snapshot so old layer selection doesn't leak
+        c._comparator_visibility_snapshot = None
+        c._swipe_comparator_enabled = False
         c.state.selected_asset = None
         c.state.clicked_points = []
         c.state.search_geometry_type = None
         c.state.search_geometry_payload = None
+        # Reset AOI visibility checkbox to checked (default for a fresh project)
+        if hasattr(c.panel, "search_aoi_visible_check"):
+            c.panel.search_aoi_visible_check.setChecked(True)
         c.panel.assets_combo.clear()
         if hasattr(c.panel, "_layer_order_registry"):
             c.panel._layer_order_registry = {}
@@ -601,6 +641,38 @@ class ProjectIoCoordinator:
             }
 
         c.panel._layer_order_registry = order_registry
+        
+        # Restore active DEM and stretch combos
+        dem_color = payload.get("active_dem_color_mode")
+        if dem_color and hasattr(c.panel, "dem_color_mode_combo"):
+            idx = c.panel.dem_color_mode_combo.findData(dem_color)
+            if isinstance(idx, int) and idx >= 0:
+                c.panel.dem_color_mode_combo.setCurrentIndex(idx)
+
+        dem_stretch = payload.get("active_dem_stretch_mode")
+        if dem_stretch and hasattr(c.panel, "dem_stretch_mode_combo"):
+            idx = c.panel.dem_stretch_mode_combo.findData(dem_stretch)
+            if isinstance(idx, int) and idx >= 0:
+                c.panel.dem_stretch_mode_combo.setCurrentIndex(idx)
+
+        stretch = payload.get("stretch_mode")
+        if stretch and hasattr(c.panel, "stretch_mode_combo"):
+            idx = c.panel.stretch_mode_combo.findData(stretch)
+            if isinstance(idx, int) and idx >= 0:
+                c.panel.stretch_mode_combo.setCurrentIndex(idx)
+
+        # Restore scene mode and basemap visibility
+        main_win = c.panel.window()
+        if hasattr(main_win, "map_overlay_controls") and main_win.map_overlay_controls:
+            controls = main_win.map_overlay_controls
+            # Restore scene mode
+            scene_mode = payload.get("scene_mode", "3D Globe")
+            controls.scene_mode_combo.setCurrentText(scene_mode)
+            # Restore basemap visibility
+            basemap_visible = payload.get("basemap_visible", True)
+            basemap_text = "Show Map" if basemap_visible else "Hide Map"
+            controls.basemap_visibility_combo.setCurrentText(basemap_text)
+
         c._active_dem_search_layer_key = search_payload.get("active_dem")
         if (
             c._active_dem_search_layer_key
@@ -654,6 +726,13 @@ class ProjectIoCoordinator:
         c._restore_annotations_on_map()
         c._refresh_vector_layers_ui()
 
+        aoi_visible = True
+        if isinstance(search_payload, dict) and "aoi_visible" in search_payload:
+            aoi_visible = bool(search_payload["aoi_visible"])
+        elif isinstance(payload, dict) and "aoi_visible" in payload:
+            aoi_visible = bool(payload["aoi_visible"])
+        c._set_search_aoi_visible(aoi_visible)
+
         selected_path = payload.get("selected_asset_path")
         if isinstance(selected_path, str) and selected_path:
             selected_asset = c._search_result_assets_by_path.get(
@@ -666,6 +745,19 @@ class ProjectIoCoordinator:
 
         c.panel.log("Project loaded.")
         c._set_project_modified(False)
+
+        camera = payload.get("camera")
+        if isinstance(camera, dict):
+            c._last_camera_state = camera
+            c._run_js_call(
+                "setCameraState",
+                camera.get("lon"),
+                camera.get("lat"),
+                camera.get("height"),
+                camera.get("heading"),
+                camera.get("pitch"),
+                camera.get("roll"),
+            )
 
 
 __all__ = ["ProjectIoCoordinator"]

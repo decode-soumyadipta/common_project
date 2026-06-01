@@ -463,15 +463,17 @@
         return;
       }
       setSearchCursorPoint(null);
-      if (window.offlineGIS && typeof window.offlineGIS.clearSearchResultMarkers === "function") {
-        window.offlineGIS.clearSearchResultMarkers();
-      }
       var frozenPoints = searchPolygonPoints.slice();
       
       // Emit to Python
       emitSearchGeometry("polygon", { points: frozenPoints });
 
       var isAnnotation = getIsAnnotationDrawing();
+      if (!isAnnotation) {
+        if (window.offlineGIS && typeof window.offlineGIS.clearSearchResultMarkers === "function") {
+          window.offlineGIS.clearSearchResultMarkers();
+        }
+      }
       
       if (isAnnotation) {
         // --- PERSISTENT ANNOTATION POLYGON (with icons) ---

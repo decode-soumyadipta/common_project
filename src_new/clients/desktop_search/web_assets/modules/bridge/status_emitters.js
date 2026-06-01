@@ -41,6 +41,19 @@
       let pitchDeg = Cesium.Math.toDegrees(viewer.camera.pitch);
       
       bridge.on_camera_changed(scaleDenom, headingDeg, pitchDeg);
+      if (typeof bridge.on_camera_pose_changed === "function") {
+        const carto = viewer.camera.positionCartographic;
+        if (carto) {
+          bridge.on_camera_pose_changed(
+            Cesium.Math.toDegrees(carto.longitude),
+            Cesium.Math.toDegrees(carto.latitude),
+            carto.height,
+            headingDeg,
+            pitchDeg,
+            Cesium.Math.toDegrees(viewer.camera.roll)
+          );
+        }
+      }
     } catch (_) {}
   }
 
@@ -273,7 +286,25 @@
     searchRectangleLocked = false;
   }
 
+  function _updateCompass() {
+    // Deprecated - compass now updates via postRender listener
+  }
+
   function wireStatusBarListeners() {
+    // Guard: QWebChannel bridge may not be available immediately on startup.
+    // Retry up to 10 times (every 100 ms) before giving up, so the first few
+    // hundred ms of mouse movements still produce coordinate updates.
+    if (!bridge || !bridge.on_mouse_coordinates) {
+      var _wireRetries = (wireStatusBarListeners._retries || 0) + 1;
+      wireStatusBarListeners._retries = _wireRetries;
+      if (_wireRetries <= 20) {
+        setTimeout(wireStatusBarListeners, 100);
+        return;
+      }
+      // After 2 s, give up the retry but still wire event listeners anyway
+      // (emitMouseCoordinates has its own bridge-null guard).
+    }
+    wireStatusBarListeners._retries = 0;
     if (!viewer || !viewer.scene) return;
     
     // Camera moved → update scale + heading + start tile loading monitor
@@ -282,7 +313,6 @@
         return;
       }
       emitCameraChanged();
-      _updateCompass();
       if (!_tileLoadingActive) {
         startTileLoadingMonitor();
       }
@@ -291,7 +321,6 @@
     // CRITICAL: Force render after camera stops moving (prevents black screens in request-render mode)
     viewer.camera.moveEnd.addEventListener(function() {
       emitCameraChanged();
-      _updateCompass();
       if (!_tileLoadingActive) {
         startTileLoadingMonitor();
       }
@@ -413,8 +442,61 @@
     });
   }
 
-  function _updateCompass() {
-    // Deprecated - compass now updates via postRender listener
+  let lastHoveredMarker = null;
+  let _markerBumpTimer  = null;
+
+  function updateMarkerHover(position) {
+    if (!viewer) return;
+    const picked = position ? viewer.scene.pick(position) : null;
+    let hoveredEntity = null;
+    if (picked && picked.id && picked.id._searchResultMarker === true) {
+      hoveredEntity = picked.id;
+    }
+
+    // ── Leave: restore previous marker ────────────────────────────────────────
+    if (lastHoveredMarker && lastHoveredMarker !== hoveredEntity) {
+      var prev = lastHoveredMarker;
+      lastHoveredMarker = null;
+      if (_markerBumpTimer) { clearTimeout(_markerBumpTimer); _markerBumpTimer = null; }
+      if (prev.billboard) {
+        prev.billboard.scale = (typeof prev._originalScale === "number") ? prev._originalScale : 1.0;
+      }
+      // Reset canvas cursor
+      if (viewer.canvas) viewer.canvas.style.cursor = "";
+      requestSceneRender();
+    }
+
+    // ── Enter: bump-animate the newly hovered marker ───────────────────────────
+    if (hoveredEntity && hoveredEntity !== lastHoveredMarker) {
+      lastHoveredMarker = hoveredEntity;
+
+      // Change canvas cursor to pointer — clearly communicates clickability
+      if (viewer.canvas) viewer.canvas.style.cursor = "pointer";
+
+      if (hoveredEntity.billboard) {
+        // Capture original scale once (safe for both raw number and Property)
+        if (hoveredEntity._originalScale === undefined) {
+          var rawScale = hoveredEntity.billboard.scale;
+          hoveredEntity._originalScale = (rawScale && typeof rawScale.getValue === "function")
+            ? rawScale.getValue()
+            : (typeof rawScale === "number" ? rawScale : 1.0);
+        }
+        var origScale = (typeof hoveredEntity._originalScale === "number") ? hoveredEntity._originalScale : 1.0;
+
+        // Step 1 → jump UP immediately (bump peak)
+        hoveredEntity.billboard.scale = origScale * 1.4;
+        requestSceneRender();
+
+        // Step 2 → settle back to original after 180 ms (smooth return)
+        _markerBumpTimer = setTimeout(function () {
+          _markerBumpTimer = null;
+          if (lastHoveredMarker === hoveredEntity && hoveredEntity.billboard) {
+            hoveredEntity.billboard.scale = origScale;
+            requestSceneRender();
+          }
+        }, 180);
+      }
+    }
   }
 
   function wireClickHandlers() {
@@ -496,6 +578,30 @@
       mouseDownPosition = null;
       
       const picked = movement && movement.position ? viewer.scene.pick(movement.position) : null;
+      if (picked && picked.id && picked.id._searchResultMarker === true) {
+        const filePath = picked.id._assetFilePath;
+        const currentDisplayed = picked.id._assetDisplayed;
+        const nextDisplayed = !currentDisplayed;
+
+        // Visual click effect: scale the billboard temporarily for click feedback
+        if (picked.id.billboard) {
+          const billboard = picked.id.billboard;
+          const originalScale = billboard.scale ? (typeof billboard.scale.getValue === "function" ? billboard.scale.getValue() : billboard.scale) : 1.0;
+          billboard.scale = originalScale * 1.35;
+          setTimeout(function () {
+            if (billboard) {
+              billboard.scale = originalScale;
+              requestSceneRender();
+            }
+          }, 150);
+        }
+
+        if (filePath && typeof window.OfflineGISUtils.emitSearchResultVisibilityToggled === "function") {
+          window.OfflineGISUtils.emitSearchResultVisibilityToggled(filePath, nextDisplayed);
+        }
+        requestSceneRender();
+        return;
+      }
       if (picked && picked.id && picked.id._annotationRole === "edit") {
         if (renameAnnotationFromEditIcon(picked.id)) {
           return;
@@ -732,6 +838,7 @@
           if (now - lastHoverUpdateMs >= HOVER_THROTTLE_MS) {
             lastHoverUpdateMs = now;
             updateAnnotationHover(movement.endPosition);
+            updateMarkerHover(movement.endPosition);
           }
         }
 

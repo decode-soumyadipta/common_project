@@ -14,14 +14,17 @@ Requirements: 7.1, 7.3, 7.5, 7.6
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from qtpy.QtCore import Qt, QTimer, QSize
+from qtpy.QtGui import QIcon, QPixmap
 from qtpy.QtWidgets import (
     QAction,
     QLabel,
     QMainWindow,
     QMessageBox,
     QScrollArea,
+    QSizePolicy,
     QStatusBar,
     QToolBar,
     QWidget,
@@ -57,8 +60,13 @@ class MainWindow(QMainWindow):
             parent: Optional parent widget.
         """
         super().__init__(parent)
-        self.setWindowTitle("Offline GIS - Data Ingestion")
+        self.setWindowTitle("resGIS - Data Ingestion (developed by NTRO, Gov. of India)")
         self.resize(1000, 700)
+
+        # Apply resGIS logo as the window icon (title-bar corner, taskbar, dock)
+        _logo = Path(__file__).resolve().parent.parent.parent.parent / "assets" / "resGIS_logo.png"
+        if _logo.exists():
+            self.setWindowIcon(QIcon(str(_logo)))
 
         # Initialize API client
         self.api_client = IngestionApiClient()
@@ -103,19 +111,38 @@ class MainWindow(QMainWindow):
 
         toolbar.addSeparator()
 
-        # Settings action
-        settings_action = QAction("Settings", self)
-        settings_action.setToolTip("Configure ingestion service settings")
-        settings_action.triggered.connect(self._show_settings)
-        toolbar.addAction(settings_action)
-
-        toolbar.addSeparator()
-
         # About action
         about_action = QAction("About", self)
         about_action.setToolTip("About this application")
         about_action.triggered.connect(self._show_about)
         toolbar.addAction(about_action)
+
+        # ── Right-aligned resGIS logo ────────────────────────────────────────
+        _spacer = QWidget()
+        _spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        toolbar.addWidget(_spacer)
+
+        _logo_path = Path(__file__).resolve().parent.parent.parent.parent / "assets" / "resGIS_logo.png"
+        if _logo_path.exists():
+            _logo_label = QLabel()
+            _pix = QPixmap(str(_logo_path))
+            
+            # Tight zoom crop of the active logo area, giving extra breathing room on the right to prevent clipping the 'S'
+            from qtpy.QtCore import QRect
+            _pix = _pix.copy(QRect(128, 349, 800, 287))
+            
+            # Scale to a slightly taller height (34 px) for prominent zoom display
+            _pix = _pix.scaledToHeight(34, Qt.TransformationMode.SmoothTransformation)
+            _logo_label.setPixmap(_pix)
+            _logo_label.setFixedSize(_pix.size())
+            _logo_label.setToolTip("resGIS \u2014 developed by NTRO, Gov. of India")
+            _logo_label.setStyleSheet("margin-left: 4px;")
+            toolbar.addWidget(_logo_label)
+            
+            # Robust native spacer to shift the logo leftwards without triggering Qt's stylesheet margin layout bugs
+            _right_margin_spacer = QWidget()
+            _right_margin_spacer.setFixedWidth(20)
+            toolbar.addWidget(_right_margin_spacer)
 
         self._toolbar = toolbar
 
@@ -187,11 +214,11 @@ class MainWindow(QMainWindow):
         """Show about dialog."""
         QMessageBox.about(
             self,
-            "About Offline GIS - Data Ingestion",
-            "<h3>Offline GIS - Data Ingestion Client</h3>"
+            "About resGIS - Data Ingestion",
+            "<h3>resGIS - Data Ingestion Client</h3>"
             "<p>Version 1.0</p>"
-            "<p>Desktop application for uploading and managing geospatial data "
-            "ingestion into the Offline GIS system.</p>"
+            "<p>Desktop application developed by NTRO, Gov. of India, for uploading and managing geospatial data "
+            "ingestion into the resGIS system.</p>"
             "<p><b>Features:</b></p>"
             "<ul>"
             "<li>Upload GeoTIFF, JPEG2000, and MBTiles files</li>"

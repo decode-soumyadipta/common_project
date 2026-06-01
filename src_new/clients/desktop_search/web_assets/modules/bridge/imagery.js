@@ -247,7 +247,7 @@
       vectorLayerSources.set(key, dataSource);
       requestSceneRender();
       log("info", "Vector layer added key=" + key + " name=" + name);
-    }).catch(function (err) {
+    }, function (err) {
       log("error", "Vector layer load failed key=" + key + " err=" + String(err));
     });
   }

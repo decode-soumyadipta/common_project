@@ -26,14 +26,14 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Application metadata constants
 # ---------------------------------------------------------------------------
-_APP_NAME = "Offline 3D GIS"
+_APP_NAME = "resGIS"
 _APP_VERSION = "1.0.0"
 _APP_DESCRIPTION = (
     "A modular, offline geospatial platform for processing and visualising "
-    "terabyte-scale aerial imagery and digital elevation models on a secure LAN."
+    "terabyte-scale aerial imagery and digital elevation models, developed by NTRO, Gov. of India."
 )
-_COPYRIGHT = "© 2024 ResGIS Project"
-_LICENSE = "Proprietary — Air-gapped LAN deployment"
+_COPYRIGHT = "© 2026 NTRO, Gov. of India"
+_LICENSE = "Proprietary — Government Use Only"
 
 
 class AboutDialog(QDialog):

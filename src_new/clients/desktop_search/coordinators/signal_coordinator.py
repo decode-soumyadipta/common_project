@@ -113,6 +113,9 @@ class SignalCoordinator:
         c.bridge.jsLogReceived.connect(c.on_js_log)
         c.bridge.searchGeometryChanged.connect(c.on_search_geometry)
         c.bridge.comparatorPaneStateChanged.connect(c.on_comparator_pane_state)
+        c.bridge.searchResultVisibilityToggled.connect(
+            c.toggle_search_result_visibility
+        )
         c.panel.uploaded_assets_list.itemSelectionChanged.connect(
             c.preview_selected_uploaded_asset
         )

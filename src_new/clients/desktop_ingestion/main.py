@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 
 from qtpy.QtWidgets import QApplication
+from qtpy.QtGui import QIcon
 
 from src_new.clients.desktop_ingestion.ui.main_window import MainWindow
 from src_new.shared.config import settings
@@ -60,8 +61,13 @@ def main() -> int:
 
     # Create Qt application
     app = QApplication(sys.argv)
-    app.setApplicationName("Offline GIS - Data Ingestion")
-    app.setOrganizationName("Offline GIS")
+    app.setApplicationName("resGIS")
+    app.setOrganizationName("NTRO, Gov. of India")
+
+    # Set application icon (taskbar, window title bar, dock/taskbar icon)
+    _logo_path = Path(__file__).resolve().parent.parent.parent / "assets" / "resGIS_logo.png"
+    if _logo_path.exists():
+        app.setWindowIcon(QIcon(str(_logo_path)))
 
     # Create and show main window
     window = MainWindow()

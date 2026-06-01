@@ -94,6 +94,8 @@
 
           iconEntity._searchResultMarker = true;
           iconEntity._searchResultMarkerIndex = index;
+          iconEntity._assetFilePath = String(marker.file_path || "");
+          iconEntity._assetDisplayed = displayed;
           searchResultMarkerEntities.push(iconEntity);
         }
         syncSearchResultMarkerVisibility();
@@ -341,6 +343,9 @@
           setStatus("Fly Through cancelled. Click to add a new path.");
           log("info", "Cancel active fly through draw");
           cancelled = true;
+        }
+        if (viewer && viewer.scene && viewer.scene.screenSpaceCameraController) {
+          viewer.scene.screenSpaceCameraController.enableInputs = true;
         }
         return cancelled;
       },
@@ -662,7 +667,6 @@
         if (typeof searchPolygonController !== "undefined" && searchPolygonController && typeof searchPolygonController.clearAllData === "function") {
           searchPolygonController.clearAllData();
         }
-        clearSearchResultMarkerEntities();
         emitSearchGeometry("none", {});
         setPolygonPreviewVisible(true);
         setSearchCursorEnabled(false);

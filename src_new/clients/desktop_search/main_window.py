@@ -16,7 +16,6 @@ from qtpy.QtGui import (
     QGuiApplication,
     QIcon,
 )
-from qtpy.QtGui import QDesktopServices
 from qtpy.QtWebChannel import QWebChannel
 from qtpy.QtWebEngineWidgets import QWebEngineSettings, QWebEngineView
 from qtpy.QtWidgets import (
@@ -138,9 +137,15 @@ class MainWindow(QMainWindow):
         """
         super().__init__()
         self.app_mode = app_mode
-        self._project_name = "Untitled Project"
-        self._is_modified = True
+        self._project_name = "untitled"
+        self._is_modified = False
         self._update_window_title()
+
+        # Apply resGIS logo as the window icon (title-bar corner, taskbar, dock)
+        import pathlib as _pathlib
+        _logo = _pathlib.Path(__file__).resolve().parent.parent.parent / "assets" / "resGIS_logo.png"
+        if _logo.exists():
+            self.setWindowIcon(QIcon(str(_logo)))
 
         # Initialize database when in server mode
         if app_mode in (DesktopAppMode.UNIFIED, DesktopAppMode.SERVER):
@@ -595,6 +600,31 @@ class MainWindow(QMainWindow):
     def _create_menu_bar(self) -> None:
         menu_bar = self.menuBar()
         menu_bar.setNativeMenuBar(False)
+        
+        # Apply compact Windows/Native style to eliminate the massive blank height gap
+        menu_bar.setStyleSheet(
+            """
+            QMenuBar {
+                background-color: #f5f7f9;
+                border-bottom: 1px solid #d1d9e6;
+                padding: 2px 4px;
+                margin: 0px;
+            }
+            QMenuBar::item {
+                background: transparent;
+                padding: 4px 8px;
+                margin: 0px 2px;
+                border-radius: 3px;
+                font-size: 12px;
+            }
+            QMenuBar::item:selected {
+                background: rgba(0, 120, 212, 0.1);
+            }
+            QMenuBar::item:pressed {
+                background: rgba(0, 120, 212, 0.15);
+            }
+            """
+        )
 
         file_menu = menu_bar.addMenu("&File")
         new_action = QAction(IconRegistry.get("new_project", size=16), "New Project", self)
@@ -631,10 +661,9 @@ class MainWindow(QMainWindow):
         help_menu.addAction(docs_action)
 
     def _open_help_url(self) -> None:
-        if not self.HELP_URL:
-            self.panel.log("Help URL is not configured yet.")
-            return
-        QDesktopServices.openUrl(QUrl(self.HELP_URL))
+        from src_new.shared.ui_components.help_dialog import HelpDialog
+        dialog = HelpDialog(self)
+        dialog.exec()
 
     def showEvent(self, event: object) -> None:
         """Handle window show event.
@@ -813,12 +842,20 @@ class MainWindow(QMainWindow):
 
         layer_list = QListWidget(popup)
         layer_list.setMinimumHeight(150)
+        checked_count = 0
         for layer in layers:
             item = QListWidgetItem(layer["label"], layer_list)
             item.setData(Qt.ItemDataRole.UserRole, layer["path"])
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            
+            # Limit default checked items to at most 2 to match the default "2 panes" layout.
+            should_check = False
+            if layer["visible"] and checked_count < 2:
+                should_check = True
+                checked_count += 1
+            
             item.setCheckState(
-                Qt.CheckState.Checked if layer["visible"] else Qt.CheckState.Unchecked
+                Qt.CheckState.Checked if should_check else Qt.CheckState.Unchecked
             )
         layout.addWidget(layer_list)
 
@@ -925,32 +962,22 @@ class MainWindow(QMainWindow):
         menu.setStyleSheet("""
             QMenu {
                 background: #ffffff;
-                border: 1px solid #d1d9e6;
-                border-radius: 10px;
-                padding: 8px;
+                border: 1px solid #999999;
+                padding: 2px;
             }
             QMenu::item {
-                padding: 12px 40px 12px 16px;
-                font-size: 13px;
-                font-weight: 500;
-                color: #2d3748;
-                border-radius: 6px;
-                margin: 2px 0px;
+                padding: 4px 16px;
+                font-size: 12px;
+                font-weight: normal;
+                color: #000000;
             }
             QMenu::item:selected {
-                background: #edf2f7;
-                color: #2b6cb0;
-            }
-            QMenu::icon {
-                padding-left: 10px;
+                background: #3399ff;
+                color: #ffffff;
             }
         """)
-        gpkg_act = menu.addAction(
-            IconRegistry.get("export_gpkg", size=16), "Export GeoPackage"
-        )
-        pdf_act = menu.addAction(
-            IconRegistry.get("print_layout", size=16), "Export PDF"
-        )
+        gpkg_act = menu.addAction("Export GeoPackage")
+        pdf_act = menu.addAction("Export PDF")
 
         pos = (
             anchor.mapToGlobal(anchor.rect().bottomLeft())
@@ -1294,6 +1321,37 @@ class MainWindow(QMainWindow):
             if group_index < len(self.TOOLBAR_GROUPS) - 1:
                 toolbar.addSeparator()
 
+        # ── Right-aligned resGIS logo ─────────────────────────────────────────
+        # Push everything that follows to the far right using an expanding spacer.
+        from qtpy.QtWidgets import QSizePolicy, QWidget as _QWidget
+        import pathlib as _pathlib
+        _spacer = _QWidget()
+        _spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        toolbar.addWidget(_spacer)
+
+        _logo_path = _pathlib.Path(__file__).resolve().parent.parent.parent / "assets" / "resGIS_logo.png"
+        if _logo_path.exists():
+            from qtpy.QtGui import QPixmap
+            _logo_label = QLabel()
+            _pix = QPixmap(str(_logo_path))
+            
+            # Tight zoom crop of the active logo area, giving extra breathing room on the right to prevent clipping the 'S'
+            from qtpy.QtCore import QRect
+            _pix = _pix.copy(QRect(128, 349, 800, 287))
+            
+            # Scale to a slightly taller height (34 px) for prominent zoom display
+            _pix = _pix.scaledToHeight(34, Qt.TransformationMode.SmoothTransformation)
+            _logo_label.setPixmap(_pix)
+            _logo_label.setFixedSize(_pix.size())
+            _logo_label.setToolTip("resGIS \u2014 developed by NTRO, Gov. of India")
+            _logo_label.setStyleSheet("margin-left: 4px;")
+            toolbar.addWidget(_logo_label)
+            
+            # Robust native spacer to shift the logo leftwards without triggering Qt's stylesheet margin layout bugs
+            _right_margin_spacer = _QWidget()
+            _right_margin_spacer.setFixedWidth(20)
+            toolbar.addWidget(_right_margin_spacer)
+
         return (
             toolbar,
             actions,
@@ -1328,12 +1386,6 @@ class MainWindow(QMainWindow):
 
     def _update_window_title(self) -> None:
         """Refresh the window title based on current project state."""
-        if self.app_mode == DesktopAppMode.SERVER:
-            self.setWindowTitle("ResGIS")
-            return
-
-        prefix = "*" if self._is_modified else ""
-        project_display = f"{prefix}{self._project_name}"
-        
-        # Long hyphen: — (U+2014)
-        self.setWindowTitle(f"{project_display} — ResGIS")
+        suffix = "*" if self._is_modified else ""
+        project_display = f"{self._project_name}{suffix}"
+        self.setWindowTitle(f"{project_display} - resGIS (developed by NTRO, Gov. of India)")

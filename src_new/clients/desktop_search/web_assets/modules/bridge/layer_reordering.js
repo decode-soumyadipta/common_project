@@ -192,8 +192,27 @@
     },
     captureSnapshot: function() {
       if (!viewer || !viewer.canvas) return null;
+      
+      const hiddenEntities = [];
+      const entities = viewer.entities.values;
+      for (let i = 0; i < entities.length; i++) {
+        const ent = entities[i];
+        if (ent && (ent._annotationRole === "edit" || ent._annotationRole === "delete" || ent._polyRole === "edit" || ent._polyRole === "delete")) {
+          hiddenEntities.push({ entity: ent, originalShow: ent.show });
+          ent.show = false;
+        }
+      }
+      
       viewer.render();
-      return viewer.canvas.toDataURL("image/png");
+      const dataUrl = viewer.canvas.toDataURL("image/png");
+      
+      // Restore
+      for (let i = 0; i < hiddenEntities.length; i++) {
+        const item = hiddenEntities[i];
+        item.entity.show = item.originalShow;
+      }
+      
+      return dataUrl;
     },
     getSceneState: function() {
       const getCameraInfo = function() {
@@ -213,9 +232,26 @@
         };
       };
       
+      const getCameraExtent = function() {
+        if (!viewer) return null;
+        try {
+          const rect = viewer.camera.computeViewRectangle();
+          if (rect) {
+            return {
+              west: Cesium.Math.toDegrees(rect.west),
+              south: Cesium.Math.toDegrees(rect.south),
+              east: Cesium.Math.toDegrees(rect.east),
+              north: Cesium.Math.toDegrees(rect.north)
+            };
+          }
+        } catch (_) {}
+        return null;
+      };
+      
       return {
         mode: currentSceneMode,
         camera: getCameraInfo(),
+        extent: getCameraExtent(),
         visibleLayers: Array.from(layerVisibilityState.entries())
           .filter(([_, vis]) => vis)
           .map(([key, _]) => key),

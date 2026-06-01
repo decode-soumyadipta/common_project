@@ -139,6 +139,7 @@ class ComparatorCoordinator:
         return self._auto_enable_second_comparator_imagery_layer()
 
     def apply_comparator_selection(self, selected_paths: list[str]) -> bool:
+        import json as _json
         c = self._controller
         selected = [
             path for path in selected_paths if path in c._search_result_assets_by_path
@@ -146,19 +147,21 @@ class ComparatorCoordinator:
         if len(selected) < 2:
             c._swipe_comparator_enabled = False
             c._run_js_call("setComparator", False)
+            c._run_js_call("clearComparatorExplicitKeys")
             c.panel.log("Comparator disabled. Select at least two layers.")
             return False
 
-        left_path = selected[0]
+        # Send the full ordered list of selected paths so the JS resolveComparatorLayerKeys
+        # always returns exactly len(selected) keys — no ghost panes from extra visible layers.
+        c._run_js_call("setComparatorAllLayers", _json.dumps(selected))
+
+        # Also keep the legacy left/right pair for backward compat with setComparatorLayers callers.
+        left_path  = selected[0]
         right_path = selected[1]
-        left_asset = c._search_result_assets_by_path.get(left_path) or {}
+        left_asset  = c._search_result_assets_by_path.get(left_path)  or {}
         right_asset = c._search_result_assets_by_path.get(right_path) or {}
-        left_label = str(
-            left_asset.get("file_name") or Path(left_path).name or "Layer A"
-        )
-        right_label = str(
-            right_asset.get("file_name") or Path(right_path).name or "Layer B"
-        )
+        left_label  = str(left_asset.get("file_name")  or Path(left_path).name  or "Layer A")
+        right_label = str(right_asset.get("file_name") or Path(right_path).name or "Layer B")
         c._run_js_call(
             "setComparatorLayers", left_path, right_path, left_label, right_label
         )
@@ -241,6 +244,8 @@ class ComparatorCoordinator:
 
         c._comparator_selected_pane = None
         c._comparator_selected_layer_type = None
+        # Clear explicit key list so next comparator open starts fresh
+        c._run_js_call("clearComparatorExplicitKeys")
         c.panel.log("Comparator disabled.")
         c._logger.info("Comparator disabled")
         c._apply_display_control_mode()

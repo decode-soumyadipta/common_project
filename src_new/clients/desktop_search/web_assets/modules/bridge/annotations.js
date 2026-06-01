@@ -1,5 +1,10 @@
   window.offlineGIS = window.offlineGIS || {};
   Object.assign(window.offlineGIS, {
+      clearAnnotations: function () {
+        if (typeof clearAnnotationEntities === "function") {
+          clearAnnotationEntities();
+        }
+      },
       setAnnotationVisibility: function (visible) {
         setAnnotationVisibility(Boolean(visible));
       },

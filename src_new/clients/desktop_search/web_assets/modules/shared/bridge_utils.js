@@ -283,12 +283,20 @@
     requestSceneRender();
   }
 
+  function emitSearchResultVisibilityToggled(filePath, visible) {
+    const bridge = getBridge();
+    if (bridge && bridge.on_search_result_visibility_toggled) {
+      bridge.on_search_result_visibility_toggled(filePath, visible);
+    }
+  }
+
   window.OfflineGISUtils = {
     log: log,
     setStatus: setStatus,
     emitMapClick: emitMapClick,
     emitMeasurementUpdated: emitMeasurementUpdated,
     emitLoadingProgress: emitLoadingProgress,
+    emitSearchResultVisibilityToggled: emitSearchResultVisibilityToggled,
     requestSceneRender: requestSceneRender,
     setComparatorWindowsVisible: setComparatorWindowsVisible,
     normalizeBounds: normalizeBounds,

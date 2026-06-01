@@ -178,6 +178,18 @@
       if (hDiv)  hDiv.classList.remove("active");
     }
 
+    // ── Tear down viewers beyond the requested count ───────────────────────────
+    // This prevents ghost panes when switching from a larger to a smaller selection
+    // (e.g., going from 4 panes to 2 panes). Cesium viewers are destroyed here
+    // so their canvases are properly cleaned up before we build the new layout.
+    for (var di = comparatorViewers.length - 1; di >= count; di--) {
+      var dv = comparatorViewers[di];
+      if (dv) {
+        try { dv.destroy(); } catch (_) {}
+      }
+      comparatorViewers.splice(di, 1);
+    }
+
     for (var i = 0; i < count; i++) {
       if (comparatorViewers[i]) continue;
       const vId = "comparatorViewer" + i;

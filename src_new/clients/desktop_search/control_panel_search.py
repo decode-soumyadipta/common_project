@@ -92,6 +92,11 @@ class ControlPanelSearchMixin:
             else "-"
         )
 
+        # Always update summary text immediately so it is always synchronized
+        self.search_results_summary.setText(
+            f"Matches: {total_matches} | DEM: {dem_count} | Imagery: {imagery_count} | Visible: {visible_count} | CRS: {crs_summary} | Latest: {latest_date}"
+        )
+
         # Check if we can perform an in-place update of visibility to avoid table flicker
         can_update_in_place = False
         if self.search_results_table.rowCount() == len(sorted_assets):
@@ -104,10 +109,6 @@ class ControlPanelSearchMixin:
                     break
 
         if can_update_in_place:
-            # Update summary text
-            self.search_results_summary.setText(
-                f"Matches: {total_matches} | DEM: {dem_count} | Imagery: {imagery_count} | Visible: {visible_count} | CRS: {crs_summary} | Latest: {latest_date}"
-            )
             # Update buttons in-place
             for r, asset in enumerate(sorted_assets):
                 path = str(asset.get("file_path") or "").replace("\\", "/")

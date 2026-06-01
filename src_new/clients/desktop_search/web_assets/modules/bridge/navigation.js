@@ -1,5 +1,24 @@
   window.offlineGIS = window.offlineGIS || {};
   Object.assign(window.offlineGIS, {
+      setCameraState: function (lon, lat, height, heading, pitch, roll) {
+        if (!viewer) return;
+        try {
+          viewer.camera.cancelFlight();
+          viewer.camera.setView({
+            destination: Cesium.Cartesian3.fromDegrees(lon, lat, height),
+            orientation: {
+              heading: Cesium.Math.toRadians(heading),
+              pitch: Cesium.Math.toRadians(pitch),
+              roll: Cesium.Math.toRadians(roll)
+            }
+          });
+          requestSceneRender();
+          log("info", "Restored camera state lon=" + lon + " lat=" + lat + " height=" + height);
+        } catch (e) {
+          log("error", "setCameraState failed: " + e);
+        }
+      },
+
       // NOTE: focusBoundsWithPadding is defined further below (authoritative definition).
       // An earlier duplicate was removed — Object.assign last-write-wins, so the first
       // copy was dead code and has been eliminated to prevent reader confusion.
@@ -560,14 +579,45 @@
         setDemColorMode(mode);
       },
       setSwipeComparatorLayers: function (leftLayerKey, rightLayerKey, leftLabel, rightLabel) {
+        // Store explicit keys so resolveComparatorLayerKeys returns exactly the selected layers
+        swipeComparatorLeftLayerKey  = String(leftLayerKey  || "") || null;
+        swipeComparatorRightLayerKey = String(rightLayerKey || "") || null;
+        swipeComparatorExplicitKeys  = [swipeComparatorLeftLayerKey, swipeComparatorRightLayerKey].filter(Boolean);
         if (typeof refreshComparatorLayers === "function") {
           refreshComparatorLayers();
         }
       },
       setComparatorLayers: function (leftLayerKey, rightLayerKey, leftLabel, rightLabel) {
+        // Store explicit keys so resolveComparatorLayerKeys returns exactly the selected layers
+        swipeComparatorLeftLayerKey  = String(leftLayerKey  || "") || null;
+        swipeComparatorRightLayerKey = String(rightLayerKey || "") || null;
+        swipeComparatorExplicitKeys  = [swipeComparatorLeftLayerKey, swipeComparatorRightLayerKey].filter(Boolean);
         if (typeof refreshComparatorLayers === "function") {
           refreshComparatorLayers();
         }
+      },
+      // N-pane comparator: called from Python with the full list of selected paths.
+      // The pane count is exactly len(allKeys), preventing ghost panes.
+      setComparatorAllLayers: function (allKeysJson) {
+        try {
+          var parsed = JSON.parse(allKeysJson);
+          if (Array.isArray(parsed) && parsed.length >= 2) {
+            swipeComparatorExplicitKeys  = parsed.map(function(k) { return String(k || ""); }).filter(Boolean);
+            swipeComparatorLeftLayerKey  = swipeComparatorExplicitKeys[0] || null;
+            swipeComparatorRightLayerKey = swipeComparatorExplicitKeys[1] || null;
+          }
+        } catch (e) {
+          log("warn", "setComparatorAllLayers parse error: " + e.message);
+        }
+        if (typeof refreshComparatorLayers === "function") {
+          refreshComparatorLayers();
+        }
+      },
+      // Clear explicit comparator key list (called when comparator is disabled).
+      clearComparatorExplicitKeys: function () {
+        swipeComparatorExplicitKeys  = [];
+        swipeComparatorLeftLayerKey  = null;
+        swipeComparatorRightLayerKey = null;
       },
       setLayerVisibility: function (layerKey, visible) {
         const applied = setLayerVisibilityByKey(String(layerKey || ""), Boolean(visible));
@@ -604,9 +654,23 @@
         clearVectorLayers();
         if (typeof clearMeasurementEntities === "function") clearMeasurementEntities();
         if (typeof clearMeasurementPreviewEntities === "function") clearMeasurementPreviewEntities();
+        if (typeof clearAnnotationEntities === "function") clearAnnotationEntities();
+        if (typeof clearLineDrawPreview === "function") clearLineDrawPreview();
         if (searchPolygonController && typeof searchPolygonController.clearAllData === "function") {
           searchPolygonController.clearAllData();
         }
+        // ── Clear search result markers (red/yellow pins) ──────────────────────
+        // These survive clearManagedImageryLayers because they are Cesium entity
+        // billboards, not imagery layers.  Must be removed explicitly on New Project
+        // so they don't bleed into the next session.
+        if (typeof clearSearchResultMarkerEntities === "function") {
+          clearSearchResultMarkerEntities();
+        } else if (window.offlineGIS && typeof window.offlineGIS.clearSearchResultMarkers === "function") {
+          window.offlineGIS.clearSearchResultMarkers();
+        }
+        // Reset search overlay visibility to visible (default for a new project)
+        searchOverlayVisible = true;
+        window._offlineGISSearchOverlayVisible = true;
         drawnPolygonCounter = 0;
         flyThroughPoints.length = 0;
         if (flyThroughPathEntity) { viewer.entities.remove(flyThroughPathEntity); flyThroughPathEntity = null; }

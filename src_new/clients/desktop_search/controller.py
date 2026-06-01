@@ -86,6 +86,7 @@ class DesktopController(QObject):
         self.panel = panel
         self.web_view = web_view
         self.bridge = bridge
+        self.bridge.controller = self
         self.app_mode = app_mode
         self.api = api_client or DesktopApiClient()
         self.api_server = api_server_manager or ApiServerManager(
@@ -157,6 +158,7 @@ class DesktopController(QObject):
         self._vector_layers: dict[str, dict[str, object]] = {}
         self._project_path: Path | None = None
         self._is_project_modified = False
+        self._last_camera_state: dict | None = None
 
         # CRITICAL FIX: Layer visibility and rendering state management
         self._visibility_sync_in_progress = False  # Prevent concurrent visibility syncs
@@ -478,8 +480,7 @@ class DesktopController(QObject):
                 check_box.blockSignals(False)
         self._logger.debug("_set_search_aoi_visible -> calling JS setSearchOverlayVisible(%s)", checked)
         self._run_js_call("setSearchOverlayVisible", checked)
-        if checked:
-            self._refresh_search_result_markers()
+        self._refresh_search_result_markers()
 
     def _refresh_search_result_markers(self) -> None:
         marker_payloads = []
@@ -648,7 +649,7 @@ class DesktopController(QObject):
     def _set_project_modified(self, modified: bool = True) -> None:
         """Update modification state and notify UI."""
         self._is_project_modified = modified
-        name = self._project_path.stem if self._project_path else "Untitled Project"
+        name = self._project_path.stem if self._project_path else "untitled"
         self.project_metadata_changed.emit(name, modified)
 
 
@@ -1679,6 +1680,7 @@ class DesktopController(QObject):
             "lat": float(lat),
             "text": file_name,
             "file_name": file_name,
+            "file_path": file_path,
             "displayed": bool(self._search_layer_visibility.get(file_path, False)),
         }
         return payload

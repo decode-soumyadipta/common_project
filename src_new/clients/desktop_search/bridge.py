@@ -11,6 +11,7 @@ class WebBridge(QObject):
     comparatorPaneStateChanged = Signal(str)
     aoiStatsUpdated = Signal(int, str)
     polygonListUpdated = Signal(str)
+    searchResultVisibilityToggled = Signal(str, bool)
 
     # ── Status-bar signals ───────────────────────────────────────────────
     # Emitted continuously as the user moves the cursor over the globe.
@@ -45,6 +46,10 @@ class WebBridge(QObject):
     # ------------------------------------------------------------------
     # Slots (called from JavaScript via QWebChannel)
     # ------------------------------------------------------------------
+
+    @Slot(str, bool)
+    def on_search_result_visibility_toggled(self, file_path: str, visible: bool) -> None:
+        self.searchResultVisibilityToggled.emit(file_path, visible)
 
     @Slot(int, str)
     def on_aoi_stats_updated(self, vertices: int, area_text: str) -> None:
@@ -87,6 +92,20 @@ class WebBridge(QObject):
     @Slot(float, float)
     def on_mouse_coordinates(self, lon: float, lat: float) -> None:
         self.mouseCoordinates.emit(lon, lat)
+
+    @Slot(float, float, float, float, float, float)
+    def on_camera_pose_changed(
+        self, lon: float, lat: float, height: float, heading: float, pitch: float, roll: float
+    ) -> None:
+        if hasattr(self, "controller") and self.controller:
+            self.controller._last_camera_state = {
+                "lon": float(lon),
+                "lat": float(lat),
+                "height": float(height),
+                "heading": float(heading),
+                "pitch": float(pitch),
+                "roll": float(roll),
+            }
 
     @Slot(float, float, float)
     def on_camera_changed(self, scale_denominator: float, heading_deg: float, pitch_deg: float) -> None:

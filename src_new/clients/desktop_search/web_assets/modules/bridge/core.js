@@ -60,6 +60,7 @@
   let swipeDividerElement = null;
   let swipeComparatorLeftLayerKey = null;
   let swipeComparatorRightLayerKey = null;
+  let swipeComparatorExplicitKeys = [];   // Full ordered list of selected layer keys (N-pane support)
   let comparatorModeEnabled = false;
   let comparatorLeftViewer = null;
   let comparatorRightViewer = null;
@@ -1931,6 +1932,12 @@
   }
 
   function resolveComparatorLayerKeys() {
+    // Prefer the explicitly selected keys (set via setComparatorLayers).
+    // This guarantees pane count == user selection, preventing ghost panes.
+    if (swipeComparatorExplicitKeys && swipeComparatorExplicitKeys.length >= 2) {
+      return swipeComparatorExplicitKeys.slice();
+    }
+    // Legacy fallback: use left/right pair if only those two are available
     if (swipeComparatorLeftLayerKey && swipeComparatorRightLayerKey) {
       return [swipeComparatorLeftLayerKey, swipeComparatorRightLayerKey];
     }
