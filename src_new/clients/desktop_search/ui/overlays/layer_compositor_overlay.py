@@ -256,9 +256,10 @@ class LayerCompositorOverlay(QWidget):
 
         return row
 
-    def apply_state(self, state_dict: dict) -> None:
+    def apply_state(self, _state_dict: dict) -> None:
         """Apply saved state to the layer compositor overlay."""
         return
 
 
 __all__ = ["LayerCompositorOverlay"]
+
