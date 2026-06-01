@@ -214,3 +214,54 @@ def test_project_io_coordinator_roundtrip():
     assert mock_controller._last_camera_state["lon"] == 77.2
     assert mock_controller.state.clicked_points == [[10.0, 20.0]]
     mock_controller._set_search_aoi_visible.assert_called_with(False)
+
+
+def test_layer_coordinator_vector_layers():
+    from unittest.mock import patch
+    import json
+    from src_new.clients.desktop_search.controller import DesktopController
+    from src_new.clients.desktop_search.coordinators.layer_coordinator import LayerCoordinator
+
+    # Arrange
+    mock_controller = MagicMock()
+    mock_controller._vector_layers = {}
+    mock_controller.panel = MagicMock()
+    
+    # Define dummy GeoJSON content
+    dummy_geojson = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [77.0, 28.0]},
+                "properties": {"name": "Test Point"}
+            }
+        ]
+    }
+    
+    # 1. Test DesktopController._read_vector_geojson directly
+    mock_path = MagicMock()
+    mock_path.suffix = ".geojson"
+    mock_path.name = "test.geojson"
+    mock_path.read_text.return_value = json.dumps(dummy_geojson)
+    
+    parsed = DesktopController._read_vector_geojson(mock_controller, mock_path)
+    assert parsed == dummy_geojson
+    
+    # 2. Test LayerCoordinator.add_vector_layers adding & caching vector layers
+    coordinator = LayerCoordinator(mock_controller)
+    mock_controller._read_vector_geojson.return_value = dummy_geojson
+    mock_controller._make_unique_vector_key.return_value = "vector:test.geojson"
+    
+    with patch("qtpy.QtWidgets.QFileDialog.getOpenFileNames", return_value=(["/path/test.geojson"], "GeoJSON")):
+        coordinator.add_vector_layers()
+        
+    # Verify vector layers registration
+    assert "vector:test.geojson" in mock_controller._vector_layers
+    assert mock_controller._vector_layers["vector:test.geojson"]["label"] == "test"
+    assert mock_controller._vector_layers["vector:test.geojson"]["geojson"] == dummy_geojson
+    
+    # Verify JS bridge was called to render on the Cesium globe
+    mock_controller._run_js_call.assert_any_call("addVectorLayer", "vector:test.geojson", "test", dummy_geojson, {})
+    mock_controller._refresh_vector_layers_ui.assert_called()
+

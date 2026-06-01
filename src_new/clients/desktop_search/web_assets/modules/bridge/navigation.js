@@ -263,7 +263,7 @@
           );
         }
         const minLevel = options && Number.isInteger(options.minzoom) ? options.minzoom : 0;
-        const maxLevel = options && Number.isInteger(options.maxzoom) ? options.maxzoom : 19;
+        const maxLevel = options && Number.isInteger(options.maxzoom) ? options.maxzoom : 26;
         const existingLayer = managedImageryLayers.get(layerKey);
         if (existingLayer) {
           if (existingLayer.imageryProvider && existingLayer.imageryProvider.url === providerUrl && !(options && options.force_rebuild === true)) {

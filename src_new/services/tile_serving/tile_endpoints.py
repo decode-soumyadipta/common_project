@@ -545,7 +545,7 @@ async def get_metadata(raster_id: str) -> dict:
         # At zoom 0, the whole world (360°) fits in TILE_SIZE pixels
         # → resolution at zoom z = 360 / (TILE_SIZE * 2^z)
         if res_deg > 0:
-            maxzoom = max(0, min(22, int(math.log2(360.0 / (TILE_SIZE * res_deg)))))
+            maxzoom = max(0, min(26, int(math.log2(360.0 / (TILE_SIZE * res_deg)))))
         else:
             maxzoom = 18
         minzoom = max(0, maxzoom - 8)

@@ -51,7 +51,7 @@ export function addImageryLayer(viewer, options) {
     alpha = 1.0,
     show = true,
     minzoom = 0,
-    maxzoom = 19,
+    maxzoom = 26,
     log
   } = options;
   

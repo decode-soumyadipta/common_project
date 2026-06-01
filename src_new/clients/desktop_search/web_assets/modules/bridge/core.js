@@ -1818,8 +1818,8 @@
 
       const demProvider = new Cesium.UrlTemplateImageryProvider({
         url: drapeUrl,
-        maximumLevel: definition.maxLevel,
-        minimumLevel: definition.minLevel,
+        maximumLevel: definition.maxLevel || definition.maxzoom || 26,
+        minimumLevel: definition.minLevel || definition.minzoom || 0,
         tilingScheme: new Cesium.WebMercatorTilingScheme(),
         enablePickFeatures: false,
         rectangle: rectangle,
@@ -1830,8 +1830,8 @@
       if (hillshadeUrl) {
         const hsProvider = new Cesium.UrlTemplateImageryProvider({
           url: hillshadeUrl,
-          maximumLevel: definition.maxLevel,
-          minimumLevel: definition.minLevel,
+          maximumLevel: definition.maxLevel || definition.maxzoom || 26,
+          minimumLevel: definition.minLevel || definition.minzoom || 0,
           tilingScheme: new Cesium.WebMercatorTilingScheme(),
           enablePickFeatures: false,
           rectangle: rectangle,
@@ -1889,8 +1889,8 @@
 
     const provider = new Cesium.UrlTemplateImageryProvider({
       url: definition.url,
-      maximumLevel: definition.maxLevel,
-      minimumLevel: definition.minLevel,
+      maximumLevel: definition.maxLevel || definition.maxzoom || 26,
+      minimumLevel: definition.minLevel || definition.minzoom || 0,
       tilingScheme: new Cesium.WebMercatorTilingScheme(),
       enablePickFeatures: false,
       rectangle: rectangle,
