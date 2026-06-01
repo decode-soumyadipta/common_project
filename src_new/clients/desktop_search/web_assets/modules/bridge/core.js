@@ -83,6 +83,7 @@
   let flyThroughSpeedMultiplier = 1.0;
   let flyThroughPlaybackProgress = 0.0;
   let flyThroughPlaybackPitchDegrees = -42.0;
+  let flyThroughPlaybackHeightMeters = 900.0;
   let flyThroughPlaybackLastTimestamp = 0;
   let flyThroughPlaybackFrameHandle = null;
   let flyThroughPlaybackSegmentIndex = 0;
@@ -251,15 +252,16 @@
 
       const carto1 = Cesium.Cartographic.fromCartesian(p1);
       const carto2 = Cesium.Cartographic.fromCartesian(p2);
+      const heightOffset = Math.max(50.0, Math.min(10000.0, Number(flyThroughPlaybackHeightMeters) || 900.0));
       const startPos = Cesium.Cartesian3.fromRadians(
         carto1.longitude,
         carto1.latitude,
-        carto1.height + 900
+        carto1.height + heightOffset
       );
       const endPos = Cesium.Cartesian3.fromRadians(
         carto2.longitude,
         carto2.latitude,
-        carto2.height + 900
+        carto2.height + heightOffset
       );
       const distance = Cesium.Cartesian3.distance(p1, p2);
       const durationMs = Math.max(350, (distance / (100 * speedFactor)) * 1000);
@@ -374,6 +376,17 @@
       return;
     }
     flyThroughPlaybackPitchDegrees = Math.max(-80.0, Math.min(-10.0, nextPitch));
+    if (flyThroughPoints.length >= 2) {
+      syncFlyThroughPlaybackToProgress(flyThroughPlaybackProgress, true);
+    }
+  }
+
+  function setFlyThroughHeight(value) {
+    const nextHeight = Number(value);
+    if (!Number.isFinite(nextHeight)) {
+      return;
+    }
+    flyThroughPlaybackHeightMeters = Math.max(50.0, Math.min(10000.0, nextHeight));
     if (flyThroughPoints.length >= 2) {
       syncFlyThroughPlaybackToProgress(flyThroughPlaybackProgress, true);
     }
@@ -907,6 +920,24 @@
         setSearchOverlayVisible: function (value) {
           searchOverlayVisible = Boolean(value);
           window._offlineGISSearchOverlayVisible = searchOverlayVisible;
+          // Enforce visibility immediately for any existing drawn polygons
+          try {
+            for (let i = 0; i < drawnPolygons.length; i += 1) {
+              const poly = drawnPolygons[i];
+              if (!poly) continue;
+              const shouldShow = Boolean(poly.visible) && searchOverlayVisible;
+              if (poly.lineEntity) poly.lineEntity.show = shouldShow;
+              if (poly.polygonEntity) poly.polygonEntity.show = shouldShow;
+              if (poly.areaLabelEntity) poly.areaLabelEntity.show = shouldShow;
+            }
+          } catch (e) {
+            // ignore errors while enforcing visibility
+          }
+          if (window.offlineGIS && typeof window.offlineGIS.syncSearchResultMarkerVisibility === "function") {
+            try {
+              window.offlineGIS.syncSearchResultMarkerVisibility();
+            } catch (_) {}
+          }
           requestSceneRender();
         },
         getAoiPanelMinimized: function () {

@@ -210,6 +210,8 @@ class ComparatorCoordinator:
         c._set_search_aoi_visible(desired_aoi_visible)
 
         if c._swipe_comparator_enabled:
+            if c._comparator_visibility_snapshot is None:
+                c._comparator_visibility_snapshot = dict(c._search_layer_visibility)
             c._run_js_call("setComparatorPosition", 0.5)
             c._run_js_call("requestComparatorPaneState")
             c.panel.log(
@@ -218,6 +220,24 @@ class ComparatorCoordinator:
             c._logger.info("Comparator enabled candidate_layers=%s", candidate_count)
             c._apply_display_control_mode()
             return True
+
+        if c._comparator_visibility_snapshot is not None:
+            snapshot = c._comparator_visibility_snapshot
+            c._comparator_visibility_snapshot = None
+            for path in c._search_result_assets_by_path:
+                if path in snapshot:
+                    c._search_layer_visibility[path] = bool(snapshot[path])
+
+            if c._event_driven_enabled:
+                c._sync_search_visibility_layers_event_driven()
+            else:
+                c._sync_search_visibility_layers()
+            c.panel.update_search_results(
+                list(c._search_result_assets_by_path.values()),
+                c._search_layer_visibility,
+            )
+            c._refresh_search_result_markers()
+            c._logger.info("Comparator disabled: restored pre-comparator layer visibility snapshot")
 
         c._comparator_selected_pane = None
         c._comparator_selected_layer_type = None

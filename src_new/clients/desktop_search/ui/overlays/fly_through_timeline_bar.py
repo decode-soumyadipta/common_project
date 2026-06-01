@@ -34,6 +34,7 @@ class FlyThroughTimelineBar(QWidget):
         self._active = False
         self._speed_value = 1.0
         self._pitch_value = -42
+        self._height_value = 900
         # Extra horizontal offset (pixels) to nudge the bar further left from the
         # map area's left edge. Increase to move the bar left; use
         # `set_horizontal_offset()` to change at runtime. Raised default to
@@ -127,6 +128,29 @@ class FlyThroughTimelineBar(QWidget):
             QSlider#flyThroughPitchSlider::handle:horizontal:hover {
                 background: #f8fbff;
             }
+            QSlider#flyThroughHeightSlider::groove:vertical {
+                background: rgba(255, 255, 255, 0.20);
+                border-radius: 3px;
+                width: 6px;
+            }
+            QSlider#flyThroughHeightSlider::sub-page:vertical {
+                background: rgba(255, 255, 255, 0.82);
+                border-radius: 3px;
+            }
+            QSlider#flyThroughHeightSlider::add-page:vertical {
+                background: rgba(255, 255, 255, 0.12);
+                border-radius: 3px;
+            }
+            QSlider#flyThroughHeightSlider::handle:vertical {
+                background: #ffffff;
+                border: 1px solid rgba(255, 255, 255, 0.55);
+                height: 14px;
+                margin: 0 -6px;
+                border-radius: 7px;
+            }
+            QSlider#flyThroughHeightSlider::handle:vertical:hover {
+                background: #f8fbff;
+            }
             """
         )
 
@@ -186,6 +210,37 @@ class FlyThroughTimelineBar(QWidget):
         self.pitch_slider.valueChanged.connect(self._on_pitch_changed)
         controls_row.addWidget(self.pitch_slider)
 
+        height_panel = QVBoxLayout()
+        height_panel.setContentsMargins(0, 0, 0, 0)
+        height_panel.setSpacing(4)
+
+        height_label = QLabel("Height")
+        height_label.setObjectName("flyThroughMetaLabel")
+        height_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        height_panel.addWidget(height_label)
+
+        self.height_slider = QSlider(Qt.Orientation.Vertical)
+        self.height_slider.setObjectName("flyThroughHeightSlider")
+        self.height_slider.setRange(100, 5000)
+        self.height_slider.setValue(900)
+        self.height_slider.setSingleStep(25)
+        self.height_slider.setPageStep(100)
+        self.height_slider.setTickPosition(QSlider.TickPosition.TicksRight)
+        self.height_slider.setTickInterval(250)
+        self.height_slider.setToolTip("Adjust camera height above ground during flight.")
+        self.height_slider.valueChanged.connect(self._on_height_changed)
+        self.height_slider.setFixedHeight(88)
+        height_panel.addWidget(self.height_slider, 1)
+
+        self.height_value_label = QLabel("900 m")
+        self.height_value_label.setObjectName("flyThroughMetaLabel")
+        self.height_value_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        height_panel.addWidget(self.height_value_label)
+
+        height_container = QWidget()
+        height_container.setLayout(height_panel)
+        controls_row.addWidget(height_container)
+
         controls_row.addStretch(1)
 
         self.play_pause_btn = QToolButton()
@@ -230,7 +285,7 @@ class FlyThroughTimelineBar(QWidget):
         outer_layout.setContentsMargins(0, 0, 0, 0)
         outer_layout.addWidget(card)
 
-        self.setMinimumHeight(98)
+        self.setMinimumHeight(134)
         self.hide()
 
     @staticmethod
@@ -252,6 +307,9 @@ class FlyThroughTimelineBar(QWidget):
             self.set_progress(0.0)
             self.set_speed(1.0)
             self.set_pitch(-42)
+            self.set_height(900)
+            self.controller._set_fly_through_pitch(-42.0)
+            self.controller._set_fly_through_height(900.0)
             # Reposition immediately when shown so offset takes effect.
             self.update_position()
 
@@ -291,6 +349,13 @@ class FlyThroughTimelineBar(QWidget):
         with QSignalBlocker(self.pitch_slider):
             self.pitch_slider.setValue(self._pitch_value)
         self.pitch_value_label.setText(f"{self._pitch_value}°")
+
+    def set_height(self, value: float) -> None:
+        height = max(100.0, min(5000.0, float(value)))
+        self._height_value = int(round(height))
+        with QSignalBlocker(self.height_slider):
+            self.height_slider.setValue(self._height_value)
+        self.height_value_label.setText(f"{self._height_value} m")
 
     def update_position(self) -> None:
         """Anchor the bar to the bottom of the map area with full horizontal width."""
@@ -339,6 +404,16 @@ class FlyThroughTimelineBar(QWidget):
         # Always clamp right side to avoid overflow past the right edge
         if x_pos > max_x:
             x_pos = max_x
+        top_margin = 12
+        max_y = bottom_right.y() - bottom_margin - self.height()
+        min_y = top_left.y() + top_margin
+        if max_y < min_y:
+            y_pos = min_y
+        else:
+            if y_pos < min_y:
+                y_pos = min_y
+            if y_pos > max_y:
+                y_pos = max_y
         self.move(x_pos, y_pos)
         self.raise_()
 
@@ -393,6 +468,11 @@ class FlyThroughTimelineBar(QWidget):
         self._pitch_value = int(value)
         self.pitch_value_label.setText(f"{self._pitch_value}°")
         self.controller._set_fly_through_pitch(float(value))
+
+    def _on_height_changed(self, value: int) -> None:
+        self._height_value = int(value)
+        self.height_value_label.setText(f"{self._height_value} m")
+        self.controller._set_fly_through_height(float(value))
 
 
 __all__ = ["FlyThroughTimelineBar"]

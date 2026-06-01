@@ -171,7 +171,7 @@ class MainWindow(QMainWindow):
         """Refresh ingestion status and asset list."""
         logger.info("Refreshing data...")
         self.monitoring_panel.refresh_all()
-        self._check_service_health()
+        self._check_service_health(retry=False)
 
     def _show_settings(self) -> None:
         """Show settings dialog."""
@@ -206,8 +206,12 @@ class MainWindow(QMainWindow):
     # Service Health Monitoring
     # ------------------------------------------------------------------
 
-    def _check_service_health(self) -> None:
-        """Check the health of ingestion and tile services."""
+    def _check_service_health(self, *, retry: bool = True) -> None:
+        """Check the health of ingestion and tile services.
+
+        On startup we give each service one short retry before showing an
+        unavailable state so cold boots do not flash a false failure.
+        """
         # Check ingestion service
         ingestion_ok = self.api_client.ingestion_service_ready()
         logger.debug("Ingestion service ready=%s", ingestion_ok)
@@ -216,6 +220,12 @@ class MainWindow(QMainWindow):
             self._ingestion_status_label.setStyleSheet(
                 "color: #2d7a2d; font-weight: 600; padding: 2px 8px;"
             )
+        elif retry:
+            self._ingestion_status_label.setText("Ingestion Service: Checking...")
+            self._ingestion_status_label.setStyleSheet(
+                "color: #b7791f; font-weight: 600; padding: 2px 8px;"
+            )
+            QTimer.singleShot(1500, lambda: self._check_service_health(retry=False))
         else:
             self._ingestion_status_label.setText("Ingestion Service: ✗ Unavailable")
             self._ingestion_status_label.setStyleSheet(
@@ -229,6 +239,11 @@ class MainWindow(QMainWindow):
             self._tile_status_label.setText("Tile Service: ✓ Healthy")
             self._tile_status_label.setStyleSheet(
                 "color: #2d7a2d; font-weight: 600; padding: 2px 8px;"
+            )
+        elif retry:
+            self._tile_status_label.setText("Tile Service: Checking...")
+            self._tile_status_label.setStyleSheet(
+                "color: #b7791f; font-weight: 600; padding: 2px 8px;"
             )
         else:
             self._tile_status_label.setText("Tile Service: ✗ Unavailable")

@@ -72,14 +72,12 @@ class MainWindow(QMainWindow):
     IMAGERY_ONLY_ACTIONS: set[str] = set()
     DEM_ONLY_ACTIONS: set[str] = {
         "Elevation Profile",
-        "Fill Volume",
     }
     TOGGLE_ACTIONS: set[str] = {
         "Layer Compositor",
         "Comparator",
         "Distance / Azimuth",
         "Elevation Profile",
-        "Fill Volume",
         "Add Point",
         "Add Line",
         "Add Polygon",
@@ -100,7 +98,6 @@ class MainWindow(QMainWindow):
             (
                 ("Distance / Azimuth", "measure_distance"),
                 ("Elevation Profile", "elevation_profile"),
-                ("Fill Volume", "volume"),
                 ("Clear Last", "clear_last"),
             ),
         ),
@@ -313,8 +310,6 @@ class MainWindow(QMainWindow):
         )
         # Wire coordinator to use the embedded panel
         self.controller._elevation_profile.set_panel(self.elevation_profile_panel)
-        # Wire fill volume job completion → uncheck toolbar button
-        self.controller._on_fill_volume_done = self._on_fill_volume_done
 
         self._escape_cancel_action = QAction("Cancel Active Draw", self)
         self._escape_cancel_action.setShortcut("Esc")
@@ -546,7 +541,6 @@ class MainWindow(QMainWindow):
         interaction_toggles = {
             "Distance / Azimuth",
             "Elevation Profile",
-            "Fill Volume",
             "Add Point",
             "Add Line",
             "Add Polygon",
@@ -1041,7 +1035,6 @@ class MainWindow(QMainWindow):
             normal_view_blockers = {
                 "Distance / Azimuth",
                 "Elevation Profile",
-                "Fill Volume",
                 "Add Point",
                 "Add Line",
                 "Add Polygon",
@@ -1108,15 +1101,6 @@ class MainWindow(QMainWindow):
         action = self.toolbar_actions.get("Elevation Profile")
         if action is not None:
             action.setChecked(False)
-
-    def _on_fill_volume_done(self) -> None:
-        """Uncheck the Fill Volume toolbar button when the analysis job finishes."""
-        action = self.toolbar_actions.get("Fill Volume")
-        if action is not None:
-            action.blockSignals(True)
-            action.setChecked(False)
-            action.blockSignals(False)
-
 
     def _on_profile_cursor_moved(self, frac: float) -> None:
         """Forward cursor fraction to the profile panel for live crosshair update."""

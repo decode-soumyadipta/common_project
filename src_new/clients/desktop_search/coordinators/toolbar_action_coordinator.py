@@ -19,7 +19,6 @@ class ToolbarActionCoordinator:
             "Distance / Azimuth": c._toolbar_measure_distance,
             "Polygon Area": c._toolbar_measure_polygon_area,
             "Elevation Profile": c._toolbar_elevation_profile,
-            "Fill Volume": c._toolbar_measure_volume,
             "Clear Last": c._toolbar_clear_last,
             "Add Point": c._toolbar_toggle_add_point_mode,
             "Add Line": c._toolbar_toggle_add_line_mode,

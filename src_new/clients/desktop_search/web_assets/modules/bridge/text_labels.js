@@ -25,6 +25,7 @@
 
   function syncSearchResultMarkerVisibility() {
     const visible = getSearchOverlayVisible();
+    log("debug", "syncSearchResultMarkerVisibility overlayVisible=" + String(visible) + " markerCount=" + String(searchResultMarkerEntities.length));
     for (let index = 0; index < searchResultMarkerEntities.length; index += 1) {
       const entity = searchResultMarkerEntities[index];
       if (entity) {
@@ -56,6 +57,9 @@
               return getSearchOverlayVisible();
             }, false),
             billboard: {
+              show: new Cesium.CallbackProperty(function () {
+                return getSearchOverlayVisible();
+              }, false),
               image: displayed ? SEARCH_RESULT_MARKER_YELLOW : SEARCH_RESULT_MARKER_RED,
               width: 26,
               height: 26,
@@ -66,6 +70,9 @@
               scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.55),
             },
             label: {
+              show: new Cesium.CallbackProperty(function () {
+                return getSearchOverlayVisible();
+              }, false),
               text: labelText,
               font: "600 11px 'Segoe UI', 'Helvetica Neue', sans-serif",
               fillColor: Cesium.Color.WHITE,
@@ -89,6 +96,7 @@
           iconEntity._searchResultMarkerIndex = index;
           searchResultMarkerEntities.push(iconEntity);
         }
+        syncSearchResultMarkerVisibility();
         requestSceneRender();
       },
       clearSearchResultMarkers: function () {
@@ -222,7 +230,6 @@
         searchPolygonPoints.length = 0;
         searchPolygonLocked = false;
         searchCursorPoint = null;
-        searchOverlayVisible = true;
         emitSearchGeometry("none", {});
         setStatus("All overlays cleared");
         log("info", "All overlays cleared");
@@ -425,6 +432,9 @@
       setFlyThroughPitch: function (value) {
         setFlyThroughPitch(value);
       },
+      setFlyThroughHeight: function (value) {
+        setFlyThroughHeight(value);
+      },
       setFlyThroughSpeed: function (value) {
         setFlyThroughSpeed(value);
       },
@@ -453,14 +463,6 @@
           try { viewer.entities.remove(window._profileLineEntity); } catch (_) {}
           window._profileLineEntity = null;
         }
-        if (window._profileStartEntity) {
-          try { viewer.entities.remove(window._profileStartEntity); } catch (_) {}
-          window._profileStartEntity = null;
-        }
-        if (window._profileEndEntity) {
-          try { viewer.entities.remove(window._profileEndEntity); } catch (_) {}
-          window._profileEndEntity = null;
-        }
         const cyan = Cesium.Color.fromCssColorString("#00e5ff");
         window._profileLineEntity = viewer.entities.add({
           polyline: {
@@ -473,15 +475,6 @@
             material: cyan,
             depthFailMaterial: cyan.withAlpha(0.5),
           },
-        });
-        // Start/end point markers
-        window._profileStartEntity = viewer.entities.add({
-          position: Cesium.Cartesian3.fromDegrees(Number(lon1), Number(lat1)),
-          point: { pixelSize: 8, color: cyan, outlineColor: Cesium.Color.BLACK, outlineWidth: 1, disableDepthTestDistance: Number.POSITIVE_INFINITY },
-        });
-        window._profileEndEntity = viewer.entities.add({
-          position: Cesium.Cartesian3.fromDegrees(Number(lon2), Number(lat2)),
-          point: { pixelSize: 8, color: cyan, outlineColor: Cesium.Color.BLACK, outlineWidth: 1, disableDepthTestDistance: Number.POSITIVE_INFINITY },
         });
         requestSceneRender();
         log("debug", "Profile line drawn lon1=" + lon1 + " lat1=" + lat1 + " lon2=" + lon2 + " lat2=" + lat2);
@@ -515,7 +508,7 @@
             return Cesium.Cartesian3.fromRadians(interp.longitude, interp.latitude);
           }, false),
           point: {
-            pixelSize: 10,
+            pixelSize: 8,
             color: yellow,
             outlineColor: Cesium.Color.fromCssColorString("#3a2800"),
             outlineWidth: 1.5,
@@ -686,6 +679,9 @@
         syncSearchResultMarkerVisibility();
         updatePolygonPreviewVisibility();
         requestSceneRender();
+      },
+      syncSearchResultMarkerVisibility: function () {
+        syncSearchResultMarkerVisibility();
       },
       clearFillVolumes: function () {
         _clearFillVolumeEntities();

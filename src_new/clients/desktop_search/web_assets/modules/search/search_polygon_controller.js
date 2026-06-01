@@ -218,8 +218,9 @@
               }, false),
               material: cesium.Color.CYAN,
               depthFailMaterial: cesium.Color.CYAN,
-              width: 2.5,
+              width: 3,
               clampToGround: true,
+              disableDepthTestDistance: Number.POSITIVE_INFINITY,
               show: new cesium.CallbackProperty(function () {
                 return isPolygonDrawPreviewActive() && getSearchPolygonPoints().length >= 1;
               }, false),
@@ -244,13 +245,15 @@
                 }).filter(function(v) { return !!v; });
                 return res.length >= 3 ? new cesium.PolygonHierarchy(res) : null;
               }, false),
-              material: cesium.Color.fromCssColorString("#4f79b8").withAlpha(0.34),
-              fill: false,
+              // Clamp preview polygon to ground and use a subtle solid fill so it
+              // appears attached to terrain (not floating).
+              material: cesium.Color.fromCssColorString("#4f79b8").withAlpha(0.22),
+              fill: true,
               outline: false,
-              height: 5000.0,
+              clampToGround: true,
               perPositionHeight: false,
               show: new cesium.CallbackProperty(function () {
-                return isPolygonDrawPreviewActive() && getSearchPolygonPoints().length >= 2;
+                return isPolygonDrawPreviewActive() && getSearchPolygonPoints().length >= 2 && getSearchOverlayVisible();
               }, false),
             },
           })
@@ -358,9 +361,10 @@
           continue;
         }
         poly.visible = Boolean(visible);
-        if (poly.lineEntity) poly.lineEntity.show = poly.visible;
-        if (poly.polygonEntity) poly.polygonEntity.show = poly.visible;
-        if (poly.areaLabelEntity) poly.areaLabelEntity.show = poly.visible;
+        const shouldShow = poly.visible && getSearchOverlayVisible();
+        if (poly.lineEntity) poly.lineEntity.show = shouldShow;
+        if (poly.polygonEntity) poly.polygonEntity.show = shouldShow;
+        if (poly.areaLabelEntity) poly.areaLabelEntity.show = shouldShow;
       }
       requestSceneRender();
     }
@@ -373,9 +377,10 @@
       for (const poly of drawnPolygons) {
         if (poly._isAnnotationPoly) continue; // Never hide user-drawn annotation polygons
         poly.visible = isVisible;
-        if (poly.lineEntity) poly.lineEntity.show = isVisible;
-        if (poly.polygonEntity) poly.polygonEntity.show = isVisible;
-        if (poly.areaLabelEntity) poly.areaLabelEntity.show = isVisible;
+        const shouldShowAll = isVisible && getSearchOverlayVisible();
+        if (poly.lineEntity) poly.lineEntity.show = shouldShowAll;
+        if (poly.polygonEntity) poly.polygonEntity.show = shouldShowAll;
+        if (poly.areaLabelEntity) poly.areaLabelEntity.show = shouldShowAll;
       }
       requestSceneRender();
     }
@@ -531,7 +536,9 @@
         var nameLabelEntity = viewer.entities.add({
           position: anchorPos,
           label: {
-            text: "Polygon " + polyId,
+            text: new cesium.CallbackProperty(function () {
+              return "Polygon " + polyId;
+            }, false),
             fillColor: cesium.Color.WHITE,
             showBackground: true,
             backgroundColor: cesium.Color.BLACK.withAlpha(0.62),
@@ -623,6 +630,12 @@
             : aoiPoints[0];
           var aoiLabelText = "AOI" + (areaText ? "\n" + areaText : "");
 
+          // Strict visibility: never create AOI entities unless overlay visible
+          if (!deps.getSearchOverlayVisible()) {
+            // still register & update panel but do not create globe entities
+            updateAoiPanel(frozenPoints);
+            deps.setStatus("Search AOI defined (hidden)");
+          } else {
           activeAoiEntity = viewer.entities.add({
             position: labelPosCartesian,
             polyline: {
@@ -630,6 +643,8 @@
               width: 3,
               material: cesium.Color.fromCssColorString("#4f79b8"),
               clampToGround: true,
+              depthFailMaterial: cesium.Color.fromCssColorString("#4f79b8").withAlpha(0.6),
+              disableDepthTestDistance: Number.POSITIVE_INFINITY,
               show: new cesium.CallbackProperty(function() {
                 return deps.getSearchOverlayVisible();
               }, false)
@@ -638,9 +653,9 @@
               hierarchy: new cesium.PolygonHierarchy(flatAoiPoints),
               material: cesium.Color.fromCssColorString("#4f79b8").withAlpha(0.32),
               fill: true,
-              outline: false,
-              height: 5000.0,
+              outline: true,
               perPositionHeight: false,
+              // remove explicit height so polygon clamps to terrain correctly
               show: new cesium.CallbackProperty(function() {
                 return deps.getSearchOverlayVisible();
               }, false)
@@ -661,6 +676,7 @@
               }, false),
             }
           });
+          }
         }
         
         // Register with backend for search

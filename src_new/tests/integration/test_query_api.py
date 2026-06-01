@@ -368,6 +368,62 @@ class TestQueryBBoxEndpoint:
         assert response.status_code == 422
 
 
+class TestElevationProfileEndpoint:
+    """Tests for POST /profile/elevation endpoint."""
+
+    def test_profile_elevation_samples_a_tiny_dem(
+        self,
+        test_client: TestClient,
+        tmp_path,
+    ):
+        """Test that the profile endpoint returns sampled elevation values."""
+        rasterio = pytest.importorskip("rasterio")
+        import numpy as np
+        from rasterio.transform import from_origin
+
+        dem_path = tmp_path / "dem.tif"
+        data = np.array(
+            [
+                [1.0, 2.0, 3.0],
+                [4.0, 5.0, 6.0],
+                [7.0, 8.0, 9.0],
+            ],
+            dtype=np.float32,
+        )
+
+        with rasterio.open(
+            dem_path,
+            "w",
+            driver="GTiff",
+            height=3,
+            width=3,
+            count=1,
+            dtype="float32",
+            crs="EPSG:4326",
+            transform=from_origin(0.0, 3.0, 1.0, 1.0),
+            nodata=-9999.0,
+        ) as dst:
+            dst.write(data, 1)
+
+        response = test_client.post(
+            "/profile/elevation",
+            json={
+                "path": str(dem_path),
+                "line_points": [
+                    {"lon": 0.5, "lat": 2.5},
+                    {"lon": 2.5, "lat": 0.5},
+                ],
+                "samples": 3,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["samples"] == 3
+        assert data["path"] == str(dem_path)
+        assert data["values"] == [1.0, 5.0, 9.0]
+
+
 class TestGetRasterMetadataEndpoint:
     """Tests for GET /raster/{raster_id} endpoint."""
     

@@ -298,10 +298,12 @@
               }
               return [];
             }, false),
-            width: 2,
+            width: 3,
             arcType: Cesium.ArcType.GEODESIC,
             material: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.85),
+            depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.45),
             clampToGround: true,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
         });
       }
@@ -340,10 +342,12 @@
               }
               return [];
             }, false),
-            width: 2,
+            width: 3,
             arcType: Cesium.ArcType.GEODESIC,
             material: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.85),
+            depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.45),
             clampToGround: true,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
             show: new Cesium.CallbackProperty(function () {
               return Boolean(lineDrawModeEnabled && lineDrawPreviewStart && lineDrawPreviewEnd);
             }, false),
@@ -686,5 +690,65 @@
     }
     requestSceneRender();
   }
+
+  Object.assign(window.offlineGIS, {
+    setDistanceMeasureMode: function (enabled) {
+      setDistanceMeasureMode(Boolean(enabled));
+    },
+    clearMeasurementEntities: function () {
+      clearMeasurementEntities();
+    },
+    clearMeasurementPreviewEntities: function () {
+      clearMeasurementPreviewEntities();
+    },
+    updateMeasurementPreview: function (
+      startLon,
+      startLat,
+      endLon,
+      endLat,
+      meters,
+      azimuth,
+      startHeightOpt,
+      endHeightOpt
+    ) {
+      updateMeasurementPreview(
+        startLon,
+        startLat,
+        endLon,
+        endLat,
+        meters,
+        azimuth,
+        startHeightOpt,
+        endHeightOpt
+      );
+    },
+    updateMeasurementEntities: function (
+      startLon,
+      startLat,
+      endLon,
+      endLat,
+      meters,
+      azimuth,
+      startHeightOpt,
+      endHeightOpt
+    ) {
+      updateMeasurementEntities(
+        startLon,
+        startLat,
+        endLon,
+        endLat,
+        meters,
+        azimuth,
+        startHeightOpt,
+        endHeightOpt
+      );
+    },
+    updateLineDrawPreview: function (startLon, startLat, endLon, endLat) {
+      updateLineDrawPreview(startLon, startLat, endLon, endLat);
+    },
+    clearLineDrawPreview: function () {
+      clearLineDrawPreview();
+    },
+  });
 
   // ═══════════════════════════════════════════════════════════════════════════

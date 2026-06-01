@@ -18,7 +18,7 @@ from __future__ import annotations
 import math
 from typing import Sequence
 
-from qtpy.QtCore import QPointF, Qt, Signal
+from qtpy.QtCore import QPointF, Qt, QTimer, Signal
 from qtpy.QtGui import (
     QColor,
     QFont,
@@ -88,6 +88,8 @@ class _Profile2DWidget(_ChartBase):
         self._values: list[float] = []
         self._distance_m: float = 0.0
         self._cursor_frac: float | None = None
+        self._cursor_frac_target: float | None = None
+        self._cursor_animating = False
         self.setMinimumSize(200, 120)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
@@ -95,12 +97,51 @@ class _Profile2DWidget(_ChartBase):
         self._values = [v for v in values if math.isfinite(v)]
         self._distance_m = float(distance_m)
         self._cursor_frac = None
+        self._cursor_frac_target = None
+        self._cursor_animating = False
         self.update()
 
     def set_cursor_fraction(self, frac: float | None) -> None:
         """Move the georeferenced cursor to position frac (0–1) along the profile."""
-        self._cursor_frac = frac
+        if frac is None:
+            self._cursor_frac = None
+            self._cursor_frac_target = None
+            self._cursor_animating = False
+            self.update()
+            return
+
+        target = max(0.0, min(1.0, float(frac)))
+        self._cursor_frac_target = target
+        if self._cursor_frac is None:
+            self._cursor_frac = target
+            self.update()
+            return
+
+        if not self._cursor_animating:
+            self._cursor_animating = True
+            QTimer.singleShot(0, self._advance_cursor_animation)
+
+    def _advance_cursor_animation(self) -> None:
+        if self._cursor_frac_target is None:
+            self._cursor_animating = False
+            return
+
+        if self._cursor_frac is None:
+            self._cursor_frac = self._cursor_frac_target
+            self._cursor_animating = False
+            self.update()
+            return
+
+        delta = self._cursor_frac_target - self._cursor_frac
+        if abs(delta) < 0.0015:
+            self._cursor_frac = self._cursor_frac_target
+            self._cursor_animating = False
+            self.update()
+            return
+
+        self._cursor_frac += delta * 0.28
         self.update()
+        QTimer.singleShot(16, self._advance_cursor_animation)
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
@@ -241,7 +282,7 @@ class _Profile2DWidget(_ChartBase):
             # Cursor point — dull yellow filled circle
             p.setPen(QPen(QColor(80, 50, 0, 220), 1.2))
             p.setBrush(QColor(200, 160, 0, 220))
-            r = 5
+            r = 4
             p.drawEllipse(int(cx) - r, int(cy_cursor) - r, r * 2, r * 2)
 
             # Readout label

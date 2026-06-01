@@ -853,22 +853,20 @@
             window._lastProfilePreviewUpdate = 0;
           }
           const timeSinceLastUpdate = now - window._lastProfilePreviewUpdate;
-          if (timeSinceLastUpdate < 16) {
-            // Skip this update - too soon after last one
-            return;
-          }
-          window._lastProfilePreviewUpdate = now;
-          
-          let profileLonLat = getLonLatFromScreen(movement.endPosition);
-          if (!profileLonLat && movement.endPosition) {
-            const ellipsoidCart = viewer.camera.pickEllipsoid(movement.endPosition, viewer.scene.globe.ellipsoid);
-            if (ellipsoidCart) profileLonLat = cartesianToLonLat(ellipsoidCart);
-          }
-          if (profileLonLat) {
-            _updateProfilePreviewLine(
-              window._profileStartLon, window._profileStartLat,
-              profileLonLat.lon, profileLonLat.lat
-            );
+          if (timeSinceLastUpdate >= 12) {
+            window._lastProfilePreviewUpdate = now;
+
+            let profileLonLat = getLonLatFromScreen(movement.endPosition);
+            if (!profileLonLat && movement.endPosition) {
+              const ellipsoidCart = viewer.camera.pickEllipsoid(movement.endPosition, viewer.scene.globe.ellipsoid);
+              if (ellipsoidCart) profileLonLat = cartesianToLonLat(ellipsoidCart);
+            }
+            if (profileLonLat) {
+              _updateProfilePreviewLine(
+                window._profileStartLon, window._profileStartLat,
+                profileLonLat.lon, profileLonLat.lat
+              );
+            }
           }
         } catch (e) {
           // Silently ignore preview errors

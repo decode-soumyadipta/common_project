@@ -121,6 +121,7 @@ class DesktopController(QObject):
         self._swipe_comparator_enabled = False
         self._comparator_selected_pane: str | None = None
         self._comparator_selected_layer_type: str | None = None
+        self._comparator_visibility_snapshot: dict[str, bool] | None = None
         self._distance_measure_mode_enabled = False
         self._add_point_mode_enabled = False
         self._add_line_mode_enabled = False
@@ -130,7 +131,6 @@ class DesktopController(QObject):
         self._pan_mode_enabled = True
         self._polygon_area_mode_enabled = False
         self._polygon_draw_mode_enabled = False
-        self._volume_mode_enabled = False
         self._viewshed_mode_enabled = False
         self._fly_through_mode_enabled = False
         self._polygon_drawing_context = "none"  # "none", "search", "measurement"
@@ -1257,6 +1257,9 @@ class DesktopController(QObject):
     def _set_fly_through_pitch(self, value: float) -> None:
         self._run_js_call("setFlyThroughPitch", float(value))
 
+    def _set_fly_through_height(self, value: float) -> None:
+        self._run_js_call("setFlyThroughHeight", float(value))
+
     def _toggle_fly_through_playback(self) -> None:
         self._run_js_call("toggleFlyThroughPlayback")
 
@@ -1375,9 +1378,6 @@ class DesktopController(QObject):
 
     def _toolbar_measure_polygon_area(self) -> None:
         self._measure.toolbar_measure_polygon_area()
-
-    def _toolbar_measure_volume(self) -> bool | None:
-        return self._measure.toolbar_measure_volume()
 
     def _dem_bounds_polygon(self, dem_path: str) -> list[tuple[float, float]] | None:
         """Return a bounding-box polygon for the active DEM asset, or None."""

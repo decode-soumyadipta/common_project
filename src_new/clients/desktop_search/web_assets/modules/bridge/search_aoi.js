@@ -44,7 +44,6 @@
       });
     }
     searchPolygonLocked = true;
-    searchOverlayVisible = true;
     updateSearchPolygonPreview();
     updateAoiPanel(searchPolygonPoints);
     emitSearchGeometry("polygon", { points: searchPolygonPoints.map(p => ({ lon: p.lon, lat: p.lat })) });

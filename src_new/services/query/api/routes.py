@@ -34,6 +34,15 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+try:
+    import numpy as np
+    import rasterio
+    from pyproj import Transformer
+except ImportError:  # pragma: no cover - runtime dependency guard
+    np = None
+    rasterio = None
+    Transformer = None
+
 from src_new.services.query.api.dependencies import get_db, get_raster_repository
 from src_new.services.query.repositories.raster_repository import RasterRepository
 from src_new.shared.models.query_result import QueryResult
@@ -126,9 +135,134 @@ class PolygonQueryRequest(BaseModel):
     buffer_meters: float = Field(default=0.0, description="Buffer distance in meters")
 
 
+class ElevationProfilePoint(BaseModel):
+    """A single point in an elevation profile line."""
+
+    lon: float = Field(description="Longitude in decimal degrees")
+    lat: float = Field(description="Latitude in decimal degrees")
+
+
+class ElevationProfileRequest(BaseModel):
+    """Request body for POST /profile/elevation."""
+
+    path: str = Field(description="Path to the DEM raster file.")
+    line_points: list[ElevationProfilePoint] = Field(
+        min_length=2,
+        description="Start and end points of the profile line.",
+    )
+    samples: int = Field(default=200, ge=2, le=5000)
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
+
+def _interpolate_profile_line(
+    start_lon: float,
+    start_lat: float,
+    end_lon: float,
+    end_lat: float,
+    samples: int,
+) -> list[tuple[float, float]]:
+    """Return evenly spaced lon/lat pairs between the two profile endpoints."""
+    if samples <= 1:
+        return [(start_lon, start_lat)]
+
+    if np is None:
+        fractions = [index / (samples - 1) for index in range(samples)]
+    else:
+        fractions = np.linspace(0.0, 1.0, samples)
+
+    return [
+        (
+            float(start_lon + (end_lon - start_lon) * fraction),
+            float(start_lat + (end_lat - start_lat) * fraction),
+        )
+        for fraction in fractions
+    ]
+
+
+def _sample_elevation_profile(
+    path: str,
+    line_points: list[ElevationProfilePoint],
+    samples: int,
+) -> list[float | None]:
+    """Sample elevation values along a line through a DEM."""
+    if rasterio is None or Transformer is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Elevation profile sampling dependencies are unavailable.",
+        )
+
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail=f"Raster not found: {path}")
+
+    start = line_points[0]
+    end = line_points[-1]
+    profile_points = _interpolate_profile_line(
+        start.lon,
+        start.lat,
+        end.lon,
+        end.lat,
+        samples,
+    )
+
+    with rasterio.open(path) as src:
+        if src.crs:
+            transformer = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
+            sample_points = [transformer.transform(lon, lat) for lon, lat in profile_points]
+        else:
+            sample_points = profile_points
+
+        values: list[float | None] = []
+        nodata = src.nodata
+        for sample in src.sample(sample_points, masked=True):
+            sample_value = sample[0]
+            if np.ma.is_masked(sample_value):
+                values.append(None)
+                continue
+            value = float(sample_value)
+            if nodata is not None and value == float(nodata):
+                values.append(None)
+            else:
+                values.append(value)
+
+    return values
+
+
+@router.post(
+    "/profile/elevation",
+    summary="Extract elevation profile",
+    description=(
+        "Sample elevation values from a DEM along a line defined by two WGS84 points."
+    ),
+)
+def extract_elevation_profile(request: ElevationProfileRequest) -> dict:
+    """Return elevation samples along a profile line."""
+    logger.info(
+        "POST /profile/elevation — path=%s samples=%d points=%d",
+        request.path,
+        request.samples,
+        len(request.line_points),
+    )
+
+    try:
+        values = _sample_elevation_profile(request.path, request.line_points, request.samples)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Elevation profile extraction failed for %s", request.path)
+        raise HTTPException(
+            status_code=500,
+            detail="Elevation profile extraction failed.",
+        ) from exc
+
+    return {
+        "path": request.path,
+        "samples": request.samples,
+        "values": values,
+    }
 
 
 @router.post(
@@ -468,4 +602,5 @@ __all__ = [
     "router",
     "PointQueryRequest",
     "BBoxQueryRequest",
+    "ElevationProfileRequest",
 ]

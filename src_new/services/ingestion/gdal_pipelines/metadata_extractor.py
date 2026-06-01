@@ -196,16 +196,30 @@ def _is_valid_epsg4326_bounds(bounds: Bounds) -> bool:
     )
 
 
-def _bounds_to_epsg4326(dataset) -> Bounds:
-    """Transform a Rasterio dataset's bounds to EPSG:4326."""
+def _bounds_to_epsg4326(dataset, external_crs: str | None = None) -> Bounds:
+    """Transform a Rasterio dataset's bounds to EPSG:4326.
+
+    If the dataset does not carry an internal CRS, a sibling sidecar CRS such
+    as .prj can be supplied via *external_crs* and will be used instead.
+    """
     try:
+        from rasterio.crs import CRS  # type: ignore[import]
         from rasterio.warp import transform_bounds  # type: ignore[import]
     except ImportError as exc:
         raise MetadataExtractorError(
             "rasterio.warp is required for CRS bounds transformation."
         ) from exc
 
-    if dataset.crs is None:
+    source_crs = dataset.crs
+    if source_crs is None and external_crs:
+        try:
+            source_crs = CRS.from_user_input(external_crs)
+        except Exception as exc:
+            raise MetadataExtractorError(
+                f"Invalid external CRS supplied for bounds transformation: {external_crs}"
+            ) from exc
+
+    if source_crs is None:
         raw_bounds = Bounds(
             min_x=float(dataset.bounds.left),
             min_y=float(dataset.bounds.bottom),
@@ -220,7 +234,7 @@ def _bounds_to_epsg4326(dataset) -> Bounds:
         return raw_bounds
 
     left, bottom, right, top = transform_bounds(
-        dataset.crs,
+        source_crs,
         "EPSG:4326",
         dataset.bounds.left,
         dataset.bounds.bottom,
@@ -555,15 +569,18 @@ def extract_metadata(path: Path) -> RasterMetadata:
                 }
             )
 
-            # Extract CRS
+            # Extract CRS. If the source lacks an embedded CRS, prefer a
+            # matching sidecar .prj / world-file CRS instead of assuming WGS84.
             crs_text = normalize_crs(
                 dataset.crs.to_string() if dataset.crs else None
             )
 
             external_crs = _read_auxiliary_crs_and_log(path, log)
+            if dataset.crs is None and external_crs:
+                crs_text = normalize_crs(external_crs)
 
             # Extract bounds and transform to EPSG:4326
-            bounds = _bounds_to_epsg4326(dataset)
+            bounds = _bounds_to_epsg4326(dataset, external_crs)
             x_res, y_res = dataset.res
 
             # Log extracted metadata
@@ -600,11 +617,6 @@ def extract_metadata(path: Path) -> RasterMetadata:
             area_km2 = (width_deg * km_per_deg_lon) * (height_deg * km_per_deg_lat)
             log.info("  Coverage: ~%.2f km²", area_km2)
             log.info("")
-
-            # Prefer .prj CRS when internal CRS is missing
-            if (crs_text is None or crs_text == "") and external_crs:
-                log.info("Applying external CRS from .prj file")
-                crs_text = normalize_crs(external_crs)
 
             if crs_text is None or crs_text == "":
                 log.warning("⚠ WARNING: No CRS defined! Assuming EPSG:4326")
