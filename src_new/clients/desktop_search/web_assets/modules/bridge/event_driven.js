@@ -10,7 +10,9 @@
         if (options && options.server_optimized) {
           // Apply ultra-high performance settings for large datasets
           viewer.scene.globe.maximumScreenSpaceError = 0.5; // Original high detail fidelity
-          viewer.scene.globe.tileCacheSize = 2000; // Aggressive tile caching
+          viewer.scene.globe.tileCacheSize = 4000; // Aggressive tile caching
+          viewer.scene.globe.loadingQueueThreshold = 100;
+          viewer.scene.globe.loadingDescendantLimit = 24;
           // FIX: requestRenderMode disabled to prevent auto-blurring and shaking
           viewer.scene.requestRenderMode = false;
           
@@ -93,7 +95,9 @@
         viewer.scene.requestRenderMode = false;
         viewer.scene.maximumRenderTimeChange = 0.0;
         viewer.scene.globe.maximumScreenSpaceError = opts.screenSpaceError || 0.5;
-        viewer.scene.globe.tileCacheSize = opts.tileCacheSize || 2000;
+        viewer.scene.globe.tileCacheSize = opts.tileCacheSize || 4000;
+        viewer.scene.globe.loadingQueueThreshold = 100;
+        viewer.scene.globe.loadingDescendantLimit = 24;
         
         // Disable expensive visual effects for performance
         viewer.scene.fog.enabled = false;

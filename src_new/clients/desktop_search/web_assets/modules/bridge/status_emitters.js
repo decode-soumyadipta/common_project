@@ -631,8 +631,29 @@
             var curName = polys[pi].label || "Polygon " + polyId;
             var newName = prompt("Rename polygon:", curName);
             if (newName && newName.trim()) {
-              polys[pi].label = newName.trim();
-              polys[pi].nameLabelEntity.label.text = newName.trim();
+              var trimmedName = newName.trim();
+              polys[pi].label = trimmedName;
+              polys[pi].nameLabelEntity.label.text = trimmedName;
+
+              // Update edit/delete offsets statically
+              var nameWidth = 0;
+              var font = "500 12px Arial, Helvetica, sans-serif";
+              if (window.OfflineGISUtils && typeof window.OfflineGISUtils.measureTextWidth === "function") {
+                nameWidth = window.OfflineGISUtils.measureTextWidth(trimmedName, font);
+              } else {
+                var canvas = document.createElement("canvas");
+                var context = canvas.getContext("2d");
+                context.font = font;
+                nameWidth = context.measureText(trimmedName).width;
+              }
+
+              if (polys[pi].nameLabelEntity._editEntity && polys[pi].nameLabelEntity._editEntity.billboard) {
+                polys[pi].nameLabelEntity._editEntity.billboard.pixelOffset = new Cesium.Cartesian2(52 + nameWidth, -14);
+              }
+              if (polys[pi].nameLabelEntity._deleteEntity && polys[pi].nameLabelEntity._deleteEntity.billboard) {
+                polys[pi].nameLabelEntity._deleteEntity.billboard.pixelOffset = new Cesium.Cartesian2(72 + nameWidth, -14);
+              }
+
               if (typeof window.syncAnnotationsToPython === "function") {
                 window.syncAnnotationsToPython();
               }
@@ -1044,13 +1065,11 @@
       // CRITICAL FIX: Throttle polygon preview updates for smooth pixel-perfect drawing
       // Update at most 60fps (every ~16ms) to prevent lag on rapid mouse movements
       let polygonLonLat = null;
+      let polygonCartesian = null;
       if (movement && movement.endPosition) {
-        polygonLonLat = getLonLatFromScreen(movement.endPosition);
-        if (!polygonLonLat) {
-          const ellipsoidCart = viewer.camera.pickEllipsoid(movement.endPosition, viewer.scene.globe.ellipsoid);
-          if (ellipsoidCart) {
-            polygonLonLat = cartesianToLonLat(ellipsoidCart);
-          }
+        polygonCartesian = getCartesianFromViewer(viewer, movement.endPosition);
+        if (polygonCartesian) {
+          polygonLonLat = cartesianToLonLat(polygonCartesian);
         }
       }
       const now = Date.now();
@@ -1062,7 +1081,12 @@
         // Skip this update - too soon after last one
         // But still update the cursor point so next update uses latest position
         if (polygonLonLat) {
-          searchCursorPoint = { lon: polygonLonLat.lon, lat: polygonLonLat.lat };
+          searchCursorPoint = {
+            lon: polygonLonLat.lon,
+            lat: polygonLonLat.lat,
+            height: polygonLonLat.height,
+            cartesian: polygonCartesian ? Cesium.Cartesian3.clone(polygonCartesian) : null
+          };
           if (window.OfflineGISRuntime && typeof window.OfflineGISRuntime.setSearchCursorPoint === "function") {
             window.OfflineGISRuntime.setSearchCursorPoint(searchCursorPoint);
           }
@@ -1073,7 +1097,12 @@
       
       // Update search polygon preview during drawing
       if (polygonLonLat) {
-        searchCursorPoint = { lon: polygonLonLat.lon, lat: polygonLonLat.lat };
+        searchCursorPoint = {
+          lon: polygonLonLat.lon,
+          lat: polygonLonLat.lat,
+          height: polygonLonLat.height,
+          cartesian: polygonCartesian ? Cesium.Cartesian3.clone(polygonCartesian) : null
+        };
         if (window.OfflineGISRuntime && typeof window.OfflineGISRuntime.setSearchCursorPoint === "function") {
           window.OfflineGISRuntime.setSearchCursorPoint(searchCursorPoint);
         }

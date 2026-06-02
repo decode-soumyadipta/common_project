@@ -85,13 +85,26 @@ class BusyOverlay(QWidget):
 
     def show_with_message(self, message: str):
         clean_message = (message or "Loading...").strip()
-        file_text = clean_message
-        if clean_message.lower().startswith("loading "):
+
+        # Detect operation type for status label
+        if clean_message.lower().startswith("opening project"):
+            self.status.setText("OPENING PROJECT")
+            # Extract file name after em-dash separator if present
+            if "\u2014" in clean_message:
+                file_text = clean_message.split("\u2014", 1)[1].strip()
+            else:
+                file_text = clean_message[len("opening project"):].strip(" \u2014-")
+        elif clean_message.lower().startswith("loading "):
+            self.status.setText("LOADING")
             file_text = clean_message[8:]
+        else:
+            self.status.setText("LOADING")
+            file_text = clean_message
+
         if file_text.endswith("..."):
             file_text = file_text[:-3].strip()
         if not file_text:
-            file_text = "Preparing layer"
+            file_text = "Preparing..."
 
         # Keep filenames readable without wrapping; trim with ellipsis if needed.
         metrics = QFontMetrics(self.file_message.font())

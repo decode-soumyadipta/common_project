@@ -215,6 +215,11 @@
       v.scene.globe.baseColor = Cesium.Color.BLACK;
       v.scene.backgroundColor = Cesium.Color.BLACK;
       v.scene.globe.maximumScreenSpaceError = 1.0;
+      v.scene.globe.tileCacheSize = 3000;
+      v.scene.globe.preloadAncestors = true;
+      v.scene.globe.preloadSiblings = true;
+      v.scene.globe.loadingDescendantLimit = 16;
+      v.scene.globe.loadingQueueThreshold = 100;
       v.scene.fxaa = true;
       // Start in 3D — use morphTo3D so the scene graph initialises correctly
       // on Windows/ANGLE (direct scene.mode assignment can leave it in a broken state)

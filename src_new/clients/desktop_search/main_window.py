@@ -8,25 +8,37 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 import time
+import json
+import cv2
+import numpy as np
 
-from qtpy.QtCore import QSize, Qt, QUrl
+from qtpy.QtCore import QSize, Qt, QUrl, QEventLoop, QTimer, QRect
 from qtpy.QtGui import (
     QAction,
     QCursor,
     QGuiApplication,
     QIcon,
+    QPainter,
+    QFont,
+    QColor,
+    QPen,
+    QImage,
 )
 from qtpy.QtWebChannel import QWebChannel
 from qtpy.QtWebEngineWidgets import QWebEngineSettings, QWebEngineView
 from qtpy.QtWidgets import (
+    QApplication,
     QComboBox,
     QDialog,
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QMenu,
     QMainWindow,
+    QMessageBox,
+    QProgressDialog,
     QPushButton,
     QScrollArea,
     QSplitter,
@@ -45,10 +57,195 @@ from src_new.clients.desktop_search.titiler_manager import TiTilerManager
 from src_new.clients.desktop_search.ui.overlays import (
     BusyOverlay,
     FlyThroughTimelineBar,
+    FlyThroughHeightSlider,
     LayerCompositorOverlay,
     MapOverlayControls,
 )
 from src_new.clients.desktop_search.web_page import LoggingWebEnginePage
+
+
+class VideoExportSettingsDialog(QDialog):
+    def __init__(self, parent=None, duration_ms=0):
+        super().__init__(parent)
+        self.setWindowTitle("Video Export Settings")
+        self.setModal(True)
+        self.setMinimumWidth(380)
+        
+        self.duration_sec = float(duration_ms) / 1000.0
+        
+        # Format duration string
+        h = int(self.duration_sec // 3600)
+        m = int((self.duration_sec % 3600) // 60)
+        s = int(self.duration_sec % 60)
+        
+        if h > 0:
+            self.duration_str = f"{h:02d}:{m:02d}:{s:02d}"
+        else:
+            self.duration_str = f"{m:02d}:{s:02d}"
+            
+        self._init_ui()
+        self.update_estimates()
+        
+    def _init_ui(self):
+        from qtpy.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton, QGroupBox
+        layout = QVBoxLayout(self)
+        layout.setSpacing(15)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        # Title
+        title = QLabel("Export Fly-Through Video")
+        title.setObjectName("titleLabel")
+        layout.addWidget(title)
+        
+        # Quality Option
+        quality_layout = QHBoxLayout()
+        quality_label = QLabel("Video Quality:")
+        self.quality_combo = QComboBox()
+        self.quality_combo.addItem("High (100% Resolution)", (1.0, 5000000))
+        self.quality_combo.addItem("Medium (70% Resolution)", (0.7, 2500000))
+        self.quality_combo.addItem("Low (50% Resolution)", (0.5, 1000000))
+        quality_layout.addWidget(quality_label)
+        quality_layout.addWidget(self.quality_combo)
+        layout.addLayout(quality_layout)
+        
+        # FPS Option
+        fps_layout = QHBoxLayout()
+        fps_label = QLabel("Frame Rate:")
+        self.fps_combo = QComboBox()
+        self.fps_combo.addItem("30 FPS (Smooth)", 30.0)
+        self.fps_combo.addItem("24 FPS (Standard)", 24.0)
+        self.fps_combo.addItem("15 FPS (Fast Export)", 15.0)
+        fps_layout.addWidget(fps_label)
+        fps_layout.addWidget(self.fps_combo)
+        layout.addLayout(fps_layout)
+        
+        # Estimates GroupBox
+        group = QGroupBox("Video Information & Estimates")
+        group_layout = QVBoxLayout(group)
+        group_layout.setSpacing(8)
+        
+        self.lbl_len = QLabel()
+        self.lbl_size = QLabel()
+        self.lbl_time = QLabel()
+        
+        group_layout.addWidget(self.lbl_len)
+        group_layout.addWidget(self.lbl_size)
+        group_layout.addWidget(self.lbl_time)
+        layout.addWidget(group)
+        
+        # Connect signals
+        self.quality_combo.currentIndexChanged.connect(self.update_estimates)
+        self.fps_combo.currentIndexChanged.connect(self.update_estimates)
+        
+        # Buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        
+        self.btn_cancel = QPushButton("Cancel")
+        self.btn_cancel.clicked.connect(self.reject)
+        
+        self.btn_export = QPushButton("Start Export")
+        self.btn_export.setObjectName("exportButton")
+        self.btn_export.clicked.connect(self.accept)
+        
+        btn_layout.addWidget(self.btn_cancel)
+        btn_layout.addWidget(self.btn_export)
+        layout.addLayout(btn_layout)
+        
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #ffffff;
+                color: #1a1a2e;
+                border: 1px solid #c5d3e8;
+                border-radius: 6px;
+            }
+            QLabel {
+                color: #1e293b;
+                font-size: 12px;
+            }
+            QLabel#titleLabel {
+                color: #1a3a6e;
+                font-size: 15px;
+                font-weight: bold;
+                margin-bottom: 4px;
+            }
+            QComboBox {
+                background-color: #f0f4fa;
+                color: #1e293b;
+                border: 1px solid #b0c0d8;
+                border-radius: 4px;
+                padding: 5px 8px;
+                min-width: 190px;
+            }
+            QComboBox:hover {
+                border-color: #2563eb;
+            }
+            QComboBox::drop-down {
+                border: none;
+            }
+            QGroupBox {
+                border: 1px solid #c5d3e8;
+                border-radius: 5px;
+                margin-top: 8px;
+                padding: 10px;
+                background-color: #f5f8fe;
+                font-weight: bold;
+                color: #1a3a6e;
+                font-size: 11px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 4px;
+                color: #1a3a6e;
+            }
+            QPushButton {
+                background-color: #f0f4fa;
+                color: #1e293b;
+                border: 1px solid #b0c0d8;
+                border-radius: 4px;
+                padding: 7px 18px;
+                font-weight: 600;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #e2eaf6;
+                border-color: #2563eb;
+                color: #1a3a6e;
+            }
+            QPushButton#exportButton {
+                background-color: #2563eb;
+                color: #ffffff;
+                border: none;
+                border-radius: 4px;
+            }
+            QPushButton#exportButton:hover {
+                background-color: #1d4ed8;
+            }
+        """)
+        
+    def update_estimates(self):
+        scale, bitrate = self.quality_combo.currentData()
+        fps = self.fps_combo.currentData()
+        
+        # Calculate estimates
+        total_frames = int(round(self.duration_sec * fps))
+        est_size_mb = (self.duration_sec * bitrate) / (8.0 * 1024.0 * 1024.0)
+        est_time_sec = total_frames * 0.08  # ~80ms per frame
+        
+        self.lbl_len.setText(f"Length:  {self.duration_str}")
+        self.lbl_size.setText(f"Estimated File Size:  ~{est_size_mb:.1f} MB")
+        
+        if est_time_sec >= 60:
+            time_str = f"~{int(est_time_sec // 60)}m {int(est_time_sec % 60)}s"
+        else:
+            time_str = f"~{int(est_time_sec)} seconds"
+        self.lbl_time.setText(f"Estimated Generation Time:  {time_str}")
+        
+    def get_selected_settings(self):
+        scale, _ = self.quality_combo.currentData()
+        fps = self.fps_combo.currentData()
+        return scale, fps
 
 
 class MainWindow(QMainWindow):
@@ -283,6 +480,7 @@ class MainWindow(QMainWindow):
         self.compositor_overlay = LayerCompositorOverlay(self, self.controller)
         self.map_overlay_controls = MapOverlayControls(self, self.controller)
         self.fly_through_timeline_bar = FlyThroughTimelineBar(self, self.controller)
+        self.fly_through_height_slider = FlyThroughHeightSlider(self, self.controller)
         # Show map overlay controls by default
         self.map_overlay_controls.show()
 
@@ -687,11 +885,15 @@ class MainWindow(QMainWindow):
             self.busy_overlay.hide()
 
     def set_fly_through_active(self, active: bool) -> None:
-        """Show or hide the fly-through timeline bar."""
+        """Show or hide the fly-through timeline bar and height slider."""
         if hasattr(self, "fly_through_timeline_bar"):
             self.fly_through_timeline_bar.set_fly_through_active(active)
             if active:
                 self.fly_through_timeline_bar.update_position()
+        if hasattr(self, "fly_through_height_slider"):
+            self.fly_through_height_slider.set_fly_through_active(active)
+            if active:
+                self.fly_through_height_slider.update_position()
 
     def moveEvent(self, event: object) -> None:
         """Handle window move event.
@@ -708,6 +910,11 @@ class MainWindow(QMainWindow):
             and self.fly_through_timeline_bar.isVisible()
         ):
             self.fly_through_timeline_bar.update_position()
+        if (
+            hasattr(self, "fly_through_height_slider")
+            and self.fly_through_height_slider.isVisible()
+        ):
+            self.fly_through_height_slider.update_position()
 
     def resizeEvent(self, event: object) -> None:
         """Handle window resize event.
@@ -730,6 +937,11 @@ class MainWindow(QMainWindow):
             and self.fly_through_timeline_bar.isVisible()
         ):
             self.fly_through_timeline_bar.update_position()
+        if (
+            hasattr(self, "fly_through_height_slider")
+            and self.fly_through_height_slider.isVisible()
+        ):
+            self.fly_through_height_slider.update_position()
 
     def _on_fly_through_playback_state_changed(self, state: str) -> None:
         if hasattr(self, "fly_through_timeline_bar"):
@@ -737,6 +949,8 @@ class MainWindow(QMainWindow):
         if str(state).lower() == "ended":
             if hasattr(self, "fly_through_timeline_bar"):
                 self.fly_through_timeline_bar.set_fly_through_active(False)
+            if hasattr(self, "fly_through_height_slider"):
+                self.fly_through_height_slider.set_fly_through_active(False)
             self.controller._fly_through_mode_enabled = False
             action = self.toolbar_actions.get("Fly Through")
             if action is not None:
@@ -1384,3 +1598,212 @@ class MainWindow(QMainWindow):
         suffix = "*" if self._is_modified else ""
         project_display = f"{self._project_name}{suffix}"
         self.setWindowTitle(f"{project_display} - resGIS (developed by NTRO, Gov. of India)")
+
+    def run_js_sync(self, script: str):
+        """Execute JavaScript synchronously using a nested event loop."""
+        loop = QEventLoop()
+        result = None
+        
+        def callback(val):
+            nonlocal result
+            result = val
+            loop.quit()
+            
+        self.web_view.page().runJavaScript(script, callback)
+        loop.exec()
+        return result
+
+    def export_fly_through_video(self) -> None:
+        """Export the fly-through animation as an MP4 video with customizable parameters."""
+        # Halts current playback
+        self.controller._run_js_call("pauseFlyThroughPlaybackOnly")
+        if hasattr(self, "fly_through_timeline_bar"):
+            self.fly_through_timeline_bar.set_playback_state("idle")
+
+        # Get total duration in MS
+        duration_ms = self.run_js_sync("window.offlineGIS && window.offlineGIS.getFlyThroughDuration ? window.offlineGIS.getFlyThroughDuration() : 0")
+        if not duration_ms or duration_ms <= 0:
+            QMessageBox.warning(
+                self,
+                "Export Error",
+                "No valid fly-through path available. Please draw at least 2 points first.",
+            )
+            return
+
+        # Show Settings Selection Dialog
+        dialog = VideoExportSettingsDialog(self, duration_ms)
+        if not dialog.exec():
+            # Cancel clicked on settings dialog
+            self.controller._run_js_call("setFlyThroughPlaybackProgress", 0.0)
+            return
+
+        scale_factor, fps = dialog.get_selected_settings()
+
+        # Prompt for output file
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Fly-Through Video",
+            "flythrough.mp4",
+            "MP4 Video (*.mp4)",
+        )
+        if not file_path:
+            self.controller._run_js_call("setFlyThroughPlaybackProgress", 0.0)
+            return
+
+        duration_sec = float(duration_ms) / 1000.0
+        total_frames = int(round(duration_sec * fps))
+        if total_frames <= 0:
+            total_frames = 1
+
+        # Show progress dialog
+        progress = QProgressDialog("Exporting fly-through video...", "Cancel", 0, total_frames, self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumWidth(300)
+        progress.setValue(0)
+        progress.show()
+
+        # Load resGIS logo if exists
+        logo_path = Path(__file__).resolve().parent.parent.parent / "assets" / "resGIS_logo.png"
+        logo_image = None
+        if logo_path.exists():
+            logo_image = QImage(str(logo_path))
+            if not logo_image.isNull():
+                # Zoom crop of the active logo area, giving extra breathing room on the right
+                logo_image = logo_image.copy(QRect(128, 349, 800, 287))
+                logo_image = logo_image.scaledToHeight(28, Qt.TransformationMode.SmoothTransformation)
+
+        writer = None
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        
+        loop = QEventLoop()
+        
+        # Hide overlay panels temporarily during frame grabbing
+        if hasattr(self, "fly_through_timeline_bar"):
+            self.fly_through_timeline_bar.hide()
+        if hasattr(self, "fly_through_height_slider"):
+            self.fly_through_height_slider.hide()
+        if hasattr(self, "map_overlay_controls"):
+            self.map_overlay_controls.hide()
+
+        try:
+            for i in range(total_frames):
+                if progress.wasCanceled():
+                    break
+
+                progress_ratio = float(i) / float(max(1, total_frames - 1))
+
+                # Update camera position and return coords in one run
+                script = f"""
+                (function() {{
+                    window.offlineGIS.setFlyThroughPlaybackProgress({progress_ratio});
+                    return window.offlineGIS.getFlyThroughCoordsAtProgress({progress_ratio});
+                }})()
+                """
+                coords = self.run_js_sync(script)
+
+                # Wait for render (60ms) to ensure WebGL canvas is updated
+                QTimer.singleShot(60, loop.quit)
+                loop.exec()
+
+                # Grab the frame from web view
+                pixmap = self.web_view.grab()
+                image = pixmap.toImage()
+
+                # Scale image according to settings
+                if scale_factor < 1.0:
+                    new_w = int(image.width() * scale_factor)
+                    new_h = int(image.height() * scale_factor)
+                    image = image.scaled(new_w, new_h, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+
+                # Draw overlays
+                painter = QPainter(image)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+
+                # 1. Draw logo in top-right corner
+                if logo_image and not logo_image.isNull():
+                    painter.save()
+                    painter.setOpacity(0.65)
+                    logo_x = image.width() - logo_image.width() - 20
+                    logo_y = 20
+                    painter.drawImage(logo_x, logo_y, logo_image)
+                    painter.restore()
+                else:
+                    painter.save()
+                    font = QFont("Helvetica Neue", 12, QFont.Weight.Bold)
+                    painter.setFont(font)
+                    painter.setBrush(QColor(0, 229, 255, 180))
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.drawEllipse(image.width() - 85, 24, 6, 6)
+                    painter.setPen(QColor(255, 255, 255, 160))
+                    painter.drawText(image.width() - 75, 30, "RSGIS")
+                    painter.restore()
+
+                # 2. Draw coordinates legend box at the bottom-center
+                if coords:
+                    lat = coords.get("lat", 0.0)
+                    lon = coords.get("lon", 0.0)
+                    height = coords.get("height", 0.0)
+
+                    box_width = 360
+                    box_height = 32
+                    box_x = (image.width() - box_width) // 2
+                    box_y = image.height() - box_height - 20
+
+                    painter.save()
+                    painter.setBrush(QColor(14, 22, 38, 195))
+                    painter.setPen(QPen(QColor(255, 255, 255, 60), 1))
+                    painter.drawRoundedRect(box_x, box_y, box_width, box_height, 6, 6)
+
+                    font = QFont("Monospace", 9, QFont.Weight.Bold)
+                    font.setStyleHint(QFont.StyleHint.Monospace)
+                    painter.setFont(font)
+                    painter.setPen(QColor(230, 240, 255, 230))
+
+                    info_text = f"LAT: {lat:10.6f}\u00b0  LON: {lon:10.6f}\u00b0  ALT: {height:4.0f}m"
+                    painter.drawText(QRect(box_x, box_y, box_width, box_height), Qt.AlignmentFlag.AlignCenter, info_text)
+                    painter.restore()
+
+                painter.end()
+
+                image = image.convertToFormat(QImage.Format.Format_RGB888)
+                width = image.width()
+                height = image.height()
+
+                ptr = image.bits()
+                ptr.setsize(height * width * 3)
+                arr = np.frombuffer(ptr, np.uint8).reshape((height, width, 3))
+
+                bgr_arr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+
+                if writer is None:
+                    writer = cv2.VideoWriter(file_path, fourcc, fps, (width, height))
+
+                writer.write(bgr_arr)
+
+                progress.setValue(i + 1)
+                QApplication.processEvents()
+
+        except Exception as ex:
+            QMessageBox.critical(
+                self,
+                "Export Error",
+                f"An error occurred during video export: {str(ex)}",
+            )
+        finally:
+            if writer is not None:
+                writer.release()
+            progress.close()
+
+            # Restore overlays
+            if hasattr(self, "fly_through_timeline_bar"):
+                self.fly_through_timeline_bar.show()
+                self.fly_through_timeline_bar.update_position()
+            if hasattr(self, "fly_through_height_slider"):
+                self.fly_through_height_slider.show()
+                self.fly_through_height_slider.update_position()
+            if hasattr(self, "map_overlay_controls"):
+                self.map_overlay_controls.show()
+                self.map_overlay_controls.update_position()
+
+            self.controller._run_js_call("setFlyThroughPlaybackProgress", 0.0)

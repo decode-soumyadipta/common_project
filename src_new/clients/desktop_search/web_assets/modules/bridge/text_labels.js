@@ -1,4 +1,27 @@
   window.offlineGIS = window.offlineGIS || {};
+  function measureTextWidth(text, font) {
+    if (window.OfflineGISUtils && typeof window.OfflineGISUtils.measureTextWidth === "function") {
+      return window.OfflineGISUtils.measureTextWidth(text, font);
+    }
+    var canvas = measureTextWidth._canvas || (measureTextWidth._canvas = document.createElement("canvas"));
+    var context = canvas.getContext("2d");
+    context.font = font || "14px sans-serif";
+    return context.measureText(text || "").width;
+  }
+
+  function readLabelText(labelEntity) {
+    if (!labelEntity || !labelEntity.label) return "";
+    var textVal = labelEntity.label.text;
+    if (!textVal) return "";
+    if (typeof textVal.getValue === "function") {
+      var julianDate = (typeof Cesium !== "undefined" && Cesium.JulianDate) 
+                       ? Cesium.JulianDate.now() 
+                       : ((typeof cesium !== "undefined" && cesium.JulianDate) ? cesium.JulianDate.now() : null);
+      return String(textVal.getValue(julianDate) || "");
+    }
+    return String(textVal || "");
+  }
+
   const searchResultMarkerEntities = [];
 
   const SEARCH_RESULT_MARKER_RED = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath fill='%23e74c3c' d='M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z'/%3E%3C/svg%3E";
@@ -282,6 +305,7 @@
             fillColor: Cesium.Color.WHITE,
             showBackground: true,
             backgroundColor: Cesium.Color.BLACK.withAlpha(0.5),
+            backgroundPadding: new Cesium.Cartesian2(12, 8),
             outlineColor: Cesium.Color.BLACK,
             outlineWidth: 3,
             style: Cesium.LabelStyle.FILL_AND_OUTLINE,
@@ -307,7 +331,10 @@
             width: 18,
             height: 18,
             color: Cesium.Color.WHITE.withAlpha(0.5),
-            pixelOffset: new Cesium.Cartesian2(-35, -25),
+            pixelOffset: new Cesium.CallbackProperty(function () {
+              var w = measureTextWidth(readLabelText(labelEntity), "bold 18px 'Segoe UI', 'Helvetica Neue', sans-serif");
+              return new Cesium.Cartesian2(-24 - w / 2, 0);
+            }, false),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
             heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
@@ -328,7 +355,10 @@
             width: 18,
             height: 18,
             color: Cesium.Color.WHITE.withAlpha(0.7),
-            pixelOffset: new Cesium.Cartesian2(35, -25),
+            pixelOffset: new Cesium.CallbackProperty(function () {
+              var w = measureTextWidth(readLabelText(labelEntity), "bold 18px 'Segoe UI', 'Helvetica Neue', sans-serif");
+              return new Cesium.Cartesian2(24 + w / 2, 0);
+            }, false),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
             heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
@@ -568,6 +598,16 @@
       stopFlyThrough: function () {
         stopFlyThrough();
       },
+      pauseFlyThroughPlaybackOnly: function () {
+        if (typeof cancelFlyThroughPlaybackFrame === "function") {
+          cancelFlyThroughPlaybackFrame();
+        }
+        flyThroughIsPlaying = false;
+        flyThroughPlaybackPaused = true;
+        if (typeof notifyFlyThroughPlaybackState === "function") {
+          notifyFlyThroughPlaybackState("paused");
+        }
+      },
       endFlyThrough: function () {
         stopFlyThrough();
       },
@@ -585,6 +625,31 @@
       },
       setFlyThroughSpeed: function (value) {
         setFlyThroughSpeed(value);
+      },
+      getFlyThroughDuration: function () {
+        const plan = buildFlyThroughPlaybackPlan();
+        return plan ? plan.totalDurationMs : 0;
+      },
+      getFlyThroughCoordsAtProgress: function (progress) {
+        const normalized = Math.max(0, Math.min(1, Number(progress) || 0));
+        const plan = buildFlyThroughPlaybackPlan();
+        if (!plan) return null;
+        const state = getFlyThroughStateForProgress(normalized, plan);
+        if (!state) return null;
+        const easedProgress = Cesium.EasingFunction.QUADRATIC_IN_OUT(state.localProgress);
+        const dest = Cesium.Cartesian3.lerp(
+          state.startPos,
+          state.endPos,
+          easedProgress,
+          new Cesium.Cartesian3()
+        );
+        const carto = Cesium.Cartographic.fromCartesian(dest);
+        if (!carto) return null;
+        return {
+          lon: Cesium.Math.toDegrees(carto.longitude),
+          lat: Cesium.Math.toDegrees(carto.latitude),
+          height: carto.height
+        };
       },
       setComparatorMode: function (enabled) {
         setSwipeComparatorEnabled(Boolean(enabled));

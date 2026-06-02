@@ -240,7 +240,7 @@
       return null;
     }
 
-    const speedFactor = Math.max(0.5, Math.min(3.0, Number(flyThroughSpeedMultiplier) || 1.0));
+    const speedFactor = Math.max(0.1, Math.min(5.0, Number(flyThroughSpeedMultiplier) || 1.0));
     const segments = [];
     let totalDurationMs = 0;
 
@@ -253,7 +253,7 @@
 
       const carto1 = Cesium.Cartographic.fromCartesian(p1);
       const carto2 = Cesium.Cartographic.fromCartesian(p2);
-      const heightOffset = Math.max(50.0, Math.min(10000.0, Number(flyThroughPlaybackHeightMeters) || 900.0));
+      const heightOffset = Math.max(1.0, Math.min(2000.0, Number(flyThroughPlaybackHeightMeters) || 900.0));
       const startPos = Cesium.Cartesian3.fromRadians(
         carto1.longitude,
         carto1.latitude,
@@ -265,7 +265,7 @@
         carto2.height + heightOffset
       );
       const distance = Cesium.Cartesian3.distance(p1, p2);
-      const durationMs = Math.max(350, (distance / (100 * speedFactor)) * 1000);
+      const durationMs = Math.max(350, (distance / (18 * speedFactor)) * 1000);
       segments.push({
         startPos: startPos,
         endPos: endPos,
@@ -357,7 +357,7 @@
     if (!Number.isFinite(nextSpeed) || nextSpeed <= 0) {
       return;
     }
-    flyThroughSpeedMultiplier = Math.max(0.5, Math.min(3.0, nextSpeed));
+    flyThroughSpeedMultiplier = Math.max(0.1, Math.min(5.0, nextSpeed));
     if (flyThroughPoints.length >= 2) {
       syncFlyThroughPlaybackToProgress(flyThroughPlaybackProgress, true);
     }
@@ -541,7 +541,7 @@
       viewer.camera.flyTo({
         destination: flyThroughOriginalView.destination,
         orientation: flyThroughOriginalView.orientation,
-        duration: Math.max(0.4, 2.5 / Math.max(0.5, Math.min(3.0, Number(flyThroughSpeedMultiplier) || 1.0))),
+        duration: Math.max(0.4, 2.5 / Math.max(0.1, Math.min(5.0, Number(flyThroughSpeedMultiplier) || 1.0))),
         complete: restoreView,
         cancel: restoreView,
       });
@@ -608,10 +608,10 @@
         return lifted;
       },
       {
-        width: 2,
+        width: 4.5,
         color: "#00e5ff",
-        alpha: 0.85,
-        clampToGround: true,
+        alpha: 1.0,
+        clampToGround: false,
       }
     );
     requestSceneRender();
@@ -642,10 +642,12 @@
     flyThroughPathEntity = viewer.entities.add({
       polyline: {
         positions: flyThroughPoints.map(liftFlyThroughPoint).filter(Boolean),
-        width: 2,
-        material: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.85),
+        width: 4.5,
+        material: Cesium.Color.fromCssColorString("#00e5ff"),
+        depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff"),
         arcType: Cesium.ArcType.GEODESIC,
-        clampToGround: true,
+        clampToGround: false,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
       }
     });
   }
@@ -1043,16 +1045,27 @@
       return null;
     }
     const scene = targetViewer.scene;
-    const ray = targetViewer.camera.getPickRay(screenPosition);
     let cartesian = null;
-    if (ray) {
-      cartesian = scene.globe.pick(ray, scene);
+    if (scene.pickPositionSupported) {
+      try {
+        const depthCart = scene.pickPosition(screenPosition);
+        if (depthCart && Cesium.Cartesian3.magnitude(depthCart) > 1.0) {
+          cartesian = depthCart;
+        }
+      } catch (_) {}
+    }
+    if (!cartesian) {
+      const ray = targetViewer.camera.getPickRay(screenPosition);
+      if (ray) {
+        cartesian = scene.globe.pick(ray, scene);
+      }
     }
     if (!cartesian) {
       cartesian = targetViewer.camera.pickEllipsoid(screenPosition, scene.globe.ellipsoid);
     }
     return cartesian || null;
   }
+
 
   function cartesianToLonLat(cartesian) {
     if (!cartesian) {
@@ -1764,13 +1777,14 @@
     targetViewer.__comparatorPrimaryLayer = null;
     targetViewer.__comparatorHillshadeLayer = null;
 
-    const localBackgroundProvider = new Cesium.UrlTemplateImageryProvider({
+    const localBackgroundProvider = OfflineGISUtils.createIntelligentOsmProvider(Cesium, {
       url: `${LOCAL_SATELLITE_TILE_ROOT}/{z}/{x}/{y}.png`,
       tilingScheme: new Cesium.WebMercatorTilingScheme(),
-      minimumLevel: 0,
-      maximumLevel: 10,  // OSM tiles available up to zoom level 10
+      rectangle: Cesium.Rectangle.fromDegrees(60.0, 5.0, 105.0, 55.0),
       credit: new Cesium.Credit("© OpenStreetMap contributors", false),
       enablePickFeatures: false,
+      tileWidth: 256,
+      tileHeight: 256,
     });
     // Suppress tile error logging for comparator background — 404s for missing tiles are expected
     localBackgroundProvider.errorEvent.addEventListener(function (error) {
@@ -1783,11 +1797,10 @@
 
     if (!targetViewer.__osmBasemapLayer) {
       try {
-        const osmProvider = new Cesium.UrlTemplateImageryProvider({
+        const osmProvider = OfflineGISUtils.createIntelligentOsmProvider(Cesium, {
           url: `${LOCAL_SATELLITE_TILE_ROOT}/{z}/{x}/{y}.png`,
           tilingScheme: new Cesium.WebMercatorTilingScheme(),
-          minimumLevel: 0,
-          maximumLevel: 10,
+          rectangle: Cesium.Rectangle.fromDegrees(60.0, 5.0, 105.0, 55.0),
           credit: new Cesium.Credit("© OpenStreetMap contributors", false),
           enablePickFeatures: false,
           tileWidth: 256,
@@ -1796,7 +1809,7 @@
         osmProvider.errorEvent.addEventListener(function (error) {
           error.retry = false;
         });
-        targetViewer.__osmBasemapLayer = targetViewer.imageryLayers.addImageryProvider(osmProvider, 0);
+        targetViewer.__osmBasemapLayer = targetViewer.imageryLayers.addImageryProvider(osmProvider, 1);
         targetViewer.__osmBasemapLayer.alpha = 1.0;
         targetViewer.__osmBasemapLayer.show = false;
       } catch (e) {

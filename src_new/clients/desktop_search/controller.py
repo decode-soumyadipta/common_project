@@ -149,6 +149,7 @@ class DesktopController(QObject):
         self._annotation_polygon_records: list[dict[str, object]] = []
         self._annotation_icon_records: list[dict[str, object]] = []  # Icon + text annotations
         self._annotation_text_records: list[dict[str, object]] = []  # Text-only labels
+        self._loading_project = False
         
         # Raster stretching state
         self._raster_stretch_settings: dict[str, dict[str, object]] = {}  # {layer_key: {type, method, params}}
@@ -974,6 +975,8 @@ class DesktopController(QObject):
 
     def on_annotations_sync(self, payload_json: str) -> None:
         """Receive continuous real-time annotations synchronization from JavaScript."""
+        if getattr(self, "_loading_project", False):
+            return
         import json
         import datetime as dt
         try:

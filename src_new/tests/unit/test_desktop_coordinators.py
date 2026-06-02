@@ -204,7 +204,9 @@ def test_project_io_coordinator_roundtrip():
     mock_controller.state.clicked_points = []
     mock_controller._last_camera_state = None
     
-    coordinator.apply_project_payload(payload)
+    from unittest.mock import patch
+    with patch("qtpy.QtCore.QTimer.singleShot", lambda ms, cb: cb()):
+        coordinator.apply_project_payload(payload)
     
     # Assert reconstructed state
     assert "/path/raster1.tif" in mock_controller._search_result_assets_by_path

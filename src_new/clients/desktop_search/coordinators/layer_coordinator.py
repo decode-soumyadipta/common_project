@@ -162,7 +162,7 @@ class LayerCoordinator:
             return
         layer = c._vector_layers.pop(key)
         c._run_js_call("removeVectorLayer", key)
-        if layer.get("source") == "annotations":
+        if "annotation" in str(layer.get("source") or "").lower() or "annotation" in key.lower():
             c._annotation_line_records = []
             c._annotation_polygon_records = []
         c._refresh_vector_layers_ui()

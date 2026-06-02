@@ -16,93 +16,238 @@ class AnnotationCoordinator:
         self._logger = logging.getLogger("client_desktop.annotation_coordinator")
 
     def restore_annotations_on_map(self) -> None:
-        """Restore all annotations to the map from saved state."""
+        """Restore all annotations to the map from saved state.
+        
+        Critical: This must use the EXACT SAME JS function calls and data format
+        as when annotations were originally created. Any mismatch will cause:
+        - Missing annotations (lines, polygons, text labels)
+        - Rendering issues (black backgrounds, floating text)
+        - Duplicate entities
+        """
         c = self._controller
+        self._logger.debug(
+            "Restoring annotations: %d points, %d lines, %d polygons, %d icons, %d texts",
+            len(c._annotation_records),
+            len(c._annotation_line_records),
+            len(c._annotation_polygon_records),
+            len(c._annotation_icon_records),
+            len(c._annotation_text_records),
+        )
+        
+        # IMPORTANT: clearAnnotations must be called ONCE before ANY restores
+        # This prevents duplication when restore is called after previous entities exist
         c._run_js_call("clearAnnotations")
 
-        # Restore point annotations
+        # ─── Restore point annotations ────────────────────────────────────────
         for item in c._annotation_records:
             try:
                 lon = float(item.get("lon") or 0.0)
                 lat = float(item.get("lat") or 0.0)
                 text = str(item.get("text") or c._default_annotation_text)
-            except (TypeError, ValueError):
+                
+                # Validate coordinates are finite and in valid range
+                if not (math.isfinite(lon) and math.isfinite(lat)):
+                    self._logger.warning("Invalid point annotation (non-finite coords): lon=%s lat=%s", lon, lat)
+                    continue
+                
+                if not (-180 <= lon <= 180 and -90 <= lat <= 90):
+                    self._logger.warning("Invalid point annotation (out of range): lon=%f lat=%f", lon, lat)
+                    continue
+                
+            except (TypeError, ValueError) as e:
+                self._logger.warning("Invalid point annotation data: %s - %s", item, e)
                 continue
+            self._logger.debug("Restoring point annotation at lon=%.5f lat=%.5f text=%s", lon, lat, text)
             c._run_js_call("addAnnotation", text, lon, lat)
 
-        # Restore icon annotations
+        # ─── Restore icon annotations ─────────────────────────────────────────
         for item in c._annotation_icon_records:
             try:
                 lon = float(item.get("lon") or 0.0)
                 lat = float(item.get("lat") or 0.0)
                 icon = str(item.get("icon") or "marker")
                 text = str(item.get("text") or "")
-            except (TypeError, ValueError):
+                
+                # Validate coordinates are finite and in valid range
+                if not (math.isfinite(lon) and math.isfinite(lat)):
+                    self._logger.warning("Invalid icon annotation (non-finite coords): lon=%s lat=%s", lon, lat)
+                    continue
+                
+                if not (-180 <= lon <= 180 and -90 <= lat <= 90):
+                    self._logger.warning("Invalid icon annotation (out of range): lon=%f lat=%f", lon, lat)
+                    continue
+                
+            except (TypeError, ValueError) as e:
+                self._logger.warning("Invalid icon annotation data: %s - %s", item, e)
                 continue
+            self._logger.debug("Restoring icon annotation at lon=%.5f lat=%.5f icon=%s text=%s", lon, lat, icon, text)
             c._run_js_call("addIconAnnotation", lon, lat, icon, text)
 
-        # Restore text labels
+        # ─── Restore text labels ──────────────────────────────────────────────
+        # CRITICAL: Text labels MUST be restored AFTER points and icons to prevent
+        # CSS conflicts or z-index issues that cause black backgrounds to leak
         for item in c._annotation_text_records:
             try:
                 lon = float(item.get("lon") or 0.0)
                 lat = float(item.get("lat") or 0.0)
                 text = str(item.get("text") or "Label")
-            except (TypeError, ValueError):
+                
+                # Validate coordinates are finite and in valid range
+                if not (math.isfinite(lon) and math.isfinite(lat)):
+                    self._logger.warning("Invalid text label (non-finite coords): lon=%s lat=%s", lon, lat)
+                    continue
+                
+                if not (-180 <= lon <= 180 and -90 <= lat <= 90):
+                    self._logger.warning("Invalid text label (out of range): lon=%f lat=%f", lon, lat)
+                    continue
+                
+            except (TypeError, ValueError) as e:
+                self._logger.warning("Invalid text label data: %s - %s", item, e)
                 continue
+            self._logger.debug("Restoring text label at lon=%.5f lat=%.5f text=%s", lon, lat, text)
             c._run_js_call("addTextLabel", lon, lat, text)
 
-        # Restore line annotations
-        for item in c._annotation_line_records:
+        # ─── Restore line annotations ──────────────────────────────────────────
+        # Lines MUST NOT have text labels pre-injected; labels come from the data
+        for i, item in enumerate(c._annotation_line_records):
             coords = item.get("coords", [])
-            if coords:
-                c._run_js_call(
-                    "addLineAnnotation",
-                    coords,
-                    str(item.get("label") or "Line"),
-                )
-
-        # Restore polygon annotations
-        for item in c._annotation_polygon_records:
-            coords = item.get("coords", [])
-            if coords:
-                # Convert list of tuples/lists or list of dicts to dict format expected by JS
-                js_points = []
+            if not coords:
+                self._logger.warning("Line annotation #%d has empty coords", i)
+                continue
+            
+            label = str(item.get("label") or f"Line {i+1}")
+            
+            # Validate coords format: must be list of [lon, lat] pairs
+            try:
+                validated_coords = []
                 for coord in coords:
-                    if isinstance(coord, (list, tuple)) and len(coord) >= 2:
-                        js_points.append({"lon": float(coord[0]), "lat": float(coord[1])})
-                    elif isinstance(coord, dict) and "lon" in coord and "lat" in coord:
-                        js_points.append({"lon": float(coord["lon"]), "lat": float(coord["lat"])})
+                    try:
+                        lon = None
+                        lat = None
+                        
+                        if isinstance(coord, (list, tuple)) and len(coord) >= 2:
+                            lon = float(coord[0])
+                            lat = float(coord[1])
+                        elif isinstance(coord, dict) and "lon" in coord and "lat" in coord:
+                            lon = float(coord["lon"])
+                            lat = float(coord["lat"])
+                        else:
+                            self._logger.warning("Line annotation #%d: Invalid coord format: %s", i, coord)
+                            continue
+                        
+                        # Validate lon/lat are finite numbers
+                        if not (isinstance(lon, float) and isinstance(lat, float)):
+                            self._logger.warning("Line annotation #%d: Non-numeric coords lon=%s lat=%s", i, lon, lat)
+                            continue
+                        
+                        if not (math.isfinite(lon) and math.isfinite(lat)):
+                            self._logger.warning("Line annotation #%d: Non-finite coords lon=%s lat=%s", i, lon, lat)
+                            continue
+                        
+                        # Validate lon/lat are in valid ranges
+                        if not (-180 <= lon <= 180 and -90 <= lat <= 90):
+                            self._logger.warning("Line annotation #%d: Coords out of valid range lon=%f lat=%f", i, lon, lat)
+                            continue
+                        
+                        validated_coords.append([lon, lat])
+                    except (ValueError, TypeError) as coord_err:
+                        self._logger.warning("Line annotation #%d: Failed to parse coord %s: %s", i, coord, coord_err)
+                        continue
+                
+                # Remove duplicate consecutive points
+                deduped_coords = []
+                for coord in validated_coords:
+                    if not deduped_coords or deduped_coords[-1] != coord:
+                        deduped_coords.append(coord)
+                
+                if len(deduped_coords) < 2:
+                    self._logger.warning("Line annotation #%d has < 2 unique valid coords (had %d validated)", i, len(validated_coords))
+                    continue
+                
+                self._logger.debug("Restoring line annotation label=%s coords=%d", label, len(deduped_coords))
+                c._run_js_call("addLineAnnotation", deduped_coords, label)
+            except Exception as e:
+                self._logger.error("Failed to restore line annotation #%d: %s", i, e)
+                continue
 
-                if js_points:
-                    c._run_js_call(
-                        "restoreAnnotationPolygon",
-                        js_points,
-                        None,
-                        str(item.get("label") or ""),
-                    )
+        # ─── Restore polygon annotations ───────────────────────────────────────
+        # Polygons MUST be closed rings and properly formatted
+        for i, item in enumerate(c._annotation_polygon_records):
+            coords = item.get("coords", [])
+            if not coords:
+                self._logger.warning("Polygon annotation #%d has empty coords", i)
+                continue
 
-        # Restore raster stretch settings
+            label = str(item.get("label") or f"Polygon {i+1}")
+            
+            try:
+                # Convert to GeoJSON-compatible format: list of [lon, lat] pairs
+                validated_coords = []
+                for coord in coords:
+                    try:
+                        lon = None
+                        lat = None
+                        
+                        if isinstance(coord, (list, tuple)) and len(coord) >= 2:
+                            lon = float(coord[0])
+                            lat = float(coord[1])
+                        elif isinstance(coord, dict) and "lon" in coord and "lat" in coord:
+                            lon = float(coord["lon"])
+                            lat = float(coord["lat"])
+                        else:
+                            self._logger.warning("Polygon annotation #%d: Invalid coord format: %s", i, coord)
+                            continue
+                        
+                        # Validate lon/lat are finite numbers
+                        if not (isinstance(lon, float) and isinstance(lat, float)):
+                            self._logger.warning("Polygon annotation #%d: Non-numeric coords lon=%s lat=%s", i, lon, lat)
+                            continue
+                        
+                        if not (math.isfinite(lon) and math.isfinite(lat)):
+                            self._logger.warning("Polygon annotation #%d: Non-finite coords lon=%s lat=%s", i, lon, lat)
+                            continue
+                        
+                        # Validate lon/lat are in valid ranges
+                        if not (-180 <= lon <= 180 and -90 <= lat <= 90):
+                            self._logger.warning("Polygon annotation #%d: Coords out of valid range lon=%f lat=%f", i, lon, lat)
+                            continue
+                        
+                        validated_coords.append([lon, lat])
+                    except (ValueError, TypeError) as coord_err:
+                        self._logger.warning("Polygon annotation #%d: Failed to parse coord %s: %s", i, coord, coord_err)
+                        continue
+                
+                # Remove duplicate consecutive points
+                deduped_coords = []
+                for coord in validated_coords:
+                    if not deduped_coords or deduped_coords[-1] != coord:
+                        deduped_coords.append(coord)
+                
+                if len(deduped_coords) < 3:
+                    self._logger.warning("Polygon annotation #%d has < 3 unique valid coords (had %d validated)", i, len(validated_coords))
+                    continue
+                
+                # Ensure polygon is closed
+                if deduped_coords[0] != deduped_coords[-1]:
+                    deduped_coords.append(deduped_coords[0])
+                
+                self._logger.debug("Restoring polygon annotation label=%s coords=%d", label, len(deduped_coords))
+                # restoreAnnotationPolygon expects (points, id, label) - use None for auto-generated id
+                c._run_js_call("restoreAnnotationPolygon", deduped_coords, None, label)
+            except Exception as e:
+                self._logger.error("Failed to restore polygon annotation #%d: %s", i, e)
+                continue
+
+        # ─── Restore raster stretch settings ───────────────────────────────────
         for layer_key, settings in c._raster_stretch_settings.items():
             stretch_type = settings.get("type")
             method = settings.get("method")
             params = settings.get("params", {})
             if stretch_type and method:
+                self._logger.debug("Restoring raster stretch layer_key=%s type=%s method=%s", layer_key, stretch_type, method)
                 c._run_js_call("applyRasterStretch", layer_key, stretch_type, method, params)
-
-        # Update vector layers with annotation geometry
-        annotation_geojson = self._annotation_line_polygon_geojson()
-        if annotation_geojson:
-            layer_key = "annotations"
-            if layer_key in c._vector_layers:
-                c._run_js_call("removeVectorLayer", layer_key)
-            c._run_js_call("addVectorLayer", layer_key, "Annotations", annotation_geojson, {})
-            c._vector_layers[layer_key] = {
-                "layer_key": layer_key,
-                "label": "Annotations",
-                "geojson": annotation_geojson,
-                "is_visible": True,
-                "source": "annotations",
-            }
+        
+        self._logger.info("Annotation restoration complete")
 
     def _annotation_line_polygon_geojson(self) -> dict | None:
         """Build GeoJSON FeatureCollection from annotation lines and polygons."""

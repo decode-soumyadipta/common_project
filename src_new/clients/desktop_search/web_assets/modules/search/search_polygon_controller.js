@@ -144,6 +144,32 @@
       deps.requestSceneRender();
     }
 
+    function getGroundHeightAtLonLat(lon, lat) {
+      const viewer = getViewer();
+      const cesium = getCesium();
+      if (!viewer || !viewer.scene || !viewer.scene.globe || !cesium) {
+        return 0;
+      }
+      try {
+        const height = viewer.scene.globe.getHeight(cesium.Cartographic.fromDegrees(lon, lat));
+        return Number.isFinite(height) ? height : 0;
+      } catch (_) {
+        return 0;
+      }
+    }
+
+    function measureTextWidth(text, font) {
+      if (window.OfflineGISUtils && typeof window.OfflineGISUtils.measureTextWidth === "function") {
+        return window.OfflineGISUtils.measureTextWidth(text, font);
+      }
+      if (!measureTextWidth._canvas) {
+        measureTextWidth._canvas = document.createElement("canvas");
+      }
+      const context = measureTextWidth._canvas.getContext("2d");
+      context.font = font || "14px sans-serif";
+      return context.measureText(text || "").width;
+    }
+
     function setSearchCursorEnabled(value) {
       deps.setSearchCursorEnabled(value);
     }
@@ -208,18 +234,40 @@
                 const cursor = getSearchCursorPoint();
                 const raw = geometry.getSearchPreviewPoints(points, cursor, true);
                 if (raw.length < 2) return [];
+                // Use a small fixed height above ellipsoid so lines are NEVER
+                // culled at any zoom level. clampToGround is intentionally OFF
+                // because GroundPolylinePrimitive ignores disableDepthTestDistance
+                // and has aggressive near-camera frustum culling.
+                const HEIGHT_OFFSET = 0.5; // metres above ellipsoid – just enough to avoid z-fighting
                 const res = raw.map(function (p) {
                   try {
-                    return p.cartesian ? cesium.Cartesian3.clone(p.cartesian) : cesium.Cartesian3.fromDegrees(p.lon, p.lat);
+                    var terrainH = 0;
+                    if (viewer.scene && viewer.scene.globe) {
+                      var h = viewer.scene.globe.getHeight(
+                        cesium.Cartographic.fromDegrees(p.lon, p.lat)
+                      );
+                      if (Number.isFinite(h)) terrainH = h;
+                    }
+                    return cesium.Cartesian3.fromDegrees(p.lon, p.lat, terrainH + HEIGHT_OFFSET);
                   } catch (e) { return null; }
                 }).filter(function(v) { return !!v; });
+                // Close the polygon outline when no cursor (polygon is complete)
                 if (!cursor && res.length >= 3) res.push(res[0]);
                 return res;
               }, false),
-              material: cesium.Color.CYAN,
-              depthFailMaterial: cesium.Color.CYAN,
-              width: 3,
-              clampToGround: true,
+              // Bright, thick, always-on-top line
+              material: new cesium.PolylineOutlineMaterialProperty({
+                color: cesium.Color.fromCssColorString("#00f0ff"),
+                outlineColor: cesium.Color.fromCssColorString("#003f5c"),
+                outlineWidth: 2,
+              }),
+              depthFailMaterial: new cesium.PolylineOutlineMaterialProperty({
+                color: cesium.Color.fromCssColorString("#00f0ff"),
+                outlineColor: cesium.Color.fromCssColorString("#003f5c"),
+                outlineWidth: 2,
+              }),
+              width: 6,
+              clampToGround: false,
               disableDepthTestDistance: Number.POSITIVE_INFINITY,
               show: new cesium.CallbackProperty(function () {
                 return isPolygonDrawPreviewActive() && getSearchPolygonPoints().length >= 1;
@@ -240,7 +288,7 @@
                 if (raw.length < 3) return null;
                 const res = raw.map(function (p) {
                   try {
-                    return p.cartesian ? cesium.Cartesian3.clone(p.cartesian) : cesium.Cartesian3.fromDegrees(p.lon, p.lat);
+                    return cesium.Cartesian3.fromDegrees(p.lon, p.lat, 0.0);
                   } catch (e) { return null; }
                 }).filter(function(v) { return !!v; });
                 return res.length >= 3 ? new cesium.PolygonHierarchy(res) : null;
@@ -277,7 +325,7 @@
               outlineWidth: 1,
               disableDepthTestDistance: Number.POSITIVE_INFINITY,
             },
-            show: false, // User requested no vertex/cursor points. GUI crosshair is used instead.
+            show: false, // Reverted to false to avoid showing dots
           })
         );
       }
@@ -337,11 +385,12 @@
 
     function syncSearchVertexEntities() {
       // User strictly requested no vertex points/yellow dots.
-      // We keep the entities array but ensure they are never shown or created.
       const searchVertexEntities = getSearchVertexEntities();
       while (searchVertexEntities.length > 0) {
         const ve = searchVertexEntities.pop();
-        if (ve) getViewer().entities.remove(ve);
+        if (ve) {
+          try { getViewer().entities.remove(ve); } catch(e) {}
+        }
       }
     }
 
@@ -495,12 +544,18 @@
           } catch (e) { return null; }
         }).filter(function(v) { return !!v; });
 
+        var ellipsoidPoints = frozenPoints.map(function (p) {
+          try {
+            return cesium.Cartesian3.fromDegrees(p.lon, p.lat, 0.0);
+          } catch (e) { return null; }
+        }).filter(function(v) { return !!v; });
+
         if (points3d.length < 3) return;
 
         var lineEntity = viewer.entities.add({
           polyline: {
-            positions: points3d.concat([points3d[0]]),
-            width: 3.5, // Strong hard sides
+            positions: ellipsoidPoints.concat([ellipsoidPoints[0]]),
+            width: 4.5, // Strong hard sides
             material: polyColor,
             depthFailMaterial: polyColor,
             clampToGround: true, // Strictly follow terrain
@@ -526,7 +581,7 @@
         var areaLabelEntity = null;
         if (center) {
           areaLabelEntity = viewer.entities.add({
-            position: cesium.Cartesian3.fromDegrees(center.lon, center.lat),
+            position: cesium.Cartesian3.fromDegrees(center.lon, center.lat, getGroundHeightAtLonLat(center.lon, center.lat)),
             label: {
               text: areaText,
               font: "13px 'Segoe UI', sans-serif",
@@ -541,16 +596,16 @@
         }
 
         var anchorPos = points3d[0];
+        const nameText = "Polygon " + polyId;
         var nameLabelEntity = viewer.entities.add({
           position: anchorPos,
           label: {
-            text: new cesium.CallbackProperty(function () {
-              return "Polygon " + polyId;
-            }, false),
+            text: nameText,
             fillColor: cesium.Color.WHITE,
             showBackground: true,
             backgroundColor: cesium.Color.BLACK.withAlpha(0.62),
-            font: "500 12px sans-serif",
+            backgroundPadding: new cesium.Cartesian2(10, 6),
+            font: "500 12px Arial, Helvetica, sans-serif",
             pixelOffset: new cesium.Cartesian2(12, -8),
             horizontalOrigin: cesium.HorizontalOrigin.LEFT,
             verticalOrigin: cesium.VerticalOrigin.BOTTOM,
@@ -561,15 +616,17 @@
         nameLabelEntity._polyRecordId = polyId;
         nameLabelEntity._polyRole = "label";
 
+      const nameWidth = measureTextWidth(nameText, "500 12px Arial, Helvetica, sans-serif");
+
       var editEntity = viewer.entities.add({
         position: anchorPos,
         billboard: {
           image: EDIT_ICON,
           width: 17, height: 17,
           color: cesium.Color.WHITE.withAlpha(0.42),
-          pixelOffset: new cesium.Cartesian2(12, -26),
-          horizontalOrigin: cesium.HorizontalOrigin.LEFT,
-          verticalOrigin: cesium.VerticalOrigin.BOTTOM,
+          pixelOffset: new cesium.Cartesian2(52 + nameWidth, -14),
+          horizontalOrigin: cesium.HorizontalOrigin.CENTER,
+          verticalOrigin: cesium.VerticalOrigin.CENTER,
           scaleByDistance: new cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
           heightReference: cesium.HeightReference.CLAMP_TO_GROUND,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
@@ -584,14 +641,17 @@
           image: DELETE_ICON,
           width: 17, height: 17,
           color: cesium.Color.WHITE.withAlpha(0.62),
-          pixelOffset: new cesium.Cartesian2(32, -26),
-          horizontalOrigin: cesium.HorizontalOrigin.LEFT,
-          verticalOrigin: cesium.VerticalOrigin.BOTTOM,
+          pixelOffset: new cesium.Cartesian2(72 + nameWidth, -14),
+          horizontalOrigin: cesium.HorizontalOrigin.CENTER,
+          verticalOrigin: cesium.VerticalOrigin.CENTER,
           scaleByDistance: new cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
           heightReference: cesium.HeightReference.CLAMP_TO_GROUND,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
+
+      nameLabelEntity._editEntity = editEntity;
+      nameLabelEntity._deleteEntity = deleteEntity;
       var showState = deps.getAnnotationVisibilityEnabled ? deps.getAnnotationVisibilityEnabled() : true;
       lineEntity.show = showState;
       polygonEntity.show = showState;
@@ -633,7 +693,7 @@
         if (aoiPoints.length >= 3) {
           var flatAoiPoints = frozenPoints.map(function (p) {
             try {
-              return cesium.Cartesian3.fromDegrees(p.lon, p.lat);
+              return cesium.Cartesian3.fromDegrees(p.lon, p.lat, 0.0);
             } catch (e) { return null; }
           }).filter(function (v) { return !!v; });
 
@@ -642,7 +702,7 @@
           var areaText = geometry.formatArea ? geometry.formatArea(areaSqM) : "0 m\u00b2";
           var labelPos = geometry.polygonLabelPosition ? geometry.polygonLabelPosition(frozenPoints) : null;
           var labelPosCartesian = labelPos
-            ? cesium.Cartesian3.fromDegrees(labelPos.lon, labelPos.lat)
+            ? cesium.Cartesian3.fromDegrees(labelPos.lon, labelPos.lat, getGroundHeightAtLonLat(labelPos.lon, labelPos.lat))
             : aoiPoints[0];
           var aoiLabelText = "AOI" + (areaText ? "\n" + areaText : "");
 
@@ -656,10 +716,10 @@
             position: labelPosCartesian,
             polyline: {
               positions: flatAoiPoints.concat([flatAoiPoints[0]]),
-              width: 3,
+              width: 4.5,
               material: cesium.Color.fromCssColorString("#4f79b8"),
               clampToGround: true,
-              depthFailMaterial: cesium.Color.fromCssColorString("#4f79b8").withAlpha(0.6),
+              depthFailMaterial: cesium.Color.fromCssColorString("#4f79b8"),
               disableDepthTestDistance: Number.POSITIVE_INFINITY,
               show: new cesium.CallbackProperty(function() {
                 return deps.getSearchOverlayVisible();
@@ -734,21 +794,65 @@
       var colorHex = POLYGON_COLORS[(polyId - 1) % POLYGON_COLORS.length];
       var polyColor = cesium.Color.fromCssColorString(colorHex);
 
-      var points3d = points.map(function (p) {
+      var normalizedPoints = [];
+      var points3d = [];
+      var EPS = 1e-8;
+      var lastLon = null;
+      var lastLat = null;
+      for (var i = 0; i < points.length; i++) {
+        var p = points[i];
+        var lon = null;
+        var lat = null;
         try {
-          return p.cartesian ? cesium.Cartesian3.clone(p.cartesian) : cesium.Cartesian3.fromDegrees(p.lon, p.lat);
-        } catch (e) { return null; }
-      }).filter(function(v) { return !!v; });
+          if (Array.isArray(p) && p.length >= 2) {
+            lon = Number(p[0]);
+            lat = Number(p[1]);
+          } else if (p && typeof p === "object") {
+            if (p.cartesian) {
+              var carto = cesium.Cartographic.fromCartesian(p.cartesian);
+              lon = cesium.Math.toDegrees(carto.longitude);
+              lat = cesium.Math.toDegrees(carto.latitude);
+            } else {
+              lon = Number(p.lon);
+              lat = Number(p.lat);
+            }
+          }
+
+          if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
+          if (lon < -180 || lon > 180 || lat < -90 || lat > 90) continue;
+          if (
+            Number.isFinite(lastLon) &&
+            Number.isFinite(lastLat) &&
+            Math.abs(lon - lastLon) <= EPS &&
+            Math.abs(lat - lastLat) <= EPS
+          ) {
+            continue;
+          }
+
+          normalizedPoints.push({ lon: lon, lat: lat });
+          points3d.push(cesium.Cartesian3.fromDegrees(lon, lat, getGroundHeightAtLonLat(lon, lat)));
+          lastLon = lon;
+          lastLat = lat;
+        } catch (e) {
+          continue;
+        }
+      }
 
       if (points3d.length < 3) return;
 
+      var ellipsoidPoints = normalizedPoints.map(function (p) {
+        return cesium.Cartesian3.fromDegrees(p.lon, p.lat, 0.0);
+      });
+
       var lineEntity = viewer.entities.add({
         polyline: {
-          positions: points3d.concat([points3d[0]]),
-          width: 3.5,
+          positions: ellipsoidPoints.concat([ellipsoidPoints[0]]),
+          width: 4.5,
+          arcType: cesium.ArcType.GEODESIC,
           material: polyColor,
           depthFailMaterial: polyColor,
           clampToGround: true,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
 
@@ -764,13 +868,13 @@
 
       var vertexEntities = [];
 
-      var center = geometry.polygonLabelPosition(points);
-      var areaM2 = geometry.computePolygonAreaSquareMeters ? geometry.computePolygonAreaSquareMeters(points) : 0;
+      var center = geometry.polygonLabelPosition(normalizedPoints);
+      var areaM2 = geometry.computePolygonAreaSquareMeters ? geometry.computePolygonAreaSquareMeters(normalizedPoints) : 0;
       var areaText = areaM2 > 0 ? "Area " + (geometry.formatArea ? geometry.formatArea(areaM2) : areaM2.toFixed(0) + " m\u00b2") : "";
       var areaLabelEntity = null;
       if (center) {
         areaLabelEntity = viewer.entities.add({
-          position: cesium.Cartesian3.fromDegrees(center.lon, center.lat),
+          position: cesium.Cartesian3.fromDegrees(center.lon, center.lat, getGroundHeightAtLonLat(center.lon, center.lat)),
           label: {
             text: areaText,
             font: "13px 'Segoe UI', sans-serif",
@@ -785,7 +889,10 @@
       }
 
       var anchorPos = points3d[0];
-      var textLabel = label || ("Polygon " + polyId);
+      var textLabel = label;
+      if (!textLabel || textLabel.toLowerCase().indexOf("annotation") === 0) {
+        textLabel = "Polygon " + polyId;
+      }
       var nameLabelEntity = viewer.entities.add({
         position: anchorPos,
         label: {
@@ -793,7 +900,8 @@
           fillColor: cesium.Color.WHITE,
           showBackground: true,
           backgroundColor: cesium.Color.BLACK.withAlpha(0.62),
-          font: "500 12px sans-serif",
+          backgroundPadding: new cesium.Cartesian2(10, 6),
+          font: "500 12px Arial, Helvetica, sans-serif",
           pixelOffset: new cesium.Cartesian2(12, -8),
           horizontalOrigin: cesium.HorizontalOrigin.LEFT,
           verticalOrigin: cesium.VerticalOrigin.BOTTOM,
@@ -804,15 +912,17 @@
       nameLabelEntity._polyRecordId = polyId;
       nameLabelEntity._polyRole = "label";
 
+      const restoredNameWidth = measureTextWidth(textLabel, "500 12px Arial, Helvetica, sans-serif");
+
       var editEntity = viewer.entities.add({
         position: anchorPos,
         billboard: {
           image: EDIT_ICON,
           width: 17, height: 17,
           color: cesium.Color.WHITE.withAlpha(0.42),
-          pixelOffset: new cesium.Cartesian2(12, -26),
-          horizontalOrigin: cesium.HorizontalOrigin.LEFT,
-          verticalOrigin: cesium.VerticalOrigin.BOTTOM,
+          pixelOffset: new cesium.Cartesian2(52 + restoredNameWidth, -14),
+          horizontalOrigin: cesium.HorizontalOrigin.CENTER,
+          verticalOrigin: cesium.VerticalOrigin.CENTER,
           scaleByDistance: new cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
           heightReference: cesium.HeightReference.CLAMP_TO_GROUND,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
@@ -827,14 +937,18 @@
           image: DELETE_ICON,
           width: 17, height: 17,
           color: cesium.Color.WHITE.withAlpha(0.62),
-          pixelOffset: new cesium.Cartesian2(32, -26),
-          horizontalOrigin: cesium.HorizontalOrigin.LEFT,
-          verticalOrigin: cesium.VerticalOrigin.BOTTOM,
+          pixelOffset: new cesium.Cartesian2(72 + restoredNameWidth, -14),
+          horizontalOrigin: cesium.HorizontalOrigin.CENTER,
+          verticalOrigin: cesium.VerticalOrigin.CENTER,
           scaleByDistance: new cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
           heightReference: cesium.HeightReference.CLAMP_TO_GROUND,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
+
+      nameLabelEntity._editEntity = editEntity;
+      nameLabelEntity._deleteEntity = deleteEntity;
+
       deleteEntity._polyRecordId = polyId;
       deleteEntity._polyRole = "delete";
 
@@ -849,7 +963,7 @@
       var polyRecord = {
         id: polyId,
         label: textLabel,
-        points: points,
+        points: normalizedPoints,
         lineEntity: lineEntity,
         polygonEntity: polygonEntity,
         areaLabelEntity: areaLabelEntity,

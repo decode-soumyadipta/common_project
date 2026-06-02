@@ -70,23 +70,25 @@
       viewer.scene.globe.depthTestAgainstTerrain = true;  // Proper layer sorting
       viewer.scene.logarithmicDepthBuffer = true;         // Smooth camera dragging
       viewer.scene.globe.maximumScreenSpaceError = 1.0;   // Original high quality fidelity (per user request)
-      viewer.scene.globe.tileCacheSize = 800;             // Larger cache for smoother pans
+      viewer.scene.globe.tileCacheSize = 4000;             // Larger cache for smoother pans
       viewer.scene.globe.preloadAncestors = true;         // Smooth transitions
       viewer.scene.globe.preloadSiblings = true;
-      viewer.scene.globe.loadingDescendantLimit = 12;
+      viewer.scene.globe.loadingDescendantLimit = 24;
+      viewer.scene.globe.loadingQueueThreshold = 100;
       
-      log("info", "DEM settings applied [MAX GPU CONFIG]: res=1.0 depthTest=true logDepth=true sse=1.5");
+      log("info", "DEM settings applied [MAX GPU CONFIG]: res=1.0 depthTest=true logDepth=true sse=1.0");
     } else {
-      // SAFE FALLBACK CONFIGURATION (Intel Integrated GPU)
+      // SAFE FALLBACK CONFIGURATION (Intel Integrated GPU / Mac)
       // Modified to prioritize visual fidelity (true 3D elevations) over pure performance
       viewer.resolutionScale = 1.0;                       // Crisp native resolution
       viewer.scene.globe.depthTestAgainstTerrain = true;  // Proper layer sorting
       viewer.scene.logarithmicDepthBuffer = true;         // Smooth camera dragging
-      viewer.scene.globe.maximumScreenSpaceError = 2.0;   // High quality geometry
-      viewer.scene.globe.tileCacheSize = 200;             // Moderate cache for smoother pans
+      viewer.scene.globe.maximumScreenSpaceError = 1.5;   // High quality geometry
+      viewer.scene.globe.tileCacheSize = 3000;             // Moderate cache for smoother pans
       viewer.scene.globe.preloadAncestors = true;         // Reduce tile churn during drag
       viewer.scene.globe.preloadSiblings = true;
-      viewer.scene.globe.loadingDescendantLimit = 4;      // Allow more in-flight tiles
+      viewer.scene.globe.loadingDescendantLimit = 16;      // Allow more in-flight tiles
+      viewer.scene.globe.loadingQueueThreshold = 100;
       
       log("info", "DEM settings applied [SAFE INTEL CONFIG modified for High Fidelity]: res=1.0 depthTest=true logDepth=true sse=2.0");
     }

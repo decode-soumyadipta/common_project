@@ -1,3 +1,26 @@
+  function measureTextWidth(text, font) {
+    if (window.OfflineGISUtils && typeof window.OfflineGISUtils.measureTextWidth === "function") {
+      return window.OfflineGISUtils.measureTextWidth(text, font);
+    }
+    var canvas = measureTextWidth._canvas || (measureTextWidth._canvas = document.createElement("canvas"));
+    var context = canvas.getContext("2d");
+    context.font = font || "14px sans-serif";
+    return context.measureText(text || "").width;
+  }
+
+  function readLabelText(labelEntity) {
+    if (!labelEntity || !labelEntity.label) return "";
+    var textVal = labelEntity.label.text;
+    if (!textVal) return "";
+    if (typeof textVal.getValue === "function") {
+      var julianDate = (typeof Cesium !== "undefined" && Cesium.JulianDate) 
+                       ? Cesium.JulianDate.now() 
+                       : ((typeof cesium !== "undefined" && cesium.JulianDate) ? cesium.JulianDate.now() : null);
+      return String(textVal.getValue(julianDate) || "");
+    }
+    return String(textVal || "");
+  }
+
   window.offlineGIS = window.offlineGIS || {};
   Object.assign(window.offlineGIS, {
       clearAnnotations: function () {
@@ -56,6 +79,7 @@
             height: 32,
             verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.5),
           },
@@ -73,6 +97,7 @@
             fillColor: Cesium.Color.WHITE,
             showBackground: true,
             backgroundColor: Cesium.Color.BLACK.withAlpha(0.7),
+            backgroundPadding: new Cesium.Cartesian2(8, 5),
             outlineColor: Cesium.Color.BLACK.withAlpha(0.9),
             outlineWidth: 2,
             style: Cesium.LabelStyle.FILL_AND_OUTLINE,
@@ -80,6 +105,7 @@
             pixelOffset: new Cesium.Cartesian2(0, -40),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.45),
             translucencyByDistance: new Cesium.NearFarScalar(3000.0, 1.0, 2400000.0, 0.62),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
@@ -89,6 +115,9 @@
         labelEntity._annotationId = annotationId;
         labelEntity._annotationRole = "label";
         
+        const font = "600 13px 'Segoe UI', 'Helvetica Neue', sans-serif";
+        const labelTextWidth = measureTextWidth(displayText, font);
+
         // Edit button
         const editEntity = viewer.entities.add({
           position: anchorPosition,
@@ -97,9 +126,10 @@
             width: 17,
             height: 17,
             color: Cesium.Color.WHITE.withAlpha(0.42),
-            pixelOffset: new Cesium.Cartesian2(-20, -58),
+            pixelOffset: new Cesium.Cartesian2(-18 - labelTextWidth / 2, -51.5),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
-            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+            verticalOrigin: Cesium.VerticalOrigin.CENTER,
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
@@ -118,9 +148,10 @@
             width: 17,
             height: 17,
             color: Cesium.Color.WHITE.withAlpha(0.62),
-            pixelOffset: new Cesium.Cartesian2(20, -58),
+            pixelOffset: new Cesium.Cartesian2(18 + labelTextWidth / 2, -51.5),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
-            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+            verticalOrigin: Cesium.VerticalOrigin.CENTER,
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
@@ -131,6 +162,9 @@
         deleteEntity._annotationIconEntity = iconEntity;
         deleteEntity._annotationLabelEntity = labelEntity;
         deleteEntity._annotationEditEntity = editEntity;
+
+        labelEntity._editEntity = editEntity;
+        labelEntity._deleteEntity = deleteEntity;
         
         annotationEntities.push(iconEntity);
         annotationEntities.push(labelEntity);
@@ -174,6 +208,27 @@
       return true;
     }
     labelEntity.label.text = cleaned;
+
+    const deleteEntity = labelEntity._deleteEntity;
+    if (deleteEntity && deleteEntity.billboard && editEntity.billboard) {
+      const font = labelEntity.label.font ? (typeof labelEntity.label.font.getValue === "function" ? labelEntity.label.font.getValue() : labelEntity.label.font) : null;
+      const textWidth = measureTextWidth(cleaned, font);
+      
+      if (editEntity._annotationIconEntity) {
+        editEntity.billboard.pixelOffset = new Cesium.Cartesian2(-18 - textWidth / 2, -51.5);
+        deleteEntity.billboard.pixelOffset = new Cesium.Cartesian2(18 + textWidth / 2, -51.5);
+      } else if (editEntity._annotationAnchorEntity && editEntity._annotationAnchorEntity._annotationRole === "line") {
+        editEntity.billboard.pixelOffset = new Cesium.Cartesian2(-18 - textWidth / 2, -20);
+        deleteEntity.billboard.pixelOffset = new Cesium.Cartesian2(18 + textWidth / 2, -20);
+      } else if (labelEntity._annotationRole === "text-label") {
+        editEntity.billboard.pixelOffset = new Cesium.Cartesian2(-24 - textWidth / 2, 20);
+        deleteEntity.billboard.pixelOffset = new Cesium.Cartesian2(24 + textWidth / 2, 20);
+      } else {
+        editEntity.billboard.pixelOffset = new Cesium.Cartesian2(52 + textWidth, -17);
+        deleteEntity.billboard.pixelOffset = new Cesium.Cartesian2(72 + textWidth, -17);
+      }
+    }
+
     if (typeof window.syncAnnotationsToPython === "function") {
       window.syncAnnotationsToPython();
     }

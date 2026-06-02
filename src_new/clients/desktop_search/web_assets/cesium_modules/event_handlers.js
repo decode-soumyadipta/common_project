@@ -400,9 +400,11 @@ function handleMeasurementClick(viewer, cartesian, onMeasurementUpdate, log) {
     measurementLineEntity = viewer.entities.add({
       polyline: {
         positions: [distanceMeasureAnchor, cartesian],
-        width: 3,
+        width: 4.5,
         material: window.Cesium.Color.YELLOW,
-        clampToGround: true
+        depthFailMaterial: window.Cesium.Color.YELLOW,
+        clampToGround: false,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY
       }
     });
     
@@ -480,9 +482,11 @@ function updateMeasurementPreview(viewer, screenPosition, onMeasurementUpdate) {
           }
           return [];
         }, false),
-        width: 2,
-        material: window.Cesium.Color.YELLOW.withAlpha(0.6),
-        clampToGround: true
+        width: 4.5,
+        material: window.Cesium.Color.YELLOW,
+        depthFailMaterial: window.Cesium.Color.YELLOW,
+        clampToGround: false,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY
       }
     });
   }

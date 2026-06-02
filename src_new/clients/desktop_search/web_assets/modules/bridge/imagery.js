@@ -48,31 +48,17 @@
       }
       const resolvedTileUrl = resolveTileTemplateUrl(templateUrlForError, provider, error);
 
-      // Enhanced error logging with more details
-      log("error", "TILE_ERROR: provider=" + name + 
+      // Log tile errors at debug level to keep standard logs clean, since edge tile 404s
+      // are normal boundary occurrences in web GIS applications. Do NOT hide/disable layers.
+      log("debug", "TILE_ERROR: provider=" + name + 
           " count=" + currentCount + 
           " z=" + error.level + 
           " x=" + error.x + 
           " y=" + error.y + 
           " msg=" + msg +
           " url=" + (error.url || resolvedTileUrl || templateUrlForError || "unknown"));
-
-      // PERSISTENCE FIX: If a layer fails consistently (e.g. 50+ tiles), it's likely a config/server issue.
-      // Stop requesting tiles for this provider to prevent UI freeze and log spam.
-      if (currentCount >= 50 && provider) {
-          if (!provider._disabledByError) {
-              log("warning", "TILE_DEBUG: Repeated tile error for " + name + " count=" + currentCount + ". Disabling provider to prevent log spam.");
-              provider._disabledByError = true;
-              
-              // Effectively stop Cesium from fetching more tiles by hiding the layer
-              const layer = findImageryLayerByProvider(provider);
-              if (layer) {
-                  layer.show = false;
-              }
-          }
-      }
       
-      // Log tile coordinate analysis for debugging only on first error
+      // Log tile coordinate analysis for debugging only on first error at debug level
       if (provider.rectangle && currentCount === 1) {
         const rect = provider.rectangle;
         const westDeg = Cesium.Math.toDegrees(rect.west);
@@ -80,7 +66,7 @@
         const eastDeg = Cesium.Math.toDegrees(rect.east);
         const northDeg = Cesium.Math.toDegrees(rect.north);
         
-        log("warn", "Tile error in bounds: west=" + westDeg.toFixed(3) + 
+        log("debug", "Tile error in bounds: west=" + westDeg.toFixed(3) + 
             " south=" + southDeg.toFixed(3) + 
             " east=" + eastDeg.toFixed(3) + 
             " north=" + northDeg.toFixed(3) +
@@ -89,10 +75,10 @@
       
       if (currentCount === 1) {
         if (templateUrlForError) {
-          log("warn", "TILE_DEBUG: Template URL for " + name + " => " + templateUrlForError);
+          log("debug", "TILE_DEBUG: Template URL for " + name + " => " + templateUrlForError);
         }
         if (resolvedTileUrl) {
-          log("warn", "TILE_DEBUG: Sample tile URL for " + name + " => " + resolvedTileUrl);
+          log("debug", "TILE_DEBUG: Sample tile URL for " + name + " => " + resolvedTileUrl);
         }
         
         // Log provider details
@@ -106,7 +92,7 @@
       
       if (currentCount <= 10 || currentCount % 25 === 0) {
         log(
-          "warn",
+          "debug",
           "TILE_DEBUG: Repeated tile error for " +
             name +
             " count=" +

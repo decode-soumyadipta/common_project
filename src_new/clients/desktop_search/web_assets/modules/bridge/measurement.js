@@ -249,9 +249,11 @@
   // Profile rubber-band preview — recreates entity on every mouse move (same as distance tool)
   function _updateProfilePreviewLine(startLon, startLat, endLon, endLat) {
     if (!viewer) return;
-    // Update the shared positions every mouse move
-    window._profilePreviewStart = Cesium.Cartesian3.fromDegrees(startLon, startLat);
-    window._profilePreviewEnd = Cesium.Cartesian3.fromDegrees(endLon, endLat);
+    // Update the shared positions every mouse move with correct terrain heights
+    let startHeight = getGroundHeightAtLonLat(startLon, startLat);
+    let endHeight = getGroundHeightAtLonLat(endLon, endLat);
+    window._profilePreviewStart = Cesium.Cartesian3.fromDegrees(startLon, startLat, startHeight + 0.2);
+    window._profilePreviewEnd = Cesium.Cartesian3.fromDegrees(endLon, endLat, endHeight + 0.2);
 
     if (!window._profilePreviewEntity) {
       // Create once with CallbackProperty(isConstant=false) — re-evaluated every frame
@@ -263,10 +265,12 @@
             }
             return [];
           }, false),
-          width: 2,
+          width: 4.5,
           arcType: Cesium.ArcType.GEODESIC,
-          material: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.85),
-          clampToGround: true,
+          material: Cesium.Color.fromCssColorString("#00e5ff"),
+          depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff"),
+          clampToGround: false,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
       log("debug", "Profile preview line entity created");
@@ -282,9 +286,9 @@
       let startHeight = startHeightOpt !== undefined ? startHeightOpt : getGroundHeightAtLonLat(startLon, startLat);
       let endHeight = endHeightOpt !== undefined ? endHeightOpt : getGroundHeightAtLonLat(endLon, endLat);
 
-      // Update shared mutable positions — the CallbackProperty reads these every frame
-      measurementPreviewStart = Cesium.Cartesian3.fromDegrees(startLon, startLat, startHeight);
-      measurementPreviewEnd = Cesium.Cartesian3.fromDegrees(endLon, endLat, endHeight);
+      // Update shared mutable positions — lifted slightly above ground to prevent culling
+      measurementPreviewStart = Cesium.Cartesian3.fromDegrees(startLon, startLat, startHeight + 0.2);
+      measurementPreviewEnd = Cesium.Cartesian3.fromDegrees(endLon, endLat, endHeight + 0.2);
 
       if (!measurementPreviewLineEntity) {
         // Create ONCE with CallbackProperty(isConstant=false) — re-evaluated every frame
@@ -296,11 +300,11 @@
               }
               return [];
             }, false),
-            width: 3,
+            width: 4.5,
             arcType: Cesium.ArcType.GEODESIC,
-            material: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.85),
-            depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.45),
-            clampToGround: true,
+            material: Cesium.Color.fromCssColorString("#00e5ff"),
+            depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff"),
+            clampToGround: false,
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
         });
@@ -325,9 +329,9 @@
       let startHeight = viewer.scene.globe.getHeight(Cesium.Cartographic.fromDegrees(startLon, startLat)) || 0;
       let endHeight = viewer.scene.globe.getHeight(Cesium.Cartographic.fromDegrees(endLon, endLat)) || 0;
 
-      // Update shared mutable positions — the CallbackProperty reads these every frame
-      lineDrawPreviewStart = Cesium.Cartesian3.fromDegrees(startLon, startLat, startHeight);
-      lineDrawPreviewEnd = Cesium.Cartesian3.fromDegrees(endLon, endLat, endHeight);
+      // Update shared mutable positions — lifted slightly above ground to prevent culling
+      lineDrawPreviewStart = Cesium.Cartesian3.fromDegrees(startLon, startLat, startHeight + 0.2);
+      lineDrawPreviewEnd = Cesium.Cartesian3.fromDegrees(endLon, endLat, endHeight + 0.2);
 
       if (!lineDrawPreviewLineEntity) {
         // Create ONCE with CallbackProperty(isConstant=false) — re-evaluated every frame
@@ -340,11 +344,11 @@
               }
               return [];
             }, false),
-            width: 3,
+            width: 4.5,
             arcType: Cesium.ArcType.GEODESIC,
-            material: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.85),
-            depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.45),
-            clampToGround: true,
+            material: Cesium.Color.fromCssColorString("#00e5ff"),
+            depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff"),
+            clampToGround: false,
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
             show: new Cesium.CallbackProperty(function () {
               return Boolean(lineDrawModeEnabled && lineDrawPreviewStart && lineDrawPreviewEnd);
@@ -464,11 +468,12 @@
       const newLine = viewer.entities.add({
         polyline: {
           positions: [start, end],
-          width: 3.5, // Increased width for better visibility
+          width: 4.5, // Increased width for better visibility
           arcType: Cesium.ArcType.GEODESIC,
           material: Cesium.Color.fromCssColorString("#00e5ff"), // Standard Cyan
-          depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.4),
-          clampToGround: true, // CRITICAL FIX: Follow terrain
+          depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff"),
+          clampToGround: false,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
 

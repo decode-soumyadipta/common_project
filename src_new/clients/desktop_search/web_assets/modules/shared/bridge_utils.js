@@ -234,10 +234,10 @@
 
     const style = Object.assign(
       {
-        width: 2,
+        width: 4.5,
         color: "#00e5ff",
-        alpha: 0.85,
-        clampToGround: true,
+        alpha: 1.0,
+        clampToGround: false,
         arcType: window.Cesium ? window.Cesium.ArcType.GEODESIC : undefined,
       },
       options || {}
@@ -283,11 +283,164 @@
     requestSceneRender();
   }
 
+  function createIntelligentOsmProvider(Cesium, options) {
+    if (!Cesium || !options) {
+      return null;
+    }
+
+    log("debug", "createIntelligentOsmProvider called with url: " + options.url);
+
+    // Force min and max zoom level for intelligent upscaling and downscaling
+    options.minimumLevel = 0;
+    options.maximumLevel = 9;
+
+    const provider = new Cesium.UrlTemplateImageryProvider(options);
+    const originalRequestImage = provider.requestImage;
+    const tilingScheme = provider.tilingScheme || new Cesium.WebMercatorTilingScheme();
+    const regionalRect = options.rectangle || Cesium.Rectangle.fromDegrees(60.0, 5.0, 105.0, 55.0);
+
+    function intersects(r1, r2) {
+      if (!r1 || !r2) return false;
+      return !(r1.west > r2.east || r1.east < r2.west || r1.south > r2.north || r1.north < r2.south);
+    }
+
+    function loadImage(childX, childY, targetZ) {
+      const tileUrl = options.url
+        .replace('{z}', targetZ)
+        .replace('{x}', childX)
+        .replace('{y}', childY);
+
+      log("debug", "loadImage requesting: " + tileUrl);
+
+      return new Promise(function (resolve) {
+        const xhr = new XMLHttpRequest();
+        xhr.open("GET", tileUrl, true);
+        xhr.responseType = "blob";
+        xhr.onload = function () {
+          const size = xhr.response ? xhr.response.size : 0;
+          log("debug", "XHR onload for " + tileUrl + " - status: " + xhr.status + ", size: " + size);
+          if (xhr.status === 200 || (xhr.status === 0 && xhr.response && size > 0)) {
+            const blob = xhr.response;
+            const img = new Image();
+            img.onload = function () {
+              log("debug", "XHR image parsed successfully for " + tileUrl);
+              resolve(img);
+            };
+            img.onerror = function () {
+              log("debug", "XHR image parse failed for " + tileUrl);
+              resolve(null);
+            };
+            img.src = URL.createObjectURL(blob);
+          } else {
+            log("debug", "XHR status check failed for " + tileUrl);
+            resolve(null);
+          }
+        };
+        xhr.onerror = function () {
+          log("debug", "XHR connection error for " + tileUrl);
+          resolve(null);
+        };
+        xhr.send();
+      });
+    }
+
+    provider.requestImage = function (x, y, level, request) {
+      log("debug", "requestImage called: z=" + level + ", x=" + x + ", y=" + y);
+
+      // Find the appropriate target zoom level from our available set: [5, 7, 9]
+      let targetZ = 9;
+      if (level <= 5) {
+        targetZ = 5;
+      } else if (level <= 7) {
+        targetZ = 7;
+      }
+
+      log("debug", "Mapping z=" + level + " to targetZ=" + targetZ);
+
+      if (level === targetZ) {
+        log("debug", "Using direct route for z=" + level);
+        return originalRequestImage.call(provider, x, y, level, request);
+      }
+
+      if (level < targetZ) {
+        log("debug", "Using compositing route for z=" + level + " -> targetZ=" + targetZ);
+        const d = targetZ - level;
+        const numTilesPerDim = 1 << d;
+        const maxTilesOnSide = 8;
+        const step = Math.max(1, Math.ceil(numTilesPerDim / maxTilesOnSide));
+
+        const loadPromises = [];
+        const tilesToDraw = [];
+
+        for (let dx = 0; dx < numTilesPerDim; dx += step) {
+          for (let dy = 0; dy < numTilesPerDim; dy += step) {
+            const childX = x * numTilesPerDim + dx;
+            const childY = y * numTilesPerDim + dy;
+
+            // Intersect with regional box
+            const childRect = tilingScheme.tileXYToRectangle(childX, childY, targetZ);
+            if (!intersects(childRect, regionalRect)) {
+              continue;
+            }
+
+            const posX = (dx / numTilesPerDim) * 256;
+            const posY = (dy / numTilesPerDim) * 256;
+            const drawW = (step / numTilesPerDim) * 256;
+            const drawH = (step / numTilesPerDim) * 256;
+
+            const p = loadImage(childX, childY, targetZ).then(function (img) {
+              if (img) {
+                tilesToDraw.push({ img: img, posX: posX, posY: posY, drawW: drawW, drawH: drawH });
+              }
+            });
+            loadPromises.push(p);
+          }
+        }
+
+        return Promise.all(loadPromises).then(function () {
+          log("debug", "Compositing done for z=" + level + ", successfully loaded child tiles: " + tilesToDraw.length);
+          if (tilesToDraw.length === 0) {
+            const blankCanvas = document.createElement("canvas");
+            blankCanvas.width = 1;
+            blankCanvas.height = 1;
+            return blankCanvas;
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = 256;
+          canvas.height = 256;
+          const ctx = canvas.getContext("2d");
+
+          tilesToDraw.forEach(function (t) {
+            ctx.drawImage(t.img, t.posX, t.posY, t.drawW, t.drawH);
+            try {
+              URL.revokeObjectURL(t.img.src);
+            } catch (_) {}
+          });
+          return canvas;
+        });
+      }
+
+      // level > targetZ (level > 9) is handled automatically by Cesium because we set maximumLevel: 9
+      return originalRequestImage.call(provider, x, y, level, request);
+    };
+
+    return provider;
+  }
+
   function emitSearchResultVisibilityToggled(filePath, visible) {
     const bridge = getBridge();
     if (bridge && bridge.on_search_result_visibility_toggled) {
       bridge.on_search_result_visibility_toggled(filePath, visible);
     }
+  }
+
+  function measureTextWidth(text, font) {
+    if (!measureTextWidth._canvas) {
+      measureTextWidth._canvas = document.createElement("canvas");
+    }
+    const context = measureTextWidth._canvas.getContext("2d");
+    context.font = font || "14px sans-serif";
+    return context.measureText(text || "").width;
   }
 
   window.OfflineGISUtils = {
@@ -308,5 +461,7 @@
     formatDistance: formatDistance,
     ensureRubberBandLine: ensureRubberBandLine,
     clearRubberBandLine: clearRubberBandLine,
+    createIntelligentOsmProvider: createIntelligentOsmProvider,
+    measureTextWidth: measureTextWidth,
   };
 })();

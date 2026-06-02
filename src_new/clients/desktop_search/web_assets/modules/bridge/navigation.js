@@ -1,3 +1,26 @@
+  function measureTextWidth(text, font) {
+    if (window.OfflineGISUtils && typeof window.OfflineGISUtils.measureTextWidth === "function") {
+      return window.OfflineGISUtils.measureTextWidth(text, font);
+    }
+    var canvas = measureTextWidth._canvas || (measureTextWidth._canvas = document.createElement("canvas"));
+    var context = canvas.getContext("2d");
+    context.font = font || "14px sans-serif";
+    return context.measureText(text || "").width;
+  }
+
+  function readLabelText(labelEntity) {
+    if (!labelEntity || !labelEntity.label) return "";
+    var textVal = labelEntity.label.text;
+    if (!textVal) return "";
+    if (typeof textVal.getValue === "function") {
+      var julianDate = (typeof Cesium !== "undefined" && Cesium.JulianDate) 
+                       ? Cesium.JulianDate.now() 
+                       : ((typeof cesium !== "undefined" && cesium.JulianDate) ? cesium.JulianDate.now() : null);
+      return String(textVal.getValue(julianDate) || "");
+    }
+    return String(textVal || "");
+  }
+
   window.offlineGIS = window.offlineGIS || {};
   Object.assign(window.offlineGIS, {
       setCameraState: function (lon, lat, height, heading, pitch, roll) {
@@ -737,18 +760,17 @@
                 // Smooth transition: Ensure the basemap exists but don't force a re-render yet
                 if (!targetViewer.__osmBasemapLayer) {
                     try {
-                        const osmProvider = new Cesium.UrlTemplateImageryProvider({
+                        const osmProvider = OfflineGISUtils.createIntelligentOsmProvider(Cesium, {
                             url: `${LOCAL_SATELLITE_TILE_ROOT}/{z}/{x}/{y}.png`,
                             tilingScheme: new Cesium.WebMercatorTilingScheme(),
-                            minimumLevel: 0,
-                            maximumLevel: 10,
+                            rectangle: Cesium.Rectangle.fromDegrees(60.0, 5.0, 105.0, 55.0),
                             credit: new Cesium.Credit("© OpenStreetMap contributors", false),
                             enablePickFeatures: false,
                             tileWidth: 256,
                             tileHeight: 256,
                         });
                         osmProvider.errorEvent.addEventListener(function (error) { error.retry = false; });
-                        targetViewer.__osmBasemapLayer = targetViewer.imageryLayers.addImageryProvider(osmProvider, 0);
+                        targetViewer.__osmBasemapLayer = targetViewer.imageryLayers.addImageryProvider(osmProvider, 1);
                         targetViewer.__osmBasemapLayer.alpha = 1.0;
                     } catch (e) {
                         log("error", "Failed to create OSM basemap: " + e.message);
@@ -756,21 +778,29 @@
                     }
                 }
                 
-                // Apply visibility and order in a single batch
                 targetViewer.__osmBasemapLayer.show = true;
-                if (targetViewer.imageryLayers.indexOf(targetViewer.__osmBasemapLayer) !== 0) {
-                    targetViewer.imageryLayers.lowerToBottom(targetViewer.__osmBasemapLayer);
+                
+                // Ensure __osmBasemapLayer is exactly at index 1 (above defaultEarthLayer at index 0)
+                const layers = targetViewer.imageryLayers;
+                const osmIdx = layers.indexOf(targetViewer.__osmBasemapLayer);
+                if (osmIdx !== 1 && layers.length > 1) {
+                    while (layers.indexOf(targetViewer.__osmBasemapLayer) > 1) {
+                        layers.lower(targetViewer.__osmBasemapLayer);
+                    }
+                    while (layers.indexOf(targetViewer.__osmBasemapLayer) < 1) {
+                        layers.raise(targetViewer.__osmBasemapLayer);
+                    }
                 }
                 
-                if (isMain && defaultEarthLayer) defaultEarthLayer.show = false;
-                if (targetViewer.__defaultEarthLayer) targetViewer.__defaultEarthLayer.show = false;
+                if (isMain && defaultEarthLayer) defaultEarthLayer.show = true;
+                if (targetViewer.__defaultEarthLayer) targetViewer.__defaultEarthLayer.show = true;
                 
                 if (isMain) osmBasemapLayer = targetViewer.__osmBasemapLayer;
             } else {
               // Hide OSM basemap and restore the default Earth imagery as the base layer
               if (targetViewer.__osmBasemapLayer) targetViewer.__osmBasemapLayer.show = false;
               if (isMain && defaultEarthLayer) defaultEarthLayer.show = true;
-              if (targetViewer.__defaultEarthLayer) targetViewer.__defaultEarthLayer.show = false;
+              if (targetViewer.__defaultEarthLayer) targetViewer.__defaultEarthLayer.show = true;
             }
         };
 
@@ -1063,6 +1093,7 @@
             color: Cesium.Color.fromCssColorString("#f2c94c"),
             outlineColor: Cesium.Color.fromCssColorString("#1d1d1d"),
             outlineWidth: 1,
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
         });
@@ -1077,13 +1108,15 @@
             fillColor: Cesium.Color.WHITE,
             showBackground: true,
             backgroundColor: Cesium.Color.BLACK.withAlpha(0.62),
+            backgroundPadding: new Cesium.Cartesian2(10, 6),
             outlineColor: Cesium.Color.BLACK.withAlpha(0.9),
             outlineWidth: 2,
             style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-            font: "600 15px 'Segoe UI', 'Helvetica Neue', sans-serif",
+            font: "600 15px Arial, Helvetica, sans-serif",
             pixelOffset: new Cesium.Cartesian2(12, -8),
             horizontalOrigin: Cesium.HorizontalOrigin.LEFT,
             verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.45),
             translucencyByDistance: new Cesium.NearFarScalar(3000.0, 1.0, 2400000.0, 0.62),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
@@ -1093,6 +1126,8 @@
         labelEntity._annotationId = annotationId;
         labelEntity._annotationRole = "label";
 
+        const pointNameWidth = measureTextWidth(pointName, "600 15px Arial, Helvetica, sans-serif");
+
         const editEntity = viewer.entities.add({
           position: anchorPosition,
           billboard: {
@@ -1100,9 +1135,10 @@
             width: 17,
             height: 17,
             color: Cesium.Color.WHITE.withAlpha(0.42),
-            pixelOffset: new Cesium.Cartesian2(12, -26),
-            horizontalOrigin: Cesium.HorizontalOrigin.LEFT,
-            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+            pixelOffset: new Cesium.Cartesian2(52 + pointNameWidth, -17),
+            horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+            verticalOrigin: Cesium.VerticalOrigin.CENTER,
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
@@ -1120,9 +1156,10 @@
             width: 17,
             height: 17,
             color: Cesium.Color.WHITE.withAlpha(0.62),
-            pixelOffset: new Cesium.Cartesian2(32, -26),
-            horizontalOrigin: Cesium.HorizontalOrigin.LEFT,
-            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+            pixelOffset: new Cesium.Cartesian2(72 + pointNameWidth, -17),
+            horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+            verticalOrigin: Cesium.VerticalOrigin.CENTER,
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
@@ -1133,6 +1170,9 @@
         deleteEntity._annotationAnchorEntity = anchorEntity;
         deleteEntity._annotationLabelEntity = labelEntity;
         deleteEntity._annotationEditEntity = editEntity;
+
+        labelEntity._editEntity = editEntity;
+        labelEntity._deleteEntity = deleteEntity;
 
         annotationEntities.push(anchorEntity);
         annotationEntities.push(labelEntity);
@@ -1154,27 +1194,46 @@
 
         const positions = [];
         const cleanCoords = [];
+        const EPS = 1e-8;
+        let lastLon = null;
+        let lastLat = null;
         for (let i = 0; i < coords.length; i++) {
           const pt = coords[i] || [];
-          const lon = Number(pt[0]);
-          const lat = Number(pt[1]);
+          const lon = Number(Array.isArray(pt) ? pt[0] : pt && pt.lon);
+          const lat = Number(Array.isArray(pt) ? pt[1] : pt && pt.lat);
           if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
+          if (lon < -180 || lon > 180 || lat < -90 || lat > 90) continue;
+          // Skip duplicate/near-duplicate consecutive vertices to avoid degenerate segments.
+          if (
+            Number.isFinite(lastLon) &&
+            Number.isFinite(lastLat) &&
+            Math.abs(lon - lastLon) <= EPS &&
+            Math.abs(lat - lastLat) <= EPS
+          ) {
+            continue;
+          }
           const carto = Cesium.Cartographic.fromDegrees(lon, lat);
           const sampledHeight = viewer.scene && viewer.scene.globe ? viewer.scene.globe.getHeight(carto) : null;
           const height = Number.isFinite(sampledHeight) ? Number(sampledHeight) : 0.0;
           positions.push(Cesium.Cartesian3.fromDegrees(lon, lat, height));
           cleanCoords.push([lon, lat]);
+          lastLon = lon;
+          lastLat = lat;
         }
-        if (positions.length < 2) return;
+        if (positions.length < 2) {
+          log("warn", "Line annotation skipped: not enough valid unique points");
+          return;
+        }
 
         const lineEntity = viewer.entities.add({
           polyline: {
             positions: positions,
-            width: 3,
+            width: 4.5,
             arcType: Cesium.ArcType.GEODESIC,
             clampToGround: true,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
             material: Cesium.Color.fromCssColorString("#f2c94c"),
-            depthFailMaterial: Cesium.Color.fromCssColorString("#f2c94c").withAlpha(0.65),
+            depthFailMaterial: Cesium.Color.fromCssColorString("#f2c94c"),
           },
         });
         lineEntity.show = annotationVisibilityEnabled;
@@ -1190,19 +1249,23 @@
             fillColor: Cesium.Color.WHITE,
             showBackground: true,
             backgroundColor: Cesium.Color.BLACK.withAlpha(0.62),
+            backgroundPadding: new Cesium.Cartesian2(10, 6),
             outlineColor: Cesium.Color.BLACK.withAlpha(0.9),
             outlineWidth: 2,
             style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-            font: "600 14px 'Segoe UI', 'Helvetica Neue', sans-serif",
+            font: "600 14px Arial, Helvetica, sans-serif",
             pixelOffset: new Cesium.Cartesian2(0, -10),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
         });
         labelEntity.show = annotationVisibilityEnabled;
         labelEntity._annotationId = annotationId;
         labelEntity._annotationRole = "label";
+
+        const labelTextWidth = measureTextWidth(labelText, "600 14px Arial, Helvetica, sans-serif");
 
         const editEntity = viewer.entities.add({
           position: Cesium.Cartesian3.fromDegrees(mid[0], mid[1]),
@@ -1211,9 +1274,10 @@
             width: 17,
             height: 17,
             color: Cesium.Color.WHITE.withAlpha(0.42),
-            pixelOffset: new Cesium.Cartesian2(-20, -26),
+            pixelOffset: new Cesium.Cartesian2(-18 - labelTextWidth / 2, -20),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
-            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+            verticalOrigin: Cesium.VerticalOrigin.CENTER,
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
@@ -1231,9 +1295,10 @@
             width: 17,
             height: 17,
             color: Cesium.Color.WHITE.withAlpha(0.62),
-            pixelOffset: new Cesium.Cartesian2(20, -26),
+            pixelOffset: new Cesium.Cartesian2(18 + labelTextWidth / 2, -20),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
-            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+            verticalOrigin: Cesium.VerticalOrigin.CENTER,
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
@@ -1244,6 +1309,9 @@
         deleteEntity._annotationAnchorEntity = lineEntity;
         deleteEntity._annotationLabelEntity = labelEntity;
         deleteEntity._annotationEditEntity = editEntity;
+
+        labelEntity._editEntity = editEntity;
+        labelEntity._deleteEntity = deleteEntity;
 
         annotationEntities.push(lineEntity);
         annotationEntities.push(labelEntity);

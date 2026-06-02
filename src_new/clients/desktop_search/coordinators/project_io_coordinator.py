@@ -52,7 +52,17 @@ class ProjectIoCoordinator:
                 }
             )
 
-        vector_layers = [dict(layer) for layer in c._vector_layers.values()]
+        # Exclude auto-generated annotation vector layers — annotations are stored
+        # separately under "annotations" key and restored as Cesium entities, not
+        # as filled GeoJSON vector layers.  Saving these would cause doubled rendering.
+        vector_layers = [
+            dict(layer) for layer in c._vector_layers.values()
+            if not (
+                "annotation" in str(layer.get("layer_key") or "").lower() or
+                "annotation" in str(layer.get("source") or "").lower() or
+                "annotation" in str(layer.get("label") or "").lower()
+            )
+        ]
 
         layer_order = [
             path
@@ -506,7 +516,6 @@ class ProjectIoCoordinator:
                 controller.panel, "Save Failed", f"Failed to save project:\n{str(e)}"
             )
 
-
     def save_project_as(self) -> None:
         controller = self._controller
         file_path, _ = QFileDialog.getSaveFileName(
@@ -534,7 +543,6 @@ class ProjectIoCoordinator:
                 controller.panel, "Save Failed", f"Failed to save project:\n{str(e)}"
             )
 
-
     def open_project(self) -> None:
         controller = self._controller
         file_path, _ = QFileDialog.getOpenFileName(
@@ -545,37 +553,67 @@ class ProjectIoCoordinator:
         )
         if not file_path:
             return
+
+        # Show loading overlay immediately — user sees "Opening Project — <name>"
+        project_name = Path(file_path).name
+        main_win = controller.panel.window()
+        if hasattr(main_win, "set_busy_overlay"):
+            main_win.set_busy_overlay(True, f"Opening Project \u2014 {project_name}")
+
         try:
             payload = json.loads(Path(file_path).read_text(encoding="utf-8"))
         except Exception as exc:
+            if hasattr(main_win, "set_busy_overlay"):
+                main_win.set_busy_overlay(False)
             controller.panel.log(f"Failed to open project: {exc}")
+            from qtpy.QtWidgets import QMessageBox
+            QMessageBox.critical(
+                controller.panel, "Open Failed",
+                f"Could not read project file:\n{exc}"
+            )
             return
+
         self.apply_project_payload(payload, source_path=Path(file_path))
 
     def apply_project_payload(self, payload: dict, source_path: Path | None = None) -> None:
-        """Apply project payload to restore project state."""
+        """Apply project payload to restore project state.
+
+        The restoration is split into two phases:
+        1. Synchronous phase – Python state reset + UI combo/label updates.
+        2. Deferred phase  – All JS entity calls happen 400 ms later so the
+           WebEngine IPC pipe can drain the clear* calls before new entities
+           are pushed.  Without this delay, restore calls can execute BEFORE
+           the clears, producing duplicated or distorted annotations.
+        """
         c = self._controller
+        c._loading_project = True
         if not c._undo_redo_in_progress:
             c._undo_stack.clear()
             c._redo_stack.clear()
             c._last_state_snapshot = payload
+
+        # ── Phase 1: clear everything ────────────────────────────────────────
         self.clear_project_state()
         if source_path:
             c._project_path = source_path
 
+        # ── Phase 1a: restore Python-side state from payload ─────────────────
         search_payload = payload.get("search") if isinstance(payload, dict) else {}
         if not isinstance(search_payload, dict):
             search_payload = {}
+
         geometry_type = search_payload.get("geometry_type")
         geometry_payload = search_payload.get("geometry_payload")
         c.state.search_geometry_type = geometry_type
         c.state.search_geometry_payload = geometry_payload
+        # Queue the AOI polygon restore JS call now (harmless if executed before clears)
         if geometry_type == "polygon" and isinstance(geometry_payload, dict):
             points = geometry_payload.get("points", [])
             if isinstance(points, list):
                 c._run_js_call("loadSearchPolygon", points)
                 c._update_coordinate_inputs_from_polygon({"points": points})
 
+        # Restore annotation records into Python state
         annotations = payload.get("annotations") if isinstance(payload, dict) else {}
         if isinstance(annotations, dict):
             c._annotation_records = list(annotations.get("points") or [])
@@ -590,13 +628,14 @@ class ProjectIoCoordinator:
             c._annotation_icon_records = []
             c._annotation_text_records = []
 
-        # Load raster stretch settings
+        # Raster stretch settings
         raster_stretch = payload.get("raster_stretch") if isinstance(payload, dict) else {}
         if isinstance(raster_stretch, dict):
             c._raster_stretch_settings = dict(raster_stretch)
         else:
             c._raster_stretch_settings = {}
 
+        # Build Python-side raster layer registry
         layers_payload = payload.get("layers") if isinstance(payload, dict) else {}
         raster_layers = []
         if isinstance(layers_payload, dict):
@@ -612,17 +651,17 @@ class ProjectIoCoordinator:
 
         from src_new.clients.desktop_search.tile_url_builder import build_xyz_url
 
-        order_registry = {}
+        order_registry: dict = {}
         for entry in raster_layers:
             if not isinstance(entry, dict):
                 continue
-            file_path = str(entry.get("file_path") or "").replace("\\", "/")
-            if not file_path:
+            fp = str(entry.get("file_path") or "").replace("\\", "/")
+            if not fp:
                 continue
-            file_name = str(entry.get("file_name") or Path(file_path).name)
-            tile_url = entry.get("tile_url") or build_xyz_url(file_path)
+            file_name = str(entry.get("file_name") or Path(fp).name)
+            tile_url = entry.get("tile_url") or build_xyz_url(fp)
             asset = {
-                "file_path": file_path,
+                "file_path": fp,
                 "file_name": file_name,
                 "kind": entry.get("kind") or "unknown",
                 "crs": entry.get("crs") or "-",
@@ -634,13 +673,11 @@ class ProjectIoCoordinator:
                 "height": entry.get("height"),
                 "created_at": entry.get("created_at"),
             }
-            c._search_result_assets_by_path[file_path] = asset
-            c._search_layer_visibility[file_path] = bool(
-                entry.get("is_visible", True)
-            )
+            c._search_result_assets_by_path[fp] = asset
+            c._search_layer_visibility[fp] = bool(entry.get("is_visible", True))
             if str(entry.get("source") or "") == "user":
-                c._user_added_assets[file_path] = asset
-            order_registry[file_path] = {
+                c._user_added_assets[fp] = asset
+            order_registry[fp] = {
                 "file_name": file_name,
                 "kind": str(asset.get("kind") or "-"),
                 "crs": str(asset.get("crs") or "-"),
@@ -650,8 +687,8 @@ class ProjectIoCoordinator:
             }
 
         c.panel._layer_order_registry = order_registry
-        
-        # Restore active DEM and stretch combos
+
+        # Restore combo-box selections (pure UI, no JS calls needed)
         dem_color = payload.get("active_dem_color_mode")
         if dem_color and hasattr(c.panel, "dem_color_mode_combo"):
             idx = c.panel.dem_color_mode_combo.findData(dem_color)
@@ -670,14 +707,12 @@ class ProjectIoCoordinator:
             if isinstance(idx, int) and idx >= 0:
                 c.panel.stretch_mode_combo.setCurrentIndex(idx)
 
-        # Restore scene mode and basemap visibility
+        # Restore scene mode and basemap visibility (combo boxes)
         main_win = c.panel.window()
         if hasattr(main_win, "map_overlay_controls") and main_win.map_overlay_controls:
             controls = main_win.map_overlay_controls
-            # Restore scene mode
             scene_mode = payload.get("scene_mode", "3D Globe")
             controls.scene_mode_combo.setCurrentText(scene_mode)
-            # Restore basemap visibility
             basemap_visible = payload.get("basemap_visible", True)
             basemap_text = "Show Map" if basemap_visible else "Hide Map"
             controls.basemap_visibility_combo.setCurrentText(basemap_text)
@@ -689,26 +724,13 @@ class ProjectIoCoordinator:
         ):
             c._active_dem_search_layer_key = None
 
-        if c._event_driven_enabled:
-            c._sync_search_visibility_layers_event_driven()
-        else:
-            c._sync_search_visibility_layers()
-
-        layer_order = search_payload.get("layer_order")
-        if isinstance(layer_order, list) and layer_order:
-            ordered_keys = [
-                str(p).replace("\\", "/")
-                for p in layer_order
-                if str(p or "").strip()
-            ]
-            if ordered_keys:
-                c._run_js_call("enforceLayerDisplayOrder", ordered_keys)
-
+        # Update the search results panel (pure Qt, no JS)
         c.panel.update_search_results(
             list(c._search_result_assets_by_path.values()),
             c._search_layer_visibility,
         )
 
+        # Collect data needed for the deferred JS restore
         vectors = []
         if isinstance(layers_payload, dict):
             vectors = layers_payload.get("vectors") or []
@@ -716,31 +738,14 @@ class ProjectIoCoordinator:
             vectors = []
 
         c._vector_layers = {}
-        c._run_js_call("clearVectorLayers")
-        for entry in vectors:
-            if not isinstance(entry, dict):
-                continue
-            layer_key = str(entry.get("layer_key") or "").strip()
-            label = str(entry.get("label") or "Vector")
-            geojson = entry.get("geojson")
-            if not layer_key or not isinstance(geojson, dict):
-                continue
-            c._run_js_call("addVectorLayer", layer_key, label, geojson, {})
-            is_visible = bool(entry.get("is_visible", True))
-            if not is_visible:
-                c._run_js_call("setVectorLayerVisibility", layer_key, False)
-            c._vector_layers[layer_key] = dict(entry)
-            c._vector_layers[layer_key]["is_visible"] = is_visible
 
-        c._restore_annotations_on_map()
-        c._refresh_vector_layers_ui()
+        layer_order = search_payload.get("layer_order")
 
         aoi_visible = True
         if isinstance(search_payload, dict) and "aoi_visible" in search_payload:
             aoi_visible = bool(search_payload["aoi_visible"])
         elif isinstance(payload, dict) and "aoi_visible" in payload:
             aoi_visible = bool(payload["aoi_visible"])
-        c._set_search_aoi_visible(aoi_visible)
 
         selected_path = payload.get("selected_asset_path")
         if isinstance(selected_path, str) and selected_path:
@@ -751,22 +756,100 @@ class ProjectIoCoordinator:
                 c.state.selected_asset = selected_asset
 
         c.state.clicked_points = list(payload.get("clicked_points") or [])
-
-        c.panel.log("Project loaded.")
         c._set_project_modified(False)
 
         camera = payload.get("camera")
-        if isinstance(camera, dict):
-            c._last_camera_state = camera
-            c._run_js_call(
-                "setCameraState",
-                camera.get("lon"),
-                camera.get("lat"),
-                camera.get("height"),
-                camera.get("heading"),
-                camera.get("pitch"),
-                camera.get("roll"),
-            )
+
+        # ── Phase 2: Deferred JS restoration (400 ms later) ──────────────────
+        # All clear* JS calls were queued in clear_project_state() above.
+        # We wait 400 ms so the WebEngine IPC pipe drains those calls BEFORE
+        # we push new entities.  Without this, restore calls can execute BEFORE
+        # the clears, leaving distorted / duplicated annotations and layers.
+        def _deferred_restore() -> None:
+            try:
+                # Sync raster layers → JS
+                if c._event_driven_enabled:
+                    c._sync_search_visibility_layers_event_driven()
+                else:
+                    c._sync_search_visibility_layers()
+
+                # Enforce display order
+                if isinstance(layer_order, list) and layer_order:
+                    ordered_keys = [
+                        str(p).replace("\\", "/")
+                        for p in layer_order
+                        if str(p or "").strip()
+                    ]
+                    if ordered_keys:
+                        c._run_js_call("enforceLayerDisplayOrder", ordered_keys)
+
+                # Restore vector layers
+                c._run_js_call("clearVectorLayers")
+                for entry in vectors:
+                    if not isinstance(entry, dict):
+                        continue
+                    layer_key = str(entry.get("layer_key") or "").strip()
+                    label = str(entry.get("label") or "Vector")
+                    geojson = entry.get("geojson")
+                    # Skip the auto-generated "annotations" vector layer — annotations are
+                    # restored as individual Cesium entities by _restore_annotations_on_map().
+                    # Loading this layer causes doubled rendering, filled polygons, and
+                    # overlapping labels.
+                    if (
+                        "annotation" in layer_key.lower() or
+                        "annotation" in str(entry.get("source") or "").lower() or
+                        "annotation" in label.lower()
+                    ):
+                        continue
+                    if not layer_key or not isinstance(geojson, dict):
+                        continue
+                    c._run_js_call("addVectorLayer", layer_key, label, geojson, {})
+                    is_visible = bool(entry.get("is_visible", True))
+                    if not is_visible:
+                        c._run_js_call("setVectorLayerVisibility", layer_key, False)
+                    c._vector_layers[layer_key] = dict(entry)
+                    c._vector_layers[layer_key]["is_visible"] = is_visible
+
+                # Restore all annotations: points, lines, polygons, icons, text labels
+                c._restore_annotations_on_map()
+                c._refresh_vector_layers_ui()
+
+                # Rebuild search result markers on the map
+                c._refresh_search_result_markers()
+
+                # AOI polygon visibility
+                c._set_search_aoi_visible(aoi_visible)
+
+                # Restore camera position last
+                if isinstance(camera, dict):
+                    c._last_camera_state = camera
+                    c._run_js_call(
+                        "setCameraState",
+                        camera.get("lon"),
+                        camera.get("lat"),
+                        camera.get("height"),
+                        camera.get("heading"),
+                        camera.get("pitch"),
+                        camera.get("roll"),
+                    )
+
+                name = source_path.name if source_path else "payload"
+                c.panel.log(f"Project loaded: {name}")
+
+            except Exception as _ex:
+                import logging
+                logging.getLogger("client_desktop.project_io").error(
+                    "Deferred project restore failed: %s", _ex
+                )
+            finally:
+                # Always hide the loading overlay regardless of success/failure
+                _mw = c.panel.window()
+                if hasattr(_mw, "set_busy_overlay"):
+                    _mw.set_busy_overlay(False)
+                c._loading_project = False
+
+        from qtpy.QtCore import QTimer
+        QTimer.singleShot(400, _deferred_restore)
 
 
 __all__ = ["ProjectIoCoordinator"]
