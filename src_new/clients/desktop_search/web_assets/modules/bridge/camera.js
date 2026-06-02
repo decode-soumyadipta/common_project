@@ -38,6 +38,11 @@
     
     log("info", "DEM_RENDER: New provider type: " + (newProvider.constructor ? newProvider.constructor.name : "unknown"));
     log("info", "DEM_RENDER: Provider ready: " + newProvider.ready);
+
+    // Proactively and smoothly realign all search result markers to the new terrain provider
+    if (window.offlineGIS && typeof window.offlineGIS.realignMarkersToTerrain === "function") {
+      window.offlineGIS.realignMarkersToTerrain();
+    }
   }
 
   function applyDemSceneSettings() {

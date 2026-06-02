@@ -318,7 +318,7 @@ def _catalog_raster_in_db(metadata: RasterMetadata, db: Session) -> None:
     ),
     status_code=200,
 )
-async def upload_raster(
+def upload_raster(
     file: UploadFile = File(..., description="Geospatial raster file to ingest."),
     sidecar_json: Optional[str] = Form(None, alias="metadata", description="JSON with optional sidecar file contents."),
     background_tasks: BackgroundTasks = BackgroundTasks(),
@@ -619,6 +619,29 @@ def delete_assets(
 
     for raster_id, file_path in rows:
         _ingestion_status.pop(str(raster_id), None)
+        try:
+            path_to_delete = Path(file_path)
+            if path_to_delete.exists():
+                path_to_delete.unlink(missing_ok=True)
+
+            # Clean up COG file
+            cog_path = path_to_delete.parent / f"{path_to_delete.stem}.cog.tif"
+            if cog_path.exists():
+                cog_path.unlink(missing_ok=True)
+
+            # Clean up sidecar files
+            for suffix in (".prj", ".tfw", ".j2w", ".jgw", ".wld"):
+                sidecar = path_to_delete.with_suffix(suffix)
+                if sidecar.exists():
+                    sidecar.unlink(missing_ok=True)
+
+            # Delete parent directory if it's a unique upload folder (e.g. uploads/<uuid>)
+            parent_dir = path_to_delete.parent
+            if parent_dir.name != "uploads" and parent_dir.parent.name == "uploads":
+                shutil.rmtree(parent_dir, ignore_errors=True)
+                logger.info("Cleaned up upload directory: %s", parent_dir)
+        except Exception as exc:
+            logger.warning("Failed to clean up files for raster_id %s: %s", raster_id, exc)
 
     return DeleteAssetsResponse(deleted=sorted(found_ids), missing=missing)
 

@@ -55,22 +55,9 @@ class EventCoordinator:
             c._add_annotation_at(lon, lat)
             return
 
-        if c._viewshed_mode_enabled:
-            c.panel.log(
-                f"Observer point selected at lon={lon:.6f}, lat={lat:.6f}. Computing viewshed..."
-            )
-            c._toolbar_measure_viewshed()
-            c.state.clicked_points.clear()
-            return
 
-        if c._shadow_height_mode_enabled:
-            if len(c.state.clicked_points) < 2:
-                c.panel.log(
-                    "Shadow Height: base point captured. Click shadow tip point."
-                )
-                return
-            c._toolbar_measure_shadow_height()
-            c.state.clicked_points.clear()
+
+
 
     def on_measurement(self, meters: float) -> None:
         """Handle measurement updates from the map."""

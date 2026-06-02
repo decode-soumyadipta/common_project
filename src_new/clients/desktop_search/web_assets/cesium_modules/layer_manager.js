@@ -52,6 +52,7 @@ export function addImageryLayer(viewer, options) {
     show = true,
     minzoom = 0,
     maxzoom = 26,
+    bounds = null,
     log
   } = options;
   
@@ -65,13 +66,30 @@ export function addImageryLayer(viewer, options) {
     return existingLayer;
   }
   
+  // Parse bounding box to restrict tile requests
+  let rectangle = window.Cesium.Rectangle.MAX_VALUE;
+  if (bounds) {
+    let west, south, east, north;
+    if (Array.isArray(bounds) && bounds.length === 4) {
+      [west, south, east, north] = bounds.map(Number);
+    } else if (typeof bounds === "object") {
+      west = Number(bounds.west);
+      south = Number(bounds.south);
+      east = Number(bounds.east);
+      north = Number(bounds.north);
+    }
+    if (Number.isFinite(west) && Number.isFinite(south) && Number.isFinite(east) && Number.isFinite(north)) {
+      rectangle = window.Cesium.Rectangle.fromDegrees(west, south, east, north);
+    }
+  }
+
   // Create imagery provider
   const provider = new window.Cesium.UrlTemplateImageryProvider({
     url: url,
     minimumLevel: minzoom,
     maximumLevel: maxzoom,
     tilingScheme: new window.Cesium.WebMercatorTilingScheme(),
-    rectangle: window.Cesium.Rectangle.MAX_VALUE
+    rectangle: rectangle
   });
   
   // Add layer to viewer

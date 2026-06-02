@@ -130,11 +130,8 @@ class DesktopController(QObject):
         self._add_line_mode_enabled = False
         self._add_text_mode_enabled = False
         self._annotation_line_start: tuple[float, float] | None = None
-        self._shadow_height_mode_enabled = False
         self._pan_mode_enabled = True
-        self._polygon_area_mode_enabled = False
         self._polygon_draw_mode_enabled = False
-        self._viewshed_mode_enabled = False
         self._fly_through_mode_enabled = False
         self._polygon_drawing_context = "none"  # "none", "search", "measurement"
         self._explicit_imagery_layer_visible = False
@@ -145,7 +142,6 @@ class DesktopController(QObject):
         self._default_profile_samples = 200
         self._default_annotation_text = "Point"
         self._measurement_done_hooks: dict[str, Callable[[], None]] = {}
-        self._on_slope_aspect_done: Callable[[], None] | None = None
         self._last_profile_values: list[float] = []
         self._measurement_history: list[str] = []
         self._annotation_records: list[dict[str, object]] = []
@@ -976,6 +972,82 @@ class DesktopController(QObject):
     def on_map_click(self, lon: float, lat: float) -> None:
         self._event.on_map_click(lon, lat)
 
+    def on_annotations_sync(self, payload_json: str) -> None:
+        """Receive continuous real-time annotations synchronization from JavaScript."""
+        import json
+        import datetime as dt
+        try:
+            data = json.loads(payload_json)
+            if not isinstance(data, dict):
+                return
+            
+            # 1. Update point annotations
+            self._annotation_records = []
+            for pt in data.get("points", []):
+                self._annotation_records.append({
+                    "type": "point",
+                    "lon": float(pt.get("lon") or 0.0),
+                    "lat": float(pt.get("lat") or 0.0),
+                    "text": str(pt.get("text") or "Point"),
+                    "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                })
+                
+            # 2. Update line annotations
+            self._annotation_line_records = []
+            for ln in data.get("lines", []):
+                coords = ln.get("coords", [])
+                label = str(ln.get("label") or "Line")
+                length_m = self._line_length_m(coords) if coords else 0.0
+                self._annotation_line_records.append({
+                    "coords": coords,
+                    "label": label,
+                    "feature_type": "line",
+                    "length_m": length_m,
+                    "width_m": 0.0,
+                    "condition": "intact",
+                    "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                })
+                
+            # 3. Update icon annotations
+            self._annotation_icon_records = []
+            for ic in data.get("icons", []):
+                self._annotation_icon_records.append({
+                    "lon": float(ic.get("lon") or 0.0),
+                    "lat": float(ic.get("lat") or 0.0),
+                    "icon": str(ic.get("icon") or "marker"),
+                    "text": str(ic.get("text") or "Icon"),
+                    "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                })
+                
+            # 4. Update text label annotations
+            self._annotation_text_records = []
+            for tx in data.get("texts", []):
+                self._annotation_text_records.append({
+                    "lon": float(tx.get("lon") or 0.0),
+                    "lat": float(tx.get("lat") or 0.0),
+                    "text": str(tx.get("text") or "Label"),
+                    "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                })
+                
+            # 5. Update polygon annotations
+            self._annotation_polygon_records = []
+            for poly in data.get("polygons", []):
+                coords = poly.get("coords", [])
+                label = str(poly.get("label") or "Polygon")
+                self._annotation_polygon_records.append({
+                    "coords": coords,
+                    "label": label,
+                    "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                })
+                
+            self._set_project_modified(True)
+            self._logger.debug("Annotations synchronized from JS: %d points, %d lines, %d icons, %d texts, %d polygons",
+                               len(self._annotation_records), len(self._annotation_line_records),
+                               len(self._annotation_icon_records), len(self._annotation_text_records),
+                               len(self._annotation_polygon_records))
+        except Exception as e:
+            self._logger.error("Failed to sync annotations from JS: %s", e)
+
     def on_measurement(self, meters: float) -> None:
         self._event.on_measurement(meters)
         if len(self.state.clicked_points) < 2:
@@ -1113,8 +1185,6 @@ class DesktopController(QObject):
             self._add_line_mode_enabled = False
             self._add_text_mode_enabled = False
             self._annotation_line_start = None
-            self._set_annotation_overlay_visible(False)
-            self._shadow_height_mode_enabled = False
             self._pan_mode_enabled = True
             self._run_js_call("setDistanceMeasureMode", False)
             self._run_js_call("setSearchDrawMode", "none")
@@ -1369,7 +1439,6 @@ class DesktopController(QObject):
             self._add_line_mode_enabled = False
             self._add_text_mode_enabled = False
             self._annotation_line_start = None
-            self._shadow_height_mode_enabled = False
         self._pan_mode_enabled = not self._distance_measure_mode_enabled
         self._last_distance_measurement_signature = None
         if self._distance_measure_mode_enabled:
@@ -1400,7 +1469,6 @@ class DesktopController(QObject):
             or self._annotation_line_start is not None
             or self._distance_measure_mode_enabled
             or self._polygon_draw_mode_enabled
-            or self._shadow_height_mode_enabled
             or self._fly_through_mode_enabled
         )
         if cancelled:
@@ -1408,11 +1476,6 @@ class DesktopController(QObject):
         self._run_js_call("cancelActiveDraw")
         if self._annotation_line_start is not None:
             self._annotation_line_start = None
-        if not cancelled and self._shadow_height_mode_enabled:
-            self._shadow_height_mode_enabled = False
-            self.panel.log("Shadow Height tool cancelled.")
-            self._logger.info("Cancelled active shadow height tool")
-            cancelled = True
         return cancelled
 
     def _toolbar_set_pan_mode(self, enabled: bool | None = None) -> bool:
@@ -1432,8 +1495,6 @@ class DesktopController(QObject):
             if self._add_text_mode_enabled:
                 self._add_text_mode_enabled = False
                 self._set_annotation_overlay_visible(False)
-            if self._shadow_height_mode_enabled:
-                self._shadow_height_mode_enabled = False
             self._run_js_call("setSearchDrawMode", "none")
             self._run_js_call("setPanMode", True)
             self.panel.log("Pan mode enabled.")
@@ -1444,49 +1505,9 @@ class DesktopController(QObject):
         self._logger.info("Pan mode disabled")
         return False
 
-    def _toolbar_measure_polygon_area(self) -> None:
-        self._measure.toolbar_measure_polygon_area()
-
     def _dem_bounds_polygon(self, dem_path: str) -> list[tuple[float, float]] | None:
         """Return a bounding-box polygon for the active DEM asset, or None."""
         return self._utility.dem_bounds_polygon(dem_path)
-
-    def _toolbar_measure_slope_aspect(self) -> bool | None:
-        """Handle slope & aspect measurement from toolbar."""
-        return self._measure.toolbar_measure_slope_aspect()
-
-    def _toolbar_measure_viewshed(self) -> None:
-        self._measure.toolbar_measure_viewshed()
-
-    def _toolbar_measure_shadow_height(self) -> None:
-        self._measure.toolbar_measure_shadow_height()
-
-    def _toolbar_toggle_shadow_height_mode(self, enabled: bool | None = None) -> bool:
-        next_state = (
-            (not self._shadow_height_mode_enabled) if enabled is None else bool(enabled)
-        )
-        self._shadow_height_mode_enabled = next_state
-        if not next_state:
-            self.panel.log("Shadow Height tool disabled.")
-            self._set_measurement_cursor_enabled(False)
-            return False
-
-        self._distance_measure_mode_enabled = False
-        self._add_point_mode_enabled = False
-        self._add_line_mode_enabled = False
-        self._add_text_mode_enabled = False
-        self._annotation_line_start = None
-        self._set_annotation_overlay_visible(False)
-        self._pan_mode_enabled = False
-        self.state.clicked_points.clear()
-        self._run_js_call("setDistanceMeasureMode", False)
-        self._run_js_call("setSearchDrawMode", "none")
-        self._run_js_call("setPanMode", False)
-        self._set_measurement_cursor_enabled(True)
-        self.panel.log(
-            "Shadow Height enabled. Click base point, then shadow tip point."
-        )
-        return True
 
     def _toolbar_toggle_add_point_mode(self, enabled: bool | None = None) -> bool:
         self._logger.debug("_toolbar_toggle_add_point_mode called: enabled=%s", enabled)
@@ -1505,7 +1526,6 @@ class DesktopController(QObject):
 
         # Disable conflicting modes (exclusivity enforced per user request)
         self._distance_measure_mode_enabled = False
-        self._shadow_height_mode_enabled = False
         self._pan_mode_enabled = False
         self._fly_through_mode_enabled = False  # Strict exclusivity
         self._add_line_mode_enabled = False
@@ -1542,7 +1562,6 @@ class DesktopController(QObject):
             return False
 
         self._distance_measure_mode_enabled = False
-        self._shadow_height_mode_enabled = False
         self._pan_mode_enabled = False
         self._fly_through_mode_enabled = False
         self._add_point_mode_enabled = False
@@ -1576,7 +1595,6 @@ class DesktopController(QObject):
             return False
 
         self._distance_measure_mode_enabled = False
-        self._shadow_height_mode_enabled = False
         self._pan_mode_enabled = False
         self._fly_through_mode_enabled = False
         self._add_point_mode_enabled = False
@@ -1611,9 +1629,7 @@ class DesktopController(QObject):
         self._add_text_mode_enabled = False
         self._annotation_line_start = None
         self._set_annotation_overlay_visible(False)
-        self._shadow_height_mode_enabled = False
         self._pan_mode_enabled = True
-        self._viewshed_mode_enabled = False
         self._run_js_call("clearOverlays")
         self._run_js_call("setDistanceMeasureMode", False)
         self._run_js_call("setSearchDrawMode", "none")

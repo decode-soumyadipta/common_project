@@ -12,6 +12,7 @@ class WebBridge(QObject):
     aoiStatsUpdated = Signal(int, str)
     polygonListUpdated = Signal(str)
     searchResultVisibilityToggled = Signal(str, bool)
+    annotationsSynced = Signal(str)
 
     # ── Status-bar signals ───────────────────────────────────────────────
     # Emitted continuously as the user moves the cursor over the globe.
@@ -58,6 +59,10 @@ class WebBridge(QObject):
     @Slot(str)
     def on_polygon_list_updated(self, payload_json: str) -> None:
         self.polygonListUpdated.emit(payload_json)
+
+    @Slot(str)
+    def on_annotations_sync(self, payload_json: str) -> None:
+        self.annotationsSynced.emit(payload_json)
 
     @Slot(float, float)
     def on_map_click(self, lon: float, lat: float) -> None:

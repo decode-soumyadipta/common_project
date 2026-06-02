@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from qtpy.QtCore import QSignalBlocker
+from qtpy.QtCore import QSignalBlocker, QTimer
 
 if TYPE_CHECKING:
     from src_new.clients.desktop_search.controller import DesktopController
@@ -29,7 +29,9 @@ class DisplaySettingsCoordinator:
     def apply_imagery_stretch_mode(self, log_to_panel: bool = True) -> None:
         """Apply imagery stretch mode and refresh affected layers."""
         c = self._controller
+        c.panel.set_search_busy(True, "Applying Imagery Stretch...", progress=15)
         refreshed = self.refresh_raster_layers_for_stretch(layer_kind="imagery")
+        QTimer.singleShot(800, lambda: c.panel.set_search_busy(False))
         mode_label = c.panel.stretch_mode_combo.currentText()
         if not log_to_panel:
             return
@@ -51,7 +53,9 @@ class DisplaySettingsCoordinator:
         c = self._controller
         if not hasattr(c.panel, "dem_stretch_mode_combo"):
             return
+        c.panel.set_search_busy(True, "Applying DEM Stretch...", progress=15)
         refreshed = self.refresh_raster_layers_for_stretch(layer_kind="dem")
+        QTimer.singleShot(800, lambda: c.panel.set_search_busy(False))
         mode_label = c.panel.dem_stretch_mode_combo.currentText()
         if not log_to_panel:
             return

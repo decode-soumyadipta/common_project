@@ -643,9 +643,9 @@
       loadSearchPolygon: function (points) {
         loadSearchPolygon(points);
       },
-      restoreAnnotationPolygon: function(points) {
+      restoreAnnotationPolygon: function(points, id, label) {
         if (searchPolygonController && typeof searchPolygonController.restoreAnnotationPolygon === "function") {
-          searchPolygonController.restoreAnnotationPolygon(points);
+          searchPolygonController.restoreAnnotationPolygon(points, id, label);
         }
       },
       clearAllLayers: function () {
@@ -675,6 +675,16 @@
         flyThroughPoints.length = 0;
         if (flyThroughPathEntity) { viewer.entities.remove(flyThroughPathEntity); flyThroughPathEntity = null; }
         if (flyThroughPreviewLineEntity) { viewer.entities.remove(flyThroughPreviewLineEntity); flyThroughPreviewLineEntity = null; }
+        // Reset camera bounds and morph state variables
+        activeTileBounds = null;
+        lastLoadedBounds = null;
+        pendingFocusBounds = null;
+        cameraOrbitBounds = null;
+        pendingFocusAfterMorph = false;
+        pendingTerrainSceneAfterMorph = false;
+        pendingFlyThroughBounds = null;
+        pendingSceneModeAfterMorph = null;
+
         _lastKnownLayerOrder = null;
         setStatus("Project cleared.");
         requestSceneRender();
@@ -1128,6 +1138,9 @@
         annotationEntities.push(labelEntity);
         annotationEntities.push(editEntity);
         annotationEntities.push(deleteEntity);
+        if (typeof window.syncAnnotationsToPython === "function") {
+          window.syncAnnotationsToPython();
+        }
         requestSceneRender();
         window.requestAnimationFrame(requestSceneRender);
         log("info", "Annotation added lon=" + lon + " lat=" + lat);
@@ -1236,6 +1249,9 @@
         annotationEntities.push(labelEntity);
         annotationEntities.push(editEntity);
         annotationEntities.push(deleteEntity);
+        if (typeof window.syncAnnotationsToPython === "function") {
+          window.syncAnnotationsToPython();
+        }
         requestSceneRender();
         log("info", "Line annotation added with " + cleanCoords.length + " point(s)");
       },

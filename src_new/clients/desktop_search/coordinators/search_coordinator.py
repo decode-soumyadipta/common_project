@@ -128,8 +128,6 @@ class SearchCoordinator:
         # if c._add_point_mode_enabled:
         #     c._add_point_mode_enabled = False
         #     c._set_annotation_overlay_visible(False) (Removed to allow coexistence)
-        if c._shadow_height_mode_enabled:
-            c._shadow_height_mode_enabled = False
         c._pan_mode_enabled = False
         c._run_js_call("setSearchDrawMode", normalized_mode)
         # Always enable crosshair for drawing activities
@@ -145,15 +143,7 @@ class SearchCoordinator:
         c._run_js_call("finishSearchPolygon")
         c._set_search_draw_button_checked(False)
 
-        # Check if polygon was drawn for measurement context
-        if c._polygon_drawing_context == "measurement":
-            if c._polygon_area_mode_enabled:
-                c._toolbar_measure_polygon_area()
-            elif c._volume_mode_enabled:
-                c._toolbar_measure_volume()
-            elif c._slope_aspect_mode_enabled:
-                c._toolbar_measure_slope_aspect()
-            c._polygon_drawing_context = "none"
+
 
     def clear_search_geometry(self) -> None:
         c = self._controller

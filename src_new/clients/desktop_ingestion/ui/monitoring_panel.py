@@ -507,8 +507,16 @@ class MonitoringPanel(QWidget):
 
     def _on_all_completed(self) -> None:
         """Handle completion of all uploads."""
-        self.upload_status_label.setText("Completed")
-        self.upload_status_label.setStyleSheet("color: #2d7a2d; font-weight: 600;")
+        if self._failed_count > 0:
+            if self._uploaded_count == 0:
+                self.upload_status_label.setText("Failed")
+                self.upload_status_label.setStyleSheet("color: #c53030; font-weight: 600;")
+            else:
+                self.upload_status_label.setText("Completed with errors")
+                self.upload_status_label.setStyleSheet("color: #b7791f; font-weight: 600;")
+        else:
+            self.upload_status_label.setText("Completed")
+            self.upload_status_label.setStyleSheet("color: #2d7a2d; font-weight: 600;")
         self.current_file_label.setText("-")
         self._log_activity(
             f"Upload batch completed: {self._uploaded_count} uploaded, "

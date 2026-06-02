@@ -116,6 +116,7 @@ class SignalCoordinator:
         c.bridge.searchResultVisibilityToggled.connect(
             c.toggle_search_result_visibility
         )
+        c.bridge.annotationsSynced.connect(c.on_annotations_sync)
         c.panel.uploaded_assets_list.itemSelectionChanged.connect(
             c.preview_selected_uploaded_asset
         )

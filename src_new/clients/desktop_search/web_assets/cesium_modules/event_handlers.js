@@ -605,6 +605,9 @@ function placeAnnotation(viewer, cartesian, lat, lon, log, text = null, color = 
   
   // Register entities
   annotationEntities.push(anchorEntity, labelEntity, editEntity, deleteEntity);
+  if (typeof window.syncAnnotationsToPython === "function") {
+    window.syncAnnotationsToPython();
+  }
   
   if (log) {
     log("info", "Placed annotation: " + annotationText + " at (" + lat.toFixed(4) + ", " + lon.toFixed(4) + ")");
@@ -632,6 +635,9 @@ function deleteAnnotation(viewer, deleteEntity, log) {
     if (target) {
       viewer.entities.remove(target);
     }
+  }
+  if (typeof window.syncAnnotationsToPython === "function") {
+    window.syncAnnotationsToPython();
   }
   
   if (log) {
@@ -661,6 +667,9 @@ function renameAnnotationFromEditIcon(editEntity, log) {
   
   if (nextText && nextText.trim()) {
     labelEntity.label.text = nextText.trim();
+    if (typeof window.syncAnnotationsToPython === "function") {
+      window.syncAnnotationsToPython();
+    }
     if (log) {
       log("info", "Renamed annotation to: " + nextText.trim());
     }

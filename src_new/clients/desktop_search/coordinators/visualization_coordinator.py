@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from qtpy.QtCore import QTimer
+
+
 
 class VisualizationCoordinator:
     """Encapsulate viewer mode and style operations for desktop controller."""
@@ -80,7 +83,20 @@ class VisualizationCoordinator:
     def apply_dem_color_mode(self, log_to_panel: bool = True) -> None:
         c = self._controller
         color_mode = str(c.panel.dem_color_mode_combo.currentData() or "gray")
+        
+        # Show styled progress overlay consistent with stretch updates
+        c.panel.set_search_busy(True, "Applying DEM Style...", progress=15)
+        
+        # Refresh the DEM layers using the python backend stats/queries
+        # This will query the backend, building the exact URL matching the current style & stretch combination
+        refreshed = c._display_settings.refresh_raster_layers_for_stretch(layer_kind="dem")
+        
+        # Also let JS know the color mode changed so it updates internal colorMode states and updates the colorbar
         c._run_js_call("setDemColorMode", color_mode)
+        
+        # Auto-dismiss popup after 800ms
+        QTimer.singleShot(800, lambda: c.panel.set_search_busy(False))
+        
         if log_to_panel:
             label = {
                 "gray": "White relief",

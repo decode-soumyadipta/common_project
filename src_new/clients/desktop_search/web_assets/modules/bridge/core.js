@@ -925,7 +925,7 @@
           try {
             for (let i = 0; i < drawnPolygons.length; i += 1) {
               const poly = drawnPolygons[i];
-              if (!poly) continue;
+              if (!poly || poly._isAnnotationPoly) continue;
               const shouldShow = Boolean(poly.visible) && searchOverlayVisible;
               if (poly.lineEntity) poly.lineEntity.show = shouldShow;
               if (poly.polygonEntity) poly.polygonEntity.show = shouldShow;
@@ -960,6 +960,9 @@
         },
         getIsAnnotationDrawing: function () {
           return isAnnotationDrawing;
+        },
+        getAnnotationVisibilityEnabled: function () {
+          return annotationVisibilityEnabled;
         },
         emitSearchGeometry: function (type, payload) {
           if (offlineGIS.on_search_geometry) {
@@ -1948,5 +1951,143 @@
     }
     return visibleKeys.slice(0, 4);
   }
+
+  function syncAnnotationsToPython() {
+    if (typeof bridge === "undefined" || !bridge || typeof bridge.on_annotations_sync !== "function") {
+      return;
+    }
+    
+    function readLabelText(labelEntity) {
+      if (!labelEntity || !labelEntity.label) return "";
+      const textVal = labelEntity.label.text;
+      if (!textVal) return "";
+      if (typeof textVal.getValue === "function") {
+        return String(textVal.getValue(Cesium.JulianDate.now()) || "");
+      }
+      return String(textVal || "");
+    }
+
+    // Group all entities in annotationEntities by _annotationId
+    const groups = {};
+    if (typeof annotationEntities !== "undefined" && Array.isArray(annotationEntities)) {
+      for (const ent of annotationEntities) {
+        if (ent && ent._annotationId) {
+          const id = ent._annotationId;
+          if (!groups[id]) {
+            groups[id] = {};
+          }
+          const role = ent._annotationRole;
+          if (role === "anchor" || role === "icon" || role === "text-label" || role === "line") {
+            groups[id].main = ent;
+          } else if (role === "label") {
+            groups[id].label = ent;
+          }
+        }
+      }
+    }
+    
+    const points = [];
+    const lines = [];
+    const icons = [];
+    const texts = [];
+    
+    for (const id in groups) {
+      const g = groups[id];
+      const mainEnt = g.main;
+      const labelEnt = g.label;
+      if (!mainEnt) continue;
+      
+      // Get position
+      let lon = 0.0;
+      let lat = 0.0;
+      if (mainEnt.position) {
+        const cartesian = mainEnt.position.getValue(Cesium.JulianDate.now());
+        if (cartesian) {
+          const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
+          if (cartographic) {
+            lon = Cesium.Math.toDegrees(cartographic.longitude);
+            lat = Cesium.Math.toDegrees(cartographic.latitude);
+          }
+        }
+      }
+      
+      // Get label text
+      let text = "";
+      if (labelEnt) {
+        text = readLabelText(labelEnt);
+      } else if (mainEnt._annotationRole === "text-label") {
+        text = readLabelText(mainEnt);
+      }
+      
+      if (id.startsWith("annotation-")) {
+        // Point annotation
+        points.push({
+          lon: lon,
+          lat: lat,
+          text: text || "Point"
+        });
+      } else if (id.startsWith("icon-annotation-")) {
+        // Icon annotation
+        const iconName = mainEnt._iconName || "marker";
+        icons.push({
+          lon: lon,
+          lat: lat,
+          icon: iconName,
+          text: text || ""
+        });
+      } else if (id.startsWith("text-label-")) {
+        // Text-only label
+        texts.push({
+          lon: lon,
+          lat: lat,
+          text: text || "Label"
+        });
+      } else if (id.startsWith("line-annotation-")) {
+        // Line annotation
+        const coords = [];
+        if (mainEnt.polyline && mainEnt.polyline.positions) {
+          const positions = mainEnt.polyline.positions.getValue(Cesium.JulianDate.now());
+          if (positions && positions.length) {
+            for (const pos of positions) {
+              const carto = Cesium.Cartographic.fromCartesian(pos);
+              if (carto) {
+                coords.push([Cesium.Math.toDegrees(carto.longitude), Cesium.Math.toDegrees(carto.latitude)]);
+              }
+            }
+          }
+        }
+        lines.push({
+          coords: coords,
+          label: text || "Line"
+        });
+      }
+    }
+    
+    // Also parse drawnPolygons for annotation polygons
+    const polygons = [];
+    if (typeof drawnPolygons !== "undefined" && Array.isArray(drawnPolygons)) {
+      for (const poly of drawnPolygons) {
+        if (poly && poly._isAnnotationPoly) {
+          const coords = (poly.points || []).map(p => [p.lon, p.lat]);
+          polygons.push({
+            coords: coords,
+            label: poly.label || ("Polygon " + poly.id)
+          });
+        }
+      }
+    }
+    
+    const payload = {
+      points: points,
+      lines: lines,
+      icons: icons,
+      texts: texts,
+      polygons: polygons
+    };
+    
+    bridge.on_annotations_sync(JSON.stringify(payload));
+  }
+  
+  window.syncAnnotationsToPython = syncAnnotationsToPython;
 
   // ═══════════════════════════════════════════════════════════════════════════

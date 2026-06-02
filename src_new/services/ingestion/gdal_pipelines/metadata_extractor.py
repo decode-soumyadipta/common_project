@@ -131,28 +131,35 @@ def _read_with_gdal(path: Path):
 
 def _read_auxiliary_crs_and_log(path: Path, log: logging.Logger) -> str | None:
     """Check for sidecar .prj and world files; return external CRS WKT if found."""
-    prj_file = path.with_suffix(".prj")
-    world_files = [
-        path.with_suffix(".j2w"),
-        path.with_suffix(".tfw"),
-        path.with_suffix(".jgw"),
-    ]
+    stems = [path.stem]
+    if path.stem.lower().endswith(".cog"):
+        stems.append(path.stem[:-4])
+
+    prj_files = []
+    world_files = []
+    for stem in stems:
+        parent = path.parent
+        prj_files.append(parent / f"{stem}.prj")
+        for ext in [".j2w", ".tfw", ".jgw", ".wld"]:
+            world_files.append(parent / f"{stem}{ext}")
 
     external_crs: str | None = None
-    if prj_file.exists():
-        log.info("✓ Found .prj file: %s", prj_file.name)
-        try:
-            prj_content = prj_file.read_text().strip()
-            if prj_content:
-                external_crs = prj_content
-                log.info(
-                    "  Projection from .prj: %s",
-                    prj_content.split("[")[1].split(",")[0]
-                    if "[" in prj_content
-                    else "Found",
-                )
-        except Exception:
-            pass
+    for prj_file in prj_files:
+        if prj_file.exists():
+            log.info("✓ Found .prj file: %s", prj_file.name)
+            try:
+                prj_content = prj_file.read_text().strip()
+                if prj_content:
+                    external_crs = prj_content
+                    log.info(
+                        "  Projection from .prj: %s",
+                        prj_content.split("[")[1].split(",")[0]
+                        if "[" in prj_content
+                        else "Found",
+                    )
+                    break
+            except Exception:
+                pass
     else:
         log.info("✗ No .prj file found")
 

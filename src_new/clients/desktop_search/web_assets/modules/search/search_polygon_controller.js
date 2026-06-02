@@ -361,10 +361,16 @@
           continue;
         }
         poly.visible = Boolean(visible);
-        const shouldShow = poly.visible && getSearchOverlayVisible();
+        const overlayVisible = poly._isAnnotationPoly
+          ? (deps.getAnnotationVisibilityEnabled ? deps.getAnnotationVisibilityEnabled() : true)
+          : deps.getSearchOverlayVisible();
+        const shouldShow = poly.visible && overlayVisible;
         if (poly.lineEntity) poly.lineEntity.show = shouldShow;
         if (poly.polygonEntity) poly.polygonEntity.show = shouldShow;
         if (poly.areaLabelEntity) poly.areaLabelEntity.show = shouldShow;
+        if (poly.nameLabelEntity) poly.nameLabelEntity.show = shouldShow;
+        if (poly.editEntity) poly.editEntity.show = shouldShow;
+        if (poly.deleteEntity) poly.deleteEntity.show = shouldShow;
       }
       requestSceneRender();
     }
@@ -586,8 +592,13 @@
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
-      deleteEntity._polyRecordId = polyId;
-      deleteEntity._polyRole = "delete";
+      var showState = deps.getAnnotationVisibilityEnabled ? deps.getAnnotationVisibilityEnabled() : true;
+      lineEntity.show = showState;
+      polygonEntity.show = showState;
+      if (areaLabelEntity) areaLabelEntity.show = showState;
+      nameLabelEntity.show = showState;
+      editEntity.show = showState;
+      deleteEntity.show = showState;
 
       var polyRecord = {
         id: polyId,
@@ -603,8 +614,11 @@
         visible: true,
         _isAnnotationPoly: true,
       };
-        var polys = getDrawnPolygons();
-        polys.push(polyRecord);
+      var polys = getDrawnPolygons();
+      polys.push(polyRecord);
+      if (typeof window.syncAnnotationsToPython === "function") {
+        window.syncAnnotationsToPython();
+      }
       } else {
         // --- AOI SEARCH MODE ---
         if (activeAoiEntity) {
@@ -710,7 +724,7 @@
       deps.requestSceneRender();
     }
 
-    function restoreAnnotationPolygon(points, id) {
+    function restoreAnnotationPolygon(points, id, label) {
       var cesium = getCesium();
       var viewer = getViewer();
       if (!cesium || !viewer || !points || points.length < 3) return;
@@ -771,10 +785,11 @@
       }
 
       var anchorPos = points3d[0];
+      var textLabel = label || ("Polygon " + polyId);
       var nameLabelEntity = viewer.entities.add({
         position: anchorPos,
         label: {
-          text: "Polygon " + polyId,
+          text: textLabel,
           fillColor: cesium.Color.WHITE,
           showBackground: true,
           backgroundColor: cesium.Color.BLACK.withAlpha(0.62),
@@ -823,9 +838,17 @@
       deleteEntity._polyRecordId = polyId;
       deleteEntity._polyRole = "delete";
 
+      var showState = deps.getAnnotationVisibilityEnabled ? deps.getAnnotationVisibilityEnabled() : true;
+      lineEntity.show = showState;
+      polygonEntity.show = showState;
+      if (areaLabelEntity) areaLabelEntity.show = showState;
+      nameLabelEntity.show = showState;
+      editEntity.show = showState;
+      deleteEntity.show = showState;
+
       var polyRecord = {
         id: polyId,
-        label: "Annotation " + polyId,
+        label: textLabel,
         points: points,
         lineEntity: lineEntity,
         polygonEntity: polygonEntity,

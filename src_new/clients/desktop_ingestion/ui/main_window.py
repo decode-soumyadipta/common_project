@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from qtpy.QtCore import Qt, QTimer, QSize
+from qtpy.QtCore import Qt, QTimer, QSize, QThread, Signal
 from qtpy.QtGui import QIcon, QPixmap
 from qtpy.QtWidgets import (
     QAction,
@@ -36,6 +36,31 @@ from src_new.clients.desktop_ingestion.ui.upload_dialog import UploadDialog
 from src_new.shared.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+class HealthCheckWorker(QThread):
+    """Background worker for querying service liveness/readiness.
+
+    Prevents blocking the Qt GUI main thread during network request timeouts.
+    """
+    health_checked = Signal(bool, bool)  # ingestion_ok, tile_ok
+
+    def __init__(self, api_client: IngestionApiClient, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.api_client = api_client
+
+    def run(self) -> None:
+        try:
+            ingestion_ok = self.api_client.ingestion_service_ready()
+        except Exception:
+            ingestion_ok = False
+
+        try:
+            tile_ok = self.api_client.tile_service_ready()
+        except Exception:
+            tile_ok = False
+
+        self.health_checked.emit(ingestion_ok, tile_ok)
 
 
 class MainWindow(QMainWindow):
@@ -198,7 +223,7 @@ class MainWindow(QMainWindow):
         """Refresh ingestion status and asset list."""
         logger.info("Refreshing data...")
         self.monitoring_panel.refresh_all()
-        self._check_service_health(retry=False)
+        self._check_service_health()
 
     def _show_settings(self) -> None:
         """Show settings dialog."""
@@ -233,44 +258,37 @@ class MainWindow(QMainWindow):
     # Service Health Monitoring
     # ------------------------------------------------------------------
 
-    def _check_service_health(self, *, retry: bool = True) -> None:
-        """Check the health of ingestion and tile services.
+    def _check_service_health(self) -> None:
+        """Start background liveness checks for ingestion and tile services.
 
-        On startup we give each service one short retry before showing an
-        unavailable state so cold boots do not flash a false failure.
+        Runs off the main thread to prevent the UI from blocking/flickering.
         """
-        # Check ingestion service
-        ingestion_ok = self.api_client.ingestion_service_ready()
-        logger.debug("Ingestion service ready=%s", ingestion_ok)
+        if hasattr(self, "_health_worker") and self._health_worker.isRunning():
+            return
+
+        self._health_worker = HealthCheckWorker(self.api_client, self)
+        self._health_worker.health_checked.connect(self._on_health_checked)
+        self._health_worker.start()
+
+    def _on_health_checked(self, ingestion_ok: bool, tile_ok: bool) -> None:
+        """Handle health check results and update the status bar."""
+        # Update ingestion service status
         if ingestion_ok:
             self._ingestion_status_label.setText("Ingestion Service: ✓ Healthy")
             self._ingestion_status_label.setStyleSheet(
                 "color: #2d7a2d; font-weight: 600; padding: 2px 8px;"
             )
-        elif retry:
-            self._ingestion_status_label.setText("Ingestion Service: Checking...")
-            self._ingestion_status_label.setStyleSheet(
-                "color: #b7791f; font-weight: 600; padding: 2px 8px;"
-            )
-            QTimer.singleShot(1500, lambda: self._check_service_health(retry=False))
         else:
             self._ingestion_status_label.setText("Ingestion Service: ✗ Unavailable")
             self._ingestion_status_label.setStyleSheet(
                 "color: #c53030; font-weight: 600; padding: 2px 8px;"
             )
 
-        # Check tile service
-        tile_ok = self.api_client.tile_service_ready()
-        logger.debug("Tile service ready=%s", tile_ok)
+        # Update tile service status
         if tile_ok:
             self._tile_status_label.setText("Tile Service: ✓ Healthy")
             self._tile_status_label.setStyleSheet(
                 "color: #2d7a2d; font-weight: 600; padding: 2px 8px;"
-            )
-        elif retry:
-            self._tile_status_label.setText("Tile Service: Checking...")
-            self._tile_status_label.setStyleSheet(
-                "color: #b7791f; font-weight: 600; padding: 2px 8px;"
             )
         else:
             self._tile_status_label.setText("Tile Service: ✗ Unavailable")

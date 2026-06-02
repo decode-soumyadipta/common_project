@@ -74,7 +74,12 @@ class AnnotationCoordinator:
                         js_points.append({"lon": float(coord["lon"]), "lat": float(coord["lat"])})
 
                 if js_points:
-                    c._run_js_call("restoreAnnotationPolygon", js_points)
+                    c._run_js_call(
+                        "restoreAnnotationPolygon",
+                        js_points,
+                        None,
+                        str(item.get("label") or ""),
+                    )
 
         # Restore raster stretch settings
         for layer_key, settings in c._raster_stretch_settings.items():
@@ -251,7 +256,6 @@ class AnnotationCoordinator:
         c._add_text_mode_enabled = False
         c._annotation_line_start = None
         c._fly_through_mode_enabled = False  # Strict exclusivity
-        c._shadow_height_mode_enabled = False
         c._pan_mode_enabled = False
         c._run_js_call("setDistanceMeasureMode", False)
         c._run_js_call("setPanMode", False)

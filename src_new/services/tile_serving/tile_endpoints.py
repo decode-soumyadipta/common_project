@@ -101,18 +101,30 @@ def _resolve_raster_path(raster_id: str) -> Path:
     # 1. Exact match: raster_id is a relative path from data_root
     candidate = data_root / raster_id
     if candidate.is_file():
-        return candidate.resolve()
+        resolved = candidate.resolve()
+        cog_sibling = resolved.parent / f"{resolved.stem}.cog.tif"
+        if cog_sibling.is_file():
+            return cog_sibling.resolve()
+        return resolved
 
     # 2. Stem match: search recursively for a file whose stem == raster_id
     for ext in (".tif", ".tiff", ".jp2", ".j2k", ".j2c", ".mbtiles"):
         stem_candidate = data_root / f"{raster_id}{ext}"
         if stem_candidate.is_file():
-            return stem_candidate.resolve()
+            resolved = stem_candidate.resolve()
+            cog_sibling = resolved.parent / f"{resolved.stem}.cog.tif"
+            if cog_sibling.is_file():
+                return cog_sibling.resolve()
+            return resolved
 
     # 3. Recursive search (slower, used as fallback)
     for found in data_root.rglob("*"):
         if found.is_file() and (found.stem == raster_id or found.name == raster_id):
-            return found.resolve()
+            resolved = found.resolve()
+            cog_sibling = resolved.parent / f"{resolved.stem}.cog.tif"
+            if cog_sibling.is_file():
+                return cog_sibling.resolve()
+            return resolved
 
     raise HTTPException(
         status_code=404,

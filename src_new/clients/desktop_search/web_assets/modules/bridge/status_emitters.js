@@ -449,7 +449,7 @@
     if (!viewer) return;
     const picked = position ? viewer.scene.pick(position) : null;
     let hoveredEntity = null;
-    if (picked && picked.id && picked.id._searchResultMarker === true) {
+    if (picked && picked.id && picked.id.billboard) {
       hoveredEntity = picked.id;
     }
 
@@ -484,17 +484,17 @@
         var origScale = (typeof hoveredEntity._originalScale === "number") ? hoveredEntity._originalScale : 1.0;
 
         // Step 1 → jump UP immediately (bump peak)
-        hoveredEntity.billboard.scale = origScale * 1.4;
+        hoveredEntity.billboard.scale = origScale * 1.35;
         requestSceneRender();
 
-        // Step 2 → settle back to original after 180 ms (smooth return)
+        // Step 2 → settle back to hovered scale (1.2x) after 150 ms
         _markerBumpTimer = setTimeout(function () {
           _markerBumpTimer = null;
           if (lastHoveredMarker === hoveredEntity && hoveredEntity.billboard) {
-            hoveredEntity.billboard.scale = origScale;
+            hoveredEntity.billboard.scale = origScale * 1.2;
             requestSceneRender();
           }
-        }, 180);
+        }, 150);
       }
     }
   }
@@ -615,6 +615,9 @@
           if (dIdx > -1) annotationEntities.splice(dIdx, 1);
           if (delTargets[di]) viewer.entities.remove(delTargets[di]);
         }
+        if (typeof window.syncAnnotationsToPython === "function") {
+          window.syncAnnotationsToPython();
+        }
         requestSceneRender();
         log("info", "Deleted annotation id=" + (delE._annotationId || "?"));
         return;
@@ -630,6 +633,9 @@
             if (newName && newName.trim()) {
               polys[pi].label = newName.trim();
               polys[pi].nameLabelEntity.label.text = newName.trim();
+              if (typeof window.syncAnnotationsToPython === "function") {
+                window.syncAnnotationsToPython();
+              }
               requestSceneRender();
             }
             break;
@@ -653,6 +659,9 @@
               if (rec.vertexEntities[vi]) viewer.entities.remove(rec.vertexEntities[vi]);
             }
             drawnPolygons.splice(pj, 1);
+            if (typeof window.syncAnnotationsToPython === "function") {
+              window.syncAnnotationsToPython();
+            }
             requestSceneRender();
             log("info", "Deleted polygon id=" + delPolyId);
             break;

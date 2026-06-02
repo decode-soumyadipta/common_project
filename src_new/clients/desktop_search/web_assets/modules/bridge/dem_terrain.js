@@ -519,7 +519,9 @@
       // Returning to gray/terrain: preserve current rescale if it exists, otherwise use original
       delete query.algorithm;
       query.colormap_name = normalized;
-      if (currentStretch && currentStretch.params && currentStretch.params.min !== undefined) {
+      if (query.rescale) {
+        // Keep the active stretch rescale already calculated and applied!
+      } else if (currentStretch && currentStretch.params && currentStretch.params.min !== undefined) {
         query.rescale = currentStretch.params.min.toFixed(1) + "," + currentStretch.params.max.toFixed(1);
       } else {
         query.rescale = `${activeRange.min.toFixed(1)},${activeRange.max.toFixed(1)}`;
@@ -636,23 +638,12 @@
           }
         }
 
-        if (normalized === "slope" || normalized === "aspect") {
-          if (osmBasemapLayer) osmBasemapLayer.show = false;
-          if (defaultEarthLayer) defaultEarthLayer.show = false;
-          if (viewer && Array.isArray(comparatorViewers)) {
-            comparatorViewers.forEach(function (comparatorViewer) {
-              if (!comparatorViewer) return;
-              if (comparatorViewer.__osmBasemapLayer) comparatorViewer.__osmBasemapLayer.show = false;
-              if (comparatorViewer.__defaultEarthLayer) comparatorViewer.__defaultEarthLayer.show = false;
-            });
-          }
-          if (activeDemDrapeLayer) {
-            activeDemDrapeLayer.show = true;
-            activeDemDrapeLayer.alpha = 1.0;
-          }
-          if (activeDemHillshadeLayer) {
-            activeDemHillshadeLayer.show = activeDemHillshadeLayer.alpha > 0.01;
-          }
+        if (activeDemDrapeLayer) {
+          activeDemDrapeLayer.show = true;
+          activeDemDrapeLayer.alpha = 1.0;
+        }
+        if (activeDemHillshadeLayer) {
+          activeDemHillshadeLayer.show = activeDemHillshadeLayer.alpha > 0.01;
         }
 
         // Removed camera locking to prevent jumping when changing color modes

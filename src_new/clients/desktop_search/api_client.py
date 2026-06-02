@@ -3,6 +3,7 @@ from __future__ import annotations
 import platform
 from typing import Any
 from urllib.parse import quote
+from pathlib import Path
 
 import httpx
 
@@ -156,8 +157,28 @@ class DesktopApiClient:
         response.raise_for_status()
         return response.json()
 
+    def _resolve_local_path(self, file_path: str) -> str:
+        """Resolve a local file path to its COG sibling if present."""
+        path_str = file_path.strip().replace("\\", "/")
+        if path_str.startswith("file:///"):
+            path_str = path_str[8:]
+        elif path_str.startswith("file://"):
+            path_str = path_str[7:]
+        elif path_str.startswith("file:"):
+            path_str = path_str[5:]
+            
+        try:
+            p = Path(path_str)
+            cog_sibling = p.parent / f"{p.stem}.cog.tif"
+            if cog_sibling.is_file():
+                return str(cog_sibling.resolve())
+        except Exception:
+            pass
+        return file_path
+
     def get_tilejson(self, file_path: str) -> dict[str, Any]:
-        encoded_path = quote(self._to_file_url(file_path), safe="/:")
+        resolved_path = self._resolve_local_path(file_path)
+        encoded_path = quote(self._to_file_url(resolved_path), safe="/:")
         endpoint = (
             f"{self._titiler_base}/cog/{settings.titiler_tile_matrix_set_id}/tilejson.json"
             f"?url={encoded_path}"
@@ -167,14 +188,16 @@ class DesktopApiClient:
         return response.json()
 
     def get_cog_info(self, file_path: str) -> dict[str, Any]:
-        encoded_path = quote(self._to_file_url(file_path), safe="/:")
+        resolved_path = self._resolve_local_path(file_path)
+        encoded_path = quote(self._to_file_url(resolved_path), safe="/:")
         endpoint = f"{self._titiler_base}/cog/info?url={encoded_path}"
         response = httpx.get(endpoint, timeout=20.0)
         response.raise_for_status()
         return response.json()
 
     def get_cog_statistics(self, file_path: str) -> dict[str, Any]:
-        encoded_path = quote(self._to_file_url(file_path), safe="/:")
+        resolved_path = self._resolve_local_path(file_path)
+        encoded_path = quote(self._to_file_url(resolved_path), safe="/:")
         endpoint = f"{self._titiler_base}/cog/statistics?url={encoded_path}"
         response = httpx.get(endpoint, timeout=30.0)
         response.raise_for_status()

@@ -84,6 +84,19 @@
         entity.show = annotationVisibilityEnabled;
       }
     }
+    if (typeof drawnPolygons !== "undefined" && Array.isArray(drawnPolygons)) {
+      for (const poly of drawnPolygons) {
+        if (poly && poly._isAnnotationPoly) {
+          const shouldShow = poly.visible && annotationVisibilityEnabled;
+          if (poly.lineEntity) poly.lineEntity.show = shouldShow;
+          if (poly.polygonEntity) poly.polygonEntity.show = shouldShow;
+          if (poly.areaLabelEntity) poly.areaLabelEntity.show = shouldShow;
+          if (poly.nameLabelEntity) poly.nameLabelEntity.show = shouldShow;
+          if (poly.editEntity) poly.editEntity.show = shouldShow;
+          if (poly.deleteEntity) poly.deleteEntity.show = shouldShow;
+        }
+      }
+    }
     requestSceneRender();
   }
 
@@ -232,21 +245,6 @@
     return;
   }
 
-  function _clearFillVolumeEntities() {
-    if (!viewer) return;
-    var ents = window._fillVolumeEntities || [];
-    for (var i = 0; i < ents.length; i++) {
-      var ent = ents[i];
-      try {
-        if (!ent) continue;
-        if (viewer.entities.contains(ent)) {
-          viewer.entities.remove(ent);
-        }
-      } catch (_) {}
-    }
-    window._fillVolumeEntities = [];
-    window._fillVolumePrimitives = [];
-  }
 
   // Profile rubber-band preview — recreates entity on every mouse move (same as distance tool)
   function _updateProfilePreviewLine(startLon, startLat, endLon, endLat) {

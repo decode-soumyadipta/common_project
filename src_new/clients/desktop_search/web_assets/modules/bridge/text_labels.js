@@ -40,6 +40,10 @@
         clearSearchResultMarkerEntities();
         const items = Array.isArray(markers) ? markers : [];
         let validCount = 0;
+        
+        const cartographics = [];
+        const entityPairs = [];
+
         for (let index = 0; index < items.length; index += 1) {
           const marker = items[index] || {};
           const lon = Number(marker.lon);
@@ -51,28 +55,28 @@
           const position = Cesium.Cartesian3.fromDegrees(lon, lat, 0.0);
           const displayed = Boolean(marker.displayed);
           validCount += 1;
-          const iconEntity = viewer.entities.add({
+          
+          const billboardEntity = viewer.entities.add({
             position: position,
-            show: new Cesium.CallbackProperty(function () {
-              return getSearchOverlayVisible();
-            }, false),
+            show: false, // Keep hidden during elevation sampling to prevent misplacement
             billboard: {
-              show: new Cesium.CallbackProperty(function () {
-                return getSearchOverlayVisible();
-              }, false),
+              show: false, // Keep hidden during elevation sampling
               image: displayed ? SEARCH_RESULT_MARKER_YELLOW : SEARCH_RESULT_MARKER_RED,
               width: 26,
               height: 26,
               verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
               horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
-              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+              heightReference: Cesium.HeightReference.NONE, // No native clamping to prevent drifting
               disableDepthTestDistance: Number.POSITIVE_INFINITY,
               scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.55),
             },
+          });
+
+          const labelEntity = viewer.entities.add({
+            position: position,
+            show: false, // Keep hidden during elevation sampling
             label: {
-              show: new Cesium.CallbackProperty(function () {
-                return getSearchOverlayVisible();
-              }, false),
+              show: false, // Keep hidden during elevation sampling
               text: labelText,
               font: "600 11px 'Segoe UI', 'Helvetica Neue', sans-serif",
               fillColor: Cesium.Color.WHITE,
@@ -85,21 +89,161 @@
               pixelOffset: new Cesium.Cartesian2(0, -32),
               horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
               verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+              heightReference: Cesium.HeightReference.NONE, // No native clamping to prevent drifting
               disableDepthTestDistance: Number.POSITIVE_INFINITY,
               scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.6),
               translucencyByDistance: new Cesium.NearFarScalar(3000.0, 1.0, 2400000.0, 0.75),
             },
           });
 
-          iconEntity._searchResultMarker = true;
-          iconEntity._searchResultMarkerIndex = index;
-          iconEntity._assetFilePath = String(marker.file_path || "");
-          iconEntity._assetDisplayed = displayed;
-          searchResultMarkerEntities.push(iconEntity);
+          billboardEntity._searchResultMarker = true;
+          billboardEntity._searchResultMarkerIndex = index;
+          billboardEntity._assetFilePath = String(marker.file_path || "");
+          billboardEntity._assetDisplayed = displayed;
+          billboardEntity._originalScale = 1.0;
+          searchResultMarkerEntities.push(billboardEntity);
+
+          labelEntity._searchResultMarker = true;
+          labelEntity._searchResultMarkerIndex = index;
+          labelEntity._assetFilePath = String(marker.file_path || "");
+          labelEntity._assetDisplayed = displayed;
+          searchResultMarkerEntities.push(labelEntity);
+
+          cartographics.push(Cesium.Cartographic.fromDegrees(lon, lat));
+          entityPairs.push({
+            billboard: billboardEntity,
+            label: labelEntity,
+            lon: lon,
+            lat: lat
+          });
         }
-        syncSearchResultMarkerVisibility();
-        requestSceneRender();
+
+        // Asynchronously query the active terrain's true geodetic elevations
+        if (cartographics.length > 0) {
+          const terrainProvider = viewer.terrainProvider || new Cesium.EllipsoidTerrainProvider();
+          Promise.resolve(Cesium.sampleTerrainMostDetailed(terrainProvider, cartographics))
+            .then(function (updatedCartographics) {
+              const visible = getSearchOverlayVisible();
+              for (let i = 0; i < updatedCartographics.length; i++) {
+                const cart = updatedCartographics[i];
+                const height = Number.isFinite(cart.height) ? cart.height : 0.0;
+                const pair = entityPairs[i];
+                const newPos = Cesium.Cartesian3.fromDegrees(pair.lon, pair.lat, height);
+                
+                if (pair.billboard) {
+                  pair.billboard.position = newPos;
+                  pair.billboard.show = visible;
+                  pair.billboard.billboard.show = new Cesium.CallbackProperty(function () {
+                    return getSearchOverlayVisible();
+                  }, false);
+                }
+                if (pair.label) {
+                  pair.label.position = newPos;
+                  pair.label.show = visible;
+                  pair.label.label.show = new Cesium.CallbackProperty(function () {
+                    return getSearchOverlayVisible();
+                  }, false);
+                }
+              }
+              requestSceneRender();
+            })
+            .catch(function () {
+              // Fallback to ellipsoid level on error
+              const visible = getSearchOverlayVisible();
+              for (let i = 0; i < entityPairs.length; i++) {
+                const pair = entityPairs[i];
+                if (pair.billboard) {
+                  pair.billboard.show = visible;
+                  pair.billboard.billboard.show = new Cesium.CallbackProperty(function () {
+                    return getSearchOverlayVisible();
+                  }, false);
+                }
+                if (pair.label) {
+                  pair.label.show = visible;
+                  pair.label.label.show = new Cesium.CallbackProperty(function () {
+                    return getSearchOverlayVisible();
+                  }, false);
+                }
+              }
+              requestSceneRender();
+            });
+        }
+      },
+      realignMarkersToTerrain: function () {
+        if (!viewer || searchResultMarkerEntities.length === 0) return;
+        
+        log("info", "DEM_RENDER: Realigning " + searchResultMarkerEntities.length + " markers to new terrain provider...");
+        
+        const cartographics = [];
+        const entityPairs = [];
+        const groups = {};
+
+        for (let i = 0; i < searchResultMarkerEntities.length; i++) {
+          const entity = searchResultMarkerEntities[i];
+          if (!entity) continue;
+          
+          // Hide immediately during transition to hide any visual drifting
+          entity.show = false;
+          
+          const idx = entity._searchResultMarkerIndex;
+          if (idx === undefined) continue;
+          if (!groups[idx]) groups[idx] = {};
+          
+          if (entity.billboard) {
+            groups[idx].billboard = entity;
+          } else if (entity.label) {
+            groups[idx].label = entity;
+          }
+        }
+        
+        Object.keys(groups).forEach(function (idx) {
+          const g = groups[idx];
+          if (g.billboard && g.billboard.position) {
+            const cartographic = Cesium.Cartographic.fromCartesian(g.billboard.position.getValue(Cesium.JulianDate.now()));
+            if (cartographic) {
+              cartographics.push(cartographic);
+              entityPairs.push({
+                billboard: g.billboard,
+                label: g.label,
+                lon: Cesium.Math.toDegrees(cartographic.longitude),
+                lat: Cesium.Math.toDegrees(cartographic.latitude)
+              });
+            }
+          }
+        });
+        
+        if (cartographics.length > 0) {
+          const terrainProvider = viewer.terrainProvider || new Cesium.EllipsoidTerrainProvider();
+          Promise.resolve(Cesium.sampleTerrainMostDetailed(terrainProvider, cartographics))
+            .then(function (updatedCartographics) {
+              const visible = getSearchOverlayVisible();
+              for (let i = 0; i < updatedCartographics.length; i++) {
+                const cart = updatedCartographics[i];
+                const height = Number.isFinite(cart.height) ? cart.height : 0.0;
+                const pair = entityPairs[i];
+                const newPos = Cesium.Cartesian3.fromDegrees(pair.lon, pair.lat, height);
+                
+                if (pair.billboard) {
+                  pair.billboard.position = newPos;
+                  pair.billboard.show = visible;
+                }
+                if (pair.label) {
+                  pair.label.position = newPos;
+                  pair.label.show = visible;
+                }
+              }
+              requestSceneRender();
+            })
+            .catch(function () {
+              const visible = getSearchOverlayVisible();
+              for (let i = 0; i < entityPairs.length; i++) {
+                const pair = entityPairs[i];
+                if (pair.billboard) pair.billboard.show = visible;
+                if (pair.label) pair.label.show = visible;
+              }
+              requestSceneRender();
+            });
+        }
       },
       clearSearchResultMarkers: function () {
         clearSearchResultMarkerEntities();
@@ -201,6 +345,9 @@
         annotationEntities.push(labelEntity);
         annotationEntities.push(editEntity);
         annotationEntities.push(deleteEntity);
+        if (typeof window.syncAnnotationsToPython === "function") {
+          window.syncAnnotationsToPython();
+        }
         syncSearchResultMarkerVisibility();
         requestSceneRender();
         log("info", "Text label added at lon=" + lon + " lat=" + lat);
@@ -211,8 +358,6 @@
         clearMeasurementEntities();
         clearMeasurementPreviewEntities();
         clearDistanceScaleOverlay();
-        _clearFillVolumeEntities();
-        window._fillVolumePrimitives = [];
         log("info", "Measurement overlays cleared");
       },
       clearMeasurementEntities: function () {
@@ -227,8 +372,6 @@
         clearDistanceScaleOverlay();
         clearAnnotationEntities();
         clearSearchEntities();
-        _clearFillVolumeEntities();
-        window._fillVolumePrimitives = [];
         searchPolygonPoints.length = 0;
         searchPolygonLocked = false;
         searchCursorPoint = null;
@@ -686,162 +829,5 @@
       },
       syncSearchResultMarkerVisibility: function () {
         syncSearchResultMarkerVisibility();
-      },
-      clearFillVolumes: function () {
-        _clearFillVolumeEntities();
-        window._fillVolumePrimitives = [];
-        requestSceneRender();
-        log("debug", "Fill volume overlays cleared");
-      },
-      drawFillVolumes: function (regionsJson) {
-        _clearFillVolumeEntities();
-        var regions;
-        try { regions = JSON.parse(regionsJson); } catch (e) { log("error", "drawFillVolumes: bad JSON"); return; }
-        if (!Array.isArray(regions) || regions.length === 0) {
-          log("debug", "drawFillVolumes: no regions to draw");
-          return;
-        }
-
-        log("info", "Starting to draw " + regions.length + " fill volume regions");
-
-        var distinctColors = [
-          [255,  80,  40, 200],
-          [ 40, 120, 255, 200],
-          [ 40, 220, 100, 200],
-          [255, 200,  40, 200],
-          [180,  40, 255, 200],
-          [255, 100, 180, 200],
-          [ 40, 220, 220, 200],
-          [255, 140,  40, 200],
-        ];
-
-        function getRegionColor(index) {
-          var rgba = distinctColors[index % distinctColors.length];
-          return new Cesium.Color(rgba[0]/255, rgba[1]/255, rgba[2]/255, rgba[3]/255);
-        }
-
-        var labelEntities = [];
-
-        for (var ri = 0; ri < regions.length; ri++) {
-          var r = regions[ri];
-          var regionId = r.id || r.region_id || (ri + 1);
-
-          if (!r.outline || r.outline.length < 3) {
-            log("warn", "Region " + regionId + " has invalid outline, skipping");
-            continue;
-          }
-
-          var fillColour = getRegionColor(ri);
-
-          // Pure entity polygon — no GroundPrimitive, no GPU lifecycle, safe on macOS Metal + Windows NVIDIA.
-          // No height — Cesium drapes on globe surface. arcType RHUMB gives pixel-accurate
-          // edges for small sub-km polygons (avoids geodesic subdivision artifacts).
-          var positions = r.outline.map(function(p) {
-            return Cesium.Cartesian3.fromDegrees(p.lon, p.lat);
-          });
-
-          // Use the region's rim elevation + small offset so the flat polygon
-          // sits just above the terrain surface and is never occluded at any zoom level.
-          var polyHeight = (typeof r.rim_elevation_m === 'number' && isFinite(r.rim_elevation_m))
-            ? r.rim_elevation_m + 2.0
-            : 2.0;
-
-          var regionEnt = viewer.entities.add({
-            id: 'fill-region-ent-' + regionId,
-            polygon: {
-              hierarchy: new Cesium.PolygonHierarchy(positions),
-              material: fillColour,
-              height: polyHeight,
-              arcType: Cesium.ArcType.RHUMB,
-              outline: false,
-              fill: true,
-            },
-          });
-          window._fillVolumeEntities.push(regionEnt);
-
-          var volStr = r.fill_volume_m3 >= 1000000000
-            ? (r.fill_volume_m3 / 1000000000).toFixed(3) + " km\u00b3"
-            : r.fill_volume_m3 >= 1000000
-            ? (r.fill_volume_m3 / 1000000).toFixed(3) + " Mm\u00b3"
-            : r.fill_volume_m3.toFixed(3) + " m\u00b3";
-          var areaStr = r.area_m2 >= 10000
-            ? (r.area_m2 / 10000).toFixed(2) + " ha"
-            : r.area_m2.toFixed(0) + " m\u00b2";
-
-          labelEntities.push({
-            position: Cesium.Cartesian3.fromDegrees(r.centroid_lon, r.centroid_lat, polyHeight + 5.0),
-            regionId: regionId,
-            volStr: volStr,
-            areaStr: areaStr,
-            maxDepth: r.max_depth_m,
-            meanDepth: r.mean_depth_m,
-          });
-        }
-
-        for (var li = 0; li < labelEntities.length; li++) {
-          var labelData = labelEntities[li];
-
-          var labelEnt = viewer.entities.add({
-            id: 'fill-label-' + labelData.regionId,
-            position: labelData.position,
-            label: {
-              text: "\u25bc Region " + labelData.regionId,
-              font: "bold 13px 'Segoe UI', Arial, sans-serif",
-              style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-              fillColor: Cesium.Color.WHITE,
-              outlineColor: Cesium.Color.BLACK,
-              outlineWidth: 2.5,
-              showBackground: true,
-              backgroundColor: Cesium.Color.BLACK.withAlpha(0.85),
-              backgroundPadding: new Cesium.Cartesian2(8, 5),
-              horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
-              verticalOrigin: Cesium.VerticalOrigin.TOP,
-              disableDepthTestDistance: Number.POSITIVE_INFINITY,
-              pixelOffset: new Cesium.Cartesian2(0, -15),
-              scale: 1.0,
-            },
-          });
-          labelEnt.regionId = labelData.regionId;
-          labelEnt.volume = labelData.volStr;
-          labelEnt.area = labelData.areaStr;
-          labelEnt.maxDepth = labelData.maxDepth.toFixed(2) + ' m';
-          labelEnt.meanDepth = labelData.meanDepth.toFixed(2) + ' m';
-          labelEnt.expanded = false;
-          labelEnt.isRegionLabel = true;
-          window._fillVolumeEntities.push(labelEnt);
-
-          var detailsEnt = viewer.entities.add({
-            id: 'fill-details-' + labelData.regionId,
-            position: labelData.position,
-            label: {
-              text:
-                'Volume: ' + labelData.volStr + '\n' +
-                'Area: ' + labelData.areaStr + '\n' +
-                'Max Depth: ' + labelData.maxDepth.toFixed(2) + ' m\n' +
-                'Mean Depth: ' + labelData.meanDepth.toFixed(2) + ' m',
-              font: "12px 'Segoe UI', Arial, sans-serif",
-              style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-              fillColor: Cesium.Color.WHITE,
-              outlineColor: Cesium.Color.BLACK,
-              outlineWidth: 2,
-              showBackground: true,
-              backgroundColor: Cesium.Color.fromCssColorString('#1a1a1a').withAlpha(0.92),
-              backgroundPadding: new Cesium.Cartesian2(10, 6),
-              horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
-              verticalOrigin: Cesium.VerticalOrigin.TOP,
-              disableDepthTestDistance: Number.POSITIVE_INFINITY,
-              pixelOffset: new Cesium.Cartesian2(0, 15),
-              scale: 0.95,
-              show: false,
-            },
-          });
-          detailsEnt.parentRegionId = labelData.regionId;
-          detailsEnt.isDetails = true;
-          window._fillVolumeEntities.push(detailsEnt);
-          labelEnt.detailsEntity = detailsEnt;
-        }
-
-        requestSceneRender();
-        log("info", "Fill volumes drawn: " + regions.length + " regions");
       },
   });

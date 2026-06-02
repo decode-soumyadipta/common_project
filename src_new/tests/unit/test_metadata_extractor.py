@@ -61,3 +61,29 @@ def test_extract_metadata_uses_external_prj_for_jpeg2000_bounds(
     assert metadata.bbox.min_lat == pytest.approx(-20.0)
     assert metadata.bbox.max_lon == pytest.approx(30.0)
     assert metadata.bbox.max_lat == pytest.approx(40.0)
+
+
+def test_read_auxiliary_crs_and_log_resolves_cog_stem(tmp_path: Path) -> None:
+    # Scenario 1: File is scene.cog.tif, sidecar is scene.prj
+    cog_path = tmp_path / "scene.cog.tif"
+    prj_path = tmp_path / "scene.prj"
+    prj_path.write_text("EPSG:32643")
+    
+    # Also create a world file for the base name
+    tfw_path = tmp_path / "scene.tfw"
+    tfw_path.write_text("1.0\n0.0\n0.0\n-1.0\n100.0\n500.0\n")
+    
+    import logging
+    logger = logging.getLogger("test_metadata")
+    
+    crs = metadata_extractor._read_auxiliary_crs_and_log(cog_path, logger)
+    assert crs == "EPSG:32643"
+    
+    # Scenario 2: File is scene.cog.tif, sidecar is scene.cog.prj (exact match)
+    prj_path.unlink()
+    tfw_path.unlink()
+    
+    cog_prj_path = tmp_path / "scene.cog.prj"
+    cog_prj_path.write_text("EPSG:3857")
+    crs = metadata_extractor._read_auxiliary_crs_and_log(cog_path, logger)
+    assert crs == "EPSG:3857"

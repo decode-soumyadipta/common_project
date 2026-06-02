@@ -63,6 +63,7 @@
         iconEntity.show = annotationVisibilityEnabled;
         iconEntity._annotationId = annotationId;
         iconEntity._annotationRole = "icon";
+        iconEntity._iconName = iconName;
         
         // Text label
         const labelEntity = viewer.entities.add({
@@ -135,6 +136,9 @@
         annotationEntities.push(labelEntity);
         annotationEntities.push(editEntity);
         annotationEntities.push(deleteEntity);
+        if (typeof window.syncAnnotationsToPython === "function") {
+          window.syncAnnotationsToPython();
+        }
         requestSceneRender();
         log("info", "Icon annotation added: " + iconName + " at lon=" + lon + " lat=" + lat);
       },
@@ -170,6 +174,9 @@
       return true;
     }
     labelEntity.label.text = cleaned;
+    if (typeof window.syncAnnotationsToPython === "function") {
+      window.syncAnnotationsToPython();
+    }
     setStatus("Point renamed: " + cleaned);
     requestSceneRender();
     return true;
