@@ -169,6 +169,16 @@ class ProjectIoCoordinator:
         c.state.clicked_points = []
         c.state.search_geometry_type = None
         c.state.search_geometry_payload = None
+        # Reset all drawing-mode flags to match a fresh app start
+        c._distance_measure_mode_enabled = False
+        c._add_point_mode_enabled = False
+        c._add_line_mode_enabled = False
+        c._add_text_mode_enabled = False
+        c._annotation_line_start = None
+        c._pan_mode_enabled = True
+        # Cancel any active JS-side draw modes and measurement cursors
+        c._run_js_call("setDistanceMeasureMode", False)
+        c._run_js_call("setMeasurementCursor", False)
         # Reset AOI visibility checkbox to checked (default for a fresh project)
         if hasattr(c.panel, "search_aoi_visible_check"):
             c.panel.search_aoi_visible_check.setChecked(True)
@@ -817,6 +827,12 @@ class ProjectIoCoordinator:
 
                 # Rebuild search result markers on the map
                 c._refresh_search_result_markers()
+                
+                # Delayed realignment of search markers to ensure they snap to terrain
+                # once tiles load
+                from qtpy.QtCore import QTimer
+                QTimer.singleShot(1000, lambda: c._run_js_call("realignMarkersToTerrain"))
+                QTimer.singleShot(3000, lambda: c._run_js_call("realignMarkersToTerrain"))
 
                 # AOI polygon visibility
                 c._set_search_aoi_visible(aoi_visible)

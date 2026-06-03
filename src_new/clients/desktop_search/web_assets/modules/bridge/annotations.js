@@ -27,11 +27,14 @@
         if (typeof clearAnnotationEntities === "function") {
           clearAnnotationEntities();
         }
+        if (window.offlineGIS && typeof window.offlineGIS.resetAnnotationCounter === "function") {
+          window.offlineGIS.resetAnnotationCounter();
+        }
       },
       setAnnotationVisibility: function (visible) {
         setAnnotationVisibility(Boolean(visible));
       },
-      addIconAnnotation: function (lon, lat, iconName, text) {
+      addIconAnnotation: function (lon, lat, iconName, text, optHeight) {
         if (!viewer) return;
         annotationCounter += 1;
         const annotationId = "icon-annotation-" + String(annotationCounter);
@@ -63,10 +66,16 @@
           }
         }
         if (!anchorPosition) {
-          const cartographic = Cesium.Cartographic.fromDegrees(Number(lon), Number(lat));
-          const sampledHeight = viewer.scene && viewer.scene.globe ? viewer.scene.globe.getHeight(cartographic) : null;
-          const height = Number.isFinite(sampledHeight) ? Number(sampledHeight) : 0.0;
-          anchorPosition = Cesium.Cartesian3.fromDegrees(Number(lon), Number(lat), height);
+          // Use saved height if provided (restore path), otherwise sample terrain
+          var h = 0.0;
+          if (typeof optHeight === "number" && Number.isFinite(optHeight)) {
+            h = optHeight;
+          } else {
+            const cartographic = Cesium.Cartographic.fromDegrees(Number(lon), Number(lat));
+            const sampledHeight = viewer.scene && viewer.scene.globe ? viewer.scene.globe.getHeight(cartographic) : null;
+            h = Number.isFinite(sampledHeight) ? Number(sampledHeight) : 0.0;
+          }
+          anchorPosition = Cesium.Cartesian3.fromDegrees(Number(lon), Number(lat), h);
         }
         lastMapClickCartesian = null;
         
@@ -79,7 +88,7 @@
             height: 32,
             verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
-            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+            heightReference: Cesium.HeightReference.NONE,
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.5),
           },
@@ -117,7 +126,7 @@
             }, false),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+            heightReference: Cesium.HeightReference.NONE,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.5),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
@@ -152,7 +161,7 @@
             }, false),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
-            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+            heightReference: Cesium.HeightReference.NONE,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.5),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
@@ -187,7 +196,7 @@
             }, false),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
-            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+            heightReference: Cesium.HeightReference.NONE,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.5),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },

@@ -43,11 +43,12 @@ class AnnotationCoordinator:
             try:
                 lon = float(item.get("lon") or 0.0)
                 lat = float(item.get("lat") or 0.0)
+                height = float(item.get("height") or 0.0)
                 text = str(item.get("text") or c._default_annotation_text)
                 
                 # Validate coordinates are finite and in valid range
-                if not (math.isfinite(lon) and math.isfinite(lat)):
-                    self._logger.warning("Invalid point annotation (non-finite coords): lon=%s lat=%s", lon, lat)
+                if not (math.isfinite(lon) and math.isfinite(lat) and math.isfinite(height)):
+                    self._logger.warning("Invalid point annotation (non-finite coords): lon=%s lat=%s height=%s", lon, lat, height)
                     continue
                 
                 if not (-180 <= lon <= 180 and -90 <= lat <= 90):
@@ -57,20 +58,21 @@ class AnnotationCoordinator:
             except (TypeError, ValueError) as e:
                 self._logger.warning("Invalid point annotation data: %s - %s", item, e)
                 continue
-            self._logger.debug("Restoring point annotation at lon=%.5f lat=%.5f text=%s", lon, lat, text)
-            c._run_js_call("addAnnotation", text, lon, lat)
+            self._logger.debug("Restoring point annotation at lon=%.5f lat=%.5f height=%.2f text=%s", lon, lat, height, text)
+            c._run_js_call("addAnnotation", text, lon, lat, height)
 
         # ─── Restore icon annotations ─────────────────────────────────────────
         for item in c._annotation_icon_records:
             try:
                 lon = float(item.get("lon") or 0.0)
                 lat = float(item.get("lat") or 0.0)
+                height = float(item.get("height") or 0.0)
                 icon = str(item.get("icon") or "marker")
                 text = str(item.get("text") or "")
                 
                 # Validate coordinates are finite and in valid range
-                if not (math.isfinite(lon) and math.isfinite(lat)):
-                    self._logger.warning("Invalid icon annotation (non-finite coords): lon=%s lat=%s", lon, lat)
+                if not (math.isfinite(lon) and math.isfinite(lat) and math.isfinite(height)):
+                    self._logger.warning("Invalid icon annotation (non-finite coords): lon=%s lat=%s height=%s", lon, lat, height)
                     continue
                 
                 if not (-180 <= lon <= 180 and -90 <= lat <= 90):
@@ -80,8 +82,8 @@ class AnnotationCoordinator:
             except (TypeError, ValueError) as e:
                 self._logger.warning("Invalid icon annotation data: %s - %s", item, e)
                 continue
-            self._logger.debug("Restoring icon annotation at lon=%.5f lat=%.5f icon=%s text=%s", lon, lat, icon, text)
-            c._run_js_call("addIconAnnotation", lon, lat, icon, text)
+            self._logger.debug("Restoring icon annotation at lon=%.5f lat=%.5f height=%.2f icon=%s text=%s", lon, lat, height, icon, text)
+            c._run_js_call("addIconAnnotation", lon, lat, icon, text, height)
 
         # ─── Restore text labels ──────────────────────────────────────────────
         # CRITICAL: Text labels MUST be restored AFTER points and icons to prevent
@@ -90,11 +92,12 @@ class AnnotationCoordinator:
             try:
                 lon = float(item.get("lon") or 0.0)
                 lat = float(item.get("lat") or 0.0)
+                height = float(item.get("height") or 0.0)
                 text = str(item.get("text") or "Label")
                 
                 # Validate coordinates are finite and in valid range
-                if not (math.isfinite(lon) and math.isfinite(lat)):
-                    self._logger.warning("Invalid text label (non-finite coords): lon=%s lat=%s", lon, lat)
+                if not (math.isfinite(lon) and math.isfinite(lat) and math.isfinite(height)):
+                    self._logger.warning("Invalid text label (non-finite coords): lon=%s lat=%s height=%s", lon, lat, height)
                     continue
                 
                 if not (-180 <= lon <= 180 and -90 <= lat <= 90):
@@ -104,8 +107,8 @@ class AnnotationCoordinator:
             except (TypeError, ValueError) as e:
                 self._logger.warning("Invalid text label data: %s - %s", item, e)
                 continue
-            self._logger.debug("Restoring text label at lon=%.5f lat=%.5f text=%s", lon, lat, text)
-            c._run_js_call("addTextLabel", lon, lat, text)
+            self._logger.debug("Restoring text label at lon=%.5f lat=%.5f height=%.2f text=%s", lon, lat, height, text)
+            c._run_js_call("addTextLabel", lon, lat, text, height)
 
         # ─── Restore line annotations ──────────────────────────────────────────
         # Lines MUST NOT have text labels pre-injected; labels come from the data
@@ -149,7 +152,13 @@ class AnnotationCoordinator:
                             self._logger.warning("Line annotation #%d: Coords out of valid range lon=%f lat=%f", i, lon, lat)
                             continue
                         
-                        validated_coords.append([lon, lat])
+                        height = 0.0
+                        if isinstance(coord, (list, tuple)) and len(coord) >= 3:
+                            height = float(coord[2])
+                        elif isinstance(coord, dict) and "height" in coord:
+                            height = float(coord["height"])
+                        
+                        validated_coords.append([lon, lat, height])
                     except (ValueError, TypeError) as coord_err:
                         self._logger.warning("Line annotation #%d: Failed to parse coord %s: %s", i, coord, coord_err)
                         continue
@@ -213,7 +222,13 @@ class AnnotationCoordinator:
                                 self._logger.warning("Polygon annotation #%d: Coords out of valid range lon=%f lat=%f", i, lon, lat)
                                 continue
                             
-                            validated_coords.append([lon, lat])
+                            height = 0.0
+                            if isinstance(coord, (list, tuple)) and len(coord) >= 3:
+                                height = float(coord[2])
+                            elif isinstance(coord, dict) and "height" in coord:
+                                height = float(coord["height"])
+                            
+                            validated_coords.append([lon, lat, height])
                         except (ValueError, TypeError) as coord_err:
                             self._logger.warning("Polygon annotation #%d: Failed to parse coord %s: %s", i, coord, coord_err)
                             continue

@@ -2012,9 +2012,10 @@
       const labelEnt = g.label;
       if (!mainEnt) continue;
       
-      // Get position
+      // Get position with height
       let lon = 0.0;
       let lat = 0.0;
+      let height = 0.0;
       if (mainEnt.position) {
         const cartesian = mainEnt.position.getValue(Cesium.JulianDate.now());
         if (cartesian) {
@@ -2022,6 +2023,7 @@
           if (cartographic) {
             lon = Cesium.Math.toDegrees(cartographic.longitude);
             lat = Cesium.Math.toDegrees(cartographic.latitude);
+            height = cartographic.height || 0.0;
           }
         }
       }
@@ -2039,6 +2041,7 @@
         points.push({
           lon: lon,
           lat: lat,
+          height: height,
           text: text || "Point"
         });
       } else if (id.startsWith("icon-annotation-")) {
@@ -2047,6 +2050,7 @@
         icons.push({
           lon: lon,
           lat: lat,
+          height: height,
           icon: iconName,
           text: text || ""
         });
@@ -2055,10 +2059,11 @@
         texts.push({
           lon: lon,
           lat: lat,
+          height: height,
           text: text || "Label"
         });
       } else if (id.startsWith("line-annotation-")) {
-        // Line annotation
+        // Line annotation — emit [lon, lat, height] triples
         const coords = [];
         if (mainEnt.polyline && mainEnt.polyline.positions) {
           const positions = mainEnt.polyline.positions.getValue(Cesium.JulianDate.now());
@@ -2066,7 +2071,7 @@
             for (const pos of positions) {
               const carto = Cesium.Cartographic.fromCartesian(pos);
               if (carto) {
-                coords.push([Cesium.Math.toDegrees(carto.longitude), Cesium.Math.toDegrees(carto.latitude)]);
+                coords.push([Cesium.Math.toDegrees(carto.longitude), Cesium.Math.toDegrees(carto.latitude), carto.height || 0.0]);
               }
             }
           }
@@ -2083,7 +2088,18 @@
     if (typeof drawnPolygons !== "undefined" && Array.isArray(drawnPolygons)) {
       for (const poly of drawnPolygons) {
         if (poly && poly._isAnnotationPoly) {
-          const coords = (poly.points || []).map(p => [p.lon, p.lat]);
+          const coords = (poly.points || []).map(function (p) {
+            let h = 0.0;
+            if (p.cartesian) {
+              const carto = Cesium.Cartographic.fromCartesian(p.cartesian);
+              if (carto) {
+                h = carto.height || 0.0;
+              }
+            } else if (typeof p.height === "number") {
+              h = p.height;
+            }
+            return [p.lon, p.lat, h];
+          });
           polygons.push({
             coords: coords,
             label: poly.label || ("Polygon " + poly.id)
@@ -2104,5 +2120,15 @@
   }
   
   window.syncAnnotationsToPython = syncAnnotationsToPython;
+
+  window.offlineGIS = window.offlineGIS || {};
+  Object.assign(window.offlineGIS, {
+    resetAnnotationCounter: function () {
+      annotationCounter = 0;
+    },
+    resetDrawnPolygonCounter: function () {
+      drawnPolygonCounter = 0;
+    }
+  });
 
   // ═══════════════════════════════════════════════════════════════════════════

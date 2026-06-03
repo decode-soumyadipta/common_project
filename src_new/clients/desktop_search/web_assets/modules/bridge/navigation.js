@@ -1065,7 +1065,7 @@
         lineDrawStart = null;
         clearLineDrawPreview();
       },
-      addAnnotation: function (text, lon, lat) {
+      addAnnotation: function (text, lon, lat, optHeight) {
         if (!viewer) return;
         annotationCounter += 1;
         const annotationId = "annotation-" + String(annotationCounter);
@@ -1082,10 +1082,16 @@
           }
         }
         if (!anchorPosition) {
-          const cartographic = Cesium.Cartographic.fromDegrees(Number(lon), Number(lat));
-          const sampledHeight = viewer.scene && viewer.scene.globe ? viewer.scene.globe.getHeight(cartographic) : null;
-          const height = Number.isFinite(sampledHeight) ? Number(sampledHeight) : 0.0;
-          anchorPosition = Cesium.Cartesian3.fromDegrees(Number(lon), Number(lat), height);
+          // Use saved height if provided (restore path), otherwise sample terrain
+          var h = 0.0;
+          if (typeof optHeight === "number" && Number.isFinite(optHeight)) {
+            h = optHeight;
+          } else {
+            const cartographic = Cesium.Cartographic.fromDegrees(Number(lon), Number(lat));
+            const sampledHeight = viewer.scene && viewer.scene.globe ? viewer.scene.globe.getHeight(cartographic) : null;
+            h = Number.isFinite(sampledHeight) ? Number(sampledHeight) : 0.0;
+          }
+          anchorPosition = Cesium.Cartesian3.fromDegrees(Number(lon), Number(lat), h);
         }
         lastMapClickCartesian = null;
         const anchorEntity = viewer.entities.add({
@@ -1095,7 +1101,7 @@
             color: Cesium.Color.fromCssColorString("#f2c94c"),
             outlineColor: Cesium.Color.fromCssColorString("#1d1d1d"),
             outlineWidth: 1,
-            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+            heightReference: Cesium.HeightReference.NONE,
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
         });
@@ -1118,7 +1124,7 @@
             pixelOffset: new Cesium.Cartesian2(12, -8),
             horizontalOrigin: Cesium.HorizontalOrigin.LEFT,
             verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+            heightReference: Cesium.HeightReference.NONE,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.45),
             translucencyByDistance: new Cesium.NearFarScalar(3000.0, 1.0, 2400000.0, 0.62),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
@@ -1137,10 +1143,23 @@
             width: 17,
             height: 17,
             color: Cesium.Color.WHITE.withAlpha(0.42),
-            pixelOffset: new Cesium.Cartesian2(52 + pointNameWidth, -17),
+            pixelOffset: new Cesium.CallbackProperty(function () {
+              var w = measureTextWidth(readLabelText(labelEntity), "600 15px Arial, Helvetica, sans-serif");
+              var distance = Cesium.Cartesian3.distance(viewer.camera.position, anchorPosition);
+              var scale = 1.0;
+              if (distance <= 2500.0) {
+                scale = 1.0;
+              } else if (distance >= 1700000.0) {
+                scale = 0.5;
+              } else {
+                var t = (distance - 2500.0) / (1700000.0 - 2500.0);
+                scale = 1.0 + t * (0.5 - 1.0);
+              }
+              return new Cesium.Cartesian2((52 + w) * scale, -17 * scale);
+            }, false),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
-            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+            heightReference: Cesium.HeightReference.NONE,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
@@ -1158,10 +1177,23 @@
             width: 17,
             height: 17,
             color: Cesium.Color.WHITE.withAlpha(0.62),
-            pixelOffset: new Cesium.Cartesian2(72 + pointNameWidth, -17),
+            pixelOffset: new Cesium.CallbackProperty(function () {
+              var w = measureTextWidth(readLabelText(labelEntity), "600 15px Arial, Helvetica, sans-serif");
+              var distance = Cesium.Cartesian3.distance(viewer.camera.position, anchorPosition);
+              var scale = 1.0;
+              if (distance <= 2500.0) {
+                scale = 1.0;
+              } else if (distance >= 1700000.0) {
+                scale = 0.5;
+              } else {
+                var t = (distance - 2500.0) / (1700000.0 - 2500.0);
+                scale = 1.0 + t * (0.5 - 1.0);
+              }
+              return new Cesium.Cartesian2((72 + w) * scale, -17 * scale);
+            }, false),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
-            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+            heightReference: Cesium.HeightReference.NONE,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
@@ -1214,10 +1246,18 @@
           ) {
             continue;
           }
-          const carto = Cesium.Cartographic.fromDegrees(lon, lat);
-          const sampledHeight = viewer.scene && viewer.scene.globe ? viewer.scene.globe.getHeight(carto) : null;
-          const height = Number.isFinite(sampledHeight) ? Number(sampledHeight) : 0.0;
-          positions.push(Cesium.Cartesian3.fromDegrees(lon, lat, height + 0.1));
+          // Use saved height from 3rd element if available (restore path),
+          // otherwise sample terrain
+          var savedH = Array.isArray(pt) && pt.length >= 3 ? Number(pt[2]) : NaN;
+          var h;
+          if (Number.isFinite(savedH)) {
+            h = savedH;
+          } else {
+            const carto = Cesium.Cartographic.fromDegrees(lon, lat);
+            const sampledHeight = viewer.scene && viewer.scene.globe ? viewer.scene.globe.getHeight(carto) : null;
+            h = Number.isFinite(sampledHeight) ? Number(sampledHeight) : 0.0;
+          }
+          positions.push(Cesium.Cartesian3.fromDegrees(lon, lat, h + 0.1));
           cleanCoords.push([lon, lat]);
           lastLon = lon;
           lastLat = lat;
@@ -1242,10 +1282,10 @@
         lineEntity._annotationId = annotationId;
         lineEntity._annotationRole = "line";
 
-        const midIdx = Math.floor(cleanCoords.length / 2);
-        const mid = cleanCoords[midIdx] || cleanCoords[0];
+        const midIdx = Math.floor(positions.length / 2);
+        const midPos = positions[midIdx] || positions[0];
         const labelEntity = viewer.entities.add({
-          position: Cesium.Cartesian3.fromDegrees(mid[0], mid[1]),
+          position: midPos,
           label: {
             text: labelText,
             fillColor: Cesium.Color.WHITE,
@@ -1256,10 +1296,23 @@
             outlineWidth: 2,
             style: Cesium.LabelStyle.FILL_AND_OUTLINE,
             font: "600 14px Arial, Helvetica, sans-serif",
-            pixelOffset: new Cesium.Cartesian2(0, -10),
+            pixelOffset: new Cesium.CallbackProperty(function () {
+              var distance = Cesium.Cartesian3.distance(viewer.camera.position, midPos);
+              var scale = 1.0;
+              if (distance <= 2500.0) {
+                scale = 1.0;
+              } else if (distance >= 1700000.0) {
+                scale = 0.5;
+              } else {
+                var t = (distance - 2500.0) / (1700000.0 - 2500.0);
+                scale = 1.0 + t * (0.5 - 1.0);
+              }
+              return new Cesium.Cartesian2(0, -14 * scale);
+            }, false),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+            heightReference: Cesium.HeightReference.NONE,
+            scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.5),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
         });
@@ -1267,20 +1320,31 @@
         labelEntity._annotationId = annotationId;
         labelEntity._annotationRole = "label";
 
-        const labelTextWidth = measureTextWidth(labelText, "600 14px Arial, Helvetica, sans-serif");
-
         const editEntity = viewer.entities.add({
-          position: Cesium.Cartesian3.fromDegrees(mid[0], mid[1]),
+          position: midPos,
           billboard: {
             image: ANNOTATION_EDIT_ICON_IMAGE,
             width: 17,
             height: 17,
             color: Cesium.Color.WHITE.withAlpha(0.42),
-            pixelOffset: new Cesium.Cartesian2(-18 - labelTextWidth / 2, -20),
+            pixelOffset: new Cesium.CallbackProperty(function () {
+              var w = measureTextWidth(readLabelText(labelEntity), "600 14px Arial, Helvetica, sans-serif");
+              var distance = Cesium.Cartesian3.distance(viewer.camera.position, midPos);
+              var scale = 1.0;
+              if (distance <= 2500.0) {
+                scale = 1.0;
+              } else if (distance >= 1700000.0) {
+                scale = 0.5;
+              } else {
+                var t = (distance - 2500.0) / (1700000.0 - 2500.0);
+                scale = 1.0 + t * (0.5 - 1.0);
+              }
+              return new Cesium.Cartesian2((-18 - w / 2) * scale, -24 * scale);
+            }, false),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
-            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-            scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
+            heightReference: Cesium.HeightReference.NONE,
+            scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.5),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
         });
@@ -1291,17 +1355,30 @@
         editEntity._annotationLabelEntity = labelEntity;
 
         const deleteEntity = viewer.entities.add({
-          position: Cesium.Cartesian3.fromDegrees(mid[0], mid[1]),
+          position: midPos,
           billboard: {
             image: ANNOTATION_DELETE_ICON_IMAGE,
             width: 17,
             height: 17,
             color: Cesium.Color.WHITE.withAlpha(0.62),
-            pixelOffset: new Cesium.Cartesian2(18 + labelTextWidth / 2, -20),
+            pixelOffset: new Cesium.CallbackProperty(function () {
+              var w = measureTextWidth(readLabelText(labelEntity), "600 14px Arial, Helvetica, sans-serif");
+              var distance = Cesium.Cartesian3.distance(viewer.camera.position, midPos);
+              var scale = 1.0;
+              if (distance <= 2500.0) {
+                scale = 1.0;
+              } else if (distance >= 1700000.0) {
+                scale = 0.5;
+              } else {
+                var t = (distance - 2500.0) / (1700000.0 - 2500.0);
+                scale = 1.0 + t * (0.5 - 1.0);
+              }
+              return new Cesium.Cartesian2((18 + w / 2) * scale, -24 * scale);
+            }, false),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
-            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-            scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
+            heightReference: Cesium.HeightReference.NONE,
+            scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.5),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
         });

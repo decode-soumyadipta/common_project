@@ -959,11 +959,13 @@ class DesktopController(QObject):
                     "type": "point",
                     "lon": float(pt.get("lon") or 0.0),
                     "lat": float(pt.get("lat") or 0.0),
+                    "height": float(pt.get("height") or 0.0),
                     "text": str(pt.get("text") or "Point"),
                     "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
                 })
                 
             # 2. Update line annotations
+            # coords now arrive as [lon, lat, height] triples from JS
             self._annotation_line_records = []
             for ln in data.get("lines", []):
                 coords = ln.get("coords", [])
@@ -985,6 +987,7 @@ class DesktopController(QObject):
                 self._annotation_icon_records.append({
                     "lon": float(ic.get("lon") or 0.0),
                     "lat": float(ic.get("lat") or 0.0),
+                    "height": float(ic.get("height") or 0.0),
                     "icon": str(ic.get("icon") or "marker"),
                     "text": str(ic.get("text") or "Icon"),
                     "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -996,6 +999,7 @@ class DesktopController(QObject):
                 self._annotation_text_records.append({
                     "lon": float(tx.get("lon") or 0.0),
                     "lat": float(tx.get("lat") or 0.0),
+                    "height": float(tx.get("height") or 0.0),
                     "text": str(tx.get("text") or "Label"),
                     "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
                 })
