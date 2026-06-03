@@ -1,7 +1,3 @@
-"""UI components for desktop search client.
+"""UI overlay components for the desktop search client."""
 
-Note: Imports are deferred to avoid QtWebEngine initialization issues.
-Import MainWindow and SearchPanel directly from their modules.
-"""
-
-__all__ = ["MainWindow", "SearchPanel"]
+__all__ = []

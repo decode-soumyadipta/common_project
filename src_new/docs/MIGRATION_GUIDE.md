@@ -48,7 +48,7 @@ This guide explains how to transition from the original monolithic `src/` codeba
 | Original Path | New Path | Notes |
 |--------------|----------|-------|
 | `src/desktop_ingestion/gui_admin/app.py` | `src_new/clients/desktop_ingestion/ui/main_window.py` | Ingestion client UI |
-| `src/client_desktop/backend/main_window.py` | `src_new/clients/desktop_search/ui/main_window.py` | Search client UI |
+| `src/client_desktop/backend/main_window.py` | `src_new/clients/desktop_search/main_window.py` | Search client UI |
 | `src/client_desktop/backend/bridge.py` | `src_new/clients/desktop_search/bridge/channel_setup.py` | QWebChannel setup |
 | `src/client_desktop/frontend/bridge.js` | `src_new/clients/desktop_search/cesium/` | Split into modules |
 | `src/client_desktop/client_frontend/web_assets/` | `src_new/clients/desktop_search/web_assets/` | HTML, CSS, CesiumJS |

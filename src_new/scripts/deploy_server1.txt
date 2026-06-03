@@ -22,8 +22,6 @@ src_new/shared/
 - src_new/services/ingestion/gdal_pipelines/
   - metadata_extractor.py
   - cog_converter.py
-  - reprojector.py
-  - thumbnail_generator.py
 - src_new/services/ingestion/format_handlers/
   - geotiff_handler.py
   - jpeg2000_handler.py
@@ -39,7 +37,6 @@ src_new/shared/
 - src_new/services/tile_serving/service.py
 - src_new/services/tile_serving/titiler_config.py
 - src_new/services/tile_serving/tile_endpoints.py
-- src_new/services/tile_serving/cache_manager.py
 
 ### Shared Modules (Required by Server 1)
 - src_new/shared/__init__.py

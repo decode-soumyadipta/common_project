@@ -15,7 +15,6 @@ src_new/shared/
 ### Query Service Modules
 - src_new/services/query/__init__.py
 - src_new/services/query/service.py
-- src_new/services/query/spatial_queries.py
 - src_new/services/query/api/
   - routes.py
   - dependencies.py

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from qtpy.QtCore import Qt
@@ -10,6 +11,8 @@ from qtpy.QtWidgets import (
     QPushButton,
     QTableWidgetItem,
 )
+
+_logger = logging.getLogger(__name__)
 
 
 class ControlPanelIngestMixin:
@@ -391,7 +394,7 @@ class ControlPanelIngestMixin:
                         self.uploaded_assets_list.setItem(0, col, empty_item)
 
                     # Log the empty state for debugging
-                    print(
+                    _logger.debug(
                         "DEBUG: refresh_uploaded_assets - No assets returned from API"
                     )
                     return
@@ -403,7 +406,7 @@ class ControlPanelIngestMixin:
                 )
 
                 # Log the asset count for debugging
-                print(
+                _logger.debug(
                     f"DEBUG: refresh_uploaded_assets - Found {len(sorted_assets)} assets from API"
                 )
 

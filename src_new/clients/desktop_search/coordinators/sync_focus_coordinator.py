@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 
+_logger = logging.getLogger(__name__)
+
 
 class SyncFocusCoordinator:
     """Encapsulate layer synchronization and focus operations for desktop controller."""
@@ -16,7 +18,7 @@ class SyncFocusCoordinator:
         
         # CRITICAL FIX: Prevent concurrent visibility syncs
         if c._event_driven_sync_in_progress:
-            print("DEBUG: Event-driven visibility sync already in progress, skipping")
+            _logger.debug("DEBUG: Event-driven visibility sync already in progress, skipping")
             return
         
         c._event_driven_sync_in_progress = True
@@ -140,17 +142,17 @@ class SyncFocusCoordinator:
         
         # CRITICAL FIX: Prevent concurrent visibility syncs
         if c._standard_sync_in_progress:
-            print("DEBUG: Standard visibility sync already in progress, skipping")
+            _logger.debug("DEBUG: Standard visibility sync already in progress, skipping")
             return
         
         c._standard_sync_in_progress = True
         
         try:
-            print(f"\n{'=' * 80}")
-            print("DEBUG: _sync_search_visibility_layers called")
-            print(f"  Loaded layer keys: {len(c._loaded_search_layer_keys)}")
-            print(f"  Active DEM layer key: {c._active_dem_search_layer_key}")
-            print(f"{'=' * 80}\n")
+            _logger.debug(f"\n{'=' * 80}")
+            _logger.debug("DEBUG: _sync_search_visibility_layers called")
+            _logger.debug(f"  Loaded layer keys: {len(c._loaded_search_layer_keys)}")
+            _logger.debug(f"  Active DEM layer key: {c._active_dem_search_layer_key}")
+            _logger.debug(f"{'=' * 80}\n")
 
             for file_path, asset in c._search_result_assets_by_path.items():
                 should_show = bool(c._search_layer_visibility.get(file_path, False))
@@ -159,36 +161,36 @@ class SyncFocusCoordinator:
                 file_name = asset.get("file_name", "unknown")
                 is_loaded = file_path in c._loaded_search_layer_keys
 
-                print(f"DEBUG: Processing layer: {file_name} (DEM: {is_dem_asset}, Loaded: {is_loaded})")
-                print(f"  should_show={should_show}, last_synced={last_synced}")
+                _logger.debug(f"DEBUG: Processing layer: {file_name} (DEM: {is_dem_asset}, Loaded: {is_loaded})")
+                _logger.debug(f"  should_show={should_show}, last_synced={last_synced}")
 
                 # OPTIMIZATION: Skip if visibility hasn't changed since last sync
                 if last_synced is not None and last_synced == should_show and is_loaded:
-                    print("  SKIP: Visibility unchanged")
+                    _logger.debug("  SKIP: Visibility unchanged")
                     continue
 
                 if not should_show:
                     if is_loaded:  # Only hide if it's actually loaded
-                        print("  ACTION: Hiding layer")
+                        _logger.debug("  ACTION: Hiding layer")
                         c._run_js_call("setLayerVisibility", file_path, False)
                         c._last_synced_visibility[file_path] = False
                         if is_dem_asset and c._active_dem_search_layer_key == file_path:
                             c.state.active_layer_is_dem = False
                             c._active_dem_search_layer_key = None
                             c._apply_display_control_mode()
-                            print("  DEM deactivated")
+                            _logger.debug("  DEM deactivated")
                     else:
-                        print("  SKIP: Layer not loaded, no need to hide")
+                        _logger.debug("  SKIP: Layer not loaded, no need to hide")
                     continue
 
                 if is_dem_asset and is_loaded:
-                    print("  ACTION: Showing DEM layer")
+                    _logger.debug("  ACTION: Showing DEM layer")
                     c._run_js_call("setLayerVisibility", file_path, True)
                     c._last_synced_visibility[file_path] = True
                     c.state.active_layer_is_dem = True
                     c._active_dem_search_layer_key = file_path
                     c._apply_display_control_mode()
-                    print("  DEM activated")
+                    _logger.debug("  DEM activated")
                     continue
 
                 if (
@@ -196,7 +198,7 @@ class SyncFocusCoordinator:
                     and c._active_dem_search_layer_key
                     and c._active_dem_search_layer_key != file_path
                 ):
-                    print("  ACTION: Hiding DEM (another DEM is active)")
+                    _logger.debug("  ACTION: Hiding DEM (another DEM is active)")
                     c._search_layer_visibility[file_path] = False
                     if is_loaded:
                         c._run_js_call("setLayerVisibility", file_path, False)
@@ -204,17 +206,17 @@ class SyncFocusCoordinator:
                     continue
 
                 if is_dem_asset and c._active_dem_search_layer_key == file_path:
-                    print("  SKIP: DEM already active")
+                    _logger.debug("  SKIP: DEM already active")
                     continue
 
                 if (not is_dem_asset) and is_loaded:
-                    print("  ACTION: Showing imagery layer")
+                    _logger.debug("  ACTION: Showing imagery layer")
                     c._run_js_call("setLayerVisibility", file_path, True)
                     c._last_synced_visibility[file_path] = True
                     continue
 
                 if not is_loaded:
-                    print("  ACTION: Loading new layer")
+                    _logger.debug("  ACTION: Loading new layer")
                     try:
                         loaded = c._load_asset_layer(
                             asset,
@@ -225,15 +227,15 @@ class SyncFocusCoordinator:
                             show_loading=False,
                         )
                         if not loaded:
-                            print("  ERROR: Failed to load layer")
+                            _logger.debug("  ERROR: Failed to load layer")
                             c._search_layer_visibility[file_path] = False
                             continue
 
                         c._loaded_search_layer_keys.add(file_path)
                         c._last_synced_visibility[file_path] = True
-                        print("  SUCCESS: Layer loaded and added to loaded keys")
+                        _logger.debug("  SUCCESS: Layer loaded and added to loaded keys")
                     except Exception as e:
-                        print(f"  ERROR: Exception while loading layer: {e}")
+                        _logger.debug(f"  ERROR: Exception while loading layer: {e}")
                         c._search_layer_visibility[file_path] = False
                         continue
 
@@ -251,7 +253,7 @@ class SyncFocusCoordinator:
                 c._run_js_call("enforceLayerDisplayOrder", ordered_keys)
 
             c._apply_display_control_mode()
-            print("DEBUG: _sync_search_visibility_layers completed\n")
+            _logger.debug("DEBUG: _sync_search_visibility_layers completed\n")
         finally:
             # Always clear the in-progress flag
             c._standard_sync_in_progress = False

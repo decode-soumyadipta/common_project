@@ -153,13 +153,11 @@ src_new/
 │   ├── tile_serving/             # Server 1: Tile generation
 │   │   ├── titiler_config.py     # TiTiler setup
 │   │   ├── tile_endpoints.py     # Custom routes
-│   │   ├── cache_manager.py      # Tile caching
 │   │   └── service.py            # FastAPI app entry point
 │   │
 │   └── query/                    # Server 2: Spatial queries
 │       ├── api/                  # FastAPI routes and dependencies
 │       ├── repositories/         # PostGIS data access layer
-│       ├── spatial_queries.py    # Business logic
 │       └── service.py            # FastAPI app entry point
 │
 ├── clients/                      # Desktop applications
@@ -199,8 +197,6 @@ src_new/
   - `api/routes.py`: REST endpoints (`/upload`, `/status/{raster_id}`, `/health`)
   - `gdal_pipelines/metadata_extractor.py`: Extract CRS, bounds, resolution
   - `gdal_pipelines/cog_converter.py`: Convert to Cloud-Optimized GeoTIFF
-  - `gdal_pipelines/reprojector.py`: CRS transformation
-  - `gdal_pipelines/thumbnail_generator.py`: Generate preview images
   - `format_handlers/`: Format-specific validation (GeoTIFF, JPEG2000, MBTiles)
   - `rust_accelerators/`: Optional Rust modules for performance
 - **Dependencies**: GDAL, Rasterio, PostGIS, FastAPI
@@ -211,7 +207,6 @@ src_new/
 - **Key Modules**:
   - `titiler_config.py`: TiTiler FastAPI app configuration
   - `tile_endpoints.py`: Custom routes (`/tiles/{z}/{x}/{y}.png`, `/preview/{raster_id}`, `/metadata/{raster_id}`)
-  - `cache_manager.py`: LRU tile cache with configurable size
 - **Dependencies**: TiTiler, GDAL, Rasterio, FastAPI
 - **Deployment**: Server 1
 
@@ -221,7 +216,6 @@ src_new/
   - `api/routes.py`: REST endpoints (`/query/point`, `/query/bbox`, `/raster/{raster_id}`, `/health`)
   - `repositories/raster_repository.py`: PostGIS data access layer
   - `repositories/spatial_index_repository.py`: Spatial indexing operations
-  - `spatial_queries.py`: Business logic composing repository methods
 - **Dependencies**: PostGIS, SQLAlchemy, FastAPI
 - **Deployment**: Server 2
 
@@ -240,11 +234,9 @@ src_new/
 #### Desktop Search Client (`clients/desktop_search/`)
 - **Responsibility**: Provide 3D visualization and spatial query UI for analysts
 - **Key Modules**:
-  - `ui/main_window.py`: Main application window with embedded web view
-  - `ui/search_panel.py`: Query input and results display
-  - `ui/controls_panel.py`: Layer controls, contrast/brightness sliders
-  - `bridge/channel_setup.py`: QWebChannel initialization
-  - `bridge/signal_handlers.py`: Python-JavaScript communication
+  - `main_window.py`: Main application window with embedded web view
+  - `control_panel.py`: Layer controls, contrast/brightness sliders
+  - `bridge.py`: QWebChannel initialization and Python-JavaScript communication
   - `cesium/viewer_init.js`: Offline Cesium viewer setup
   - `cesium/camera_control.js`: Camera manipulation
   - `cesium/layer_manager.js`: Imagery layer management

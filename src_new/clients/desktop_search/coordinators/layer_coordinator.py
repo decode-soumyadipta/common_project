@@ -7,6 +7,8 @@ from pathlib import Path
 
 from qtpy.QtWidgets import QFileDialog
 
+_logger = logging.getLogger(__name__)
+
 
 class LayerCoordinator:
     """Encapsulate layer management operations for desktop controller."""
@@ -184,7 +186,7 @@ class LayerCoordinator:
         # Check if this path was recently toggled (within 100ms)
         last_toggle_time = c._visibility_toggle_debounce.get(normalized_path, 0)
         if current_time - last_toggle_time < 0.1:  # 100ms debounce window
-            print(f"DEBUG: Ignoring rapid click on {normalized_path} (debounced)")
+            _logger.debug(f"DEBUG: Ignoring rapid click on {normalized_path} (debounced)")
             return
         
         c._visibility_toggle_debounce[normalized_path] = current_time
@@ -200,7 +202,7 @@ class LayerCoordinator:
 
         # CRITICAL FIX: Prevent multiple concurrent visibility operations
         if c._visibility_sync_in_progress:
-            print(f"DEBUG: Visibility sync already in progress, queuing toggle for {normalized_path}")
+            _logger.debug(f"DEBUG: Visibility sync already in progress, queuing toggle for {normalized_path}")
             return
         
         # Mark sync as in progress
@@ -215,7 +217,7 @@ class LayerCoordinator:
 
             c._search_layer_visibility[normalized_path] = next_visible
 
-            print(f"DEBUG: Syncing visibility for {normalized_path}: {next_visible}")
+            _logger.debug(f"DEBUG: Syncing visibility for {normalized_path}: {next_visible}")
             
             # Determine if this is a new layer that needs loading
             needs_loading = next_visible and normalized_path not in c._loaded_search_layer_keys
@@ -258,21 +260,21 @@ class LayerCoordinator:
         try:
             # Verify asset still exists
             if file_path not in c._search_result_assets_by_path:
-                print(f"DEBUG: Asset {file_path} no longer in search results, skip zoom")
+                _logger.debug(f"DEBUG: Asset {file_path} no longer in search results, skip zoom")
                 if was_loading:
                     c._set_layer_loading(False, "Ready")
                 return
             
             # Verify layer was actually loaded
             if file_path not in c._loaded_search_layer_keys:
-                print(f"DEBUG: Asset {file_path} not loaded yet, skip zoom")
+                _logger.debug(f"DEBUG: Asset {file_path} not loaded yet, skip zoom")
                 if was_loading:
                     c._set_layer_loading(False, "Ready")
                 return
             
             c._toolbar_zoom_to_asset(file_path)
         except Exception as e:
-            print(f"DEBUG: Error during zoom to asset {file_path}: {e}")
+            _logger.debug(f"DEBUG: Error during zoom to asset {file_path}: {e}")
             # Log but don't fail - the layer is still visible even if zoom fails
         finally:
             # Always clear loading state after zoom attempt

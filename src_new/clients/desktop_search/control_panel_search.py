@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
 from qtpy.QtCore import Qt
@@ -12,6 +13,8 @@ from qtpy.QtWidgets import (
     QTableWidgetItem,
     QWidget,
 )
+
+_logger = logging.getLogger(__name__)
 
 
 class ControlPanelSearchMixin:
@@ -158,11 +161,11 @@ class ControlPanelSearchMixin:
                 }
         self._layer_order_registry = new_registry
 
-        print("DEBUG: Sorted assets order:")
+        _logger.debug("DEBUG: Sorted assets order:")
         for i, asset in enumerate(sorted_assets):
             kind = str(asset.get("kind") or "").upper()
             file_name = str(asset.get("file_name") or "-")
-            print(f"  {i + 1}. {kind}: {file_name}")
+            _logger.debug(f"  {i + 1}. {kind}: {file_name}")
 
         for asset in sorted_assets:
             row = self.search_results_table.rowCount()
@@ -177,7 +180,7 @@ class ControlPanelSearchMixin:
             normalized_path = file_path.replace("\\", "/")
             is_visible = visibility_map.get(normalized_path, False)
 
-            print(f"DEBUG: Creating row {row} for {kind} - {file_name}")
+            _logger.debug(f"DEBUG: Creating row {row} for {kind} - {file_name}")
 
             # Create visibility toggle button with eye icons
             toggle_button = QPushButton(
@@ -211,7 +214,7 @@ class ControlPanelSearchMixin:
 
             if not file_path:
                 toggle_button.setEnabled(False)
-                print("  Button disabled (no file path)")
+                _logger.debug("  Button disabled (no file path)")
             else:
                 # Normalize path to match controller's format
                 normalized_path = file_path.replace("\\", "/")
@@ -222,7 +225,7 @@ class ControlPanelSearchMixin:
                     "file_path", normalized_path
                 )  # Store normalized path
 
-                print(
+                _logger.debug(
                     f"  Button created: text={'👁' if is_visible else '👁‍🗨'}, is_visible={is_visible}, path={normalized_path}"
                 )
 
@@ -230,19 +233,19 @@ class ControlPanelSearchMixin:
                     def handler():
                         current_visible = btn.property("is_visible")
                         new_visible = not current_visible
-                        print("\nDEBUG: Toggle button clicked!")
-                        print(f"  path: {path}")
-                        print(f"  current_visible: {current_visible}")
-                        print(f"  new_visible: {new_visible}")
+                        _logger.debug("\nDEBUG: Toggle button clicked!")
+                        _logger.debug(f"  path: {path}")
+                        _logger.debug(f"  current_visible: {current_visible}")
+                        _logger.debug(f"  new_visible: {new_visible}")
                         # Update button immediately for responsive feel
                         btn.setText("👁" if new_visible else "👁‍🗨")
                         btn.setToolTip(
                             "Hide from map" if new_visible else "Show on map"
                         )
                         btn.setProperty("is_visible", new_visible)
-                        print(f"  Button updated: text={'👁' if new_visible else '👁‍🗨'}")
+                        _logger.debug(f"  Button updated: text={'👁' if new_visible else '👁‍🗨'}")
                         # Emit signal to update map
-                        print(
+                        _logger.debug(
                             f"  Emitting signal: search_result_visibility_toggled({path}, {new_visible})"
                         )
                         self.search_result_visibility_toggled.emit(path, new_visible)
@@ -361,16 +364,16 @@ class ControlPanelSearchMixin:
                         Qt.ItemDataRole.ForegroundRole, QBrush(QColor(0, 0, 0))
                     )
 
-            print(
+            _logger.debug(
                 f"DEBUG: Created table items for row {row}: file={file_name}, kind={kind}, crs={crs}, path={normalized_path}"
             )
 
         # Don't enable sorting - it conflicts with drag-and-drop
         # self.search_results_table.setSortingEnabled(True)
-        print(
+        _logger.debug(
             f"\nDEBUG: Search results table populated with {self.search_results_table.rowCount()} rows"
         )
-        print(f"DEBUG: update_search_results completed\n{'=' * 80}\n")
+        _logger.debug(f"DEBUG: update_search_results completed\n{'=' * 80}\n")
 
     def update_vector_layers(self, layers: list[dict]) -> None:
         self.vector_layers_table.setRowCount(0)
@@ -570,11 +573,11 @@ class ControlPanelSearchMixin:
             Qt will clear the dragged row's data during the drag operation,
             so we need to preserve everything before that happens.
             """
-            print(f"\n{'=' * 80}")
-            print(
+            _logger.debug(f"\n{'=' * 80}")
+            _logger.debug(
                 f"DEBUG: START DRAG - capturing ALL {table.rowCount()} rows NOW (earliest moment)!"
             )
-            print(f"{'=' * 80}\n")
+            _logger.debug(f"{'=' * 80}\n")
 
             # Clear previous capture
             self._drag_captured_data = []
@@ -616,16 +619,16 @@ class ControlPanelSearchMixin:
                             "original_row": i,
                         }
                         self._drag_captured_data.append(row_data)
-                        print(
+                        _logger.debug(
                             f"DEBUG: Captured row {i}: {file_name} - {file_path} (visible={is_visible})"
                         )
                     else:
-                        print(f"WARNING: Row {i} missing file_path or file_name")
+                        _logger.debug(f"WARNING: Row {i} missing file_path or file_name")
                 else:
-                    print(f"WARNING: Row {i} has no file_item")
+                    _logger.debug(f"WARNING: Row {i} has no file_item")
 
-            print(f"DEBUG: Captured {len(self._drag_captured_data)} rows at START DRAG")
-            print(f"{'=' * 80}\n")
+            _logger.debug(f"DEBUG: Captured {len(self._drag_captured_data)} rows at START DRAG")
+            _logger.debug(f"{'=' * 80}\n")
 
             selected_rows = (
                 table.selectionModel().selectedRows() if table.selectionModel() else []
@@ -634,14 +637,14 @@ class ControlPanelSearchMixin:
                 self._drag_source_row = selected_rows[0].row()
             else:
                 self._drag_source_row = table.currentRow()
-            print(f"DEBUG: Drag source row = {self._drag_source_row}")
+            _logger.debug(f"DEBUG: Drag source row = {self._drag_source_row}")
 
             # Call original handler to start the drag
             original_start_drag(supported_actions)
 
         def custom_drag_enter(event):
             # Just pass through - data already captured in startDrag
-            print(
+            _logger.debug(
                 f"DEBUG: Drag enter - using {len(self._drag_captured_data)} pre-captured rows from startDrag"
             )
             original_drag_enter(event)
@@ -666,14 +669,14 @@ class ControlPanelSearchMixin:
             original_drag_move(event)
 
         def custom_drop_event(event):
-            print(f"\n{'=' * 80}")
-            print(
+            _logger.debug(f"\n{'=' * 80}")
+            _logger.debug(
                 f"DEBUG: Drop event - using {len(self._drag_captured_data)} pre-captured rows"
             )
-            print(f"{'=' * 80}\n")
+            _logger.debug(f"{'=' * 80}\n")
 
             if not self._drag_captured_data:
-                print("ERROR: No captured data available for reordering!")
+                _logger.debug("ERROR: No captured data available for reordering!")
                 original_drop_event(event)
                 return
 
@@ -699,7 +702,7 @@ class ControlPanelSearchMixin:
             ):
                 source_row = 0
 
-            print(
+            _logger.debug(
                 f"DEBUG: Drop target row = {drop_row} (indicator={indicator_pos}), source row = {source_row}"
             )
 
@@ -714,7 +717,7 @@ class ControlPanelSearchMixin:
             reordered.insert(drop_row, moved)
 
             event.acceptProposedAction()
-            print("DEBUG: Drop completed, triggering reorder handler")
+            _logger.debug("DEBUG: Drop completed, triggering reorder handler")
             self._on_search_results_reordered_with_data(
                 self._drag_captured_data, forced_order=reordered
             )
@@ -734,26 +737,26 @@ class ControlPanelSearchMixin:
         CRITICAL: Qt's drag-and-drop corrupts table item data during the operation.
         We use pre-captured data to rebuild the table with the correct order.
         """
-        print(f"\n{'=' * 80}")
-        print("DEBUG: _on_search_results_reordered_with_data called!")
-        print(f"{'=' * 80}\n")
+        _logger.debug(f"\n{'=' * 80}")
+        _logger.debug("DEBUG: _on_search_results_reordered_with_data called!")
+        _logger.debug(f"{'=' * 80}\n")
         try:
             table = self.search_results_table
             if table.rowCount() == 0:
-                print("DEBUG: Table is empty, returning")
+                _logger.debug("DEBUG: Table is empty, returning")
                 return
 
-            print(f"DEBUG: Table has {table.rowCount()} rows")
-            print(f"DEBUG: Using {len(pre_drop_row_data)} pre-captured rows")
+            _logger.debug(f"DEBUG: Table has {table.rowCount()} rows")
+            _logger.debug(f"DEBUG: Using {len(pre_drop_row_data)} pre-captured rows")
 
             if not pre_drop_row_data:
-                print(
+                _logger.debug(
                     "ERROR: No pre-drop data provided! Cannot reconstruct layer order."
                 )
                 return
 
             if forced_order is not None:
-                print(f"DEBUG: Using forced order with {len(forced_order)} rows")
+                _logger.debug(f"DEBUG: Using forced order with {len(forced_order)} rows")
                 table.setRowCount(0)
                 table.setRowCount(len(forced_order))
                 reordered_layers = []
@@ -769,15 +772,15 @@ class ControlPanelSearchMixin:
                             "display_order": i,
                         }
                     )
-                    print(
+                    _logger.debug(
                         f"  Row {i} rebuilt: {row_data['file_name']} ({row_data['kind']}) visible={row_data.get('is_visible', True)}"
                     )
                 table.viewport().update()
                 self._force_table_text_colors(table)
-                print(f"DEBUG: Extracted {len(reordered_layers)} layers")
+                _logger.debug(f"DEBUG: Extracted {len(reordered_layers)} layers")
 
                 if len(reordered_layers) == 0:
-                    print("ERROR: No layers extracted! Cannot proceed with reordering.")
+                    _logger.debug("ERROR: No layers extracted! Cannot proceed with reordering.")
                     return
 
                 self._pending_reorder_data = reordered_layers
@@ -793,9 +796,9 @@ class ControlPanelSearchMixin:
                     for layer in reordered_layers
                     if layer.get("file_path")
                 }
-                print("DEBUG: Starting debounce timer (150ms)")
+                _logger.debug("DEBUG: Starting debounce timer (150ms)")
                 self._reorder_debounce_timer.start(150)
-                print("DEBUG: _on_search_results_reordered_with_data completed\n")
+                _logger.debug("DEBUG: _on_search_results_reordered_with_data completed\n")
                 return
 
             # Build a map of file_path -> full row data (use file_path as key for uniqueness)
@@ -803,7 +806,7 @@ class ControlPanelSearchMixin:
             for row_data in pre_drop_row_data:
                 data_by_filepath[row_data["file_path"]] = row_data
 
-            print(f"DEBUG: Data map has {len(data_by_filepath)} unique file paths")
+            _logger.debug(f"DEBUG: Data map has {len(data_by_filepath)} unique file paths")
 
             # Try to extract the new order from existing table items after Qt's drop
             current_order = []
@@ -815,22 +818,22 @@ class ControlPanelSearchMixin:
                     file_path = file_item.data(Qt.ItemDataRole.UserRole)
                     if file_path and file_path in data_by_filepath:
                         current_order.append(file_path)
-                        print(f"  Row {i} has valid file_path: {file_path}")
+                        _logger.debug(f"  Row {i} has valid file_path: {file_path}")
                     else:
-                        print(f"  Row {i} has invalid/missing file_path: {file_path}")
+                        _logger.debug(f"  Row {i} has invalid/missing file_path: {file_path}")
                         table_corrupted = True
                         break
                 else:
-                    print(f"  Row {i} has no file_item")
+                    _logger.debug(f"  Row {i} has no file_item")
                     table_corrupted = True
                     break
 
             # If Qt corrupted the table or we couldn't extract proper order, rebuild completely
             if table_corrupted or len(current_order) != len(pre_drop_row_data):
-                print(
+                _logger.debug(
                     f"  Table corrupted or incomplete: extracted {len(current_order)} paths but expected {len(pre_drop_row_data)}"
                 )
-                print(
+                _logger.debug(
                     "  Rebuilding table completely from pre-drop data in current order"
                 )
 
@@ -855,7 +858,7 @@ class ControlPanelSearchMixin:
 
                 # If we still don't have a complete order, use the original order
                 if len(new_order) != len(pre_drop_row_data):
-                    print("  Could not determine new order, using original order")
+                    _logger.debug("  Could not determine new order, using original order")
                     new_order = [data["file_path"] for data in pre_drop_row_data]
 
                 # Clear and rebuild the table with the determined order
@@ -881,15 +884,15 @@ class ControlPanelSearchMixin:
                         }
                     )
 
-                    print(
+                    _logger.debug(
                         f"  Row {i} rebuilt: {row_data['file_name']} ({row_data['kind']}) visible={row_data.get('is_visible', True)}"
                     )
 
-                print(f"DEBUG: Table rebuilt with {len(reordered_layers)} rows")
+                _logger.debug(f"DEBUG: Table rebuilt with {len(reordered_layers)} rows")
 
             else:
                 # Table items are intact, just update them to ensure consistency
-                print(f"  Table intact: processing {len(current_order)} rows normally")
+                _logger.debug(f"  Table intact: processing {len(current_order)} rows normally")
 
                 reordered_layers = []
                 for i, file_path in enumerate(current_order):
@@ -910,7 +913,7 @@ class ControlPanelSearchMixin:
                         }
                     )
 
-                    print(
+                    _logger.debug(
                         f"  Row {i} updated: {row_data['file_name']} ({row_data['kind']}) visible={row_data.get('is_visible', True)}"
                     )
 
@@ -920,10 +923,10 @@ class ControlPanelSearchMixin:
             # CRITICAL: Force text color refresh after table operations
             self._force_table_text_colors(table)
 
-            print(f"DEBUG: Extracted {len(reordered_layers)} layers")
+            _logger.debug(f"DEBUG: Extracted {len(reordered_layers)} layers")
 
             if len(reordered_layers) == 0:
-                print("ERROR: No layers extracted! Cannot proceed with reordering.")
+                _logger.debug("ERROR: No layers extracted! Cannot proceed with reordering.")
                 return
 
             # Store the reorder data and update the local order registry
@@ -940,12 +943,12 @@ class ControlPanelSearchMixin:
                 for layer in reordered_layers
                 if layer.get("file_path")
             }
-            print("DEBUG: Starting debounce timer (150ms)")
+            _logger.debug("DEBUG: Starting debounce timer (150ms)")
             self._reorder_debounce_timer.start(150)  # 150ms debounce
-            print("DEBUG: _on_search_results_reordered_with_data completed\n")
+            _logger.debug("DEBUG: _on_search_results_reordered_with_data completed\n")
 
         except Exception as e:
-            print(f"ERROR: Failed to handle search results reordering: {e}")
+            _logger.debug(f"ERROR: Failed to handle search results reordering: {e}")
             import traceback
 
             traceback.print_exc()
@@ -1246,35 +1249,35 @@ class ControlPanelSearchMixin:
                             Qt.ItemDataRole.ForegroundRole, QBrush(QColor(0, 0, 0))
                         )
         except Exception as e:
-            print(f"WARNING: Failed to force table text colors: {e}")
+            _logger.debug(f"WARNING: Failed to force table text colors: {e}")
 
     def _process_pending_reorder(self) -> None:
         """Process the pending reorder operation after debounce delay."""
-        print(f"\n{'=' * 80}")
-        print("DEBUG: _process_pending_reorder called!")
-        print(f"  _pending_reorder_data: {self._pending_reorder_data}")
-        print(f"{'=' * 80}\n")
+        _logger.debug(f"\n{'=' * 80}")
+        _logger.debug("DEBUG: _process_pending_reorder called!")
+        _logger.debug(f"  _pending_reorder_data: {self._pending_reorder_data}")
+        _logger.debug(f"{'=' * 80}\n")
 
         if self._pending_reorder_data is None:
-            print("DEBUG: No pending reorder data, returning")
+            _logger.debug("DEBUG: No pending reorder data, returning")
             return
 
         try:
             # Emit signal to controller for real-time globe layer reordering
             if hasattr(self, "search_layers_reordered"):
-                print(
+                _logger.debug(
                     f"DEBUG: Emitting search_layers_reordered signal with {len(self._pending_reorder_data)} layers"
                 )
                 self.search_layers_reordered.emit(self._pending_reorder_data)
-                print("DEBUG: Signal emitted successfully")
+                _logger.debug("DEBUG: Signal emitted successfully")
             else:
-                print("ERROR: search_layers_reordered signal not found!")
+                _logger.debug("ERROR: search_layers_reordered signal not found!")
 
             self._pending_reorder_data = None
-            print("DEBUG: _process_pending_reorder completed\n")
+            _logger.debug("DEBUG: _process_pending_reorder completed\n")
 
         except Exception as e:
-            print(f"ERROR: Failed to process pending reorder: {e}")
+            _logger.debug(f"ERROR: Failed to process pending reorder: {e}")
             import traceback
 
             traceback.print_exc()
