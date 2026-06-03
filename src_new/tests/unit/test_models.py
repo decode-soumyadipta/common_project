@@ -21,9 +21,7 @@ from src_new.shared.models.raster_metadata import RasterKind, RasterMetadata
 from src_new.shared.models.tile_request import TileRequest
 
 
-# =============================================================================
-# BoundingBox Tests
-# =============================================================================
+# ============================================================================= BoundingBox Tests =============================================================================
 
 class TestBoundingBox:
     """Test suite for BoundingBox model validation and methods."""
@@ -247,9 +245,7 @@ class TestBoundingBox:
         assert bbox_restored == bbox
 
 
-# =============================================================================
-# CoordinateReferenceSystem Tests
-# =============================================================================
+# ============================================================================= CoordinateReferenceSystem Tests =============================================================================
 
 class TestCoordinateReferenceSystem:
     """Test suite for CoordinateReferenceSystem model."""
@@ -327,9 +323,7 @@ class TestCoordinateReferenceSystem:
         assert "not a valid integer" in str(exc_info.value)
 
 
-# =============================================================================
-# RasterMetadata Tests
-# =============================================================================
+# ============================================================================= RasterMetadata Tests =============================================================================
 
 class TestRasterMetadata:
     """Test suite for RasterMetadata model."""
@@ -541,9 +535,7 @@ class TestRasterMetadata:
         assert meta_restored.upload_date == meta.upload_date
 
 
-# =============================================================================
-# QueryResult Tests
-# =============================================================================
+# ============================================================================= QueryResult Tests =============================================================================
 
 class TestQueryResult:
     """Test suite for QueryResult model."""
@@ -662,9 +654,7 @@ class TestQueryResult:
         assert result.rasters == []
 
 
-# =============================================================================
-# TileRequest Tests
-# =============================================================================
+# ============================================================================= TileRequest Tests =============================================================================
 
 class TestTileRequest:
     """Test suite for TileRequest model."""

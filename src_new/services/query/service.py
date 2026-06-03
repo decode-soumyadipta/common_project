@@ -38,9 +38,7 @@ from src_new.shared.auth.lan_security import LANSecurityMiddleware, get_bind_hos
 from src_new.shared.config import settings
 from src_new.shared.utils.error_handlers import register_exception_handlers
 
-# ---------------------------------------------------------------------------
-# Logging setup — configure before creating the app so startup messages land
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Logging setup — configure before creating the app so startup messages land ---------------------------------------------------------------------------
 
 try:
     from src_new.shared.utils.logging_config import configure_logging
@@ -55,9 +53,7 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# FastAPI application
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- FastAPI application ---------------------------------------------------------------------------
 
 app = FastAPI(
     title="Query Service",
@@ -68,23 +64,17 @@ app = FastAPI(
     version="1.0.0",
     # Disable automatic redirect for trailing slashes to avoid CORS issues
     redirect_slashes=False,
-    # Restrict OpenAPI docs to LAN (docs are still served; auth is handled
-    # by LANSecurityMiddleware at the network level)
+    # Restrict OpenAPI docs to LAN (docs are still served; auth is handled by LANSecurityMiddleware at the network level)
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
 )
 
-# ---------------------------------------------------------------------------
-# Middleware — LAN security (Requirement 16.1)
-# Must be added BEFORE routers so it intercepts every request.
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Middleware — LAN security (Requirement 16.1) Must be added BEFORE routers so it intercepts every request. ---------------------------------------------------------------------------
 
 app.add_middleware(LANSecurityMiddleware)
 
-# ---------------------------------------------------------------------------
-# Request/Response Logging Middleware (Requirement 18.3)
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Request/Response Logging Middleware (Requirement 18.3) ---------------------------------------------------------------------------
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
@@ -128,21 +118,15 @@ async def log_requests(request: Request, call_next):
     
     return response
 
-# ---------------------------------------------------------------------------
-# Routers
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Routers ---------------------------------------------------------------------------
 
 app.include_router(router)
 
-# ---------------------------------------------------------------------------
-# Exception handlers
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Exception handlers ---------------------------------------------------------------------------
 
 register_exception_handlers(app)
 
-# ---------------------------------------------------------------------------
-# Startup / shutdown lifecycle events
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Startup / shutdown lifecycle events ---------------------------------------------------------------------------
 
 
 @app.on_event("startup")
@@ -178,9 +162,7 @@ async def _on_shutdown() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# Programmatic entry point (python -m src_new.services.query.service)
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Programmatic entry point (python -m src_new.services.query.service) ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     host = get_bind_host()

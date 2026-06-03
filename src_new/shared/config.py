@@ -19,13 +19,10 @@ from typing import Literal
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Resolve the project root as the directory two levels above this file:
-# src_new/shared/config.py → src_new/ → project_root/
+# Resolve the project root as the directory two levels above this file: src_new/shared/config.py → src_new/ → project_root/
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
-# Load .env from the project root before Pydantic reads env vars.
-# This ensures variables are available even when the process is started
-# from a different working directory.
+# Load .env from the project root before Pydantic reads env vars. This ensures variables are available even when the process is started from a different working directory.
 load_dotenv(_PROJECT_ROOT / ".env", override=False)
 
 logger = logging.getLogger(__name__)
@@ -39,30 +36,22 @@ class Settings(BaseSettings):
     When a variable is missing, the default is used and a warning is logged.
     """
 
-    # -------------------------------------------------------------------------
-    # 1. Data storage
-    # -------------------------------------------------------------------------
+    # ------------------------------------------------------------------------- 1. Data storage -------------------------------------------------------------------------
     data_root: Path = Path(".").resolve()
     """Root directory for all geospatial data files (COGs, MBTiles, etc.)."""
 
-    # -------------------------------------------------------------------------
-    # 2. Database
-    # -------------------------------------------------------------------------
+    # ------------------------------------------------------------------------- 2. Database -------------------------------------------------------------------------
     database_url: str = f"sqlite:///{_PROJECT_ROOT.as_posix()}/offline_gis.db"
     """SQLAlchemy-compatible database URL. Use postgresql+psycopg2:// for PostGIS."""
 
-    # -------------------------------------------------------------------------
-    # 3. API / service binding
-    # -------------------------------------------------------------------------
+    # ------------------------------------------------------------------------- 3. API / service binding -------------------------------------------------------------------------
     api_host: str = "127.0.0.1"
     """Host interface for all services. Set to LAN IP for multi-machine deployment."""
 
     api_port: int = 8000
     """Default API port (used when a service-specific port is not set)."""
 
-    # -------------------------------------------------------------------------
-    # 4. Service URLs (used by clients and inter-service communication)
-    # -------------------------------------------------------------------------
+    # ------------------------------------------------------------------------- 4. Service URLs (used by clients and inter-service communication) -------------------------------------------------------------------------
     titiler_base_url: str = "http://127.0.0.1:8002"
     """Base URL of the TiTiler tile service."""
 
@@ -78,9 +67,7 @@ class Settings(BaseSettings):
     tile_service_url: str = "http://127.0.0.1:8002"
     """Base URL of the Tile Service (Server 1)."""
 
-    # -------------------------------------------------------------------------
-    # 5. Service ports (used by service entry points)
-    # -------------------------------------------------------------------------
+    # ------------------------------------------------------------------------- 5. Service ports (used by service entry points) -------------------------------------------------------------------------
     ingestion_service_port: int = 8001
     """Port for the Ingestion Service."""
 
@@ -90,36 +77,28 @@ class Settings(BaseSettings):
     query_service_port: int = 8003
     """Port for the Query Service."""
 
-    # -------------------------------------------------------------------------
-    # 6. Upload / tile limits
-    # -------------------------------------------------------------------------
+    # ------------------------------------------------------------------------- 6. Upload / tile limits -------------------------------------------------------------------------
     max_upload_size: int = 10 * 1024 * 1024 * 1024  # 10 GB
     """Maximum allowed upload size in bytes."""
 
     tile_cache_size: int = 512
     """Maximum number of tiles to keep in the in-memory LRU cache."""
 
-    # -------------------------------------------------------------------------
-    # 7. GDAL performance tuning
-    # -------------------------------------------------------------------------
+    # ------------------------------------------------------------------------- 7. GDAL performance tuning -------------------------------------------------------------------------
     gdal_disable_readdir_on_open: str = "EMPTY_DIR"
     """GDAL_DISABLE_READDIR_ON_OPEN value. Speeds up COG access."""
 
     gdal_http_merge_consecutive_ranges: str = "YES"
     """GDAL_HTTP_MERGE_CONSECUTIVE_RANGES value. Reduces HTTP round-trips."""
 
-    # -------------------------------------------------------------------------
-    # 8. Security / network
-    # -------------------------------------------------------------------------
+    # ------------------------------------------------------------------------- 8. Security / network -------------------------------------------------------------------------
     allowed_hosts: str = "127.0.0.1"
     """Comma-separated list of allowed client IP addresses for LAN security."""
 
     bind_all_interfaces: bool = False
     """When True, services bind to 0.0.0.0 instead of api_host. Use with caution."""
 
-    # -------------------------------------------------------------------------
-    # 9. Logging
-    # -------------------------------------------------------------------------
+    # ------------------------------------------------------------------------- 9. Logging -------------------------------------------------------------------------
     log_level: str = "INFO"
     """Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL."""
 
@@ -129,16 +108,12 @@ class Settings(BaseSettings):
     log_output_path: str = ""
     """Path to log file. Empty string means stdout only."""
 
-    # -------------------------------------------------------------------------
-    # 10. Deployment topology (legacy compat)
-    # -------------------------------------------------------------------------
+    # ------------------------------------------------------------------------- 10. Deployment topology (legacy compat) -------------------------------------------------------------------------
     deployment_topology: Literal["same-machine", "split-lan", "hybrid", "distributed"] = (
         "same-machine"
     )
 
-    # -------------------------------------------------------------------------
-    # 11. Ingestion performance (preserved from existing settings)
-    # -------------------------------------------------------------------------
+    # ------------------------------------------------------------------------- 11. Ingestion performance (preserved from existing settings) -------------------------------------------------------------------------
     max_ingest_workers: int = 5
     ingest_checkpoint_interval: int = 1
     ingest_item_max_retries: int = 3
@@ -147,18 +122,14 @@ class Settings(BaseSettings):
     ingest_enable_cog_conversion: bool = True
     ingest_cog_overwrite: bool = False
 
-    # -------------------------------------------------------------------------
-    # 12. COG / GDAL output settings
-    # -------------------------------------------------------------------------
+    # ------------------------------------------------------------------------- 12. COG / GDAL output settings -------------------------------------------------------------------------
     cog_blocksize: int = 512
     cog_compression: str = "LZW"
     cog_overview_resampling: str = "average"
     ingest_organize_outputs: bool = True
     ingest_output_base_dir: str = "processed_outputs"
 
-    # -------------------------------------------------------------------------
-    # 13. TiTiler tile matrix
-    # -------------------------------------------------------------------------
+    # ------------------------------------------------------------------------- 13. TiTiler tile matrix -------------------------------------------------------------------------
     titiler_tile_matrix_set_id: str = "WebMercatorQuad"
 
     model_config = SettingsConfigDict(

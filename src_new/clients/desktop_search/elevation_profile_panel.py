@@ -49,7 +49,7 @@ except ImportError:
         _ChartBase = QWidget  # CPU fallback — still works fine
 
 
-#  Colour palette 
+# Colour palette
 _BG = QColor(255, 255, 255)
 _GRID = QColor(215, 225, 240)
 _AXIS = QColor(50, 70, 100)
@@ -75,9 +75,7 @@ _MT = 22  # margin top
 _MR = 12  # margin right
 
 
-# 
 # 2D Profile Chart
-# 
 
 
 class _Profile2DWidget(_ChartBase):
@@ -302,13 +300,9 @@ class _Profile2DWidget(_ChartBase):
             p.drawText(lbl_x, lbl_y, lbl)
 
 
-# 
 # 3D Section Plane Widget
-# 
 
-# 
 # 3D Section Plane Widget — interactive (drag to rotate, scroll to zoom)
-# 
 
 
 def _elev_to_color(frac: float) -> QColor:
@@ -370,7 +364,7 @@ class _Profile3DWidget(_ChartBase):
         self._cursor_frac = frac
         self.update()
 
-    #  Mouse interaction 
+    # Mouse interaction
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.MouseButton.LeftButton:
@@ -430,7 +424,7 @@ class _Profile3DWidget(_ChartBase):
         self._zoom = max(0.2, min(6.0, self._zoom))
         self.update()
 
-    #  Rendering 
+    # Rendering
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
@@ -495,7 +489,7 @@ class _Profile3DWidget(_ChartBase):
 
         depth = 0.15  # thickness of the section plane
 
-        #  Back face 
+        # Back face
         bp = QPolygonF(
             [pt(i, depth) for i in range(n)]
             + [pt_base(i, depth) for i in range(n - 1, -1, -1)]
@@ -504,7 +498,7 @@ class _Profile3DWidget(_ChartBase):
         p.setPen(Qt.PenStyle.NoPen)
         p.drawPolygon(bp)
 
-        #  Front face — coloured strips 
+        # Front face — coloured strips
         for i in range(n - 1):
             frac_l = (vals[i] - vmin) / vrange
             frac_r = (vals[i + 1] - vmin) / vrange
@@ -522,7 +516,7 @@ class _Profile3DWidget(_ChartBase):
             p.setPen(Qt.PenStyle.NoPen)
             p.drawPolygon(quad)
 
-        #  Top connecting face 
+        # Top connecting face
         for i in range(n - 1):
             frac_m = ((vals[i] + vals[i + 1]) / 2 - vmin) / vrange
             col = _elev_to_color(frac_m)
@@ -532,7 +526,7 @@ class _Profile3DWidget(_ChartBase):
             p.setPen(Qt.PenStyle.NoPen)
             p.drawPolygon(quad)
 
-        #  Side walls 
+        # Side walls
         for side_i in [0, n - 1]:
             wall = QPolygonF(
                 [
@@ -546,20 +540,20 @@ class _Profile3DWidget(_ChartBase):
             p.setPen(QPen(_RIBBON_EDGE, 0.6))
             p.drawPolygon(wall)
 
-        #  Profile edge line 
+        # Profile edge line
         p.setPen(QPen(QColor(20, 60, 120), 1.8))
         p.setBrush(Qt.BrushStyle.NoBrush)
         for i in range(1, n):
             p.drawLine(pt(i - 1, 0), pt(i, 0))
 
-        #  Base lines 
+        # Base lines
         p.setPen(QPen(_AXIS, 0.8))
         p.drawLine(pt_base(0, 0), pt_base(n - 1, 0))
         p.drawLine(pt_base(0, depth), pt_base(n - 1, depth))
         p.drawLine(pt_base(0, 0), pt_base(0, depth))
         p.drawLine(pt_base(n - 1, 0), pt_base(n - 1, depth))
 
-        #  Y-axis ticks 
+        # Y-axis ticks
         p.setFont(_FONT_SMALL)
         fm = QFontMetrics(_FONT_SMALL)
         p.setPen(_TICK_LABEL)
@@ -573,7 +567,7 @@ class _Profile3DWidget(_ChartBase):
             tw = fm.horizontalAdvance(lbl)
             p.drawText(int(sp.x()) - tw - 4, int(sp.y()) + fm.ascent() // 2, lbl)
 
-        #  Title 
+        # Title
         p.setFont(_FONT_TITLE)
         p.setPen(_TITLE)
         p.drawText(8, 18, "3D Cross-Section")
@@ -581,7 +575,7 @@ class _Profile3DWidget(_ChartBase):
         p.setPen(_TICK_LABEL)
         p.drawText(8, 30, "L-drag: rotate  R-drag: pan  Scroll: zoom  Dbl-click: reset")
 
-        #  Colorbar 
+        # Colorbar
         cb_h = H - 60
         cb_y0 = 30
         n_stops = 64
@@ -614,7 +608,7 @@ class _Profile3DWidget(_ChartBase):
         p.drawText(-20, 0, "m")
         p.restore()
 
-        #  Georeferenced cursor point on 3D section 
+        # Georeferenced cursor point on 3D section
         if self._cursor_frac is not None and 0.0 <= self._cursor_frac <= 1.0 and n >= 2:
             frac = self._cursor_frac
             idx_f = frac * (n - 1)
@@ -640,9 +634,7 @@ class _Profile3DWidget(_ChartBase):
             p.drawLine(sp, base_sp)
 
 
-# 
 # Embedded panel (not a dialog — lives inside the main window splitter)
-# 
 
 
 class ElevationProfilePanel(QWidget):
@@ -660,14 +652,14 @@ class ElevationProfilePanel(QWidget):
         self.setMaximumHeight(400)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-        #  Separator line at top 
+        # Separator line at top
         sep = QFrame(self)
         sep.setFrameShape(QFrame.Shape.HLine)
         sep.setFrameShadow(QFrame.Shadow.Plain)
         sep.setStyleSheet("QFrame { color: #c9d3df; margin: 0px; }")
         sep.setFixedHeight(1)
 
-        #  Header bar 
+        # Header bar
         header_bar = QWidget(self)
         header_bar.setFixedHeight(26)
         header_bar.setStyleSheet("QWidget { background: #eef2f7; }")
@@ -697,7 +689,7 @@ class ElevationProfilePanel(QWidget):
         close_btn.clicked.connect(self.close_requested.emit)
         hbl.addWidget(close_btn)
 
-        #  Charts 
+        # Charts
         self._chart_2d = _Profile2DWidget(self)
 
         charts_row = QHBoxLayout()
@@ -705,7 +697,7 @@ class ElevationProfilePanel(QWidget):
         charts_row.setSpacing(0)
         charts_row.addWidget(self._chart_2d)
 
-        #  Root layout 
+        # Root layout
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)

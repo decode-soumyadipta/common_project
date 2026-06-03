@@ -13,8 +13,7 @@ import httpx
 
 from src_new.shared.config import settings
 
-# Note: server_gateway is only needed in UNIFIED/SERVER modes
-# In CLIENT mode, we connect to external services
+# Note: server_gateway is only needed in UNIFIED/SERVER modes In CLIENT mode, we connect to external services
 try:
     from server_gateway.api.routes.health import API_BUILD
 except ImportError:
@@ -44,13 +43,11 @@ class ApiServerManager:
             if not response.is_success:
                 return False, False
             
-            # If we get a 200 OK, the server is at least alive.
-            # Try to parse JSON to detect stale builds.
+            # If we get a 200 OK, the server is at least alive. Try to parse JSON to detect stale builds.
             try:
                 payload = response.json()
             except Exception:
-                # 200 OK but not JSON yet? Might be starting up.
-                # Return ready=True to satisfy the wait loop, but stale=False.
+                # 200 OK but not JSON yet? Might be starting up. Return ready=True to satisfy the wait loop, but stale=False.
                 return True, False
 
             if not isinstance(payload, dict):
@@ -58,8 +55,7 @@ class ApiServerManager:
 
             api_build = payload.get("api_build")
             
-            # If api_build is missing, it's either an old version or still initializing.
-            # We treat this as "ready" so the app can proceed, but not "stale".
+            # If api_build is missing, it's either an old version or still initializing. We treat this as "ready" so the app can proceed, but not "stale".
             if api_build is None:
                 return True, False
             
@@ -169,8 +165,7 @@ class ApiServerManager:
         pids: set[int] = set()
         for line in (result.stdout or "").splitlines():
             parts = line.split()
-            # netstat -ano output: Proto  Local  Foreign  State  PID
-            # e.g. TCP  0.0.0.0:8000  0.0.0.0:0  LISTENING  1234
+            # netstat -ano output: Proto  Local  Foreign  State  PID e.g. TCP  0.0.0.0:8000  0.0.0.0:0  LISTENING  1234
             if len(parts) < 5:
                 continue
             local = parts[1]

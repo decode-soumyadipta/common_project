@@ -302,8 +302,7 @@ class ControlPanelIngestMixin:
             if path_obj.suffix.lower() in [".jp2", ".j2k"]:
                 prj_file = path_obj.with_suffix(".prj")
                 if prj_file.exists() and str(prj_file) not in file_paths:
-                    # Don't add .prj to result_files, just mark as processed
-                    # The ingestion system will handle auxiliary files automatically
+                    # Don't add .prj to result_files, just mark as processed The ingestion system will handle auxiliary files automatically
                     processed_files.add(str(prj_file))
 
         return result_files
@@ -399,8 +398,7 @@ class ControlPanelIngestMixin:
                     )
                     return
 
-                # Sort by ingest timestamp (most recent first) - API already returns in this order
-                # but we ensure it here for consistency
+                # Sort by ingest timestamp (most recent first) - API already returns in this order but we ensure it here for consistency
                 sorted_assets = sorted(
                     assets, key=lambda a: a.get("created_at", ""), reverse=True
                 )
@@ -518,8 +516,7 @@ class ControlPanelIngestMixin:
 
         self._last_refresh_time = time.time()
 
-        # Just refresh the uploaded assets without clearing caches
-        # Cache clearing will be handled by the controller when needed
+        # Just refresh the uploaded assets without clearing caches Cache clearing will be handled by the controller when needed
         self.refresh_uploaded_assets()
 
     def _is_recent_asset(self, timestamp: str | None) -> bool:

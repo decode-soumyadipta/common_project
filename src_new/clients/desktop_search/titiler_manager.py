@@ -180,8 +180,7 @@ class TiTilerManager:
         _python_exe = Path(sys.executable).resolve()
         _env_root = _python_exe.parent  # conda env root on Windows (bin folder)
 
-        # On Windows/Conda, the DLLs (GEOS for shapely, GDAL for rasterio) are in Library/bin.
-        # We must ensure this is in the PATH of the subprocess.
+        # On Windows/Conda, the DLLs (GEOS for shapely, GDAL for rasterio) are in Library/bin. We must ensure this is in the PATH of the subprocess.
         _env_lib_bin = _env_root / "Library" / "bin"
         _env_scripts = _env_root / "Scripts"
         _new_paths = [str(_env_root), str(_env_scripts), str(_env_lib_bin)]
@@ -240,8 +239,7 @@ class TiTilerManager:
         # ── Windows-specific subprocess flags ─────────────────────────────────
         kwargs: dict = dict(env=env, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
         if platform.system() == "Windows":
-            # CREATE_NO_WINDOW (0x08000000): suppress console flash
-            # CREATE_NEW_PROCESS_GROUP (0x00000200): isolate signal handling
+            # CREATE_NO_WINDOW (0x08000000): suppress console flash CREATE_NEW_PROCESS_GROUP (0x00000200): isolate signal handling
             kwargs["creationflags"] = 0x08000000 | 0x00000200
 
         self._process = subprocess.Popen(command, **kwargs)

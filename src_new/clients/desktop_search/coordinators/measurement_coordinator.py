@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import datetime as dt
-import json
 
-from qtpy.QtCore import Qt, QObject, Signal as _Signal, QThreadPool
+from qtpy.QtCore import Qt
 
 from src_new.clients.desktop_search.measurement_worker import MeasurementWorker
 from src_new.clients.desktop_search.measurement_tools import (
@@ -67,10 +66,7 @@ class MeasurementCoordinator:
             c.bridge.loadingProgress.emit(0, f"Computing {name}")
 
         worker = MeasurementWorker(name=name, task=task)
-        # Keep a strong Python reference so the worker and its signals QObject
-        # stay alive until on_measurement_job_finished clears it.
-        # Without this, Qt's autoDelete destroys the C++ side after run(),
-        # leaving a dangling pointer that segfaults on the next pool.start().
+        # Keep a strong Python reference so the worker and its signals QObject stay alive until on_measurement_job_finished clears it. Without this, Qt's autoDelete destroys the C++ side after run(), leaving a dangling pointer that segfaults on the next pool.start().
         self._active_worker = worker
         worker.signals.finished.connect(
             lambda job_name, result, error, fmt=formatter: (

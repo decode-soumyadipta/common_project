@@ -32,8 +32,7 @@ class CameraCoordinator:
             lon_diff = east - west
             diagonal = math.sqrt(lat_diff**2 + lon_diff**2)
 
-            # Camera height based on asset size (in degrees to meters approximation)
-            # 1 degree ≈ 111km, we want to see the whole asset
+            # Camera height based on asset size (in degrees to meters approximation) 1 degree ≈ 111km, we want to see the whole asset
             camera_height = diagonal * 111000 * 1.5  # 1.5x for padding
             camera_height = max(
                 1000, min(camera_height, 50000000)

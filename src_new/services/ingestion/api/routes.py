@@ -51,24 +51,17 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["ingestion"])
 
-# ---------------------------------------------------------------------------
-# Supported file extensions (mirrors src_new/shared/constants.py)
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Supported file extensions (mirrors src_new/shared/constants.py) ---------------------------------------------------------------------------
 
 _SUPPORTED_EXTENSIONS = {".tif", ".tiff", ".jp2", ".j2k", ".mbtiles"}
 
-# ---------------------------------------------------------------------------
-# In-memory ingestion status store
-# (In production this would be backed by the database / a job queue)
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- In-memory ingestion status store (In production this would be backed by the database / a job queue) ---------------------------------------------------------------------------
 
 # Maps raster_id → IngestionStatus dict
 _ingestion_status: dict[str, dict] = {}
 
 
-# ---------------------------------------------------------------------------
-# Response schemas
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Response schemas ---------------------------------------------------------------------------
 
 
 class UploadResponse(BaseModel):
@@ -133,9 +126,7 @@ class DeleteAssetsResponse(BaseModel):
     missing: list[str]
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Internal helpers ---------------------------------------------------------------------------
 
 
 def _save_upload_to_disk(upload: UploadFile, data_root: Path, max_size: int) -> Path:
@@ -312,9 +303,7 @@ def _catalog_raster_in_db(metadata: RasterMetadata, db: Session) -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Endpoints ---------------------------------------------------------------------------
 
 
 @router.post(
@@ -436,9 +425,7 @@ def upload_raster(
 
     _ingestion_status[raster_id]["progress"] = 0.3
 
-    # --- 3.5. Schedule COG conversion as a background task ---
-    # Fires AFTER the HTTP response is returned so it never blocks or
-    # causes 500s. COG files will be available for fast tiling on next request.
+    # --- 3.5. Schedule COG conversion as a background task --- Fires AFTER the HTTP response is returned so it never blocks or causes 500s. COG files will be available for fast tiling on next request.
     if ext in {".tif", ".tiff", ".jp2", ".j2k"}:
         _cog_path = saved_path  # capture snapshot before any mutation
         def _bg_cog(p: Path = _cog_path) -> None:
@@ -725,9 +712,7 @@ def health_check(
     }
 
 
-# ---------------------------------------------------------------------------
-# Expose the in-memory status store for testing
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Expose the in-memory status store for testing ---------------------------------------------------------------------------
 
 
 def _get_ingestion_status_store() -> dict:

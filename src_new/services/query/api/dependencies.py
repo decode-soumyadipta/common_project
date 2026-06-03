@@ -32,9 +32,7 @@ from src_new.shared.config import Settings, settings as _default_settings
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Engine / session factory — built lazily from settings so tests can override
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Engine / session factory — built lazily from settings so tests can override ---------------------------------------------------------------------------
 
 _engine = None
 _SessionLocal = None
@@ -92,9 +90,7 @@ def _get_session_factory():
     return _SessionLocal
 
 
-# ---------------------------------------------------------------------------
-# FastAPI dependency: database session
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- FastAPI dependency: database session ---------------------------------------------------------------------------
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -123,9 +119,7 @@ def get_db() -> Generator[Session, None, None]:
         session.close()
 
 
-# ---------------------------------------------------------------------------
-# FastAPI dependency: settings
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- FastAPI dependency: settings ---------------------------------------------------------------------------
 
 
 def get_settings() -> Settings:
@@ -140,9 +134,7 @@ def get_settings() -> Settings:
     return _default_settings
 
 
-# ---------------------------------------------------------------------------
-# FastAPI dependency: RasterRepository
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- FastAPI dependency: RasterRepository ---------------------------------------------------------------------------
 
 
 def get_raster_repository(
@@ -161,9 +153,7 @@ def get_raster_repository(
     return RasterRepository(db)
 
 
-# ---------------------------------------------------------------------------
-# Type aliases for cleaner route signatures
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Type aliases for cleaner route signatures ---------------------------------------------------------------------------
 
 DbSession = Annotated[Session, Depends(get_db)]
 AppSettings = Annotated[Settings, Depends(get_settings)]

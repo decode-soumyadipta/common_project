@@ -151,8 +151,7 @@ class ComparatorCoordinator:
             c.panel.log("Comparator disabled. Select at least two layers.")
             return False
 
-        # Send the full ordered list of selected paths so the JS resolveComparatorLayerKeys
-        # always returns exactly len(selected) keys — no ghost panes from extra visible layers.
+        # Send the full ordered list of selected paths so the JS resolveComparatorLayerKeys always returns exactly len(selected) keys — no ghost panes from extra visible layers.
         c._run_js_call("setComparatorAllLayers", _json.dumps(selected))
 
         # Also keep the legacy left/right pair for backward compat with setComparatorLayers callers.
@@ -203,8 +202,7 @@ class ComparatorCoordinator:
         c._swipe_comparator_enabled = next_state
         c._run_js_call("setComparator", c._swipe_comparator_enabled)
 
-        # Keep AOI/search marker visibility aligned with the checkbox state.
-        # Comparator mode transitions can trigger re-renders that otherwise surface stale marker visibility.
+        # Keep AOI/search marker visibility aligned with the checkbox state. Comparator mode transitions can trigger re-renders that otherwise surface stale marker visibility.
         desired_aoi_visible = (
             bool(c.panel.search_aoi_visible_check.isChecked())
             if hasattr(c.panel, "search_aoi_visible_check")

@@ -26,9 +26,7 @@ from src_new.shared.models.raster_metadata import RasterMetadata, RasterKind
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Table / column constants — single source of truth for raw SQL references
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Table / column constants — single source of truth for raw SQL references ---------------------------------------------------------------------------
 _TABLE = "raster_assets"
 _GEOM_EXPR = "ST_GeomFromText(bounds_wkt, 4326)"
 _INDEX_NAME = "idx_raster_assets_geom_gist"
@@ -52,9 +50,7 @@ class SpatialIndexRepository:
     def __init__(self, db: AsyncSession | AsyncConnection) -> None:
         self._db = db
 
-    # ------------------------------------------------------------------
-    # DDL — index management
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ DDL — index management ------------------------------------------------------------------
 
     async def create_gist_index(self, *, if_not_exists: bool = True) -> None:
         """Create a PostGIS GiST index on the ``bounds_wkt`` geometry column.
@@ -74,8 +70,7 @@ class SpatialIndexRepository:
         Requirements: 10.3
         """
         qualifier = "IF NOT EXISTS" if if_not_exists else ""
-        # DDL cannot use bind parameters, but the index/table names are
-        # internal constants — not user-supplied — so this is safe.
+        # DDL cannot use bind parameters, but the index/table names are internal constants — not user-supplied — so this is safe.
         ddl = text(
             f"CREATE INDEX {qualifier} {_INDEX_NAME} "
             f"ON {_TABLE} USING GIST ({_GEOM_EXPR})"
@@ -104,9 +99,7 @@ class SpatialIndexRepository:
         logger.info("Dropping GiST index '%s' (if_exists=%s)", _INDEX_NAME, if_exists)
         await self._execute(ddl)
 
-    # ------------------------------------------------------------------
-    # Spatial queries — ST_Intersects
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ Spatial queries — ST_Intersects ------------------------------------------------------------------
 
     async def query_intersects(
         self,
@@ -179,9 +172,7 @@ class SpatialIndexRepository:
         rows = await self._fetchall(stmt, params)
         return [_row_to_metadata(row) for row in rows]
 
-    # ------------------------------------------------------------------
-    # Spatial queries — ST_Contains
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ Spatial queries — ST_Contains ------------------------------------------------------------------
 
     async def query_contains(
         self,
@@ -250,9 +241,7 @@ class SpatialIndexRepository:
         rows = await self._fetchall(stmt, params)
         return [_row_to_metadata(row) for row in rows]
 
-    # ------------------------------------------------------------------
-    # Point-based ST_Intersects convenience method
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ Point-based ST_Intersects convenience method ------------------------------------------------------------------
 
     async def query_intersects_point(
         self,
@@ -310,9 +299,7 @@ class SpatialIndexRepository:
         rows = await self._fetchall(stmt, params)
         return [_row_to_metadata(row) for row in rows]
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ Internal helpers ------------------------------------------------------------------
 
     async def _execute(self, stmt: Any, params: dict[str, Any] | None = None) -> None:
         """Execute a statement (DDL or DML) against the underlying connection."""
@@ -335,9 +322,7 @@ class SpatialIndexRepository:
         return list(result.mappings().all())
 
 
-# ---------------------------------------------------------------------------
-# Row → model conversion
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Row → model conversion ---------------------------------------------------------------------------
 
 def _row_to_metadata(row: Any) -> RasterMetadata:
     """Convert a raw database row mapping to a :class:`RasterMetadata` model.

@@ -34,14 +34,9 @@ class FlyThroughTimelineBar(QWidget):
         self._active = False
         self._speed_value = 1.0
         self._pitch_value = -42
-        # Extra horizontal offset (pixels) to nudge the bar further left from the
-        # map area's left edge. Increase to move the bar left; use
-        # `set_horizontal_offset()` to change at runtime. Raised default to
-        # strongly bias the control towards the left side of the map viewport.
-        # Default offset to bias the control leftwards. Align to the left edge by default.
+        # Extra horizontal offset (pixels) to nudge the bar further left from the map area's left edge. Increase to move the bar left; use `set_horizontal_offset()` to change at runtime. Raised default to strongly bias the control towards the left side of the map viewport. Default offset to bias the control leftwards. Align to the left edge by default.
         self._horizontal_offset = 0
-        # Allow the bar to move left of the map area's edge so it can shift
-        # farther left than the visible map column when requested.
+        # Allow the bar to move left of the map area's edge so it can shift farther left than the visible map column when requested.
         self._force_left = True
 
         self.setObjectName("flyThroughTimelineBar")
@@ -342,8 +337,7 @@ class FlyThroughTimelineBar(QWidget):
         map_width = bottom_right.x() - top_left.x()
         available_width = max(0, map_width - left_margin - right_margin)
 
-        # Constrain the control bar width so it doesn't span the entire map when
-        # the map is very wide. This lets us center it within the map viewport.
+        # Constrain the control bar width so it doesn't span the entire map when the map is very wide. This lets us center it within the map viewport.
         max_control_width = 720
         min_control_width = 320
         width = min(max_control_width, max(min_control_width, available_width))

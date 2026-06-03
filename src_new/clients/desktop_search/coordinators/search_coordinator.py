@@ -131,9 +131,7 @@ class SearchCoordinator:
             if c._distance_measure_mode_enabled:
                 c._distance_measure_mode_enabled = False
                 c._run_js_call("setDistanceMeasureMode", False)
-            # if c._add_point_mode_enabled:
-            #     c._add_point_mode_enabled = False
-            #     c._set_annotation_overlay_visible(False) (Removed to allow coexistence)
+            # if c._add_point_mode_enabled: c._add_point_mode_enabled = False c._set_annotation_overlay_visible(False) (Removed to allow coexistence)
             c._pan_mode_enabled = False
             c._run_js_call("setSearchDrawMode", normalized_mode)
             # Always enable crosshair for drawing activities
@@ -205,10 +203,7 @@ class SearchCoordinator:
             (lon - lon_offset, lat + lat_offset),
         ]
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # Event-Driven Architecture Methods for Terabyte-Scale Performance
-    # Metadata-first AOI search that never loads full rasters
-    # ═══════════════════════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════════════════════ Event-Driven Architecture Methods for Terabyte-Scale Performance Metadata-first AOI search that never loads full rasters ═══════════════════════════════════════════════════════════════════════════
 
     def search_assets_by_coordinate_event_driven(self) -> None:
         """Search assets by coordinate using server-side metadata processing.
@@ -236,10 +231,7 @@ class SearchCoordinator:
                 True, "Processing metadata on server...", progress=15
             )
 
-            # Robust search strategy:
-            # 1) Always run point query (fast, precise, resilient)
-            # 2) If buffer > 0, merge with polygon envelope query
-            # 3) If still empty, retry once with swapped lon/lat
+            # Robust search strategy: 1) Always run point query (fast, precise, resilient) 2) If buffer > 0, merge with polygon envelope query 3) If still empty, retry once with swapped lon/lat
             assets, resolved_lon, resolved_lat, used_swapped = (
                 self._search_coordinate_assets_event_driven_with_fallback(
                     lon=lon,
@@ -296,8 +288,7 @@ class SearchCoordinator:
         if assets:
             return assets, lon, lat, False
 
-        # Retry once with swapped coordinate order. This handles the common
-        # case where users enter lat/lon into lon/lat fields.
+        # Retry once with swapped coordinate order. This handles the common case where users enter lat/lon into lon/lat fields.
         swapped_assets = self._search_coordinate_assets_event_driven(
             lon=lat,
             lat=lon,
@@ -311,17 +302,13 @@ class SearchCoordinator:
             )
             return swapped_assets, lat, lon, True
 
-        # Final fallback: if server returned no results for both orders,
-        # perform a lightweight client-side nearest-asset lookup using
-        # catalog bounds (centroid distance). This helps when metadata
-        # queries are strict but the user expects nearby assets.
+        # Final fallback: if server returned no results for both orders, perform a lightweight client-side nearest-asset lookup using catalog bounds (centroid distance). This helps when metadata queries are strict but the user expects nearby assets.
         try:
             all_assets = c.api.list_assets()
             if all_assets:
                 def _centroid_distance(a):
                     from math import radians, sin, cos, asin, sqrt
-                    # bbox may come as dict {min_lon, min_lat, max_lon, max_lat}
-                    # or as a list/tuple [west, south, east, north]
+                    # bbox may come as dict {min_lon, min_lat, max_lon, max_lat} or as a list/tuple [west, south, east, north]
                     b = a.get("bbox") or a.get("bounds") or None
                     if not b:
                         return float("inf")

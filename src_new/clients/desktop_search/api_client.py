@@ -238,9 +238,7 @@ class DesktopApiClient:
             while "//" in normalized:
                 normalized = normalized.replace("//", "/")
 
-        # Windows absolute path: ``C:/...``
-        # On Windows: return the raw path — GDAL handles it natively and spaces
-        # are safe because the caller will percent-encode the whole string.
+        # Windows absolute path: ``C:/...`` On Windows: return the raw path — GDAL handles it natively and spaces are safe because the caller will percent-encode the whole string.
         if len(normalized) >= 3 and normalized[1] == ":" and normalized[2] == "/":
             if platform.system() == "Windows":
                 return normalized  # e.g. "C:/Users/Foo Bar/data.tif"

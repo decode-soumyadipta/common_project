@@ -35,15 +35,11 @@ from src_new.shared.utils.logging_config import configure_logging
 from src_new.services.tile_serving.tile_endpoints import router as tile_router
 from src_new.services.tile_serving.titiler_config import create_titiler_app
 
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Logging ---------------------------------------------------------------------------
 configure_logging()
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# FastAPI application
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- FastAPI application ---------------------------------------------------------------------------
 
 app = FastAPI(
     title="Tile Service",
@@ -57,16 +53,10 @@ app = FastAPI(
     redirect_slashes=False,
 )
 
-# ---------------------------------------------------------------------------
-# Security middleware — must be added before routes are registered so that
-# every request (including sub-application requests) passes through it.
-# Requirement 16.1
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Security middleware — must be added before routes are registered so that every request (including sub-application requests) passes through it. Requirement 16.1 ---------------------------------------------------------------------------
 app.add_middleware(LANSecurityMiddleware)
 
-# ---------------------------------------------------------------------------
-# Request/Response Logging Middleware (Requirement 18.3)
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Request/Response Logging Middleware (Requirement 18.3) ---------------------------------------------------------------------------
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
@@ -110,27 +100,16 @@ async def log_requests(request: Request, call_next):
     
     return response
 
-# ---------------------------------------------------------------------------
-# Mount TiTiler sub-application
-# TiTiler provides its own set of tile-serving endpoints (COG, STAC, etc.).
-# We mount it at /titiler so it does not conflict with our custom routes.
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Mount TiTiler sub-application TiTiler provides its own set of tile-serving endpoints (COG, STAC, etc.). We mount it at /titiler so it does not conflict with our custom routes. ---------------------------------------------------------------------------
 titiler_app = create_titiler_app()
 app.mount("/titiler", titiler_app, name="titiler")
 logger.debug("TiTiler sub-application mounted at /titiler.")
 
-# ---------------------------------------------------------------------------
-# Custom tile endpoints router
-# Provides: /tiles/{z}/{x}/{y}.png, /preview/{raster_id},
-#           /metadata/{raster_id}, /health
-# Requirement 11.5
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Custom tile endpoints router Provides: /tiles/{z}/{x}/{y}.png, /preview/{raster_id}, /metadata/{raster_id}, /health Requirement 11.5 ---------------------------------------------------------------------------
 app.include_router(tile_router)
 logger.debug("Custom tile_endpoints router included.")
 
-# ---------------------------------------------------------------------------
-# Startup / shutdown lifecycle events
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Startup / shutdown lifecycle events ---------------------------------------------------------------------------
 
 
 @app.on_event("startup")
@@ -174,9 +153,7 @@ async def _on_shutdown() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# Uvicorn entry point
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Uvicorn entry point ---------------------------------------------------------------------------
 
 
 def run() -> None:

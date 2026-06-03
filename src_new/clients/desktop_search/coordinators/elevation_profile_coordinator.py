@@ -103,9 +103,7 @@ class ElevationProfileCoordinator:
             self._c._run_js_call("clearProfilePreview")
             self._c._run_js_call("setPanMode", True)
             self._run_profile()
-            # Re-arm: reset clicks so the next map click starts a fresh line.
-            # The previous profile line on the globe is cleared when drawProfileLine
-            # is called for the new line (it clears all previous entities first).
+            # Re-arm: reset clicks so the next map click starts a fresh line. The previous profile line on the globe is cleared when drawProfileLine is called for the new line (it clears all previous entities first).
             self._clicks = []
             self._active = True
             self._c._run_js_call("setPanMode", False)

@@ -29,8 +29,7 @@ class MapOverlayControls(QWidget):
         self.controller = controller
         self._special_mode_active = False
         self.setObjectName("mapOverlayControls")
-        # Restore the original dark-panel style — no QComboBox override so
-        # the native macOS dropdown popup keeps its own readable colours.
+        # Restore the original dark-panel style — no QComboBox override so the native macOS dropdown popup keeps its own readable colours.
         self.setStyleSheet(
             """
             QWidget#mapOverlayControls {
@@ -97,9 +96,7 @@ class MapOverlayControls(QWidget):
             f"window.offlineGIS.setBasemapVisibility({str(visible).lower()});"
         )
 
-    # ------------------------------------------------------------------ #
-    # Compatibility stubs                                                  #
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------ # Compatibility stubs                                                  # ------------------------------------------------------------------ #
 
     def update_aoi_stats(self, vertices: int, area_text: str) -> None:
         """No-op: AOI area label is now always shown on the Cesium globe."""

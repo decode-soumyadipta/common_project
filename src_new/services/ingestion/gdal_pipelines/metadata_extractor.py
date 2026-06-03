@@ -27,18 +27,14 @@ from src_new.shared.utils.file_validation import Bounds
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Public exception
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Public exception ---------------------------------------------------------------------------
 
 
 class MetadataExtractorError(RuntimeError):
     """Raised when metadata extraction fails for a raster file."""
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers — raster kind detection
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Internal helpers — raster kind detection ---------------------------------------------------------------------------
 
 
 def _detect_raster_kind(path: Path) -> RasterKind:
@@ -92,9 +88,7 @@ def _detect_raster_kind(path: Path) -> RasterKind:
     return RasterKind.UNKNOWN
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers — dataset I/O
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Internal helpers — dataset I/O ---------------------------------------------------------------------------
 
 
 def _read_with_rasterio(path: Path):
@@ -124,9 +118,7 @@ def _read_with_gdal(path: Path):
     return dataset
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers — auxiliary CRS files
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Internal helpers — auxiliary CRS files ---------------------------------------------------------------------------
 
 
 def _read_auxiliary_crs_and_log(path: Path, log: logging.Logger) -> str | None:
@@ -186,9 +178,7 @@ def _read_auxiliary_crs_and_log(path: Path, log: logging.Logger) -> str | None:
     return external_crs
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers — bounds validation and transformation
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Internal helpers — bounds validation and transformation ---------------------------------------------------------------------------
 
 
 def _is_valid_epsg4326_bounds(bounds: Bounds) -> bool:
@@ -382,9 +372,7 @@ def _bounds_to_epsg4326_gdal(dataset, external_crs: str | None) -> Bounds:
     return transformed_bounds
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers — model construction
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Internal helpers — model construction ---------------------------------------------------------------------------
 
 
 def _bounds_to_bbox(bounds: Bounds) -> BoundingBox:
@@ -397,9 +385,7 @@ def _bounds_to_bbox(bounds: Bounds) -> BoundingBox:
     )
 
 
-# ---------------------------------------------------------------------------
-# GDAL-path extraction
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- GDAL-path extraction ---------------------------------------------------------------------------
 
 
 def _extract_metadata_with_gdal(path: Path) -> RasterMetadata:
@@ -484,9 +470,7 @@ def _extract_metadata_with_gdal(path: Path) -> RasterMetadata:
         dataset = None
 
 
-# ---------------------------------------------------------------------------
-# Overview / pyramid hook
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Overview / pyramid hook ---------------------------------------------------------------------------
 
 
 def ensure_overviews(path: Path) -> bool:
@@ -513,9 +497,7 @@ def ensure_overviews(path: Path) -> bool:
         return False
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Public API ---------------------------------------------------------------------------
 
 
 def extract_metadata(path: Path) -> RasterMetadata:
@@ -576,8 +558,7 @@ def extract_metadata(path: Path) -> RasterMetadata:
                 }
             )
 
-            # Extract CRS. If the source lacks an embedded CRS, prefer a
-            # matching sidecar .prj / world-file CRS instead of assuming WGS84.
+            # Extract CRS. If the source lacks an embedded CRS, prefer a matching sidecar .prj / world-file CRS instead of assuming WGS84.
             crs_text = normalize_crs(
                 dataset.crs.to_string() if dataset.crs else None
             )

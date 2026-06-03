@@ -52,9 +52,7 @@ class ProjectIoCoordinator:
                 }
             )
 
-        # Exclude auto-generated annotation vector layers — annotations are stored
-        # separately under "annotations" key and restored as Cesium entities, not
-        # as filled GeoJSON vector layers.  Saving these would cause doubled rendering.
+        # Exclude auto-generated annotation vector layers — annotations are stored separately under "annotations" key and restored as Cesium entities, not as filled GeoJSON vector layers.  Saving these would cause doubled rendering.
         vector_layers = [
             dict(layer) for layer in c._vector_layers.values()
             if not (
@@ -772,10 +770,7 @@ class ProjectIoCoordinator:
         camera = payload.get("camera")
 
         # ── Phase 2: Deferred JS restoration (400 ms later) ──────────────────
-        # All clear* JS calls were queued in clear_project_state() above.
-        # We wait 400 ms so the WebEngine IPC pipe drains those calls BEFORE
-        # we push new entities.  Without this, restore calls can execute BEFORE
-        # the clears, leaving distorted / duplicated annotations and layers.
+        # All clear* JS calls were queued in clear_project_state() above. We wait 400 ms so the WebEngine IPC pipe drains those calls BEFORE we push new entities.  Without this, restore calls can execute BEFORE the clears, leaving distorted / duplicated annotations and layers.
         def _deferred_restore() -> None:
             try:
                 # Sync raster layers → JS
@@ -802,10 +797,7 @@ class ProjectIoCoordinator:
                     layer_key = str(entry.get("layer_key") or "").strip()
                     label = str(entry.get("label") or "Vector")
                     geojson = entry.get("geojson")
-                    # Skip the auto-generated "annotations" vector layer — annotations are
-                    # restored as individual Cesium entities by _restore_annotations_on_map().
-                    # Loading this layer causes doubled rendering, filled polygons, and
-                    # overlapping labels.
+                    # Skip the auto-generated "annotations" vector layer — annotations are restored as individual Cesium entities by _restore_annotations_on_map(). Loading this layer causes doubled rendering, filled polygons, and overlapping labels.
                     if (
                         "annotation" in layer_key.lower() or
                         "annotation" in str(entry.get("source") or "").lower() or
@@ -828,8 +820,7 @@ class ProjectIoCoordinator:
                 # Rebuild search result markers on the map
                 c._refresh_search_result_markers()
                 
-                # Delayed realignment of search markers to ensure they snap to terrain
-                # once tiles load
+                # Delayed realignment of search markers to ensure they snap to terrain once tiles load
                 from qtpy.QtCore import QTimer
                 QTimer.singleShot(1000, lambda: c._run_js_call("realignMarkersToTerrain"))
                 QTimer.singleShot(3000, lambda: c._run_js_call("realignMarkersToTerrain"))

@@ -67,9 +67,7 @@ class SettingsDialog(QDialog):
         self._build_ui()
         logger.debug("SettingsDialog initialised with current config values")
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ Public API ------------------------------------------------------------------
 
     def get_updated_settings(self) -> dict[str, object]:
         """Return a dict of field-name → new value for all edited fields.
@@ -93,9 +91,7 @@ class SettingsDialog(QDialog):
 
         return updates
 
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ Private helpers ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
         """Construct and lay out all child widgets."""

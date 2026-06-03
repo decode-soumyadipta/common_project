@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import logging
 import os
-import shutil
 from pathlib import Path
 
 from qtpy.QtCore import QRect, Qt, QMarginsF, QThread, Signal
@@ -43,10 +42,7 @@ class ExportCoordinator:
         c.panel.log(f"Starting GeoPackage export to {output_path.name}...")
 
         try:
-            # 1. Export Annotations (delegating to ProjectIO which uses Fiona if available)
-            # Since ProjectIO.export_annotations_geopackage asks for a file path, 
-            # we'll use it but it might prompt again if we are not careful.
-            # Actually, I'll implement a custom logic here to avoid double prompts.
+            # 1. Export Annotations (delegating to ProjectIO which uses Fiona if available) Since ProjectIO.export_annotations_geopackage asks for a file path, we'll use it but it might prompt again if we are not careful. Actually, I'll implement a custom logic here to avoid double prompts.
             self._export_vector_layers(output_path)
 
             # 2. Export Raster Layers (Original GeoTIFFs as GPKG layers)
@@ -61,16 +57,14 @@ class ExportCoordinator:
                 layer_name = f"raster_{layer_name}"
                 c.panel.log(f"  Adding raster layer: {layer_name}")
                 
-                # Use GDAL to add the TIFF as a layer in the GeoPackage
-                # -update allows appending to existing GPKG
+                # Use GDAL to add the TIFF as a layer in the GeoPackage -update allows appending to existing GPKG
                 ds = gdal.Open(src_path)
                 if ds:
                     translate_options = {
                         "format": "GPKG",
                         "creationOptions": [f"RASTER_TABLE={layer_name}", "APPEND_SUBDATASET=YES"]
                     }
-                    # GeoPackage raster supports max 4 bands (RGBA). 
-                    # If source has more (e.g. 6-band multispectral), limit to first 3 or 4.
+                    # GeoPackage raster supports max 4 bands (RGBA). If source has more (e.g. 6-band multispectral), limit to first 3 or 4.
                     if ds.RasterCount > 4:
                         translate_options["bandList"] = [1, 2, 3]
                         c.panel.log(f"    Source has {ds.RasterCount} bands; limiting to first 3 for GPKG compatibility.")
@@ -106,13 +100,9 @@ class ExportCoordinator:
         c = self._controller
         c.panel.log("Preparing PDF report...")
 
-        # 1. Get snapshot from JS
-        # We use runJavaScript with a callback or use the return value if possible.
-        # Since runJavaScript is async in QtWebEngine, we'll need to use a trick or just wait.
-        # But we can use the bridge to return it.
+        # 1. Get snapshot from JS We use runJavaScript with a callback or use the return value if possible. Since runJavaScript is async in QtWebEngine, we'll need to use a trick or just wait. But we can use the bridge to return it.
         
-        # We'll use a signal/slot pattern or a simple polling for the result if needed.
-        # Actually, let's use a simpler way: runJavaScript with a python callback.
+        # We'll use a signal/slot pattern or a simple polling for the result if needed. Actually, let's use a simpler way: runJavaScript with a python callback.
         
         def on_snapshot_ready(data_url):
             if not data_url:
@@ -682,6 +672,7 @@ class ExportGeoTiffDialog(QDialog):
         self.assets = assets
         self._resolve_source_path = resolve_source_path
         self.threads = {}  # Keep references to running threads
+        self.finished_threads = []  # Keep references to completed threads to prevent premature GC/crash
         self.init_ui()
 
     def init_ui(self):
@@ -876,7 +867,7 @@ class ExportGeoTiffDialog(QDialog):
 
         thread = GeoTiffExportThread(export_src, dest_path)
         thread.progress.connect(progress_bar.setValue)
-        thread.progress.connect(lambda val: status_label.setText(f"Exporting..."))
+        thread.progress.connect(lambda val: status_label.setText("Exporting..."))
         
         def handle_finished(success, err_msg):
             progress_bar.setVisible(False)
@@ -888,8 +879,10 @@ class ExportGeoTiffDialog(QDialog):
                 status_label.setText("Failed")
                 QMessageBox.critical(self, "Export Error", f"Failed to export asset as GeoTIFF:\n{err_msg}")
                 button.setEnabled(True)
-            # Remove reference
-            self.threads.pop(thread_key, None)
+            # Move reference to finished_threads to prevent premature GC/crash
+            thread_obj = self.threads.pop(thread_key, None)
+            if thread_obj:
+                self.finished_threads.append(thread_obj)
 
         thread.finished.connect(handle_finished)
         self.threads[thread_key] = thread

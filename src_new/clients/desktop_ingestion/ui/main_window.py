@@ -109,9 +109,7 @@ class MainWindow(QMainWindow):
 
         logger.info("MainWindow initialized")
 
-    # ------------------------------------------------------------------
-    # UI Construction
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ UI Construction ------------------------------------------------------------------
 
     def _create_toolbar(self) -> None:
         """Create the main toolbar with ingestion actions."""
@@ -204,9 +202,7 @@ class MainWindow(QMainWindow):
             QLabel(f"Ingestion URL: {settings.ingestion_service_url}")
         )
 
-    # ------------------------------------------------------------------
-    # Actions
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ Actions ------------------------------------------------------------------
 
     def _show_upload_dialog(self) -> None:
         """Show the upload dialog and process selected files."""
@@ -255,9 +251,7 @@ class MainWindow(QMainWindow):
             "<p><b>Requirements:</b> 7.1, 7.3, 7.5, 7.6</p>",
         )
 
-    # ------------------------------------------------------------------
-    # Service Health Monitoring
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ Service Health Monitoring ------------------------------------------------------------------
 
     def _check_service_health(self) -> None:
         """Start background liveness checks for ingestion and tile services.

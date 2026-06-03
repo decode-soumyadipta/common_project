@@ -61,9 +61,7 @@ class TestFullWorkflow:
         - Tile Service (port 8002)
         - Query Service (port 8003)
         """
-        # TODO: This test requires actual service deployment
-        # For now, we'll create a placeholder that can be implemented
-        # once services are fully operational
+        # TODO: This test requires actual service deployment For now, we'll create a placeholder that can be implemented once services are fully operational
         
         # Configuration
         ingestion_url = "http://localhost:8001"
@@ -94,8 +92,7 @@ class TestFullWorkflow:
             assert status_data["progress"] == 1.0
             assert status_data["error"] is None
         
-        # Step 3: Verify raster exists in PostGIS/SQLite
-        # If db_session is a MagicMock, let's query the actual database using the settings URL!
+        # Step 3: Verify raster exists in PostGIS/SQLite If db_session is a MagicMock, let's query the actual database using the settings URL!
         from unittest.mock import MagicMock
         if hasattr(db_session, "execute") and not isinstance(db_session, MagicMock):
             actual_db = db_session
@@ -125,8 +122,7 @@ class TestFullWorkflow:
             if not hasattr(db_session, "execute") or isinstance(db_session, MagicMock):
                 actual_db.close()
         
-        # Step 4: Request tile from Tile Service
-        # Request tile at zoom level 0, tile (0, 0)
+        # Step 4: Request tile from Tile Service Request tile at zoom level 0, tile (0, 0)
         async with AsyncClient(base_url=tile_url) as client:
             response = await client.get(
                 "/tiles/0/0/0.png",
@@ -144,8 +140,7 @@ class TestFullWorkflow:
             assert img.format == "PNG"
             assert img.size == (256, 256)  # Standard tile size
         
-        # Step 6: Query by point from Query Service
-        # Use the center point of the bounding box
+        # Step 6: Query by point from Query Service Use the center point of the bounding box
         center_lon = (bbox["min_lon"] + bbox["max_lon"]) / 2
         center_lat = (bbox["min_lat"] + bbox["max_lat"]) / 2
         

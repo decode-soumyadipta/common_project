@@ -36,9 +36,7 @@ from src_new.shared.models.raster_metadata import RasterKind, RasterMetadata
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Internal helpers ---------------------------------------------------------------------------
 
 
 def _normalized_bounds(
@@ -173,9 +171,7 @@ def _row_to_raster_metadata(row: Any) -> RasterMetadata:
     )
 
 
-# ---------------------------------------------------------------------------
-# Sync repository (SQLAlchemy Session)
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Sync repository (SQLAlchemy Session) ---------------------------------------------------------------------------
 
 
 class RasterRepository:
@@ -198,9 +194,7 @@ class RasterRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    # ------------------------------------------------------------------
-    # Read operations
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ Read operations ------------------------------------------------------------------
 
     def find_by_id(self, raster_id: str) -> Optional[RasterMetadata]:
         """Return the raster with the given UUID, or None if not found.
@@ -262,8 +256,7 @@ class RasterRepository:
         sort_col = "created_at" if hasattr(RasterAsset, "created_at") else "upload_date"
         
         if self._is_postgresql():
-            # Parameterized PostGIS point-in-polygon query.
-            # Uses ST_SetSRID(ST_Point(:lon, :lat), 4326) — no string interpolation.
+            # Parameterized PostGIS point-in-polygon query. Uses ST_SetSRID(ST_Point(:lon, :lat), 4326) — no string interpolation.
             stmt = text(
                 f"""
                 SELECT {pk_col}
@@ -402,8 +395,7 @@ class RasterRepository:
         sort_col = "created_at" if hasattr(RasterAsset, "created_at") else "upload_date"
 
         if self._is_postgresql():
-            # Parameterized PostGIS bbox intersection query.
-            # ST_MakeEnvelope(:west, :south, :east, :north, 4326) — no interpolation.
+            # Parameterized PostGIS bbox intersection query. ST_MakeEnvelope(:west, :south, :east, :north, 4326) — no interpolation.
             stmt = text(
                 f"""
                 SELECT {pk_col}
@@ -441,8 +433,7 @@ class RasterRepository:
                 stmt_all
             ):
                 try:
-                    # Check if bounding boxes intersect
-                    # Two boxes intersect if they overlap in both X and Y dimensions
+                    # Check if bounding boxes intersect Two boxes intersect if they overlap in both X and Y dimensions
                     if not (
                         asset_max_lon < west
                         or asset_min_lon > east
@@ -475,9 +466,7 @@ class RasterRepository:
         )
         return [_row_to_raster_metadata(a) for a in assets]
 
-    # ------------------------------------------------------------------
-    # Write operations
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ Write operations ------------------------------------------------------------------
 
     def insert_metadata(self, metadata: RasterMetadata) -> RasterMetadata:
         """Insert a new raster metadata record into the catalog.
@@ -616,9 +605,7 @@ class RasterRepository:
                 pass
             raise RuntimeError(f"update_metadata failed: {exc}") from exc
 
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ Private helpers ------------------------------------------------------------------
 
     def _is_postgresql(self) -> bool:
         """Return True when the underlying database dialect is PostgreSQL."""
@@ -642,9 +629,7 @@ class RasterRepository:
         return [by_id[item_id] for item_id in ids if item_id in by_id]
 
 
-# ---------------------------------------------------------------------------
-# Async repository (asyncpg)
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Async repository (asyncpg) ---------------------------------------------------------------------------
 
 
 class AsyncRasterRepository:
@@ -678,9 +663,7 @@ class AsyncRasterRepository:
         """
         self._conn = connection
 
-    # ------------------------------------------------------------------
-    # Read operations
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ Read operations ------------------------------------------------------------------
 
     async def find_by_id(self, raster_id: str) -> Optional[RasterMetadata]:
         """Return the raster with the given UUID, or None if not found.
@@ -788,9 +771,7 @@ class AsyncRasterRepository:
         )
         return results
 
-    # ------------------------------------------------------------------
-    # Write operations
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ Write operations ------------------------------------------------------------------
 
     async def insert_metadata(self, metadata: RasterMetadata) -> RasterMetadata:
         """Insert a new raster metadata record into the catalog.

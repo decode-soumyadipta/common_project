@@ -24,25 +24,16 @@ from src_new.shared.config import settings
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Step 1: Apply GDAL env vars from config BEFORE importing TiTiler.
-# TiTiler / GDAL reads several env vars at import time, so this must happen
-# as early as possible — before any titiler.* import.
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Step 1: Apply GDAL env vars from config BEFORE importing TiTiler. TiTiler / GDAL reads several env vars at import time, so this must happen as early as possible — before any titiler.* import. ---------------------------------------------------------------------------
 settings.apply_gdal_env()
 
-# Disable GDAL's built-in HTTP/VSICURL transport so TiTiler cannot reach
-# remote rasters.  This enforces the air-gap requirement (16.4).
+# Disable GDAL's built-in HTTP/VSICURL transport so TiTiler cannot reach remote rasters.  This enforces the air-gap requirement (16.4).
 os.environ.setdefault("GDAL_HTTP_TIMEOUT", "1")
 os.environ.setdefault("CPL_VSIL_CURL_ALLOWED_EXTENSIONS", "")  # block all remote extensions
 os.environ.setdefault("GDAL_DISABLE_READDIR_ON_OPEN", settings.gdal_disable_readdir_on_open)
 os.environ.setdefault("GDAL_HTTP_MERGE_CONSECUTIVE_RANGES", settings.gdal_http_merge_consecutive_ranges)
 
-# ---------------------------------------------------------------------------
-# Step 2: Import TiTiler (after env vars are set).
-# Use try/except so the module can be imported even when titiler is not
-# installed (e.g. in CI or lightweight environments).
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Step 2: Import TiTiler (after env vars are set). Use try/except so the module can be imported even when titiler is not installed (e.g. in CI or lightweight environments). ---------------------------------------------------------------------------
 try:
     from titiler.application.main import app as _titiler_app  # type: ignore[import]
 
@@ -59,9 +50,7 @@ except ImportError as _exc:  # pragma: no cover
     )
 
 
-# ---------------------------------------------------------------------------
-# Windows encoded-path fix middleware
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Windows encoded-path fix middleware ---------------------------------------------------------------------------
 
 if _TITILER_AVAILABLE:
     from starlette.middleware.base import BaseHTTPMiddleware as _BaseHTTPMiddleware
@@ -112,9 +101,7 @@ else:  # pragma: no cover
         pass
 
 
-# ---------------------------------------------------------------------------
-# Public factory
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Public factory ---------------------------------------------------------------------------
 
 
 def create_titiler_app():  # type: ignore[return]

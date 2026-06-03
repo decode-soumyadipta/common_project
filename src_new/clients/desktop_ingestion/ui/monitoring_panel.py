@@ -46,9 +46,7 @@ from src_new.clients.desktop_ingestion.api_client import (
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Parallel Upload Infrastructure
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Parallel Upload Infrastructure ---------------------------------------------------------------------------
 
 
 class _UploadSignals(QObject):
@@ -197,9 +195,7 @@ class MonitoringPanel(QWidget):
             max_threads,
         )
 
-    # ------------------------------------------------------------------
-    # UI Construction
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ UI Construction ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
         """Construct and lay out all child widgets."""
@@ -320,8 +316,7 @@ class MonitoringPanel(QWidget):
 
         controls_row = QHBoxLayout()
         self.select_all_checkbox = QCheckBox("Select All")
-        # Use clicked(bool) — not stateChanged — to get a reliable bool and
-        # avoid int-vs-enum comparison bugs in PySide6/PyQt6.
+        # Use clicked(bool) — not stateChanged — to get a reliable bool and avoid int-vs-enum comparison bugs in PySide6/PyQt6.
         self.select_all_checkbox.clicked.connect(self._on_select_all_clicked)
         controls_row.addWidget(self.select_all_checkbox)
         controls_row.addStretch()
@@ -431,9 +426,7 @@ class MonitoringPanel(QWidget):
 
         return group
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ Public API ------------------------------------------------------------------
 
     def upload_files(
         self, files: list[Path], tags: list[str], description: str = ""
@@ -492,9 +485,7 @@ class MonitoringPanel(QWidget):
         self.refresh_assets()
         self._poll_ingestion_status()
 
-    # ------------------------------------------------------------------
-    # Private Helpers — Parallel Upload Callbacks
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ Private Helpers — Parallel Upload Callbacks ------------------------------------------------------------------
 
     def _on_file_completed(
         self, file_path: str, raster_id: str, status: str, message: str
@@ -587,9 +578,7 @@ class MonitoringPanel(QWidget):
             except Exception as exc:
                 logger.debug("Failed to poll status for %s: %s", raster_id, exc)
 
-    # ------------------------------------------------------------------
-    # Private Helpers — Assets Table
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ Private Helpers — Assets Table ------------------------------------------------------------------
 
     def _update_assets_table(self) -> None:
         """Refresh the assets table with current data from the server."""

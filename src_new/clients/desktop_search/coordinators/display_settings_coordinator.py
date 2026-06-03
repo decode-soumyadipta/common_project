@@ -279,8 +279,7 @@ class DisplaySettingsCoordinator:
 
         self._set_dem_slope_option_enabled(not comparator_active)
 
-        # Camera controls: pitch slider enabled in ALL 3D modes with any layer
-        # Rotation works in both 2D and 3D (heading rotation valid in 2D Cesium)
+        # Camera controls: pitch slider enabled in ALL 3D modes with any layer Rotation works in both 2D and 3D (heading rotation valid in 2D Cesium)
         any_layer_visible = dem_visible or imagery_visible
         c.panel.pitch_slider.setEnabled(any_layer_visible and not is_2d_mode)
         for widget in (
@@ -311,11 +310,7 @@ class DisplaySettingsCoordinator:
             c.panel.pitch_slider.setToolTip("Adjust camera pitch angle")
 
         if c._toolbar_context_callback is not None:
-            # The toolbar callback is a bound MainWindow method; during
-            # controller initialization the MainWindow.controller attribute
-            # may not be set yet. Call defensively to avoid AttributeError in
-            # that race. If the callback fails, log and continue — the
-            # MainWindow will refresh toolbar state later.
+            # The toolbar callback is a bound MainWindow method; during controller initialization the MainWindow.controller attribute may not be set yet. Call defensively to avoid AttributeError in that race. If the callback fails, log and continue — the MainWindow will refresh toolbar state later.
             try:
                 if dem_visible and imagery_visible:
                     c._toolbar_context_callback("mixed")

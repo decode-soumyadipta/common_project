@@ -34,9 +34,7 @@ from src_new.shared.models.raster_metadata import RasterMetadata, RasterKind
 from src_new.shared.models.bounding_box import BoundingBox
 
 
-# ---------------------------------------------------------------------------
-# Test ORM Model
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Test ORM Model ---------------------------------------------------------------------------
 
 Base = declarative_base()
 
@@ -60,9 +58,7 @@ class RasterAsset(Base):
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Fixtures ---------------------------------------------------------------------------
 
 
 @pytest.fixture
@@ -169,9 +165,7 @@ def populated_db_session(
     return db_session
 
 
-# ---------------------------------------------------------------------------
-# RasterRepository Tests
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- RasterRepository Tests ---------------------------------------------------------------------------
 
 
 class TestRasterRepository:
@@ -423,12 +417,10 @@ class TestRasterRepository:
         with patch("src_new.services.query.repositories.raster_repository.RasterAsset", RasterAsset):
             repo = RasterRepository(populated_db_session)
 
-            # Attempt SQL injection in find_by_point
-            # If not parameterized, this could execute malicious SQL
+            # Attempt SQL injection in find_by_point If not parameterized, this could execute malicious SQL
             malicious_lon = "72.5; DROP TABLE raster_assets; --"
 
-            # These should be safely handled as invalid float values
-            # and return empty results, not cause errors
+            # These should be safely handled as invalid float values and return empty results, not cause errors
             try:
                 # Convert to float will fail, but should be caught gracefully
                 repo.find_by_point(lon=float(malicious_lon), lat=18.5)
@@ -449,9 +441,7 @@ class TestRasterRepository:
             assert len(all_rasters) == 4  # All fixture data still present
 
 
-# ---------------------------------------------------------------------------
-# AsyncRasterRepository Tests (using mocks - no actual async execution needed)
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- AsyncRasterRepository Tests (using mocks - no actual async execution needed) ---------------------------------------------------------------------------
 
 
 class TestAsyncRasterRepository:
@@ -496,9 +486,7 @@ class TestAsyncRasterRepository:
         assert repo._conn == mock_conn
 
 
-# ---------------------------------------------------------------------------
-# SpatialIndexRepository Tests (using mocks - no actual async execution needed)
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- SpatialIndexRepository Tests (using mocks - no actual async execution needed) ---------------------------------------------------------------------------
 
 
 class TestSpatialIndexRepository:
@@ -536,8 +524,7 @@ class TestSpatialIndexRepository:
 
         repo = SpatialIndexRepository(mock_session)
 
-        # Verify the repository was created - actual SQL injection testing
-        # is done at the integration level with a real database
+        # Verify the repository was created - actual SQL injection testing is done at the integration level with a real database
         assert repo._db == mock_session
 
 

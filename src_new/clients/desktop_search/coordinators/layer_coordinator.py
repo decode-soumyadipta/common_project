@@ -178,8 +178,7 @@ class LayerCoordinator:
             c.panel.log("Visibility toggle ignored: missing asset path.")
             return
 
-        # CRITICAL FIX: Prevent rapid successive clicks from queuing multiple operations
-        # and causing hangs. Use a debounce mechanism with a flag.
+        # CRITICAL FIX: Prevent rapid successive clicks from queuing multiple operations and causing hangs. Use a debounce mechanism with a flag.
         import time
         current_time = time.time()
         
@@ -233,10 +232,7 @@ class LayerCoordinator:
 
             if c._search_layer_visibility.get(normalized_path, False):
                 c.panel.log(f"Shown on map: {asset.get('file_name', 'asset')}")
-                # Use instantFocusBounds (snap camera immediately) so Cesium requests
-                # tiles at the correct zoom level from the very first render frame.
-                # flyToBounds (animated, 2s) causes the camera to be at a high altitude
-                # during the animation where minzoom=11 tiles aren't requested → blank globe.
+                # Use instantFocusBounds (snap camera immediately) so Cesium requests tiles at the correct zoom level from the very first render frame. flyToBounds (animated, 2s) causes the camera to be at a high altitude during the animation where minzoom=11 tiles aren't requested → blank globe.
                 from qtpy.QtCore import QTimer
                 # Increased delay to ensure layer sync completes before camera movement
                 QTimer.singleShot(250, lambda: self._safe_zoom_to_asset(c, normalized_path, needs_loading))
@@ -316,17 +312,7 @@ class LayerCoordinator:
                 )
                 return
 
-            # REORDER-ONLY — never load layers here.
-            #
-            # _loaded_search_layer_keys tracks which assets have been sent to Cesium.
-            # Assets loaded via the search-results sync flow are added to this set by
-            # sync_focus_coordinator (lines ~65 and ~211).  Assets not yet in the set
-            # are simply not present in the Cesium imagery stack yet; telling Cesium to
-            # reorder them would be a no-op at best and a full re-render at worst.
-            #
-            # Previously this block attempted to load every "missing" layer, which caused
-            # ALL assets to be re-rendered on every drag-and-drop reorder (because the set
-            # was empty for layers loaded through the search path), freezing the application.
+            # REORDER-ONLY — never load layers here. _loaded_search_layer_keys tracks which assets have been sent to Cesium. Assets loaded via the search-results sync flow are added to this set by sync_focus_coordinator (lines ~65 and ~211).  Assets not yet in the set are simply not present in the Cesium imagery stack yet; telling Cesium to reorder them would be a no-op at best and a full re-render at worst. Previously this block attempted to load every "missing" layer, which caused ALL assets to be re-rendered on every drag-and-drop reorder (because the set was empty for layers loaded through the search path), freezing the application.
             loaded_for_reorder = [
                 asset
                 for asset in reordered_assets

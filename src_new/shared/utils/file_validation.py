@@ -19,9 +19,7 @@ from src_new.shared.constants import SUPPORTED_FORMATS, MAX_UPLOAD_SIZE_DEFAULT
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Geometry helpers (preserved from core_shared/utils/geometry.py)
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Geometry helpers (preserved from core_shared/utils/geometry.py) ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -86,9 +84,7 @@ def parse_bounds_wkt_polygon(wkt: str) -> Bounds:
     return Bounds(min(xs), min(ys), max(xs), max(ys))
 
 
-# ---------------------------------------------------------------------------
-# File-format validators
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- File-format validators ---------------------------------------------------------------------------
 
 # Magic bytes for supported formats
 _GEOTIFF_MAGIC_LE = b"\x49\x49\x2a\x00"  # Little-endian TIFF

@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
 
 from src_new.services.ingestion.gdal_pipelines.cog_converter import CogConverter
 from src_new.shared.config import settings
@@ -70,8 +69,7 @@ def test_cog_converter_fallback_cleans_up_temp_on_failure(monkeypatch, tmp_path:
     import rasterio.shutil
     from contextlib import contextmanager
 
-    # Force all attempts to fail
-    # Attempt 1 (rio_copy) raises an error
+    # Force all attempts to fail Attempt 1 (rio_copy) raises an error
     def failing_rio_copy(src, dst, **kwargs):
         # Write temporary file to check if it gets cleaned up
         Path(dst).write_bytes(b"partial-cog-content")

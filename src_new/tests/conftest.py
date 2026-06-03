@@ -28,8 +28,7 @@ def db_session() -> Generator:
     Yields:
         Database session object (psycopg2 connection or SQLAlchemy session)
     """
-    # TODO: Implement actual PostGIS test database setup
-    # For now, return a mock to allow tests to be written
+    # TODO: Implement actual PostGIS test database setup For now, return a mock to allow tests to be written
     mock_db = MagicMock()
     mock_db.execute = MagicMock()
     mock_db.commit = MagicMock()

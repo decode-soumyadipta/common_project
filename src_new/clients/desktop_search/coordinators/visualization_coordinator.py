@@ -87,9 +87,8 @@ class VisualizationCoordinator:
         # Show styled progress overlay consistent with stretch updates
         c.panel.set_search_busy(True, "Applying DEM Style...", progress=15)
         
-        # Refresh the DEM layers using the python backend stats/queries
-        # This will query the backend, building the exact URL matching the current style & stretch combination
-        refreshed = c._display_settings.refresh_raster_layers_for_stretch(layer_kind="dem")
+        # Refresh the DEM layers using the python backend stats/queries This will query the backend, building the exact URL matching the current style & stretch combination
+        c._display_settings.refresh_raster_layers_for_stretch(layer_kind="dem")
         
         # Also let JS know the color mode changed so it updates internal colorMode states and updates the colorbar
         c._run_js_call("setDemColorMode", color_mode)

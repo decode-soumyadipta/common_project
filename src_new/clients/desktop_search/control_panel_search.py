@@ -32,13 +32,11 @@ class ControlPanelSearchMixin:
         """Update search results table with proper ordering: Imagery first (top), then DEM (bottom)."""
         visibility_map = visibility_by_path or {}
 
-        # Sort assets: Imagery first (top of list), DEM last (bottom of list)
-        # This matches the visual stacking on the globe where imagery is on top
+        # Sort assets: Imagery first (top of list), DEM last (bottom of list) This matches the visual stacking on the globe where imagery is on top
         def sort_key(asset):
             kind = str(asset.get("kind") or "").lower()
             created_at = self._search_created_at_sort_key(asset.get("created_at"))
-            # Imagery (kind != "dem") gets priority 0, DEM gets priority 1
-            # Within each group, sort by date (newest first)
+            # Imagery (kind != "dem") gets priority 0, DEM gets priority 1 Within each group, sort by date (newest first)
             is_dem = 1 if kind == "dem" else 0
             return (is_dem, -created_at)  # Negative for reverse date order
 
@@ -270,8 +268,7 @@ class ControlPanelSearchMixin:
                 QBrush(QColor(102, 102, 102))
             )  # Dark gray for visibility
 
-            # Create table items with explicit text color for visibility
-            # CRITICAL: Store file_path in UserRole for drag-and-drop reordering
+            # Create table items with explicit text color for visibility CRITICAL: Store file_path in UserRole for drag-and-drop reordering
             file_item = QTableWidgetItem(file_name)
             file_item.setData(
                 Qt.ItemDataRole.UserRole, normalized_path
@@ -339,8 +336,7 @@ class ControlPanelSearchMixin:
             )
             delete_btn.setText("\u2715")  # Multiplication X / Close cross - feels like a delete icon
             
-            # Using a custom icon if possible, but Unicode \u2715 is a safe red 'x' 
-            # as often seen in QGIS for 'Remove Layer'
+            # Using a custom icon if possible, but Unicode \u2715 is a safe red 'x' as often seen in QGIS for 'Remove Layer'
             
             delete_btn.clicked.connect(
                 lambda checked, p=normalized_path: self.search_layer_delete_requested.emit(p)
@@ -368,8 +364,7 @@ class ControlPanelSearchMixin:
                 f"DEBUG: Created table items for row {row}: file={file_name}, kind={kind}, crs={crs}, path={normalized_path}"
             )
 
-        # Don't enable sorting - it conflicts with drag-and-drop
-        # self.search_results_table.setSortingEnabled(True)
+        # Don't enable sorting - it conflicts with drag-and-drop self.search_results_table.setSortingEnabled(True)
         _logger.debug(
             f"\nDEBUG: Search results table populated with {self.search_results_table.rowCount()} rows"
         )
@@ -837,8 +832,7 @@ class ControlPanelSearchMixin:
                     "  Rebuilding table completely from pre-drop data in current order"
                 )
 
-                # Get the current row order by examining which rows are where
-                # Qt moves rows but may clear data, so we need to infer the new order
+                # Get the current row order by examining which rows are where Qt moves rows but may clear data, so we need to infer the new order
                 new_order = []
 
                 # Try to match rows by position and any remaining data

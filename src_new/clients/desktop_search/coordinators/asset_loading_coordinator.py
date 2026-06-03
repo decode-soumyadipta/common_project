@@ -61,9 +61,7 @@ class AssetLoadingCoordinator:
                 c._set_layer_loading(False, "Layer load failed")
             return None
 
-        # Auto-convert to COG if the source is a plain GeoTIFF.
-        # Non-COG files fail to tile on Windows and are slower everywhere.
-        # The COG is written next to the source (e.g. dem.cog.tif) and reused.
+        # Auto-convert to COG if the source is a plain GeoTIFF. Non-COG files fail to tile on Windows and are slower everywhere. The COG is written next to the source (e.g. dem.cog.tif) and reused.
         if c.app_mode != DesktopAppMode.CLIENT and not skip_cog:
             try:
                 from src_new.shared.ingestion.services.cog_service import (

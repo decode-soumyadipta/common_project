@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import pytest
 from unittest.mock import MagicMock
 import numpy as np
 from pathlib import Path
@@ -130,3 +129,64 @@ def test_elevation_profile_sample_error_fallback(monkeypatch):
     # Verify it handled the error and returned 10 None values
     assert len(values) == 10
     assert all(v is None for v in values)
+
+
+def test_global_exception_shield(monkeypatch):
+    import sys
+    from src_new.clients.desktop_search.main import global_excepthook
+    
+    # Mock logger
+    mock_logger = MagicMock()
+    monkeypatch.setattr("src_new.clients.desktop_search.main.logger", mock_logger)
+    
+    # Mock QApplication
+    mock_app = MagicMock()
+    mock_qapp_class = MagicMock()
+    mock_qapp_class.instance.return_value = mock_app
+    monkeypatch.setattr("src_new.clients.desktop_search.main.QApplication", mock_qapp_class)
+    
+    # Mock QThread
+    mock_qthread_class = MagicMock()
+    # Case 1: different thread (non-GUI)
+    mock_qthread_class.currentThread.return_value = "worker_thread"
+    mock_app.thread.return_value = "main_thread"
+    monkeypatch.setattr("qtpy.QtCore.QThread", mock_qthread_class)
+    
+    # Mock QMessageBox
+    mock_qmsgbox = MagicMock()
+    monkeypatch.setattr("qtpy.QtWidgets.QMessageBox", mock_qmsgbox)
+    
+    try:
+        raise ValueError("Oops, something went wrong!")
+    except ValueError:
+        exctype, value, tb = sys.exc_info()
+        global_excepthook(exctype, value, tb)
+        
+    # Verify logged critical message
+    mock_logger.critical.assert_called_once()
+    args, kwargs = mock_logger.critical.call_args
+    assert "Oops, something went wrong!" in args[0]
+    
+    # Verify QMessageBox was NOT called because we are on a worker thread
+    mock_qmsgbox.assert_not_called()
+    
+    # Case 2: same thread (GUI thread)
+    mock_logger.reset_mock()
+    mock_qmsgbox.reset_mock()
+    mock_qthread_class.currentThread.return_value = "main_thread"
+    
+    # Create an instance that can mock the QMessageBox popup
+    mock_msg_instance = MagicMock()
+    mock_qmsgbox.return_value = mock_msg_instance
+    
+    try:
+        raise ValueError("Another error in GUI thread")
+    except ValueError:
+        exctype, value, tb = sys.exc_info()
+        global_excepthook(exctype, value, tb)
+        
+    # Verify logged
+    mock_logger.critical.assert_called_once()
+    # Verify QMessageBox instance was created and exec was called
+    mock_qmsgbox.assert_called_once()
+    mock_msg_instance.exec.assert_called_once()

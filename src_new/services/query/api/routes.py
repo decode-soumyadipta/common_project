@@ -56,9 +56,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["query"])
 
 
-# ---------------------------------------------------------------------------
-# Request schemas
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Request schemas ---------------------------------------------------------------------------
 
 
 class PointQueryRequest(BaseModel):
@@ -153,9 +151,7 @@ class ElevationProfileRequest(BaseModel):
     samples: int = Field(default=200, ge=2, le=5000)
 
 
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Endpoints ---------------------------------------------------------------------------
 
 
 def _interpolate_profile_line(
@@ -520,8 +516,7 @@ def search_by_polygon(
         )
     
     try:
-        # Convert polygon to bounding box for now (simple implementation)
-        # TODO: Implement proper polygon intersection in repository
+        # Convert polygon to bounding box for now (simple implementation) TODO: Implement proper polygon intersection in repository
         lons = [p.lon for p in request.points]
         lats = [p.lat for p in request.points]
         

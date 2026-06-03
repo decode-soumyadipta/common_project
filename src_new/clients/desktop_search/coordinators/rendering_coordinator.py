@@ -66,8 +66,7 @@ class RenderingCoordinator:
             query["bidx"] = [1, 2, 3]
             # Use bilinear resampling for high fidelity rendering instead of nearest neighbor
             query["resampling"] = "bilinear"
-            # Set nodata=0 to prevent GDAL "INIT_DEST NO_DATA without defined nodata"
-            # error on Windows when the file has no nodata value defined.
+            # Set nodata=0 to prevent GDAL "INIT_DEST NO_DATA without defined nodata" error on Windows when the file has no nodata value defined.
             if "nodata" not in query:
                 query["nodata"] = 0
         else:
@@ -153,9 +152,7 @@ class RenderingCoordinator:
             return query
 
         if band_count >= 3 and not is_dem:
-            # FIX: Apply QGIS-style per-band Cumulative Count Cut (2% - 98%)
-            # This fixes both the pitch-black 16-bit rendering and the bluish tint.
-            # Passing a list of rescales allows TiTiler to stretch each band independently.
+            # FIX: Apply QGIS-style per-band Cumulative Count Cut (2% - 98%) This fixes both the pitch-black 16-bit rendering and the bluish tint. Passing a list of rescales allows TiTiler to stretch each band independently.
             if stretch_mode == "linear_shared":
                 lows = []
                 highs = []
@@ -336,8 +333,7 @@ class RenderingCoordinator:
     def find_best_file_version(self, file_path: str) -> str:
         """Find the best version of a file, prioritizing Web Mercator projected and COG versions."""
         original_path = Path(file_path)
-        # Even if the original file is missing (e.g. it was replaced by a COG version during ingestion),
-        # we should still look for candidates based on its name.
+        # Even if the original file is missing (e.g. it was replaced by a COG version during ingestion), we should still look for candidates based on its name.
         if not original_path.exists():
             self._logger.debug(
                 f"Original file not found, searching for versions: {file_path}"
@@ -492,9 +488,7 @@ class RenderingCoordinator:
             c._run_js_call("setSceneModeControlEnabled", True)
             c._apply_display_control_mode()
 
-        # CRITICAL FIX: Do NOT force scene mode from Python backend
-        # JavaScript will automatically switch to 2D for imagery, 3D for DEM
-        # Forcing mode here creates conflicts and unnecessary morphing
+        # CRITICAL FIX: Do NOT force scene mode from Python backend JavaScript will automatically switch to 2D for imagery, 3D for DEM Forcing mode here creates conflicts and unnecessary morphing
 
         self._logger.info(
             "Event-driven layer render request name=%s kind=%s is_dem=%s replace_existing=%s apply_scene_mode=%s",
@@ -505,9 +499,7 @@ class RenderingCoordinator:
             apply_scene_mode,
         )
 
-        # Removed: Python-side setSceneMode call that conflicts with JavaScript auto-switching
-        # JavaScript addTileLayer() will automatically call setSceneModeInternal("2d")
-        # JavaScript addDemLayer() will automatically call setSceneModeInternal("3d")
+        # Removed: Python-side setSceneMode call that conflicts with JavaScript auto-switching JavaScript addTileLayer() will automatically call setSceneModeInternal("2d") JavaScript addDemLayer() will automatically call setSceneModeInternal("3d")
 
         # Event-driven imagery loading with server optimization
         c._run_js_call(

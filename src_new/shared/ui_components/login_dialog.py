@@ -25,9 +25,7 @@ from src_new.shared.config import settings
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Application metadata (read from config; no hardcoded strings)
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Application metadata (read from config; no hardcoded strings) ---------------------------------------------------------------------------
 _APP_TITLE = "Offline 3D GIS"
 
 
@@ -65,9 +63,7 @@ class LoginDialog(QDialog):
             settings.ingestion_service_url,
         )
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ Public API ------------------------------------------------------------------
 
     def credentials(self) -> tuple[str, str]:
         """Return the entered (username, password) tuple.
@@ -81,9 +77,7 @@ class LoginDialog(QDialog):
             self.password_edit.text(),
         )
 
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ Private helpers ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
         """Construct and lay out all child widgets."""

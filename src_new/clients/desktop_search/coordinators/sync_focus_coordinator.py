@@ -118,9 +118,7 @@ class SyncFocusCoordinator:
         options["apply_scene_mode"] = apply_scene_mode
         options["event_driven"] = True
 
-        # Store bounds from TiTiler back into the asset dict so that
-        # _fly_to_asset / asset_bounds can find them later without an extra HTTP call.
-        # utility_coordinator.asset_bounds checks asset["bounds"] first.
+        # Store bounds from TiTiler back into the asset dict so that _fly_to_asset / asset_bounds can find them later without an extra HTTP call. utility_coordinator.asset_bounds checks asset["bounds"] first.
         if "bounds" in options and isinstance(options["bounds"], dict):
             asset["bounds"] = options["bounds"]
 
@@ -278,8 +276,7 @@ class SyncFocusCoordinator:
             if c._search_layer_visibility.get(path, False)
         ]
         
-        # Fallback: Zoom/focus to all search results if none are visible, satisfying the requirement:
-        # "after searching..it must auto zoom focus automatically to the aoi......setview../flyto"
+        # Fallback: Zoom/focus to all search results if none are visible, satisfying the requirement: "after searching..it must auto zoom focus automatically to the aoi......setview../flyto"
         assets_to_focus = visible_assets if visible_assets else list(c._search_result_assets_by_path.values())
         
         if not assets_to_focus:
@@ -363,9 +360,7 @@ class SyncFocusCoordinator:
         try:
             order_registry = getattr(c.panel, "_layer_order_registry", {}) or {}
 
-            # Sort all loaded layer paths by their new display_order from the registry.
-            # Invisible layers that aren't in _loaded_search_layer_keys are excluded —
-            # they are not present in the Cesium stack so can't be repositioned.
+            # Sort all loaded layer paths by their new display_order from the registry. Invisible layers that aren't in _loaded_search_layer_keys are excluded — they are not present in the Cesium stack so can't be repositioned.
             loaded_paths_sorted = sorted(
                 [
                     p
@@ -401,8 +396,7 @@ class SyncFocusCoordinator:
         """
         c = self._controller
         try:
-            # For standard approach, we need to manipulate the Cesium layer stack
-            # by raising/lowering layers to achieve the desired order
+            # For standard approach, we need to manipulate the Cesium layer stack by raising/lowering layers to achieve the desired order
             loaded_layers = []
             for asset in reordered_assets:
                 file_path = str(asset.get("file_path", "")).replace("\\", "/")

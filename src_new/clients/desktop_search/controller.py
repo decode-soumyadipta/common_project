@@ -208,8 +208,7 @@ class DesktopController(QObject):
         self._signal.connect_all_signals()
         self._apply_display_control_mode()
         self._last_state_snapshot = self.build_project_payload()
-        # Defer startup network and process work so the main window can render
-        # immediately instead of appearing as a silent/no-window launch.
+        # Defer startup network and process work so the main window can render immediately instead of appearing as a silent/no-window launch.
         QTimer.singleShot(0, self._bootstrap_startup_tasks)
 
     def _bootstrap_startup_tasks(self) -> None:
@@ -338,9 +337,7 @@ class DesktopController(QObject):
         # Clear only the assets combo box - this is necessary as it's the main catalog selector
         self.panel.assets_combo.clear()
 
-        # NOTE: We no longer clear search_results_table or uploaded_assets_list here.
-        # This ensures that clicking 'Refresh' doesn't wipe the user's current view.
-        # The tables will be updated naturally when fresh data arrives.
+        # NOTE: We no longer clear search_results_table or uploaded_assets_list here. This ensures that clicking 'Refresh' doesn't wipe the user's current view. The tables will be updated naturally when fresh data arrives.
 
         # Reset state variables
         self.state.selected_asset = None
@@ -503,8 +500,7 @@ class DesktopController(QObject):
         # Set cursor via JavaScript (for Cesium canvas cursor)
         self._logger.debug("_set_measurement_cursor_enabled called: enabled=%s", enabled)
         self._run_js_call("setMeasurementCursor", bool(enabled))
-        # CRITICAL FIX: Emit signal to update Qt widget cursor (for Windows cursor display)
-        # The MainWindow listens to this signal and updates the web view cursor
+        # CRITICAL FIX: Emit signal to update Qt widget cursor (for Windows cursor display) The MainWindow listens to this signal and updates the web view cursor
         if hasattr(self, "bridge") and self.bridge:
             self._logger.debug("Emitting measureCursorChanged signal: enabled=%s", enabled)
             self.bridge.measureCursorChanged.emit(bool(enabled))
@@ -916,9 +912,7 @@ class DesktopController(QObject):
         self._viz.rotate_camera(degrees)
 
     def set_pitch(self, degrees: int) -> None:
-        # Debounce: buffer rapid slider events, only fire after 80ms of silence.
-        # Without this, the log shows 30-50 queued setPitch calls that all execute
-        # on the JS thread AFTER the user has stopped — causing camera jumps.
+        # Debounce: buffer rapid slider events, only fire after 80ms of silence. Without this, the log shows 30-50 queued setPitch calls that all execute on the JS thread AFTER the user has stopped — causing camera jumps.
         self._pending_pitch_degrees = int(degrees)
         if not hasattr(self, "_pitch_debounce_timer"):
             from qtpy.QtCore import QTimer
@@ -964,8 +958,7 @@ class DesktopController(QObject):
                     "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
                 })
                 
-            # 2. Update line annotations
-            # coords now arrive as [lon, lat, height] triples from JS
+            # 2. Update line annotations coords now arrive as [lon, lat, height] triples from JS
             self._annotation_line_records = []
             for ln in data.get("lines", []):
                 coords = ln.get("coords", [])

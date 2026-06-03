@@ -31,9 +31,7 @@ from qtpy.QtWidgets import (
 )
 from pyproj import Transformer
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Helpers ---------------------------------------------------------------------------
 
 
 def _make_separator() -> QFrame:
@@ -112,9 +110,7 @@ def _utm_epsg_for_lon_lat(lon: float, lat: float) -> int:
     return 32600 + zone if lat >= 0 else 32700 + zone
 
 
-# ---------------------------------------------------------------------------
-# Main status bar widget
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Main status bar widget ---------------------------------------------------------------------------
 
 _STATUSBAR_STYLE = """
 QStatusBar {
@@ -229,13 +225,10 @@ class GISStatusBar(QStatusBar):
         self._coord_update_interval_s = 0.05
         self._last_coord_update_ts = 0.0
         # ── Progress priority tracking ────────────────────────────────────
-        # Computation progress (fill volume, slope, etc.) takes priority over
-        # tile-loading progress so the two don't fight each other.
+        # Computation progress (fill volume, slope, etc.) takes priority over tile-loading progress so the two don't fight each other.
         self._computation_active = False
 
-    # ------------------------------------------------------------------
-    # Slots wired to WebBridge signals
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ Slots wired to WebBridge signals ------------------------------------------------------------------
 
     @Slot(float, float)
     def on_mouse_coordinates(self, lon: float, lat: float) -> None:
@@ -255,8 +248,7 @@ class GISStatusBar(QStatusBar):
             return
         self._last_coord_update_ts = now
 
-        # Enhanced coordinate display with higher precision for professional use
-        # Use 8 decimal places for sub-meter accuracy
+        # Enhanced coordinate display with higher precision for professional use Use 8 decimal places for sub-meter accuracy
         precision = min(self._coord_decimal_places, 8)
 
         # Longitude with enhanced formatting
@@ -317,8 +309,7 @@ class GISStatusBar(QStatusBar):
         if percent == 100:
             self._computation_active = False
 
-        # Tile-loading events must not overwrite an active computation progress
-        # UNLESS the tile event itself is a completion signal (percent=100).
+        # Tile-loading events must not overwrite an active computation progress UNLESS the tile event itself is a completion signal (percent=100).
         if is_tile_load and self._computation_active and percent < 100:
             return
 
@@ -383,9 +374,7 @@ class GISStatusBar(QStatusBar):
             self._progress_bar.setRange(0, 100)
             self._progress_bar.setValue(0)
 
-    # ------------------------------------------------------------------
-    # Public helpers
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ Public helpers ------------------------------------------------------------------
 
     def set_crs(self, auth_id: str) -> None:
         """Set the CRS badge text.
@@ -409,9 +398,7 @@ class GISStatusBar(QStatusBar):
         self._lat_box.label.setText("Lat: —")
         self._utm_box.label.setText("UTM: —")
 
-    # ------------------------------------------------------------------
-    # Private
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ Private ------------------------------------------------------------------
 
     def _format_utm_coordinates(self, lon: float, lat: float) -> str:
         """Format coordinates as UTM string with meters.

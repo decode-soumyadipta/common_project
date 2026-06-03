@@ -31,9 +31,7 @@ from src_new.shared.constants import (
 LOGGER = logging.getLogger("services.ingestion.gdal_pipelines.cog_converter")
 
 
-# ---------------------------------------------------------------------------
-# Result dataclass
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Result dataclass ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -52,9 +50,7 @@ class CogConversionResult:
     converted: bool
 
 
-# ---------------------------------------------------------------------------
-# Public converter class
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Public converter class ---------------------------------------------------------------------------
 
 
 class CogConverter:
@@ -323,9 +319,7 @@ class CogConverter:
                 source_path=source, working_path=source, converted=False
             )
 
-    # ------------------------------------------------------------------
-    # gdal.Translate / gdal.Warp helpers
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ gdal.Translate / gdal.Warp helpers ------------------------------------------------------------------
 
     @staticmethod
     def translate(
@@ -457,9 +451,7 @@ class CogConverter:
             )
             return False
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ Internal helpers ------------------------------------------------------------------
 
     @staticmethod
     def _try_gdal_translate(source: Path, target: Path) -> bool:
@@ -644,12 +636,9 @@ class CogConverter:
             return False
 
 
-# ---------------------------------------------------------------------------
-# Convenience alias — preserves the original class name used in src/
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Convenience alias — preserves the original class name used in src/ ---------------------------------------------------------------------------
 
-#: Backward-compatible alias for code that imported ``CogPreparationService``
-#: from the old ``cog_service`` package.
+# : Backward-compatible alias for code that imported ``CogPreparationService`` : from the old ``cog_service`` package.
 CogPreparationService = CogConverter
 
 __all__ = [

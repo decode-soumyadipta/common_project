@@ -136,8 +136,7 @@ def extract_metadata(path: Path) -> Dict[str, Any]:
 
         conn.close()
 
-        # --- Resolution: approximate metres/pixel at max zoom ---
-        # Web Mercator circumference ≈ 40_075_016.686 m; tile is 256 px wide
+        # --- Resolution: approximate metres/pixel at max zoom --- Web Mercator circumference ≈ 40_075_016.686 m; tile is 256 px wide
         resolution = _zoom_to_resolution(max_zoom)
 
         return {
@@ -171,9 +170,7 @@ def extract_metadata(path: Path) -> Dict[str, Any]:
         ) from exc
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Internal helpers ---------------------------------------------------------------------------
 
 
 def _parse_bounds(bounds_str: str) -> Dict[str, float]:

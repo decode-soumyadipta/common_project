@@ -34,8 +34,7 @@ class AnnotationCoordinator:
             len(c._annotation_text_records),
         )
         
-        # IMPORTANT: clearAnnotations must be called ONCE before ANY restores
-        # This prevents duplication when restore is called after previous entities exist
+        # IMPORTANT: clearAnnotations must be called ONCE before ANY restores This prevents duplication when restore is called after previous entities exist
         c._run_js_call("clearAnnotations")
 
         # ─── Restore point annotations ────────────────────────────────────────
@@ -86,8 +85,7 @@ class AnnotationCoordinator:
             c._run_js_call("addIconAnnotation", lon, lat, icon, text, height)
 
         # ─── Restore text labels ──────────────────────────────────────────────
-        # CRITICAL: Text labels MUST be restored AFTER points and icons to prevent
-        # CSS conflicts or z-index issues that cause black backgrounds to leak
+        # CRITICAL: Text labels MUST be restored AFTER points and icons to prevent CSS conflicts or z-index issues that cause black backgrounds to leak
         for item in c._annotation_text_records:
             try:
                 lon = float(item.get("lon") or 0.0)

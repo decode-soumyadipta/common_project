@@ -12,8 +12,7 @@ class ToolbarActionCoordinator:
     ) -> bool | None:
         c = self._controller
         handlers = {
-            # Layer Compositor is orchestrated by MainWindow, but keep a mapped
-            # handler label here to preserve toolbar contract coverage.
+            # Layer Compositor is orchestrated by MainWindow, but keep a mapped handler label here to preserve toolbar contract coverage.
             "Layer Compositor": lambda: None,
             "Comparator": c._toolbar_toggle_comparator,
             "Distance / Azimuth": c._toolbar_measure_distance,

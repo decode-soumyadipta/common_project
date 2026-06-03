@@ -23,9 +23,7 @@ from src_new.shared.config import settings
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Application metadata constants
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Application metadata constants ---------------------------------------------------------------------------
 _APP_NAME = "resGIS"
 _APP_VERSION = "1.0.0"
 _APP_DESCRIPTION = (
@@ -61,9 +59,7 @@ class AboutDialog(QDialog):
         self._build_ui()
         logger.debug("AboutDialog initialised")
 
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ Private helpers ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
         """Construct and lay out all child widgets."""

@@ -36,11 +36,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["tiles"])
 
-# ---------------------------------------------------------------------------
-# Optional heavy imports — rasterio / numpy / PIL are used for tile rendering.
-# We guard them so the module can be imported in environments where they are
-# not installed (e.g. lightweight CI).
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Optional heavy imports — rasterio / numpy / PIL are used for tile rendering. We guard them so the module can be imported in environments where they are not installed (e.g. lightweight CI). ---------------------------------------------------------------------------
 try:
     import numpy as np
     import rasterio
@@ -64,9 +60,7 @@ except ImportError:  # pragma: no cover
     logger.warning("Pillow is not installed. PNG encoding will be unavailable.")
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Internal helpers ---------------------------------------------------------------------------
 
 
 def _resolve_raster_path(raster_id: str) -> Path:
@@ -238,8 +232,7 @@ def _read_tile_from_raster(
             detail="rasterio is not installed; tile rendering is unavailable.",
         )
 
-    # Convert XYZ tile coordinates to Web Mercator bounds
-    # Tile bounds formula: https://wiki.openstreetmap.org/wiki/Slippy_map_tilenames
+    # Convert XYZ tile coordinates to Web Mercator bounds Tile bounds formula: https://wiki.openstreetmap.org/wiki/Slippy_map_tilenames
     import math
 
     n = 2**z
@@ -389,9 +382,7 @@ def _read_preview_from_raster(
     return preview_data
 
 
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Endpoints ---------------------------------------------------------------------------
 
 
 @router.get(
@@ -619,9 +610,7 @@ async def get_metadata(raster_id: str) -> dict:
         lat_span = max_lat - min_lat
         res_deg = min(lon_span / src.width, lat_span / src.height) if src.width and src.height else 1.0
 
-        # Zoom level where 1 pixel ≈ 1 tile pixel
-        # At zoom 0, the whole world (360°) fits in TILE_SIZE pixels
-        # → resolution at zoom z = 360 / (TILE_SIZE * 2^z)
+        # Zoom level where 1 pixel ≈ 1 tile pixel At zoom 0, the whole world (360°) fits in TILE_SIZE pixels → resolution at zoom z = 360 / (TILE_SIZE * 2^z)
         if res_deg > 0:
             maxzoom = max(0, min(26, int(math.log2(360.0 / (TILE_SIZE * res_deg)))))
         else:

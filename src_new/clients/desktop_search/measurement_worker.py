@@ -15,15 +15,11 @@ class MeasurementWorker(QRunnable):
         self._name = name
         self._task = task
         self.signals = MeasurementWorkerSignals()
-        # Prevent Qt from deleting the C++ object after run() completes.
-        # With autoDelete=True (the default) Qt destroys the QRunnable as soon
-        # as the thread pool finishes it, which invalidates self.signals while
-        # Python still holds a reference — causing a segfault on the next run.
+        # Prevent Qt from deleting the C++ object after run() completes. With autoDelete=True (the default) Qt destroys the QRunnable as soon as the thread pool finishes it, which invalidates self.signals while Python still holds a reference — causing a segfault on the next run.
         self.setAutoDelete(False)
 
     def run(self) -> None:  # type: ignore[override]
-        # Initialise a thread-local PROJ database context so that pyproj
-        # Transformer calls work correctly inside QThreadPool worker threads.
+        # Initialise a thread-local PROJ database context so that pyproj Transformer calls work correctly inside QThreadPool worker threads.
         try:
             from pyproj import network  # noqa: F401 — side-effect: bootstraps context
             from pyproj.crs import CRS

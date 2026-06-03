@@ -29,8 +29,7 @@ def test_search_results_coordinator_populates_tile_url():
     # Act
     coordinator.apply_search_results_event_driven(assets, label="Test Search")
 
-    # Assert
-    # Verify search result assets by path has been populated
+    # Assert Verify search result assets by path has been populated
     result_path = "/Users/soumyadiptadey/Developer/common_project/uploads/coal_13.tif"
     assert result_path in mock_controller._search_result_assets_by_path
     
@@ -95,8 +94,7 @@ def test_sync_focus_coordinator_fallback_focus_all_assets_when_none_visible():
         force=True, is_first_search=True, asset_count=2
     )
 
-    # Verify fallback calculated the union bounds of all assets:
-    # union of bounds is west=10.0, south=18.0, east=17.0, north=25.0
+    # Verify fallback calculated the union bounds of all assets: union of bounds is west=10.0, south=18.0, east=17.0, north=25.0
     mock_controller._run_js_call.assert_any_call(
         "focusBoundsWithPadding",
         10.0,
@@ -196,8 +194,7 @@ def test_project_io_coordinator_roundtrip():
     assert payload["layers"]["vectors"][0]["layer_key"] == "vector1"
     assert payload["camera"]["lon"] == 77.2
     
-    # Apply payload
-    # Let's reset controller state first to verify reconstruction
+    # Apply payload Let's reset controller state first to verify reconstruction
     mock_controller._search_result_assets_by_path = {}
     mock_controller._vector_layers = {}
     mock_controller._annotation_records = []
@@ -282,8 +279,8 @@ def test_desktop_controller_undo_redo_stack():
     mock_panel.dem_stretch_mode_combo.findData.return_value = -1
     mock_panel.stretch_mode_combo.findData.return_value = -1
     
-    with patch("src_new.clients.desktop_search.controller.QTimer") as mock_timer, \
-         patch("src_new.clients.desktop_search.controller.QThreadPool") as mock_pool:
+    with patch("src_new.clients.desktop_search.controller.QTimer"), \
+         patch("src_new.clients.desktop_search.controller.QThreadPool"):
         # Instantiate DesktopController with basic mocks
         controller = DesktopController(
             panel=mock_panel,
@@ -335,8 +332,7 @@ def test_desktop_controller_undo_redo_stack():
     assert len(controller._undo_stack) == 1
     assert controller._undo_stack[0]["state_id"] == 0
     
-    # 4. Test Stack limit capping (capped at 50)
-    # Restore state_idx back to 1 for consistency
+    # 4. Test Stack limit capping (capped at 50) Restore state_idx back to 1 for consistency
     current_state_idx = 1
     # Advance project modification 58 more times (state_idx from 2 to 59)
     for i in range(2, 60):
@@ -348,6 +344,56 @@ def test_desktop_controller_undo_redo_stack():
     assert controller._undo_stack[0]["state_id"] == 9
     assert controller._undo_stack[-1]["state_id"] == 58
     assert controller._last_state_snapshot["state_id"] == 59
+
+
+def test_export_dialog_thread_retention(monkeypatch):
+    from src_new.clients.desktop_search.coordinators.export_coordinator import ExportGeoTiffDialog
+    
+    # Mock QDialog methods
+    monkeypatch.setattr("qtpy.QtWidgets.QDialog.__init__", lambda self, parent=None: None)
+    monkeypatch.setattr("qtpy.QtWidgets.QDialog.style", lambda self: MagicMock())
+    
+    # Instantiate without calling init_ui
+    dialog = ExportGeoTiffDialog.__new__(ExportGeoTiffDialog)
+    dialog.assets = []
+    dialog._resolve_source_path = None
+    dialog.threads = {}
+    dialog.finished_threads = []
+    
+    # Create mock components
+    mock_btn = MagicMock()
+    mock_progress_bar = MagicMock()
+    mock_status_label = MagicMock()
+    
+    # Mock QFileDialog
+    monkeypatch.setattr("qtpy.QtWidgets.QFileDialog.getSaveFileName", lambda *args, **kwargs: ("/path/to/dest.tif", "Filter"))
+    
+    # Mock GeoTiffExportThread
+    mock_thread = MagicMock()
+    mock_thread_class = MagicMock(return_value=mock_thread)
+    monkeypatch.setattr("src_new.clients.desktop_search.coordinators.export_coordinator.GeoTiffExportThread", mock_thread_class)
+    
+    # Mock Path exists
+    monkeypatch.setattr("pathlib.Path.exists", lambda self: True)
+    
+    # Trigger start_download
+    dialog.start_download("/path/to/src.tif", "src.tif", mock_btn, mock_progress_bar, mock_status_label)
+    
+    # Verify thread was added to threads dictionary
+    assert "/path/to/src.tif" in dialog.threads
+    assert dialog.threads["/path/to/src.tif"] == mock_thread
+    
+    # Capture handle_finished connected to finished signal
+    finished_connection = mock_thread.finished.connect.call_args[0][0]
+    
+    # Call handle_finished(success=True, err_msg="")
+    finished_connection(True, "")
+    
+    # Verify that the thread is removed from active threads
+    assert "/path/to/src.tif" not in dialog.threads
+    # Verify that it is appended to finished_threads to protect its lifecycle
+    assert mock_thread in dialog.finished_threads
+
 
 
 

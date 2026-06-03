@@ -15,8 +15,7 @@ class WebBridge(QObject):
     annotationsSynced = Signal(str)
 
     # ── Status-bar signals ───────────────────────────────────────────────
-    # Emitted continuously as the user moves the cursor over the globe.
-    # lon / lat are in decimal degrees (WGS-84 / EPSG:4326).
+    # Emitted continuously as the user moves the cursor over the globe. lon / lat are in decimal degrees (WGS-84 / EPSG:4326).
     mouseCoordinates = Signal(float, float)
 
     # Emitted on every camera move: approximate scale denominator + heading + pitch.
@@ -44,9 +43,7 @@ class WebBridge(QObject):
         super().__init__(parent)
         self._measure_cursor_enabled: bool | None = None
 
-    # ------------------------------------------------------------------
-    # Slots (called from JavaScript via QWebChannel)
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ Slots (called from JavaScript via QWebChannel) ------------------------------------------------------------------
 
     @Slot(str, bool)
     def on_search_result_visibility_toggled(self, file_path: str, visible: bool) -> None:

@@ -435,7 +435,7 @@ class ControlPanel(
         point_container = QFrame()
         point_container.setObjectName("pointSearchContainer")
         point_container.setStyleSheet("""
-            #pointSearchContainer {
+            # pointSearchContainer {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #fcfdfe, stop:1 #f1f5f9);
                 border: 1px solid #cbd5e0;
                 border-radius: 8px;
@@ -504,12 +504,12 @@ class ControlPanel(
         geom_container = QFrame()
         geom_container.setObjectName("geomSearchContainer")
         geom_container.setStyleSheet("""
-            #geomSearchContainer {
+            # geomSearchContainer {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #fcfdfe, stop:1 #f1f5f9);
                 border: 1px solid #cbd5e0;
                 border-radius: 8px;
             }
-            #searchPolygonModeBtn {
+            # searchPolygonModeBtn {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #edf2f7);
                 border: 1px solid #cbd5e0;
                 border-right: none;
@@ -520,18 +520,18 @@ class ControlPanel(
                 color: #4a5568;
                 font-weight: 600;
             }
-            #searchPolygonModeBtn:hover {
+            # searchPolygonModeBtn:hover {
                 background: #ffffff;
                 color: #2b6cb0;
             }
-            #searchPolygonModeBtn:checked {
+            # searchPolygonModeBtn:checked {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ebf8ff, stop:1 #bee3f8);
                 border: 1px solid #4299e1;
                 border-right: none;
                 color: #2b6cb0;
                 font-weight: bold;
             }
-            #searchBoxModeBtn {
+            # searchBoxModeBtn {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #edf2f7);
                 border: 1px solid #cbd5e0;
                 border-top-left-radius: 0px;
@@ -541,11 +541,11 @@ class ControlPanel(
                 color: #4a5568;
                 font-weight: 600;
             }
-            #searchBoxModeBtn:hover {
+            # searchBoxModeBtn:hover {
                 background: #ffffff;
                 color: #2b6cb0;
             }
-            #searchBoxModeBtn:checked {
+            # searchBoxModeBtn:checked {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ebf8ff, stop:1 #bee3f8);
                 border: 1px solid #4299e1;
                 color: #2b6cb0;
@@ -700,9 +700,7 @@ class ControlPanel(
         self.search_results_table.setWordWrap(False)
         self.search_results_table.setTextElideMode(Qt.TextElideMode.ElideMiddle)
 
-        # macOS QMacStyle ignores rgba alpha in palette and in CSS background on ::item.
-        # Must use fully opaque colors. AlternateBase must also be white (not gray)
-        # or macOS will paint its own system blue on alternating rows.
+        # macOS QMacStyle ignores rgba alpha in palette and in CSS background on ::item. Must use fully opaque colors. AlternateBase must also be white (not gray) or macOS will paint its own system blue on alternating rows.
         palette = self.search_results_table.palette()
         palette.setColor(QPalette.ColorRole.Base, QColor(255, 255, 255))           # all rows: white
         palette.setColor(QPalette.ColorRole.AlternateBase, QColor(255, 255, 255)) # alt rows: also white
@@ -1106,8 +1104,7 @@ class ControlPanel(
             self.sections.setVisible(False)
             self._set_client_group_title_visibility(visible=True)
 
-            # Add server sections directly to main layout
-            # Remove the toolbox before adding sections
+            # Add server sections directly to main layout Remove the toolbox before adding sections
             _remove_widget(self.sections)
 
             # Add server-specific sections directly

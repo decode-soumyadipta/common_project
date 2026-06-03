@@ -221,9 +221,7 @@ class AssetCoordinator:
         c.panel.assets_combo.clear()
         c._asset_cache.clear()
         c._dem_asset_kind_cache.clear()
-        # NOTE: _search_result_assets_by_path and _search_layer_visibility are
-        # intentionally preserved so that the Search Results table is unaffected
-        # by a catalog refresh.
+        # NOTE: _search_result_assets_by_path and _search_layer_visibility are intentionally preserved so that the Search Results table is unaffected by a catalog refresh.
 
         # Check if assets is empty or None
         if not assets:

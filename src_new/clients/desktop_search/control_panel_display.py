@@ -22,9 +22,7 @@ class ControlPanelDisplayMixin:
         if not self.pitch_slider.isEnabled():
             return
 
-        # Pitch from Cesium is roughly -90 (looking straight down) to 0 (looking horizontal)
-        # Or it might be positive depending on the coordinate frame, but usually negative in the slider.
-        # Clamp it to the slider range and set the value.
+        # Pitch from Cesium is roughly -90 (looking straight down) to 0 (looking horizontal) Or it might be positive depending on the coordinate frame, but usually negative in the slider. Clamp it to the slider range and set the value.
         pitch_val = int(pitch_deg)
         if pitch_val > self.pitch_slider.maximum():
             pitch_val = self.pitch_slider.maximum()

@@ -35,9 +35,7 @@ from src_new.shared.config import Settings, settings as _default_settings
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Engine / session factory — built lazily from settings so tests can override
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Engine / session factory — built lazily from settings so tests can override ---------------------------------------------------------------------------
 
 _engine = None
 _SessionLocal = None
@@ -98,9 +96,7 @@ def _get_session_factory():
     return _SessionLocal
 
 
-# ---------------------------------------------------------------------------
-# FastAPI dependency: database session
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- FastAPI dependency: database session ---------------------------------------------------------------------------
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -129,9 +125,7 @@ def get_db() -> Generator[Session, None, None]:
         session.close()
 
 
-# ---------------------------------------------------------------------------
-# FastAPI dependency: settings
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- FastAPI dependency: settings ---------------------------------------------------------------------------
 
 
 def get_settings() -> Settings:
@@ -147,9 +141,7 @@ def get_settings() -> Settings:
     return _default_settings
 
 
-# ---------------------------------------------------------------------------
-# FastAPI dependency: GDAL metadata extractor pipeline
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- FastAPI dependency: GDAL metadata extractor pipeline ---------------------------------------------------------------------------
 
 
 def get_metadata_extractor():
@@ -171,9 +163,7 @@ def get_metadata_extractor():
     return extract_metadata
 
 
-# ---------------------------------------------------------------------------
-# FastAPI dependency: format handler dispatch
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- FastAPI dependency: format handler dispatch ---------------------------------------------------------------------------
 
 
 def get_format_handler(file_extension: str) -> Optional[object]:
@@ -209,9 +199,7 @@ def get_format_handler(file_extension: str) -> Optional[object]:
     return None
 
 
-# ---------------------------------------------------------------------------
-# FastAPI dependency: data root path
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- FastAPI dependency: data root path ---------------------------------------------------------------------------
 
 
 def get_data_root() -> Path:
@@ -228,9 +216,7 @@ def get_data_root() -> Path:
     return data_root
 
 
-# ---------------------------------------------------------------------------
-# Type aliases for cleaner route signatures
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Type aliases for cleaner route signatures ---------------------------------------------------------------------------
 
 DbSession = Annotated[Session, Depends(get_db)]
 AppSettings = Annotated[Settings, Depends(get_settings)]

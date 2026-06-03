@@ -142,10 +142,7 @@ class SearchResultsCoordinator:
             label,
         )
 
-        # FIX 1 — Layer order: enforce display order matching the UI list.
-        # UI display sort: imagery (non-DEM) at row 0 = visually ON TOP in Cesium.
-        # IMPORTANT: sort imagery before DEM so JS raises imagery to the top correctly.
-        # (Previously we used dict insertion order which was API order = DEM first → wrong.)
+        # FIX 1 — Layer order: enforce display order matching the UI list. UI display sort: imagery (non-DEM) at row 0 = visually ON TOP in Cesium. IMPORTANT: sort imagery before DEM so JS raises imagery to the top correctly. (Previously we used dict insertion order which was API order = DEM first → wrong.)
         ordered_keys = sorted(
             [
                 p.replace("\\", "/")
@@ -160,8 +157,7 @@ class SearchResultsCoordinator:
         if ordered_keys:
             c._run_js_call("enforceLayerDisplayOrder", ordered_keys)
 
-        # FIX 2 — Fly-to: single controlled fly-to AFTER layers+order are set,
-        # so the globe is never blank during flight.
+        # FIX 2 — Fly-to: single controlled fly-to AFTER layers+order are set, so the globe is never blank during flight.
         c._focus_visible_search_assets_with_enhanced_behavior(
             force=not had_visible_assets,
             is_first_search=not had_visible_assets,

@@ -8,9 +8,7 @@ EPSG codes, TILE_SIZE, MAX_UPLOAD_SIZE_DEFAULT.
 """
 from __future__ import annotations
 
-# ---------------------------------------------------------------------------
-# Supported geospatial file formats
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Supported geospatial file formats ---------------------------------------------------------------------------
 
 SUPPORTED_FORMATS: frozenset[str] = frozenset({"tif", "jp2", "mbtiles"})
 """Normalized (lowercase, no dot) file extensions accepted by the ingestion service."""
@@ -25,9 +23,7 @@ FORMAT_MIME_TYPES: dict[str, str] = {
 }
 """MIME types for each supported format."""
 
-# ---------------------------------------------------------------------------
-# EPSG / CRS codes
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- EPSG / CRS codes ---------------------------------------------------------------------------
 
 EPSG_WGS84: int = 4326
 """WGS 84 geographic coordinate system — standard for GPS and web maps."""
@@ -47,9 +43,7 @@ DEFAULT_CRS: str = f"EPSG:{EPSG_WGS84}"
 TILE_CRS: str = f"EPSG:{EPSG_WEB_MERCATOR}"
 """CRS used for tile serving (Web Mercator)."""
 
-# ---------------------------------------------------------------------------
-# Tile dimensions
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Tile dimensions ---------------------------------------------------------------------------
 
 TILE_SIZE: int = 256
 """Standard tile size in pixels (width and height). Used by TiTiler and CesiumJS."""
@@ -63,9 +57,7 @@ TILE_MIN_ZOOM: int = 0
 TILE_MAX_ZOOM: int = 22
 """Maximum zoom level for tile pyramid."""
 
-# ---------------------------------------------------------------------------
-# Upload / file size limits
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Upload / file size limits ---------------------------------------------------------------------------
 
 MAX_UPLOAD_SIZE_DEFAULT: int = 10 * 1024 * 1024 * 1024  # 10 GB
 """Default maximum upload size in bytes (10 GB). Override with MAX_UPLOAD_SIZE env var."""
@@ -73,9 +65,7 @@ MAX_UPLOAD_SIZE_DEFAULT: int = 10 * 1024 * 1024 * 1024  # 10 GB
 MAX_UPLOAD_SIZE_SMALL: int = 100 * 1024 * 1024  # 100 MB
 """Small upload limit for testing and development environments."""
 
-# ---------------------------------------------------------------------------
-# Database / PostGIS
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Database / PostGIS ---------------------------------------------------------------------------
 
 POSTGIS_SRID: int = EPSG_WGS84
 """Default SRID for PostGIS geometry columns."""
@@ -83,9 +73,7 @@ POSTGIS_SRID: int = EPSG_WGS84
 SPATIAL_INDEX_TYPE: str = "GIST"
 """PostGIS spatial index type used for geometry columns."""
 
-# ---------------------------------------------------------------------------
-# Ingestion pipeline
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Ingestion pipeline ---------------------------------------------------------------------------
 
 COG_BLOCKSIZE: int = 512
 """Default COG tile block size in pixels."""
@@ -105,9 +93,7 @@ INGEST_STATUSES: frozenset[str] = frozenset(
     {INGEST_STATUS_QUEUED, INGEST_STATUS_PROCESSING, INGEST_STATUS_CATALOGED, INGEST_STATUS_FAILED}
 )
 
-# ---------------------------------------------------------------------------
-# API / service defaults
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- API / service defaults ---------------------------------------------------------------------------
 
 DEFAULT_API_HOST: str = "127.0.0.1"
 DEFAULT_INGESTION_SERVICE_PORT: int = 8001
@@ -117,16 +103,12 @@ DEFAULT_QUERY_SERVICE_PORT: int = 8003
 API_VERSION: str = "v1"
 API_PREFIX: str = f"/api/{API_VERSION}"
 
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Logging ---------------------------------------------------------------------------
 
 DEFAULT_LOG_LEVEL: str = "INFO"
 DEFAULT_LOG_FORMAT: str = "text"
 
-# ---------------------------------------------------------------------------
-# Security
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Security ---------------------------------------------------------------------------
 
 LOCALHOST_ADDRESSES: frozenset[str] = frozenset({"127.0.0.1", "::1", "localhost"})
 """IP addresses always considered local/trusted."""

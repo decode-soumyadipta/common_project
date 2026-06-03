@@ -55,9 +55,7 @@ class BoundingBox(BaseModel):
             )
         return self
 
-    # ------------------------------------------------------------------
-    # Convenience helpers
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ Convenience helpers ------------------------------------------------------------------
 
     def contains_point(self, lon: float, lat: float) -> bool:
         """Return True if the given point falls within (or on the edge of) this box."""

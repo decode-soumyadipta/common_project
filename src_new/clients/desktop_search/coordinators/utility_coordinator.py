@@ -326,9 +326,7 @@ class UtilityCoordinator:
                     c._dem_asset_kind_cache[file_path] = False
                 return False
 
-            # Single-band: Check data type to distinguish DEM from grayscale imagery
-            # DEM typically uses float32/float64 or int16/int32 for elevation values
-            # Grayscale imagery typically uses uint8/uint16 for pixel values
+            # Single-band: Check data type to distinguish DEM from grayscale imagery DEM typically uses float32/float64 or int16/int32 for elevation values Grayscale imagery typically uses uint8/uint16 for pixel values
             if band_count == 1:
                 # Float types = likely DEM (elevation values)
                 if "float" in dtype:

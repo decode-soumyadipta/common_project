@@ -25,9 +25,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Attempt to load the compiled Rust extension
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Attempt to load the compiled Rust extension ---------------------------------------------------------------------------
 _RUST_AVAILABLE = False
 
 try:
@@ -47,9 +45,7 @@ except ImportError:
         "Run 'scripts/build_rust.sh' to compile the Rust extension."
     )
 
-    # -----------------------------------------------------------------------
-    # Pure-Python fallback: rasterize_vectors
-    # -----------------------------------------------------------------------
+    # ----------------------------------------------------------------------- Pure-Python fallback: rasterize_vectors -----------------------------------------------------------------------
     def rasterize_vectors(  # type: ignore[misc]
         geometries: list,
         burn_value: float,
@@ -142,9 +138,7 @@ except ImportError:
 
         return buffer
 
-    # -----------------------------------------------------------------------
-    # Pure-Python fallback: transform_coordinates
-    # -----------------------------------------------------------------------
+    # ----------------------------------------------------------------------- Pure-Python fallback: transform_coordinates -----------------------------------------------------------------------
     def transform_coordinates(  # type: ignore[misc]
         coordinates: list[tuple[float, float]],
         source_crs: str,
@@ -224,9 +218,7 @@ except ImportError:
         return list(coordinates)
 
 
-# ---------------------------------------------------------------------------
-# Internal helper (used by the pure-Python rasterize fallback only)
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Internal helper (used by the pure-Python rasterize fallback only) ---------------------------------------------------------------------------
 
 def _extract_all_coords(geometry: dict) -> list[tuple[float, float]]:
     """Recursively extract all (x, y) coordinate pairs from a GeoJSON geometry."""
@@ -259,9 +251,7 @@ def _extract_all_coords(geometry: dict) -> list[tuple[float, float]]:
     return coords
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Public API ---------------------------------------------------------------------------
 
 __all__ = [
     "rasterize_vectors",

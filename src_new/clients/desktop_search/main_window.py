@@ -8,7 +8,6 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 import time
-import json
 import cv2
 import numpy as np
 
@@ -87,7 +86,7 @@ class VideoExportSettingsDialog(QDialog):
         self.update_estimates()
         
     def _init_ui(self):
-        from qtpy.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton, QGroupBox
+        from qtpy.QtWidgets import QVBoxLayout, QLabel, QPushButton, QGroupBox
         layout = QVBoxLayout(self)
         layout.setSpacing(15)
         layout.setContentsMargins(20, 20, 20, 20)
@@ -392,8 +391,7 @@ class MainWindow(QMainWindow):
         self.panel_scroll.setWidget(self.panel)
         from qtpy.QtWebEngineWidgets import QWebEngineProfile
         
-        # Create a unique profile name based on app mode to isolate caches (e.g. Ingest vs Search)
-        # This prevents "Access is denied" errors in the GPUCache directory.
+        # Create a unique profile name based on app mode to isolate caches (e.g. Ingest vs Search) This prevents "Access is denied" errors in the GPUCache directory.
         profile_name = f"OfflineGIS_{self.app_mode.value}"
         self.profile = QWebEngineProfile(profile_name, self)
         
@@ -424,8 +422,7 @@ class MainWindow(QMainWindow):
         self.busy_overlay.hide()
 
         # ── Elevation profile panel (hidden until first profile) ──────────
-        # It sits ONLY under the map column (web_view), not the full window.
-        # We achieve this by putting the web_view in its own vertical splitter.
+        # It sits ONLY under the map column (web_view), not the full window. We achieve this by putting the web_view in its own vertical splitter.
         from src_new.clients.desktop_search.elevation_profile_panel import (
             ElevationProfilePanel,
         )
@@ -554,8 +551,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         """Handle window close to release WebEngine resources properly."""
         if hasattr(self, "web_view") and self.web_view:
-            # Detach the page from the view and profile before destruction
-            # to prevent "Expect troubles" warnings.
+            # Detach the page from the view and profile before destruction to prevent "Expect troubles" warnings.
             self.web_view.setPage(None)
             self.web_view.deleteLater()
         
@@ -717,8 +713,7 @@ class MainWindow(QMainWindow):
             self.controller.add_vector_layers()
             return
 
-        # --- State Sync Phase ---
-        # Special case: Layer Compositor toggled OFF
+        # --- State Sync Phase --- Special case: Layer Compositor toggled OFF
         if action_label == "Layer Compositor" and not checked:
             self.controller.disable_layer_compositor()
             if hasattr(self, "compositor_overlay"):
@@ -732,8 +727,7 @@ class MainWindow(QMainWindow):
                 action.setChecked(final_state)
                 action.blockSignals(False)
 
-        # --- Interaction Exclusivity ---
-        # If an interaction tool was just ENABLED, uncheck all OTHER interaction tools.
+        # --- Interaction Exclusivity --- If an interaction tool was just ENABLED, uncheck all OTHER interaction tools.
         interaction_toggles = {
             "Distance / Azimuth",
             "Elevation Profile",
@@ -764,8 +758,7 @@ class MainWindow(QMainWindow):
             )
             self.map_overlay_controls.set_special_mode(is_special)
 
-        # --- Final UI Refresh ---
-        # This will handle mutual exclusivity (grey-out) and contextual visibility
+        # --- Final UI Refresh --- This will handle mutual exclusivity (grey-out) and contextual visibility
         self._refresh_toolbar_action_state()
 
     def _show_layer_compositor_overlay(self) -> None:
@@ -947,9 +940,7 @@ class MainWindow(QMainWindow):
                 previous = action.blockSignals(True)
                 action.setChecked(False)
                 action.blockSignals(previous)
-            # Recompute toolbar enabled/disabled state now that fly-through is over.
-            # Without this refresh, annotation tools can remain greyed out until another
-            # toolbar action forces a state sync.
+            # Recompute toolbar enabled/disabled state now that fly-through is over. Without this refresh, annotation tools can remain greyed out until another toolbar action forces a state sync.
             self._refresh_toolbar_action_state()
 
     def _on_fly_through_playback_progress_changed(self, progress: float) -> None:
@@ -1246,8 +1237,7 @@ class MainWindow(QMainWindow):
             if label in {"Comparator", "Fly Through"} and normal_view_blocked:
                 is_enabled = False
 
-            # 5. Annotation tool exclusivity (Add Point, Add Line, Add Polygon, Add Text Label)
-            # Disable during Comparator and Fly Through modes.
+            # 5. Annotation tool exclusivity (Add Point, Add Line, Add Polygon, Add Text Label) Disable during Comparator and Fly Through modes.
             annotation_tools = {
                 "Add Point",
                 "Add Line",

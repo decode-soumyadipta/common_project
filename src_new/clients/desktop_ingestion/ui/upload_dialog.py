@@ -34,9 +34,7 @@ from src_new.shared.config import settings
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Supported file extensions (mirrors src_new/shared/constants.py)
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- Supported file extensions (mirrors src_new/shared/constants.py) ---------------------------------------------------------------------------
 _SUPPORTED_EXTENSIONS = (".tif", ".tiff", ".j2k", ".jp2", ".mbtiles")
 _FILE_FILTER = (
     "Geospatial Files (*.tif *.tiff *.j2k *.jp2 *.mbtiles);;"
@@ -90,9 +88,7 @@ class UploadDialog(QDialog):
             settings.ingestion_service_url,
         )
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ Public API ------------------------------------------------------------------
 
     @property
     def selected_files(self) -> list[Path]:
@@ -129,9 +125,7 @@ class UploadDialog(QDialog):
         """
         return self.description_edit.toPlainText().strip()
 
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ Private helpers ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
         """Construct and lay out all child widgets."""
