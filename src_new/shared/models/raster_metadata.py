@@ -98,6 +98,14 @@ class RasterMetadata(BaseModel):
         gt=0,
         description="Raster height in pixels.",
     )
+    tags: Optional[str] = Field(
+        default="",
+        description="Comma-separated user-supplied metadata tags.",
+    )
+    description: Optional[str] = Field(
+        default="",
+        description="Free-text description of the asset.",
+    )
     upload_date: Optional[datetime] = Field(
         default=None,
         description="UTC timestamp when the raster was ingested. None if not yet set.",

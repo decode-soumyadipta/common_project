@@ -1,9 +1,9 @@
 """Monitoring panel for the Desktop Ingestion Client.
 
 This module provides a PySide6 widget that displays:
-- Upload progress for multiple files
+- Upload progress for multiple files (parallel multi-threaded)
 - Ingestion status polling
-- Uploaded asset catalog with metadata
+- Uploaded asset catalog with metadata (tags, description)
 - Real-time activity log
 
 The panel communicates with the Ingestion Service via the
@@ -14,10 +14,12 @@ Requirements: 7.1, 7.3, 7.5, 7.6
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Optional
 
-from qtpy.QtCore import Qt, QThread, QTimer, Signal
+from qtpy.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, Signal
 from qtpy.QtWidgets import (
     QCheckBox,
     QFormLayout,
@@ -44,100 +46,114 @@ from src_new.clients.desktop_ingestion.api_client import (
 logger = logging.getLogger(__name__)
 
 
-class UploadWorker(QThread):
-    """Background worker thread for uploading files to the Ingestion Service.
+# ---------------------------------------------------------------------------
+# Parallel Upload Infrastructure
+# ---------------------------------------------------------------------------
 
-    Emits signals for progress updates and completion status.
 
-    Signals:
-        progress: Emitted with (current_index, total_count, file_name) during upload.
-        file_completed: Emitted with (file_path, raster_id, status, message) after each file.
-        all_completed: Emitted when all files have been processed.
-        error: Emitted with (file_path, error_message) on upload failure.
+class _UploadSignals(QObject):
+    """Signals emitted by a single file upload task.
+
+    These are QObject-based because QRunnable cannot emit signals directly.
     """
-
-    progress = Signal(int, int, str)  # current, total, file_name
     file_completed = Signal(str, str, str, str)  # file_path, raster_id, status, message
-    all_completed = Signal()
     error = Signal(str, str)  # file_path, error_message
+    finished = Signal()  # emitted always (success or failure)
+
+
+class SingleFileUploadTask(QRunnable):
+    """QRunnable that uploads ONE file to the Ingestion Service.
+
+    Designed to run in a QThreadPool so that multiple files upload in parallel
+    without blocking the main Qt thread.  Includes one automatic retry on failure.
+    """
 
     def __init__(
         self,
         api_client: IngestionApiClient,
-        files: list[Path],
+        file_path: Path,
         tags: list[str],
-        parent: QWidget | None = None,
+        description: str = "",
     ) -> None:
-        """Initialize the upload worker.
-
-        Args:
-            api_client: API client for communicating with the Ingestion Service.
-            files: List of file paths to upload.
-            tags: Optional metadata tags to attach to uploads.
-            parent: Optional parent widget.
-        """
-        super().__init__(parent)
+        super().__init__()
         self.api_client = api_client
-        self.files = files
+        self.file_path = file_path
         self.tags = tags
-        self._stop_requested = False
+        self.description = description
+        self.signals = _UploadSignals()
+        self.setAutoDelete(True)
 
     def run(self) -> None:
-        """Execute the upload process in a background thread."""
-        total = len(self.files)
-        for i, file_path in enumerate(self.files):
-            if self._stop_requested:
-                logger.info("Upload worker stopped by user request")
-                break
+        """Execute the upload with one retry on failure."""
+        max_attempts = 2
+        last_error: Optional[Exception] = None
 
-            self.progress.emit(i + 1, total, file_path.name)
-
+        for attempt in range(1, max_attempts + 1):
             try:
-                # Prepare metadata
-                metadata = {}
+                # Prepare metadata dict
+                metadata: dict = {}
                 if self.tags:
                     metadata["tags"] = self.tags
+                if self.description:
+                    metadata["description"] = self.description
 
-                # Look for sidecar files (e.g. .prj, .j2w, .tfw, .jgw) next to the raster file
+                # Look for sidecar files (.prj, .j2w, .tfw, .jgw) next to raster
                 for suffix in [".prj", ".j2w", ".tfw", ".jgw"]:
-                    sidecar_path = file_path.with_suffix(suffix)
+                    sidecar_path = self.file_path.with_suffix(suffix)
                     if sidecar_path.exists():
                         try:
-                            metadata[f"sidecar_{suffix.replace('.', '')}"] = sidecar_path.read_text().strip()
-                            logger.info("Found sidecar %s for %s", suffix, file_path.name)
+                            metadata[f"sidecar_{suffix.replace('.', '')}"] = (
+                                sidecar_path.read_text().strip()
+                            )
+                            logger.info(
+                                "Found sidecar %s for %s", suffix, self.file_path.name
+                            )
                         except Exception as exc:
-                            logger.warning("Failed to read sidecar %s: %s", sidecar_path, exc)
+                            logger.warning(
+                                "Failed to read sidecar %s: %s", sidecar_path, exc
+                            )
 
-                # Upload file
                 response: UploadResponse = self.api_client.upload_file(
-                    file_path, extra_metadata=metadata, timeout=600.0
+                    self.file_path, extra_metadata=metadata, timeout=600.0
                 )
 
-                self.file_completed.emit(
-                    str(file_path),
+                self.signals.file_completed.emit(
+                    str(self.file_path),
                     response.raster_id,
                     response.status,
                     response.message,
                 )
+                self.signals.finished.emit()
+                return  # success — exit
 
             except Exception as exc:
-                logger.exception("Upload failed for %s", file_path)
-                self.error.emit(str(file_path), str(exc))
+                last_error = exc
+                if attempt < max_attempts:
+                    logger.warning(
+                        "Upload attempt %d failed for %s: %s — retrying...",
+                        attempt,
+                        self.file_path.name,
+                        exc,
+                    )
+                else:
+                    logger.exception(
+                        "Upload failed after %d attempts for %s",
+                        max_attempts,
+                        self.file_path,
+                    )
 
-        self.all_completed.emit()
-
-    def stop(self) -> None:
-        """Request the worker to stop processing."""
-        self._stop_requested = True
+        # All retries exhausted
+        self.signals.error.emit(str(self.file_path), str(last_error))
+        self.signals.finished.emit()
 
 
 class MonitoringPanel(QWidget):
     """Monitoring panel for tracking ingestion progress and viewing uploaded assets.
 
     Provides:
-    - Upload progress tracking with real-time status updates
+    - Parallel upload progress tracking with real-time status updates
     - Ingestion status polling for processing files
-    - Uploaded asset catalog with metadata display
+    - Uploaded asset catalog with tags & description display
     - Activity log for debugging and monitoring
 
     Requirements: 7.1, 7.3, 7.5, 7.6
@@ -154,9 +170,18 @@ class MonitoringPanel(QWidget):
         """
         super().__init__(parent)
         self.api_client = api_client
-        self._upload_worker: UploadWorker | None = None
         self._active_uploads: dict[str, str] = {}  # file_path -> raster_id
         self._suppress_check_signals = False
+
+        # Parallel upload tracking
+        self._upload_pool = QThreadPool.globalInstance()
+        # Use at most 4 threads (or cpu_count, whichever is smaller)
+        max_threads = min(4, os.cpu_count() or 2)
+        self._upload_pool.setMaxThreadCount(max_threads)
+        self._upload_total = 0
+        self._uploaded_count = 0
+        self._failed_count = 0
+        self._pending_tasks = 0
 
         self._build_ui()
 
@@ -167,7 +192,10 @@ class MonitoringPanel(QWidget):
 
         QTimer.singleShot(0, self.refresh_assets)
 
-        logger.debug("MonitoringPanel initialized")
+        logger.debug(
+            "MonitoringPanel initialized with %d parallel upload threads",
+            max_threads,
+        )
 
     # ------------------------------------------------------------------
     # UI Construction
@@ -303,10 +331,10 @@ class MonitoringPanel(QWidget):
         controls_row.addWidget(self.delete_selected_btn)
         layout.addLayout(controls_row)
 
-        # Assets table
+        # Assets table — columns: checkbox | Raster ID | Tags | Description | Uploaded At
         self.assets_table = QTableWidget(0, 5)
         self.assets_table.setHorizontalHeaderLabels(
-            ["", "Raster ID", "Status", "Progress", "Uploaded At"]
+            ["", "Raster ID", "Tags", "Description", "Uploaded At"]
         )
         self.assets_table.horizontalHeader().setSectionResizeMode(
             0, QHeaderView.ResizeMode.ResizeToContents
@@ -318,7 +346,7 @@ class MonitoringPanel(QWidget):
             2, QHeaderView.ResizeMode.ResizeToContents
         )
         self.assets_table.horizontalHeader().setSectionResizeMode(
-            3, QHeaderView.ResizeMode.ResizeToContents
+            3, QHeaderView.ResizeMode.Stretch
         )
         self.assets_table.horizontalHeader().setSectionResizeMode(
             4, QHeaderView.ResizeMode.ResizeToContents
@@ -407,43 +435,52 @@ class MonitoringPanel(QWidget):
     # Public API
     # ------------------------------------------------------------------
 
-    def upload_files(self, files: list[Path], tags: list[str]) -> None:
-        """Start uploading files to the Ingestion Service.
+    def upload_files(
+        self, files: list[Path], tags: list[str], description: str = ""
+    ) -> None:
+        """Start uploading files to the Ingestion Service in parallel.
+
+        Uses a QThreadPool to run multiple uploads concurrently without
+        blocking the main Qt thread.
 
         Args:
             files: List of file paths to upload.
             tags: Optional metadata tags to attach to uploads.
+            description: Optional description for the upload batch.
         """
-        if self._upload_worker and self._upload_worker.isRunning():
-            QMessageBox.warning(
-                self,
-                "Upload In Progress",
-                "An upload is already in progress. Please wait for it to complete.",
-            )
-            return
-
         if not files:
             return
 
-        self._log_activity(f"Starting upload of {len(files)} file(s)...")
+        self._log_activity(
+            f"Starting parallel upload of {len(files)} file(s) "
+            f"({self._upload_pool.maxThreadCount()} threads)..."
+        )
 
         # Reset progress
+        self._upload_total = len(files)
+        self._uploaded_count = 0
+        self._failed_count = 0
+        self._pending_tasks = len(files)
+
         self.upload_progress_bar.setMaximum(len(files))
         self.upload_progress_bar.setValue(0)
         self.upload_status_label.setText("Uploading...")
         self.upload_status_label.setStyleSheet("color: #2b6cb0; font-weight: 600;")
-        self.current_file_label.setText("-")
-        self._uploaded_count = 0
-        self._failed_count = 0
+        self.current_file_label.setText(f"0/{len(files)} dispatched")
         self._update_counts()
 
-        # Start upload worker
-        self._upload_worker = UploadWorker(self.api_client, files, tags, self)
-        self._upload_worker.progress.connect(self._on_upload_progress)
-        self._upload_worker.file_completed.connect(self._on_file_completed)
-        self._upload_worker.all_completed.connect(self._on_all_completed)
-        self._upload_worker.error.connect(self._on_upload_error)
-        self._upload_worker.start()
+        # Dispatch each file as an independent runnable task
+        for i, file_path in enumerate(files):
+            task = SingleFileUploadTask(
+                self.api_client, file_path, tags, description
+            )
+            task.signals.file_completed.connect(self._on_file_completed)
+            task.signals.error.connect(self._on_upload_error)
+            task.signals.finished.connect(self._on_task_finished)
+            self._upload_pool.start(task)
+            logger.debug("Dispatched upload task %d/%d: %s", i + 1, len(files), file_path.name)
+
+        self.current_file_label.setText(f"{len(files)}/{len(files)} dispatched")
 
     def refresh_assets(self) -> None:
         """Refresh the uploaded assets table."""
@@ -456,20 +493,8 @@ class MonitoringPanel(QWidget):
         self._poll_ingestion_status()
 
     # ------------------------------------------------------------------
-    # Private Helpers
+    # Private Helpers — Parallel Upload Callbacks
     # ------------------------------------------------------------------
-
-    def _on_upload_progress(self, current: int, total: int, file_name: str) -> None:
-        """Handle upload progress updates.
-
-        Args:
-            current: Current file index (1-based).
-            total: Total number of files.
-            file_name: Name of the current file being uploaded.
-        """
-        self.upload_progress_bar.setValue(current)
-        self.current_file_label.setText(file_name)
-        self._log_activity(f"Uploading {current}/{total}: {file_name}")
 
     def _on_file_completed(
         self, file_path: str, raster_id: str, status: str, message: str
@@ -483,12 +508,13 @@ class MonitoringPanel(QWidget):
             message: Status message from the service.
         """
         self._uploaded_count += 1
+        self.upload_progress_bar.setValue(self._uploaded_count + self._failed_count)
         self._update_counts()
         self._log_activity(
             f"✓ Uploaded: {Path(file_path).name} → {raster_id} ({status})"
         )
 
-        # Track active upload
+        # Track active upload for status polling
         self._active_uploads[file_path] = raster_id
 
         # Refresh from server so latest appears at the top
@@ -502,8 +528,18 @@ class MonitoringPanel(QWidget):
             error_message: Error message describing the failure.
         """
         self._failed_count += 1
+        self.upload_progress_bar.setValue(self._uploaded_count + self._failed_count)
         self._update_counts()
         self._log_activity(f"✗ Failed: {Path(file_path).name} - {error_message}")
+
+    def _on_task_finished(self) -> None:
+        """Called when any upload task (success or fail) finishes.
+
+        Checks whether all tasks are done and updates final status.
+        """
+        self._pending_tasks -= 1
+        if self._pending_tasks <= 0:
+            self._on_all_completed()
 
     def _on_all_completed(self) -> None:
         """Handle completion of all uploads."""
@@ -537,7 +573,6 @@ class MonitoringPanel(QWidget):
         for file_path, raster_id in list(self._active_uploads.items()):
             try:
                 status = self.api_client.get_status(raster_id, timeout=5.0)
-                self._update_asset_status(raster_id, status.status, status.progress)
 
                 # Remove from active uploads if completed or failed
                 if status.progress >= 1.0 or status.error:
@@ -552,59 +587,12 @@ class MonitoringPanel(QWidget):
             except Exception as exc:
                 logger.debug("Failed to poll status for %s: %s", raster_id, exc)
 
-    def _add_asset_to_table(
-        self, raster_id: str, status: str, progress: float
-    ) -> None:
-        """Add an asset to the assets table.
-
-        Args:
-            raster_id: Raster ID.
-            status: Current status.
-            progress: Progress value (0.0 to 1.0).
-        """
-        row = self.assets_table.rowCount()
-        self.assets_table.insertRow(row)
-
-        check_item = QTableWidgetItem()
-        check_item.setFlags(
-            Qt.ItemFlag.ItemIsUserCheckable
-            | Qt.ItemFlag.ItemIsEnabled
-            | Qt.ItemFlag.ItemIsSelectable
-        )
-        check_item.setCheckState(Qt.CheckState.Unchecked)
-        self.assets_table.setItem(row, 0, check_item)
-        self.assets_table.setItem(row, 1, QTableWidgetItem(raster_id))
-        self.assets_table.setItem(row, 2, QTableWidgetItem(status))
-        self.assets_table.setItem(row, 3, QTableWidgetItem(f"{progress * 100:.0f}%"))
-        self.assets_table.setItem(
-            row,
-            4,
-            QTableWidgetItem(
-                self._format_upload_date(datetime.now(timezone.utc).isoformat())
-            ),
-        )
-
-    def _update_asset_status(
-        self, raster_id: str, status: str, progress: float
-    ) -> None:
-        """Update the status of an asset in the table.
-
-        Args:
-            raster_id: Raster ID to update.
-            status: New status.
-            progress: New progress value (0.0 to 1.0).
-        """
-        for row in range(self.assets_table.rowCount()):
-            item = self.assets_table.item(row, 1)
-            if item and item.text() == raster_id:
-                self.assets_table.setItem(row, 2, QTableWidgetItem(status))
-                self.assets_table.setItem(
-                    row, 3, QTableWidgetItem(f"{progress * 100:.0f}%")
-                )
-                break
+    # ------------------------------------------------------------------
+    # Private Helpers — Assets Table
+    # ------------------------------------------------------------------
 
     def _update_assets_table(self) -> None:
-        """Refresh the assets table with current data."""
+        """Refresh the assets table with current data from the server."""
         try:
             assets = self.api_client.list_assets(timeout=10.0)
         except Exception as exc:
@@ -615,8 +603,8 @@ class MonitoringPanel(QWidget):
         self.assets_table.setRowCount(0)
         for asset in assets:
             raster_id = str(asset.get("raster_id") or "")
-            status = "cataloged"
-            progress = 1.0
+            tags = str(asset.get("tags") or "")
+            description = str(asset.get("description") or "")
             upload_date = self._format_upload_date(str(asset.get("upload_date") or ""))
 
             row = self.assets_table.rowCount()
@@ -631,10 +619,8 @@ class MonitoringPanel(QWidget):
             check_item.setCheckState(Qt.CheckState.Unchecked)
             self.assets_table.setItem(row, 0, check_item)
             self.assets_table.setItem(row, 1, QTableWidgetItem(raster_id))
-            self.assets_table.setItem(row, 2, QTableWidgetItem(status))
-            self.assets_table.setItem(
-                row, 3, QTableWidgetItem(f"{progress * 100:.0f}%")
-            )
+            self.assets_table.setItem(row, 2, QTableWidgetItem(tags))
+            self.assets_table.setItem(row, 3, QTableWidgetItem(description))
             self.assets_table.setItem(
                 row, 4, QTableWidgetItem(upload_date)
             )

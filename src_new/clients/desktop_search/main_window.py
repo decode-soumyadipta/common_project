@@ -838,16 +838,6 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(exit_action)
 
-        edit_menu = menu_bar.addMenu("&Edit")
-        undo_action = QAction(IconRegistry.get("undo", size=16), "Undo", self)
-        undo_action.setShortcut("Ctrl+Z")
-        redo_action = QAction(IconRegistry.get("redo", size=16), "Redo", self)
-        redo_action.setShortcut("Ctrl+Y")
-        undo_action.triggered.connect(self.controller.undo_last_action)
-        redo_action.triggered.connect(self.controller.redo_last_action)
-        edit_menu.addAction(undo_action)
-        edit_menu.addAction(redo_action)
-
         help_menu = menu_bar.addMenu("&Help")
         docs_action = QAction("Documentation", self)
         docs_action.triggered.connect(self._open_help_url)
@@ -1039,16 +1029,6 @@ class MainWindow(QMainWindow):
         title = QLabel("Comparator")
         layout.addWidget(title)
 
-        row = QHBoxLayout()
-        row.setSpacing(8)
-        row.addWidget(QLabel("Layout"))
-        layout_combo = QComboBox(popup)
-        layout_combo.addItem("2 panes (side-by-side)", 2)
-        layout_combo.addItem("3 panes (2 top + 1 bottom)", 3)
-        layout_combo.addItem("4 panes (2 x 2)", 4)
-        row.addWidget(layout_combo)
-        layout.addLayout(row)
-
         layer_list = QListWidget(popup)
         layer_list.setMinimumHeight(150)
         checked_count = 0
@@ -1057,7 +1037,7 @@ class MainWindow(QMainWindow):
             item.setData(Qt.ItemDataRole.UserRole, layer["path"])
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             
-            # Limit default checked items to at most 2 to match the default "2 panes" layout.
+            # Limit default checked items to at most 2.
             should_check = False
             if layer["visible"] and checked_count < 2:
                 should_check = True
@@ -1068,7 +1048,7 @@ class MainWindow(QMainWindow):
             )
         layout.addWidget(layer_list)
 
-        info_label = QLabel("Select up to 4 layers.")
+        info_label = QLabel("Select exactly 2 layers.")
         layout.addWidget(info_label)
 
         apply_button = QPushButton("Apply")
@@ -1084,25 +1064,12 @@ class MainWindow(QMainWindow):
 
         def _sync_layout_by_selection() -> None:
             selected_count = _selected_count()
-            model = layout_combo.model()
-            for idx in range(layout_combo.count()):
-                pane_count = int(layout_combo.itemData(idx) or 0)
-                item = model.item(idx) if hasattr(model, "item") else None
-                if item is not None:
-                    item.setEnabled(pane_count == selected_count)
-
-            target_index = layout_combo.findData(selected_count)
-            if target_index >= 0:
-                if layout_combo.currentIndex() != target_index:
-                    layout_combo.setCurrentIndex(target_index)
-                info_label.setText(
-                    f"{selected_count} layer(s) selected. Layout locked to {selected_count} panes."
-                )
+            if selected_count == 2:
+                info_label.setText("Exactly 2 layers selected.")
                 apply_button.setEnabled(True)
-                return
-
-            info_label.setText("Select at least 2 layers.")
-            apply_button.setEnabled(False)
+            else:
+                info_label.setText(f"Select exactly 2 layers (selected: {selected_count}).")
+                apply_button.setEnabled(False)
 
         def enforce_max_selection(changed_item: QListWidgetItem) -> None:
             checked_items = [
@@ -1110,11 +1077,13 @@ class MainWindow(QMainWindow):
                 for i in range(layer_list.count())
                 if layer_list.item(i).checkState() == Qt.CheckState.Checked
             ]
-            if len(checked_items) <= 4:
+            if len(checked_items) <= 2:
                 _sync_layout_by_selection()
                 return
+            layer_list.blockSignals(True)
             changed_item.setCheckState(Qt.CheckState.Unchecked)
-            info_label.setText("Maximum 4 layers are allowed.")
+            layer_list.blockSignals(False)
+            info_label.setText("Maximum 2 layers are allowed.")
             _sync_layout_by_selection()
 
         layer_list.itemChanged.connect(enforce_max_selection)
@@ -1129,17 +1098,10 @@ class MainWindow(QMainWindow):
                 selected_paths.append(str(item.data(Qt.ItemDataRole.UserRole) or ""))
 
             selected_paths = [path for path in selected_paths if path]
-            if len(selected_paths) < 2:
-                self.panel.log("Select at least two layers for comparator.")
+            if len(selected_paths) != 2:
+                self.panel.log("Select exactly 2 layers for comparator.")
                 action.setChecked(False)
                 popup.close()
-                return
-
-            pane_count = int(layout_combo.currentData())
-            if len(selected_paths) != pane_count:
-                self.panel.log(
-                    f"Select exactly {pane_count} layers for selected layout."
-                )
                 return
 
             success = self.controller.apply_comparator_selection(selected_paths)
@@ -1185,7 +1147,7 @@ class MainWindow(QMainWindow):
                 color: #ffffff;
             }
         """)
-        gpkg_act = menu.addAction("Export GeoPackage")
+        geotiff_act = menu.addAction("Export Asset as GeoTIFF")
         pdf_act = menu.addAction("Export PDF")
 
         pos = (
@@ -1195,8 +1157,8 @@ class MainWindow(QMainWindow):
         )
         chosen = menu.exec(pos)
 
-        if chosen == gpkg_act:
-            self.controller.handle_toolbar_action("Export GeoPackage")
+        if chosen == geotiff_act:
+            self.controller.handle_toolbar_action("Export Asset as GeoTIFF")
         elif chosen == pdf_act:
             self.controller.handle_toolbar_action("Export PDF")
 

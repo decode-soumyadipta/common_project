@@ -9,10 +9,10 @@
     const visible = polygonVisibilityEnabled;
     // Note: show properties for preview entities are managed via CallbackProperty in the controller
     // to ensure high-frequency updates during drawing. Static overrides here are avoided.
-    if (searchCursorEntity) {
-      searchCursorEntity.show = false;
+    if (window.searchCursorEntity) {
+      window.searchCursorEntity.show = false;
     }
-    if (searchPreviewLineEntity || searchPreviewPolygonEntity || searchAreaLabelEntity) {
+    if (window.searchPreviewLineEntity || window.searchPreviewPolygonEntity || window.searchAreaLabelEntity) {
       requestSceneRender();
     }
   }
@@ -39,30 +39,30 @@
   }
 
   function clearSearchEntities() {
-    if (searchCursorEntity) {
-      viewer.entities.remove(searchCursorEntity);
-      searchCursorEntity = null;
+    if (window.searchCursorEntity) {
+      viewer.entities.remove(window.searchCursorEntity);
+      window.searchCursorEntity = null;
     }
-    if (searchPreviewLineEntity) {
-      viewer.entities.remove(searchPreviewLineEntity);
-      searchPreviewLineEntity = null;
+    if (window.searchPreviewLineEntity) {
+      viewer.entities.remove(window.searchPreviewLineEntity);
+      window.searchPreviewLineEntity = null;
     }
-    if (searchPreviewPolygonEntity) {
-      viewer.entities.remove(searchPreviewPolygonEntity);
-      searchPreviewPolygonEntity = null;
+    if (window.searchPreviewPolygonEntity) {
+      viewer.entities.remove(window.searchPreviewPolygonEntity);
+      window.searchPreviewPolygonEntity = null;
     }
-    if (searchAreaLabelEntity) {
-      viewer.entities.remove(searchAreaLabelEntity);
-      searchAreaLabelEntity = null;
+    if (window.searchAreaLabelEntity) {
+      viewer.entities.remove(window.searchAreaLabelEntity);
+      window.searchAreaLabelEntity = null;
     }
-    if (typeof searchRectangleEntity !== "undefined" && searchRectangleEntity) {
-      viewer.entities.remove(searchRectangleEntity);
-      searchRectangleEntity = null;
+    if (window.searchRectangleEntity) {
+      viewer.entities.remove(window.searchRectangleEntity);
+      window.searchRectangleEntity = null;
     }
-    if (typeof searchAoiEntity !== "undefined" && searchAoiEntity) {
-      viewer.entities.remove(searchAoiEntity);
-      searchAoiEntity = null;
-      searchAoiBounds = null;
+    if (window.searchAoiEntity) {
+      viewer.entities.remove(window.searchAoiEntity);
+      window.searchAoiEntity = null;
+      window.searchAoiBounds = null;
     }
     // Clear vertex marker entities
     while (searchVertexEntities.length > 0) {
@@ -74,6 +74,25 @@
     requestSceneRender();
     if (window.bridge && window.bridge.on_aoi_stats_updated) {
       window.bridge.on_aoi_stats_updated(0, "0 m\u00b2");
+    }
+  }
+
+  function resetSearchDrawTransientState() {
+    searchPolygonLocked = false;
+    searchRectangleLocked = false;
+    searchCursorPoint = null;
+    searchPolygonPoints.length = 0;
+    searchRectangleStartPoint = null;
+    searchRectangleCurrentPoint = null;
+    window.searchAoiBounds = null;
+    if (window.searchRectangleEntity && viewer) {
+      try {
+        viewer.entities.remove(window.searchRectangleEntity);
+      } catch (_) {}
+      window.searchRectangleEntity = null;
+    }
+    if (viewer && viewer.scene && viewer.scene.screenSpaceCameraController) {
+      viewer.scene.screenSpaceCameraController.enableInputs = true;
     }
   }
 
@@ -252,8 +271,8 @@
     // Update the shared positions every mouse move with correct terrain heights
     let startHeight = getGroundHeightAtLonLat(startLon, startLat);
     let endHeight = getGroundHeightAtLonLat(endLon, endLat);
-    window._profilePreviewStart = Cesium.Cartesian3.fromDegrees(startLon, startLat, startHeight + 0.2);
-    window._profilePreviewEnd = Cesium.Cartesian3.fromDegrees(endLon, endLat, endHeight + 0.2);
+    window._profilePreviewStart = Cesium.Cartesian3.fromDegrees(startLon, startLat, startHeight + 0.1);
+    window._profilePreviewEnd = Cesium.Cartesian3.fromDegrees(endLon, endLat, endHeight + 0.1);
 
     if (!window._profilePreviewEntity) {
       // Create once with CallbackProperty(isConstant=false) — re-evaluated every frame
@@ -287,8 +306,8 @@
       let endHeight = endHeightOpt !== undefined ? endHeightOpt : getGroundHeightAtLonLat(endLon, endLat);
 
       // Update shared mutable positions — lifted slightly above ground to prevent culling
-      measurementPreviewStart = Cesium.Cartesian3.fromDegrees(startLon, startLat, startHeight + 0.2);
-      measurementPreviewEnd = Cesium.Cartesian3.fromDegrees(endLon, endLat, endHeight + 0.2);
+      measurementPreviewStart = Cesium.Cartesian3.fromDegrees(startLon, startLat, startHeight + 0.1);
+      measurementPreviewEnd = Cesium.Cartesian3.fromDegrees(endLon, endLat, endHeight + 0.1);
 
       if (!measurementPreviewLineEntity) {
         // Create ONCE with CallbackProperty(isConstant=false) — re-evaluated every frame
@@ -330,8 +349,8 @@
       let endHeight = viewer.scene.globe.getHeight(Cesium.Cartographic.fromDegrees(endLon, endLat)) || 0;
 
       // Update shared mutable positions — lifted slightly above ground to prevent culling
-      lineDrawPreviewStart = Cesium.Cartesian3.fromDegrees(startLon, startLat, startHeight + 0.2);
-      lineDrawPreviewEnd = Cesium.Cartesian3.fromDegrees(endLon, endLat, endHeight + 0.2);
+      lineDrawPreviewStart = Cesium.Cartesian3.fromDegrees(startLon, startLat, startHeight + 0.1);
+      lineDrawPreviewEnd = Cesium.Cartesian3.fromDegrees(endLon, endLat, endHeight + 0.1);
 
       if (!lineDrawPreviewLineEntity) {
         // Create ONCE with CallbackProperty(isConstant=false) — re-evaluated every frame
@@ -454,8 +473,8 @@
       let startHeight = startHeightOpt !== undefined ? startHeightOpt : (viewer.scene.globe.getHeight(Cesium.Cartographic.fromDegrees(startLon, startLat)) || 0);
       let endHeight = endHeightOpt !== undefined ? endHeightOpt : (viewer.scene.globe.getHeight(Cesium.Cartographic.fromDegrees(endLon, endLat)) || 0);
 
-      const start = Cesium.Cartesian3.fromDegrees(startLon, startLat, startHeight);
-      const end = Cesium.Cartesian3.fromDegrees(endLon, endLat, endHeight);
+      const start = Cesium.Cartesian3.fromDegrees(startLon, startLat, startHeight + 0.1);
+      const end = Cesium.Cartesian3.fromDegrees(endLon, endLat, endHeight + 0.1);
       
       const labelLon = (startLon + endLon) / 2.0;
       const labelLat = (startLat + endLat) / 2.0;
@@ -478,7 +497,7 @@
       });
 
       const newLabel = viewer.entities.add({
-        position: Cesium.Cartesian3.fromDegrees(labelLon, labelLat, labelHeight),
+        position: Cesium.Cartesian3.fromDegrees(labelLon, labelLat, labelHeight + 0.1),
         label: {
           text: labelText,
           font: "bold 13px 'Segoe UI', 'Arial', sans-serif",
@@ -492,7 +511,7 @@
           horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
           verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
           pixelOffset: new Cesium.Cartesian2(0, -14),
-          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+          heightReference: Cesium.HeightReference.NONE,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
           scale: 1.0,
         },
@@ -505,7 +524,7 @@
               color: Cesium.Color.fromCssColorString("#00e5ff"),
               outlineColor: Cesium.Color.TRANSPARENT,
             outlineWidth: 0,
-              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+              heightReference: Cesium.HeightReference.NONE,
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           }
       });
@@ -516,7 +535,7 @@
               color: Cesium.Color.fromCssColorString("#00e5ff"),
               outlineColor: Cesium.Color.TRANSPARENT,
             outlineWidth: 0,
-              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+              heightReference: Cesium.HeightReference.NONE,
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           }
       });

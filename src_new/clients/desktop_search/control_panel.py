@@ -1188,33 +1188,39 @@ class ControlPanel(
             section_widget.setFlat(not visible)
 
     def _set_search_draw_mode(self, mode: str) -> None:
-        normalized = "rectangle" if str(mode or "").lower() in {"rectangle", "box", "bbox"} else "polygon"
-        if getattr(self, "search_draw_mode", None) == normalized:
+        if getattr(self, "_setting_search_draw_mode", False):
             return
-        self.search_draw_mode = normalized
+        self._setting_search_draw_mode = True
+        try:
+            normalized = "rectangle" if str(mode or "").lower() in {"rectangle", "box", "bbox"} else "polygon"
+            if hasattr(self, "search_draw_mode") and self.search_draw_mode == normalized:
+                return
+            self.search_draw_mode = normalized
 
-        # Block signals to prevent infinite feedback loop
-        self.search_polygon_mode_btn.blockSignals(True)
-        self.search_box_mode_btn.blockSignals(True)
+            # Block signals to prevent infinite feedback loop
+            self.search_polygon_mode_btn.blockSignals(True)
+            self.search_box_mode_btn.blockSignals(True)
 
-        self.search_polygon_mode_btn.setChecked(normalized == "polygon")
-        self.search_box_mode_btn.setChecked(normalized == "rectangle")
+            self.search_polygon_mode_btn.setChecked(normalized == "polygon")
+            self.search_box_mode_btn.setChecked(normalized == "rectangle")
 
-        self.search_polygon_mode_btn.blockSignals(False)
-        self.search_box_mode_btn.blockSignals(False)
+            self.search_polygon_mode_btn.blockSignals(False)
+            self.search_box_mode_btn.blockSignals(False)
 
-        # Update UI states and tooltips based on selected mode
-        if normalized == "rectangle":
-            self.search_finish_polygon_btn.setEnabled(False)
-            self.search_draw_polygon_btn.setToolTip("Start drawing a box by dragging on the map.")
-            self.search_from_draw_btn.setToolTip("Search assets overlapping the drawn box.")
-            self.search_clear_geometry_btn.setToolTip("Clear the current box from the map.")
-            self.search_finish_polygon_btn.setToolTip("Finish is only used for polygon drawing.")
-        else:
-            self.search_finish_polygon_btn.setEnabled(True)
-            self.search_draw_polygon_btn.setToolTip("Start drawing a polygon on the map.")
-            self.search_from_draw_btn.setToolTip("Search assets overlapping the drawn polygon.")
-            self.search_clear_geometry_btn.setToolTip("Clear the current polygon from the map.")
-            self.search_finish_polygon_btn.setToolTip("Complete the active polygon.")
+            # Update UI states and tooltips based on selected mode
+            if normalized == "rectangle":
+                self.search_finish_polygon_btn.setEnabled(False)
+                self.search_draw_polygon_btn.setToolTip("Start drawing a box by dragging on the map.")
+                self.search_from_draw_btn.setToolTip("Search assets overlapping the drawn box.")
+                self.search_clear_geometry_btn.setToolTip("Clear the current box from the map.")
+                self.search_finish_polygon_btn.setToolTip("Finish is only used for polygon drawing.")
+            else:
+                self.search_finish_polygon_btn.setEnabled(True)
+                self.search_draw_polygon_btn.setToolTip("Start drawing a polygon on the map.")
+                self.search_from_draw_btn.setToolTip("Search assets overlapping the drawn polygon.")
+                self.search_clear_geometry_btn.setToolTip("Clear the current polygon from the map.")
+                self.search_finish_polygon_btn.setToolTip("Complete the active polygon.")
 
-        self.search_draw_mode_changed.emit(normalized)
+            self.search_draw_mode_changed.emit(normalized)
+        finally:
+            self._setting_search_draw_mode = False

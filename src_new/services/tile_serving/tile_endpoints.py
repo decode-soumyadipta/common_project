@@ -117,8 +117,22 @@ def _resolve_raster_path(raster_id: str) -> Path:
                 return cog_sibling.resolve()
             return resolved
 
-    # 3. Recursive search (slower, used as fallback)
+    # 3. Search in uploads folder first (much faster than full rglob)
+    uploads_dir = data_root / "uploads"
+    if uploads_dir.is_dir():
+        for found in uploads_dir.rglob("*"):
+            if found.is_file() and (found.stem == raster_id or found.name == raster_id):
+                resolved = found.resolve()
+                cog_sibling = resolved.parent / f"{resolved.stem}.cog.tif"
+                if cog_sibling.is_file():
+                    return cog_sibling.resolve()
+                return resolved
+
+    # 4. Recursive search (slower, used as fallback)
     for found in data_root.rglob("*"):
+        # Ignore common non-data folders to avoid severe performance degradation
+        if any(p in found.parts for p in (".git", ".venv", "venv", ".pytest_cache", "__pycache__", "node_modules", "src_new")):
+            continue
         if found.is_file() and (found.stem == raster_id or found.name == raster_id):
             resolved = found.resolve()
             cog_sibling = resolved.parent / f"{resolved.stem}.cog.tif"
@@ -251,22 +265,43 @@ def _read_tile_from_raster(
         )
 
         # Build output array
-        bands = min(src.count, 4)  # cap at RGBA
-        tile_data = np.zeros((bands, tile_size, tile_size), dtype="uint8")
+        src_count = src.count
+        out_bands = 4 if src_count == 3 else min(src_count, 4)
+        tile_data = np.zeros((out_bands, tile_size, tile_size), dtype="uint8")
+
+        # Set default alpha channel to 255 if promoted to RGBA
+        if out_bands == 4 and src_count == 3:
+            tile_data[3] = 255
 
         tile_transform = from_bounds(west, south, east, north, tile_size, tile_size)
+        failed_mask = np.zeros((tile_size, tile_size), dtype=bool)
 
-        for band_idx in range(1, bands + 1):
+        for band_idx in range(1, src_count + 1):
+            if band_idx > out_bands:
+                break
             band_data = np.zeros((tile_size, tile_size), dtype="float32")
-            reproject(
-                source=rasterio.band(src, band_idx),
-                destination=band_data,
-                src_transform=src.transform,
-                src_crs=src.crs,
-                dst_transform=tile_transform,
-                dst_crs=dst_crs,
-                resampling=Resampling.bilinear,
-            )
+            try:
+                reproject(
+                    source=rasterio.band(src, band_idx),
+                    destination=band_data,
+                    src_transform=src.transform,
+                    src_crs=src.crs,
+                    dst_transform=tile_transform,
+                    dst_crs=dst_crs,
+                    resampling=Resampling.bilinear,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Reproject tile band %d failed for %s (z=%d x=%d y=%d): %s. Filling with zeros.",
+                    band_idx, raster_path.name, z, x, y, exc
+                )
+                failed_mask[:] = True
+
+            # If the source has a nodata value, mask it
+            nodata = src.nodata
+            if nodata is not None and isinstance(nodata, (int, float, np.integer, np.floating)):
+                failed_mask |= (band_data == nodata)
+
             # Normalize to uint8
             band_min = float(band_data.min())
             band_max = float(band_data.max())
@@ -275,6 +310,11 @@ def _read_tile_from_raster(
             else:
                 normalized = band_data * 0
             tile_data[band_idx - 1] = normalized.astype("uint8")
+
+        # Mask out black / failed pixels by setting their alpha channel to 0
+        if out_bands == 4:
+            is_black = (tile_data[0] == 0) & (tile_data[1] == 0) & (tile_data[2] == 0)
+            tile_data[3] = np.where(failed_mask | is_black, 0, tile_data[3])
 
     return tile_data
 
@@ -302,15 +342,36 @@ def _read_preview_from_raster(
         )
 
     with rasterio.open(str(raster_path)) as src:
-        bands = min(src.count, 4)
-        preview_data = np.zeros((bands, preview_size, preview_size), dtype="uint8")
+        src_count = src.count
+        out_bands = 4 if src_count == 3 else min(src_count, 4)
+        preview_data = np.zeros((out_bands, preview_size, preview_size), dtype="uint8")
 
-        for band_idx in range(1, bands + 1):
-            band_data = src.read(
-                band_idx,
-                out_shape=(preview_size, preview_size),
-                resampling=Resampling.bilinear,
-            ).astype("float32")
+        # Set default alpha channel to 255 if promoted to RGBA
+        if out_bands == 4 and src_count == 3:
+            preview_data[3] = 255
+
+        failed_mask = np.zeros((preview_size, preview_size), dtype=bool)
+
+        for band_idx in range(1, src_count + 1):
+            if band_idx > out_bands:
+                break
+            try:
+                band_data = src.read(
+                    band_idx,
+                    out_shape=(preview_size, preview_size),
+                    resampling=Resampling.bilinear,
+                ).astype("float32")
+            except Exception as exc:
+                logger.warning(
+                    "Read preview band %d failed for %s: %s. Filling with zeros.",
+                    band_idx, raster_path.name, exc
+                )
+                band_data = np.zeros((preview_size, preview_size), dtype="float32")
+                failed_mask[:] = True
+
+            nodata = src.nodata
+            if nodata is not None and isinstance(nodata, (int, float, np.integer, np.floating)):
+                failed_mask |= (band_data == nodata)
 
             band_min = float(band_data.min())
             band_max = float(band_data.max())
@@ -319,6 +380,11 @@ def _read_preview_from_raster(
             else:
                 normalized = band_data * 0
             preview_data[band_idx - 1] = normalized.astype("uint8")
+
+        # Mask out black / failed pixels by setting their alpha channel to 0
+        if out_bands == 4:
+            is_black = (preview_data[0] == 0) & (preview_data[1] == 0) & (preview_data[2] == 0)
+            preview_data[3] = np.where(failed_mask | is_black, 0, preview_data[3])
 
     return preview_data
 

@@ -81,9 +81,10 @@
     return false;
   }
 
-  let searchRectangleEntity = null;
-  let searchAoiEntity = null;
-  let searchAoiBounds = null;
+  window.searchRectangleEntity = window.searchRectangleEntity || null;
+  window.searchAoiEntity = window.searchAoiEntity || null;
+  window.searchAoiBounds = window.searchAoiBounds || null;
+
 
   function rectangleBoundsFromPoints(startPoint, currentPoint) {
     if (!startPoint || !currentPoint) {
@@ -136,35 +137,71 @@
   }
 
   function ensureSearchRectangleEntity() {
-    if (!viewer || !viewer.entities || searchRectangleEntity) {
+    if (!viewer || !viewer.entities) {
       return;
     }
-    searchRectangleEntity = viewer.entities.add({
+    if (
+      window.searchRectangleEntity &&
+      typeof viewer.entities.contains === "function" &&
+      !viewer.entities.contains(window.searchRectangleEntity)
+    ) {
+      window.searchRectangleEntity = null;
+    }
+    if (window.searchRectangleEntity) {
+      return;
+    }
+    window.searchRectangleEntity = viewer.entities.add({
       position: new Cesium.CallbackProperty(function () {
         const bounds = rectangleBoundsFromPoints(searchRectangleStartPoint, searchRectangleCurrentPoint);
         if (!bounds) {
           return Cesium.Cartesian3.fromDegrees(0, 0, 0);
         }
-        return Cesium.Cartesian3.fromDegrees(
-          (bounds.west + bounds.east) * 0.5,
-          (bounds.south + bounds.north) * 0.5,
-          0.0
-        );
+        const centerLon = (bounds.west + bounds.east) * 0.5;
+        const centerLat = (bounds.south + bounds.north) * 0.5;
+        const centerHeight = getGroundHeightAtLonLat(centerLon, centerLat);
+        return Cesium.Cartesian3.fromDegrees(centerLon, centerLat, centerHeight + 0.1);
       }, false),
-      rectangle: {
-        height: 5000.0,
-        coordinates: new Cesium.CallbackProperty(function () {
+      polygon: {
+        hierarchy: new Cesium.CallbackProperty(function () {
           const bounds = rectangleBoundsFromPoints(searchRectangleStartPoint, searchRectangleCurrentPoint);
-          return bounds
-            ? Cesium.Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north)
-            : null;
+          if (!bounds) return null;
+          return new Cesium.PolygonHierarchy([
+            Cesium.Cartesian3.fromDegrees(bounds.west, bounds.south, 0.0),
+            Cesium.Cartesian3.fromDegrees(bounds.east, bounds.south, 0.0),
+            Cesium.Cartesian3.fromDegrees(bounds.east, bounds.north, 0.0),
+            Cesium.Cartesian3.fromDegrees(bounds.west, bounds.north, 0.0),
+          ]);
         }, false),
-        material: Cesium.Color.CYAN.withAlpha(0.22),
-        outline: true,
-        outlineColor: new Cesium.CallbackProperty(function () {
-          return searchRectangleLocked ? Cesium.Color.GRAY : Cesium.Color.CYAN;
+        material: Cesium.Color.YELLOW.withAlpha(0.22),
+        fill: true,
+        outline: false,
+        classificationType: Cesium.ClassificationType.BOTH,
+        perPositionHeight: false,
+        show: new Cesium.CallbackProperty(function () {
+          return (searchDrawMode === "rectangle" || searchRectangleLocked) && getSearchOverlayVisible() && !searchRectangleLocked;
         }, false),
-        outlineWidth: 2,
+      },
+      polyline: {
+        positions: new Cesium.CallbackProperty(function () {
+          const bounds = rectangleBoundsFromPoints(searchRectangleStartPoint, searchRectangleCurrentPoint);
+          if (!bounds) return [];
+          const h1 = getGroundHeightAtLonLat(bounds.west, bounds.south);
+          const h2 = getGroundHeightAtLonLat(bounds.east, bounds.south);
+          const h3 = getGroundHeightAtLonLat(bounds.east, bounds.north);
+          const h4 = getGroundHeightAtLonLat(bounds.west, bounds.north);
+          return [
+            Cesium.Cartesian3.fromDegrees(bounds.west, bounds.south, h1 + 0.1),
+            Cesium.Cartesian3.fromDegrees(bounds.east, bounds.south, h2 + 0.1),
+            Cesium.Cartesian3.fromDegrees(bounds.east, bounds.north, h3 + 0.1),
+            Cesium.Cartesian3.fromDegrees(bounds.west, bounds.north, h4 + 0.1),
+            Cesium.Cartesian3.fromDegrees(bounds.west, bounds.south, h1 + 0.1),
+          ];
+        }, false),
+        width: 4.0,
+        material: Cesium.Color.YELLOW,
+        depthFailMaterial: Cesium.Color.YELLOW,
+        clampToGround: false,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
         show: new Cesium.CallbackProperty(function () {
           return (searchDrawMode === "rectangle" || searchRectangleLocked) && getSearchOverlayVisible() && !searchRectangleLocked;
         }, false),
@@ -208,41 +245,69 @@
   }
 
   function ensureSearchAoiEntity() {
-    if (!viewer || !viewer.entities || !searchAoiBounds) {
+    if (!viewer || !viewer.entities || !window.searchAoiBounds) {
       return;
     }
-    if (!searchAoiEntity) {
-      searchAoiEntity = viewer.entities.add({
+    if (!window.searchAoiEntity) {
+      window.searchAoiEntity = viewer.entities.add({
         position: new Cesium.CallbackProperty(function () {
-          const bounds = searchAoiBounds;
+          const bounds = window.searchAoiBounds;
           if (!bounds) {
             return Cesium.Cartesian3.fromDegrees(0, 0, 0);
           }
-          return Cesium.Cartesian3.fromDegrees(
-            (bounds.west + bounds.east) * 0.5,
-            (bounds.south + bounds.north) * 0.5,
-            0.0
-          );
+          const centerLon = (bounds.west + bounds.east) * 0.5;
+          const centerLat = (bounds.south + bounds.north) * 0.5;
+          const centerHeight = getGroundHeightAtLonLat(centerLon, centerLat);
+          return Cesium.Cartesian3.fromDegrees(centerLon, centerLat, centerHeight + 0.1);
         }, false),
-        rectangle: {
-          height: 5000.0,
-          coordinates: new Cesium.CallbackProperty(function () {
-            const bounds = searchAoiBounds;
-            return bounds
-              ? Cesium.Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north)
-              : null;
+        polygon: {
+          hierarchy: new Cesium.CallbackProperty(function () {
+            const bounds = window.searchAoiBounds;
+            if (!bounds) return null;
+            return new Cesium.PolygonHierarchy([
+              Cesium.Cartesian3.fromDegrees(bounds.west, bounds.south, 0.0),
+              Cesium.Cartesian3.fromDegrees(bounds.east, bounds.south, 0.0),
+              Cesium.Cartesian3.fromDegrees(bounds.east, bounds.north, 0.0),
+              Cesium.Cartesian3.fromDegrees(bounds.west, bounds.north, 0.0),
+            ]);
           }, false),
-          material: Cesium.Color.fromCssColorString("#4f79b8").withAlpha(0.32),
-          outline: true,
-          outlineColor: Cesium.Color.fromCssColorString("#2f4f7f"),
-          outlineWidth: 2,
+          material: Cesium.Color.CYAN.withAlpha(0.22),
+          fill: true,
+          outline: false,
+          classificationType: Cesium.ClassificationType.BOTH,
+          perPositionHeight: false,
           show: new Cesium.CallbackProperty(function () {
-            return Boolean(searchAoiBounds) && getSearchOverlayVisible();
+            return Boolean(window.searchAoiBounds) && getSearchOverlayVisible();
+          }, false),
+        },
+        polyline: {
+          positions: new Cesium.CallbackProperty(function () {
+            const bounds = window.searchAoiBounds;
+            if (!bounds) return [];
+            const h1 = getGroundHeightAtLonLat(bounds.west, bounds.south);
+            const h2 = getGroundHeightAtLonLat(bounds.east, bounds.south);
+            const h3 = getGroundHeightAtLonLat(bounds.east, bounds.north);
+            const h4 = getGroundHeightAtLonLat(bounds.west, bounds.north);
+            return [
+              Cesium.Cartesian3.fromDegrees(bounds.west, bounds.south, h1 + 0.1),
+              Cesium.Cartesian3.fromDegrees(bounds.east, bounds.south, h2 + 0.1),
+              Cesium.Cartesian3.fromDegrees(bounds.east, bounds.north, h3 + 0.1),
+              Cesium.Cartesian3.fromDegrees(bounds.west, bounds.north, h4 + 0.1),
+              Cesium.Cartesian3.fromDegrees(bounds.west, bounds.south, h1 + 0.1),
+            ];
+          }, false),
+          width: 4.0,
+          material: Cesium.Color.CYAN,
+          depthFailMaterial: Cesium.Color.CYAN,
+          clampToGround: false,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          show: new Cesium.CallbackProperty(function () {
+            return Boolean(window.searchAoiBounds) && getSearchOverlayVisible();
           }, false),
         },
         label: {
           text: new Cesium.CallbackProperty(function () {
-            const bounds = searchAoiBounds;
+            const bounds = window.searchAoiBounds;
             if (!bounds) {
               return "";
             }
@@ -269,11 +334,11 @@
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
           scale: 0.75,
           show: new Cesium.CallbackProperty(function () {
-            return Boolean(searchAoiBounds) && getSearchOverlayVisible();
+            return Boolean(window.searchAoiBounds) && getSearchOverlayVisible();
           }, false),
         },
         show: new Cesium.CallbackProperty(function () {
-          return Boolean(searchAoiBounds) && getSearchOverlayVisible();
+          return Boolean(window.searchAoiBounds) && getSearchOverlayVisible();
         }, false),
       });
     }
@@ -797,6 +862,8 @@
                 color: Cesium.Color.fromCssColorString("#00e5ff"),
                 outlineColor: Cesium.Color.WHITE,
                 outlineWidth: 2,
+                heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY,
               },
             });
             requestSceneRender();
@@ -1156,7 +1223,7 @@
           const bounds = rectangleBoundsFromPoints(searchRectangleStartPoint, searchRectangleCurrentPoint);
           if (bounds) {
             searchRectangleLocked = true;
-            searchAoiBounds = bounds;
+            window.searchAoiBounds = bounds;
             ensureSearchAoiEntity();
             const geom = getSearchGeometryModule();
             if (geom.emitSearchGeometry) {

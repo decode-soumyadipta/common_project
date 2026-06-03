@@ -314,8 +314,7 @@
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
             heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-            scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.2, 1800000.0, 0.6),
-            translucencyByDistance: new Cesium.NearFarScalar(3000.0, 1.0, 2400000.0, 0.7),
+            scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.5),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
         });
@@ -333,12 +332,22 @@
             color: Cesium.Color.WHITE.withAlpha(0.5),
             pixelOffset: new Cesium.CallbackProperty(function () {
               var w = measureTextWidth(readLabelText(labelEntity), "bold 18px 'Segoe UI', 'Helvetica Neue', sans-serif");
-              return new Cesium.Cartesian2(-24 - w / 2, 0);
+              var distance = Cesium.Cartesian3.distance(viewer.camera.position, anchorPosition);
+              var scale = 1.0;
+              if (distance <= 2500.0) {
+                scale = 1.0;
+              } else if (distance >= 1800000.0) {
+                scale = 0.5;
+              } else {
+                var t = (distance - 2500.0) / (1800000.0 - 2500.0);
+                scale = 1.0 + t * (0.5 - 1.0);
+              }
+              return new Cesium.Cartesian2((-24 - w / 2) * scale, 0);
             }, false),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
             heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-            scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
+            scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.5),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
         });
@@ -357,12 +366,22 @@
             color: Cesium.Color.WHITE.withAlpha(0.7),
             pixelOffset: new Cesium.CallbackProperty(function () {
               var w = measureTextWidth(readLabelText(labelEntity), "bold 18px 'Segoe UI', 'Helvetica Neue', sans-serif");
-              return new Cesium.Cartesian2(24 + w / 2, 0);
+              var distance = Cesium.Cartesian3.distance(viewer.camera.position, anchorPosition);
+              var scale = 1.0;
+              if (distance <= 2500.0) {
+                scale = 1.0;
+              } else if (distance >= 1800000.0) {
+                scale = 0.5;
+              } else {
+                var t = (distance - 2500.0) / (1800000.0 - 2500.0);
+                scale = 1.0 + t * (0.5 - 1.0);
+              }
+              return new Cesium.Cartesian2((24 + w / 2) * scale, 0);
             }, false),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
             heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-            scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
+            scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.5),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
         });
@@ -477,29 +496,43 @@
           log("info", "Cancel active distance draw");
           cancelled = true;
         }
-        if (searchDrawMode === "polygon" && !searchPolygonLocked && searchPolygonPoints.length > 0) {
+        if (searchDrawMode === "polygon" && !searchPolygonLocked) {
           searchPolygonPoints.length = 0;
           searchCursorPoint = null;
           if (window.OfflineGISRuntime && typeof window.OfflineGISRuntime.setSearchCursorPoint === "function") {
             window.OfflineGISRuntime.setSearchCursorPoint(null);
           }
           updateSearchPolygonPreview();
-          setStatus("Polygon draw cancelled. Click points to start again.");
+          searchDrawMode = "none";
+          setSearchCursorEnabled(false);
+          updatePolygonPreviewVisibility();
+          emitSearchGeometry("none", {});
+          setStatus("Polygon drawing cancelled.");
           log("info", "Cancel active polygon draw");
           cancelled = true;
+          if (viewer && viewer.scene && viewer.scene.screenSpaceCameraController) {
+            viewer.scene.screenSpaceCameraController.enableInputs = true;
+          }
         }
-        if (searchDrawMode === "rectangle" && !searchRectangleLocked && (searchRectangleStartPoint || searchRectangleCurrentPoint)) {
+        if (searchDrawMode === "rectangle" && !searchRectangleLocked) {
           searchRectangleStartPoint = null;
           searchRectangleCurrentPoint = null;
           searchRectangleLocked = false;
-          if (typeof searchRectangleEntity !== "undefined" && searchRectangleEntity && viewer) {
-            viewer.entities.remove(searchRectangleEntity);
-            searchRectangleEntity = null;
+          if (window.searchRectangleEntity && viewer) {
+            viewer.entities.remove(window.searchRectangleEntity);
+            window.searchRectangleEntity = null;
           }
-          requestSceneRender();
-          setStatus("Box draw cancelled. Drag to start again.");
+          searchDrawMode = "none";
+          setSearchCursorEnabled(false);
+          updatePolygonPreviewVisibility();
+          emitSearchGeometry("none", {});
+          setStatus("Box drawing cancelled.");
           log("info", "Cancel active rectangle draw");
           cancelled = true;
+          if (viewer && viewer.scene && viewer.scene.screenSpaceCameraController) {
+            viewer.scene.screenSpaceCameraController.enableInputs = true;
+          }
+          requestSceneRender();
         }
         if (flyThroughModeEnabled && flyThroughPoints.length > 0) {
           flyThroughPoints.length = 0;
@@ -677,16 +710,19 @@
           window._profileLineEntity = null;
         }
         const cyan = Cesium.Color.fromCssColorString("#00e5ff");
+        const h1 = getGroundHeightAtLonLat(Number(lon1), Number(lat1));
+        const h2 = getGroundHeightAtLonLat(Number(lon2), Number(lat2));
         window._profileLineEntity = viewer.entities.add({
           polyline: {
             positions: [
-              Cesium.Cartesian3.fromDegrees(Number(lon1), Number(lat1)),
-              Cesium.Cartesian3.fromDegrees(Number(lon2), Number(lat2)),
+              Cesium.Cartesian3.fromDegrees(Number(lon1), Number(lat1), h1 + 0.1),
+              Cesium.Cartesian3.fromDegrees(Number(lon2), Number(lat2), h2 + 0.1),
             ],
             width: 2.5,
             arcType: Cesium.ArcType.GEODESIC,
             material: cyan,
-            depthFailMaterial: cyan.withAlpha(0.5),
+            depthFailMaterial: cyan,
+            clampToGround: false,
           },
         });
         requestSceneRender();
@@ -826,32 +862,37 @@
       setSearchDrawMode: function (mode) {
         if (mode !== "polygon" && mode !== "rectangle") {
           searchDrawMode = "none";
-          searchOverlayVisible = false;
           setSearchCursorEnabled(false);
           updatePolygonPreviewVisibility();
+          if (viewer && viewer.scene && viewer.scene.screenSpaceCameraController) {
+            viewer.scene.screenSpaceCameraController.enableInputs = true;
+          }
           // Removed DOM update
           setStatus("Search draw disabled");
           requestSceneRender();
           return;
         }
+        resetSearchDrawTransientState();
+        if (typeof searchPolygonController !== "undefined" && searchPolygonController && typeof searchPolygonController.clearSearchAoi === "function") {
+          searchPolygonController.clearSearchAoi();
+        }
+        if (window.searchAoiEntity && viewer) {
+          try { viewer.entities.remove(window.searchAoiEntity); } catch (_) {}
+          window.searchAoiEntity = null;
+          window.searchAoiBounds = null;
+        }
         searchDrawMode = mode;
+        searchOverlayVisible = true;
+        window._offlineGISSearchOverlayVisible = true;
         polygonVisibilityEnabled = true;
-        searchCursorPoint = null;
-        searchRectangleStartPoint = null;
-        searchRectangleCurrentPoint = null;
-        searchRectangleLocked = false;
         if (mode === "rectangle") {
           setPolygonPreviewVisible(false);
           setSearchCursorEnabled(false);
           setStatus("Box draw: drag on the map to define a search box");
         } else {
           setPolygonPreviewVisible(true);
-          setSearchCursorEnabled(!searchPolygonLocked);
-          if (searchPolygonLocked) {
-            setStatus("Polygon restored. Clear geometry to start a new polygon.");
-          } else {
-            setStatus("Polygon draw: click points, right-click or Finish to close");
-          }
+          setSearchCursorEnabled(true);
+          setStatus("Polygon draw: click points, right-click or Finish to close");
         }
         // Removed DOM update
         requestSceneRender();
@@ -860,17 +901,7 @@
         finalizeSearchPolygon();
       },
       clearSearchGeometry: function () {
-        searchDrawMode = "none";
-        searchPolygonLocked = false;
-        searchCursorPoint = null;
-        searchPolygonPoints.length = 0;
-        searchRectangleStartPoint = null;
-        searchRectangleCurrentPoint = null;
-        searchRectangleLocked = false;
-        if (typeof searchRectangleEntity !== "undefined" && searchRectangleEntity && viewer) {
-          viewer.entities.remove(searchRectangleEntity);
-          searchRectangleEntity = null;
-        }
+        resetSearchDrawTransientState();
         clearSearchEntities();
         if (typeof searchPolygonController !== "undefined" && searchPolygonController && typeof searchPolygonController.clearAllData === "function") {
           searchPolygonController.clearAllData();
@@ -878,7 +909,6 @@
         emitSearchGeometry("none", {});
         setPolygonPreviewVisible(true);
         setSearchCursorEnabled(false);
-        // Removed DOM update
         setStatus("Search geometry cleared");
         requestSceneRender();
       },

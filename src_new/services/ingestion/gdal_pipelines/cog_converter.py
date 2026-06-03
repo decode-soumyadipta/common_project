@@ -20,6 +20,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Semaphore
 
 from src_new.shared.config import settings
 from src_new.shared.constants import (
@@ -71,6 +72,8 @@ class CogConverter:
     before any GDAL/rasterio operation (Requirement 9.4).
     """
 
+    _lock = Semaphore(1)
+
     def convert(self, source_path: Path) -> CogConversionResult:
         """Convert *source_path* to a COG if needed and return the result.
 
@@ -80,87 +83,210 @@ class CogConverter:
         Returns:
             :class:`CogConversionResult` describing the outcome.
         """
-        # Apply GDAL env vars before any GDAL operation (Requirement 9.4).
-        settings.apply_gdal_env()
+        with self._lock:
+            # Apply GDAL env vars before any GDAL operation (Requirement 9.4).
+            settings.apply_gdal_env()
 
-        source = source_path.resolve()
+            source = source_path.resolve()
 
-        # Normalise .j2k → .jp2 when a sibling .jp2 exists.
-        if source.suffix.lower() == ".j2k":
-            jp2_candidate = source.with_suffix(".jp2")
-            if jp2_candidate.exists():
-                source = jp2_candidate.resolve()
+            # Normalise .j2k → .jp2 when a sibling .jp2 exists.
+            if source.suffix.lower() == ".j2k":
+                jp2_candidate = source.with_suffix(".jp2")
+                if jp2_candidate.exists():
+                    source = jp2_candidate.resolve()
 
-        # Respect the global COG conversion toggle.
-        if not settings.ingest_enable_cog_conversion:
-            LOGGER.debug(
-                "COG conversion disabled by config; skipping source=%s", source
-            )
-            return CogConversionResult(
-                source_path=source, working_path=source, converted=False
-            )
+            # Respect the global COG conversion toggle.
+            if not settings.ingest_enable_cog_conversion:
+                LOGGER.debug(
+                    "COG conversion disabled by config; skipping source=%s", source
+                )
+                return CogConversionResult(
+                    source_path=source, working_path=source, converted=False
+                )
 
-        suffix = source.suffix.lower()
-        if suffix not in {".tif", ".tiff", ".jp2", ".j2k"}:
-            LOGGER.debug(
-                "Unsupported format for COG conversion; skipping source=%s", source
-            )
-            return CogConversionResult(
-                source_path=source, working_path=source, converted=False
-            )
+            suffix = source.suffix.lower()
+            if suffix not in {".tif", ".tiff", ".jp2", ".j2k"}:
+                LOGGER.debug(
+                    "Unsupported format for COG conversion; skipping source=%s", source
+                )
+                return CogConversionResult(
+                    source_path=source, working_path=source, converted=False
+                )
 
-        if self._looks_like_cog(source):
-            LOGGER.debug("Source already looks like a COG; skipping source=%s", source)
-            return CogConversionResult(
-                source_path=source, working_path=source, converted=False
-            )
+            if self._looks_like_cog(source):
+                LOGGER.debug("Source already looks like a COG; skipping source=%s", source)
+                return CogConversionResult(
+                    source_path=source, working_path=source, converted=False
+                )
 
-        cog_path = self._target_cog_path(source)
-        if cog_path.exists() and not settings.ingest_cog_overwrite:
-            LOGGER.debug(
-                "COG output already exists and overwrite disabled; "
-                "reusing existing source=%s cog=%s",
-                source,
-                cog_path,
-            )
-            return CogConversionResult(
-                source_path=source, working_path=cog_path, converted=False
-            )
+            cog_path = self._target_cog_path(source)
+            if cog_path.exists() and not settings.ingest_cog_overwrite:
+                LOGGER.debug(
+                    "COG output already exists and overwrite disabled; "
+                    "reusing existing source=%s cog=%s",
+                    source,
+                    cog_path,
+                )
+                return CogConversionResult(
+                    source_path=source, working_path=cog_path, converted=False
+                )
 
-        temp_cog_path = cog_path.with_suffix(cog_path.suffix + ".tmp")
-        try:
-            if temp_cog_path.exists():
-                temp_cog_path.unlink()
-        except Exception:
-            pass
-
-        # For JPEG2000 sources, try gdal_translate first (avoids rasterio JP2 issues).
-        if suffix in {".jp2", ".j2k"}:
-            if self._try_gdal_translate(source, temp_cog_path):
-                try:
-                    temp_cog_path.replace(cog_path)
-                    return CogConversionResult(
-                        source_path=source, working_path=cog_path, converted=True
-                    )
-                except Exception as exc_rename:
-                    LOGGER.error("Failed to rename temp COG after initial gdal_translate: %s", exc_rename)
+            temp_cog_path = cog_path.with_suffix(cog_path.suffix + ".tmp")
             try:
                 if temp_cog_path.exists():
                     temp_cog_path.unlink()
             except Exception:
                 pass
 
-        # Primary path: rasterio COG driver.
-        try:
-            import rasterio  # type: ignore
-            from rasterio.shutil import copy as rio_copy  # type: ignore
-        except Exception:
-            LOGGER.warning(
-                "COG conversion skipped because rasterio COG support is unavailable "
-                "source=%s operation=cog_convert",
-                source,
-            )
-            # Last-resort gdal_translate for JP2 sources.
+            # For JPEG2000 sources, try gdal_translate first (avoids rasterio JP2 issues).
+            if suffix in {".jp2", ".j2k"}:
+                if self._try_gdal_translate(source, temp_cog_path):
+                    try:
+                        temp_cog_path.replace(cog_path)
+                        return CogConversionResult(
+                            source_path=source, working_path=cog_path, converted=True
+                        )
+                    except Exception as exc_rename:
+                        LOGGER.error("Failed to rename temp COG after initial gdal_translate: %s", exc_rename)
+                try:
+                    if temp_cog_path.exists():
+                        temp_cog_path.unlink()
+                except Exception:
+                    pass
+
+            # Primary path: rasterio COG driver.
+            try:
+                import rasterio  # type: ignore
+                from rasterio.shutil import copy as rio_copy  # type: ignore
+            except Exception:
+                LOGGER.warning(
+                    "COG conversion skipped because rasterio COG support is unavailable "
+                    "source=%s operation=cog_convert",
+                    source,
+                )
+                # Last-resort gdal_translate for JP2 sources.
+                if source.suffix.lower() in {".jp2", ".j2k"}:
+                    if self._try_gdal_translate(source, temp_cog_path):
+                        try:
+                            temp_cog_path.replace(cog_path)
+                            return CogConversionResult(
+                                source_path=source, working_path=cog_path, converted=True
+                            )
+                        except Exception as exc_rename:
+                            LOGGER.error("Failed to rename temp COG after fallback gdal_translate: %s", exc_rename)
+                    try:
+                        if temp_cog_path.exists():
+                            temp_cog_path.unlink()
+                    except Exception:
+                        pass
+                return CogConversionResult(
+                    source_path=source, working_path=source, converted=False
+                )
+
+            # Attempt 1: rasterio COG driver.
+            try:
+                with rasterio.open(source) as src:
+                    rio_copy(
+                        src,
+                        temp_cog_path,
+                        driver="COG",
+                        BLOCKSIZE=str(settings.cog_blocksize),
+                        COMPRESS=settings.cog_compression,
+                        BIGTIFF="IF_SAFER",
+                        NUM_THREADS="ALL_CPUS",
+                        RESAMPLING=settings.cog_overview_resampling,
+                        OVERVIEWS="AUTO",
+                    )
+                temp_cog_path.replace(cog_path)
+                LOGGER.info(
+                    "COG conversion succeeded source=%s target=%s operation=cog_convert",
+                    source,
+                    cog_path,
+                )
+                return CogConversionResult(
+                    source_path=source, working_path=cog_path, converted=True
+                )
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning(
+                    "COG driver failed for source=%s operation=cog_convert error=%s "
+                    "— trying tiled GeoTIFF fallback",
+                    source,
+                    exc,
+                )
+                try:
+                    if temp_cog_path.exists():
+                        temp_cog_path.unlink()
+                except Exception:
+                    pass
+
+            # Attempt 2: tiled GeoTIFF with internal overviews (TiTiler-compatible).
+            try:
+                import numpy as np
+                with rasterio.open(source) as src:
+                    profile = src.profile.copy()
+                    profile.update(
+                        driver="GTiff",
+                        tiled=True,
+                        blockxsize=COG_BLOCKSIZE,
+                        blockysize=COG_BLOCKSIZE,
+                        compress=COG_COMPRESSION.lower(),
+                        bigtiff="IF_SAFER",
+                        interleave="pixel",
+                    )
+
+                    # Check for sidecar PRJ file to get native CRS
+                    prj_path = source.with_suffix(".prj")
+                    if prj_path.exists():
+                        try:
+                            prj_content = prj_path.read_text().strip()
+                            if prj_content:
+                                from rasterio.crs import CRS
+                                profile["crs"] = CRS.from_user_input(prj_content)
+                                LOGGER.info("Applied sidecar CRS from %s during fallback conversion", prj_path.name)
+                        except Exception as prj_exc:
+                            LOGGER.warning("Failed to apply sidecar CRS from %s: %s", prj_path.name, prj_exc)
+
+                    with rasterio.open(temp_cog_path, "w", **profile) as dst:
+                        for ji, window in src.block_windows(1):
+                            for i in range(1, src.count + 1):
+                                try:
+                                    data = src.read(i, window=window)
+                                except Exception as exc:
+                                    LOGGER.warning(
+                                        "Read failed for band %d window %s of source %s: %s. Filling with zeros.",
+                                        i, window, source.name, exc
+                                    )
+                                    data = np.zeros((window.height, window.width), dtype=src.dtypes[i-1])
+                                dst.write(data, i, window=window)
+
+                        dst.build_overviews(
+                            [2, 4, 8, 16], rasterio.enums.Resampling.nearest
+                        )
+                        dst.update_tags(ns="rio_overview", resampling="nearest")
+                temp_cog_path.replace(cog_path)
+                LOGGER.info(
+                    "Tiled GeoTIFF fallback succeeded source=%s target=%s "
+                    "operation=cog_convert_fallback",
+                    source,
+                    cog_path,
+                )
+                return CogConversionResult(
+                    source_path=source, working_path=cog_path, converted=True
+                )
+            except Exception as exc2:  # noqa: BLE001
+                LOGGER.warning(
+                    "Tiled GeoTIFF fallback also failed source=%s "
+                    "operation=cog_convert_fallback error=%s",
+                    source,
+                    exc2,
+                )
+                try:
+                    if temp_cog_path.exists():
+                        temp_cog_path.unlink()
+                except Exception:
+                    pass
+
+            # Attempt 3: gdal_translate CLI (last resort for JP2 sources).
             if source.suffix.lower() in {".jp2", ".j2k"}:
                 if self._try_gdal_translate(source, temp_cog_path):
                     try:
@@ -169,155 +295,33 @@ class CogConverter:
                             source_path=source, working_path=cog_path, converted=True
                         )
                     except Exception as exc_rename:
-                        LOGGER.error("Failed to rename temp COG after fallback gdal_translate: %s", exc_rename)
+                        LOGGER.error("Failed to rename temp COG after Attempt 3 gdal_translate: %s", exc_rename)
                 try:
                     if temp_cog_path.exists():
                         temp_cog_path.unlink()
                 except Exception:
                     pass
+
+            # All attempts failed — clean up any partial output and return original.
+            try:
+                if cog_path.exists():
+                    cog_path.unlink()
+            except Exception:
+                pass
+            try:
+                if temp_cog_path.exists():
+                    temp_cog_path.unlink()
+            except Exception:
+                pass
+
+            LOGGER.error(
+                "All COG conversion attempts failed source=%s operation=cog_convert; "
+                "downstream processing will use original file",
+                source,
+            )
             return CogConversionResult(
                 source_path=source, working_path=source, converted=False
             )
-
-        # Attempt 1: rasterio COG driver.
-        try:
-            with rasterio.open(source) as src:
-                rio_copy(
-                    src,
-                    temp_cog_path,
-                    driver="COG",
-                    BLOCKSIZE=str(settings.cog_blocksize),
-                    COMPRESS=settings.cog_compression,
-                    BIGTIFF="IF_SAFER",
-                    NUM_THREADS="ALL_CPUS",
-                    RESAMPLING=settings.cog_overview_resampling,
-                    OVERVIEWS="AUTO",
-                )
-            temp_cog_path.replace(cog_path)
-            LOGGER.info(
-                "COG conversion succeeded source=%s target=%s operation=cog_convert",
-                source,
-                cog_path,
-            )
-            return CogConversionResult(
-                source_path=source, working_path=cog_path, converted=True
-            )
-        except Exception as exc:  # noqa: BLE001
-            LOGGER.warning(
-                "COG driver failed for source=%s operation=cog_convert error=%s "
-                "— trying tiled GeoTIFF fallback",
-                source,
-                exc,
-            )
-            try:
-                if temp_cog_path.exists():
-                    temp_cog_path.unlink()
-            except Exception:
-                pass
-
-        # Attempt 2: tiled GeoTIFF with internal overviews (TiTiler-compatible).
-        try:
-            import numpy as np
-            with rasterio.open(source) as src:
-                profile = src.profile.copy()
-                profile.update(
-                    driver="GTiff",
-                    tiled=True,
-                    blockxsize=COG_BLOCKSIZE,
-                    blockysize=COG_BLOCKSIZE,
-                    compress=COG_COMPRESSION.lower(),
-                    bigtiff="IF_SAFER",
-                    interleave="pixel",
-                )
-
-                # Check for sidecar PRJ file to get native CRS
-                prj_path = source.with_suffix(".prj")
-                if prj_path.exists():
-                    try:
-                        prj_content = prj_path.read_text().strip()
-                        if prj_content:
-                            from rasterio.crs import CRS
-                            profile["crs"] = CRS.from_user_input(prj_content)
-                            LOGGER.info("Applied sidecar CRS from %s during fallback conversion", prj_path.name)
-                    except Exception as prj_exc:
-                        LOGGER.warning("Failed to apply sidecar CRS from %s: %s", prj_path.name, prj_exc)
-
-                with rasterio.open(temp_cog_path, "w", **profile) as dst:
-                    for ji, window in src.block_windows(1):
-                        for i in range(1, src.count + 1):
-                            try:
-                                data = src.read(i, window=window)
-                            except Exception as exc:
-                                LOGGER.warning(
-                                    "Read failed for band %d window %s of source %s: %s. Filling with zeros.",
-                                    i, window, source.name, exc
-                                )
-                                data = np.zeros((window.height, window.width), dtype=src.dtypes[i-1])
-                            dst.write(data, i, window=window)
-
-                    dst.build_overviews(
-                        [2, 4, 8, 16], rasterio.enums.Resampling.nearest
-                    )
-                    dst.update_tags(ns="rio_overview", resampling="nearest")
-            temp_cog_path.replace(cog_path)
-            LOGGER.info(
-                "Tiled GeoTIFF fallback succeeded source=%s target=%s "
-                "operation=cog_convert_fallback",
-                source,
-                cog_path,
-            )
-            return CogConversionResult(
-                source_path=source, working_path=cog_path, converted=True
-            )
-        except Exception as exc2:  # noqa: BLE001
-            LOGGER.warning(
-                "Tiled GeoTIFF fallback also failed source=%s "
-                "operation=cog_convert_fallback error=%s",
-                source,
-                exc2,
-            )
-            try:
-                if temp_cog_path.exists():
-                    temp_cog_path.unlink()
-            except Exception:
-                pass
-
-        # Attempt 3: gdal_translate CLI (last resort for JP2 sources).
-        if source.suffix.lower() in {".jp2", ".j2k"}:
-            if self._try_gdal_translate(source, temp_cog_path):
-                try:
-                    temp_cog_path.replace(cog_path)
-                    return CogConversionResult(
-                        source_path=source, working_path=cog_path, converted=True
-                    )
-                except Exception as exc_rename:
-                    LOGGER.error("Failed to rename temp COG after Attempt 3 gdal_translate: %s", exc_rename)
-            try:
-                if temp_cog_path.exists():
-                    temp_cog_path.unlink()
-            except Exception:
-                pass
-
-        # All attempts failed — clean up any partial output and return original.
-        try:
-            if cog_path.exists():
-                cog_path.unlink()
-        except Exception:
-            pass
-        try:
-            if temp_cog_path.exists():
-                temp_cog_path.unlink()
-        except Exception:
-            pass
-
-        LOGGER.error(
-            "All COG conversion attempts failed source=%s operation=cog_convert; "
-            "downstream processing will use original file",
-            source,
-        )
-        return CogConversionResult(
-            source_path=source, working_path=source, converted=False
-        )
 
     # ------------------------------------------------------------------
     # gdal.Translate / gdal.Warp helpers

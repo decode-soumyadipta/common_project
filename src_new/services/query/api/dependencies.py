@@ -70,6 +70,12 @@ def _get_engine():
 
         logger.info("Query Service database engine created: %s", db_url.split("@")[-1])
 
+        try:
+            from src_new.shared.models.raster_asset_orm import migrate_database_schema
+            migrate_database_schema(_engine)
+        except Exception as e:
+            logger.warning("Failed to run database migration on engine creation: %s", e)
+
     return _engine
 
 

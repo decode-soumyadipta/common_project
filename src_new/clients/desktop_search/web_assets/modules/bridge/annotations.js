@@ -102,12 +102,23 @@
             outlineWidth: 2,
             style: Cesium.LabelStyle.FILL_AND_OUTLINE,
             font: "600 13px 'Segoe UI', 'Helvetica Neue', sans-serif",
-            pixelOffset: new Cesium.Cartesian2(0, -40),
+            pixelOffset: new Cesium.CallbackProperty(function () {
+              var distance = Cesium.Cartesian3.distance(viewer.camera.position, anchorPosition);
+              var scale = 1.0;
+              if (distance <= 2500.0) {
+                scale = 1.0;
+              } else if (distance >= 1800000.0) {
+                scale = 0.5;
+              } else {
+                var t = (distance - 2500.0) / (1800000.0 - 2500.0);
+                scale = 1.0 + t * (0.5 - 1.0);
+              }
+              return new Cesium.Cartesian2(0, -40 * scale);
+            }, false),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
             heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-            scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.45),
-            translucencyByDistance: new Cesium.NearFarScalar(3000.0, 1.0, 2400000.0, 0.62),
+            scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.5),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
         });
@@ -116,7 +127,6 @@
         labelEntity._annotationRole = "label";
         
         const font = "600 13px 'Segoe UI', 'Helvetica Neue', sans-serif";
-        const labelTextWidth = measureTextWidth(displayText, font);
 
         // Edit button
         const editEntity = viewer.entities.add({
@@ -126,11 +136,24 @@
             width: 17,
             height: 17,
             color: Cesium.Color.WHITE.withAlpha(0.42),
-            pixelOffset: new Cesium.Cartesian2(-18 - labelTextWidth / 2, -51.5),
+            pixelOffset: new Cesium.CallbackProperty(function () {
+              var textWidth = measureTextWidth(readLabelText(labelEntity), font);
+              var distance = Cesium.Cartesian3.distance(viewer.camera.position, anchorPosition);
+              var scale = 1.0;
+              if (distance <= 2500.0) {
+                scale = 1.0;
+              } else if (distance >= 1800000.0) {
+                scale = 0.5;
+              } else {
+                var t = (distance - 2500.0) / (1800000.0 - 2500.0);
+                scale = 1.0 + t * (0.5 - 1.0);
+              }
+              return new Cesium.Cartesian2((-18 - textWidth / 2) * scale, -51.5 * scale);
+            }, false),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
             heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-            scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
+            scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.5),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
         });
@@ -148,11 +171,24 @@
             width: 17,
             height: 17,
             color: Cesium.Color.WHITE.withAlpha(0.62),
-            pixelOffset: new Cesium.Cartesian2(18 + labelTextWidth / 2, -51.5),
+            pixelOffset: new Cesium.CallbackProperty(function () {
+              var textWidth = measureTextWidth(readLabelText(labelEntity), font);
+              var distance = Cesium.Cartesian3.distance(viewer.camera.position, anchorPosition);
+              var scale = 1.0;
+              if (distance <= 2500.0) {
+                scale = 1.0;
+              } else if (distance >= 1800000.0) {
+                scale = 0.5;
+              } else {
+                var t = (distance - 2500.0) / (1800000.0 - 2500.0);
+                scale = 1.0 + t * (0.5 - 1.0);
+              }
+              return new Cesium.Cartesian2((18 + textWidth / 2) * scale, -51.5 * scale);
+            }, false),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
             heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-            scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
+            scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.5),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
         });
@@ -214,7 +250,9 @@
       const font = labelEntity.label.font ? (typeof labelEntity.label.font.getValue === "function" ? labelEntity.label.font.getValue() : labelEntity.label.font) : null;
       const textWidth = measureTextWidth(cleaned, font);
       
-      if (editEntity._annotationIconEntity) {
+      if (editEntity.billboard.pixelOffset instanceof Cesium.CallbackProperty) {
+        // Dynamic callback handles it, no assignment needed
+      } else if (editEntity._annotationIconEntity) {
         editEntity.billboard.pixelOffset = new Cesium.Cartesian2(-18 - textWidth / 2, -51.5);
         deleteEntity.billboard.pixelOffset = new Cesium.Cartesian2(18 + textWidth / 2, -51.5);
       } else if (editEntity._annotationAnchorEntity && editEntity._annotationAnchorEntity._annotationRole === "line") {

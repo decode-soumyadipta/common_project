@@ -106,6 +106,8 @@ def _row_to_raster_metadata(row: Any) -> RasterMetadata:
         resolution_y = float(row["resolution_y"])
         width = int(row["width"])
         height = int(row["height"])
+        tags = str(row.get("tags") or "") if "tags" in row.keys() else ""
+        description = str(row.get("description") or "") if "description" in row.keys() else ""
         upload_date: Optional[datetime] = row.get("created_at") or row.get("upload_date")
         updated_at: Optional[datetime] = row.get("updated_at")
     else:
@@ -136,6 +138,8 @@ def _row_to_raster_metadata(row: Any) -> RasterMetadata:
         resolution_y = float(row.resolution_y)
         width = int(row.width)
         height = int(row.height)
+        tags = str(getattr(row, "tags", "") or "")
+        description = str(getattr(row, "description", "") or "")
         upload_date = getattr(row, "upload_date", None) or getattr(row, "created_at", None)
         updated_at = getattr(row, "updated_at", None)
 
@@ -162,6 +166,8 @@ def _row_to_raster_metadata(row: Any) -> RasterMetadata:
         resolution_y=resolution_y,
         width=width,
         height=height,
+        tags=tags,
+        description=description,
         upload_date=upload_date,
         updated_at=updated_at,
     )

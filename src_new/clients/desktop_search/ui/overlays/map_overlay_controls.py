@@ -71,6 +71,8 @@ class MapOverlayControls(QWidget):
     def set_special_mode(self, active: bool) -> None:
         """Call when comparator or compositor mode is activated/deactivated."""
         self._special_mode_active = bool(active)
+        if active:
+            self.basemap_visibility_combo.setCurrentText("Hide Map")
 
     def update_position(self) -> None:
         """Update the overlay position to the top-right inside the map viewport."""

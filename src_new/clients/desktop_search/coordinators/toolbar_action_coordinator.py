@@ -30,8 +30,8 @@ class ToolbarActionCoordinator:
             "Add Vector": c.add_vector_layers,
             "Add Raster Layer": c.add_raster_layers,
             "Save Project": c._toolbar_save_project,
-            "Export": c._toolbar_export_geopackage,
-            "Export GeoPackage": c._toolbar_export_geopackage,
+            "Export": c._toolbar_export_geotiff,
+            "Export Asset as GeoTIFF": c._toolbar_export_geotiff,
             "Export PDF": c._toolbar_export_pdf,
         }
         handler = handlers.get(action_label)

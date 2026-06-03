@@ -50,6 +50,10 @@ class RasterAsset(Base):
     width = Column(Integer, nullable=False)
     height = Column(Integer, nullable=False)
 
+    # User-supplied metadata
+    tags = Column(String, nullable=True, default="")  # comma-separated tags
+    description = Column(String, nullable=True, default="")  # free-text description
+
     # Timestamps
     upload_date = Column(DateTime, nullable=True)  # ISO format timestamp from ingestion
 
@@ -63,3 +67,39 @@ class RasterAsset(Base):
             f"{self.max_lon}, {self.max_lat}]"
             f")>"
         )
+
+
+def migrate_database_schema(engine) -> None:
+    """Check if the database schema requires migration and add missing columns dynamically."""
+    import logging
+    from sqlalchemy import inspect, text
+
+    logger = logging.getLogger(__name__)
+    inspector = inspect(engine)
+
+    # Check if table exists
+    if not inspector.has_table("raster_assets"):
+        logger.info("Database migration: table raster_assets does not exist. Creating it.")
+        Base.metadata.create_all(engine)
+        return
+
+    # Check existing columns
+    columns = [col["name"] for col in inspector.get_columns("raster_assets")]
+
+    with engine.begin() as conn:
+        # Check and add 'tags' column if missing
+        if "tags" not in columns:
+            try:
+                conn.execute(text("ALTER TABLE raster_assets ADD COLUMN tags TEXT DEFAULT ''"))
+                logger.info("Database migration: Added tags column to raster_assets table.")
+            except Exception as e:
+                logger.warning("Database migration: Failed to add tags column to raster_assets table: %s", e)
+
+        # Check and add 'description' column if missing
+        if "description" not in columns:
+            try:
+                conn.execute(text("ALTER TABLE raster_assets ADD COLUMN description TEXT DEFAULT ''"))
+                logger.info("Database migration: Added description column to raster_assets table.")
+            except Exception as e:
+                logger.warning("Database migration: Failed to add description column to raster_assets table: %s", e)
+

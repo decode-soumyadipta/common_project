@@ -98,7 +98,6 @@ class DesktopController(QObject):
         self._asset_cache: dict[str, dict] = {}
         self._dem_asset_kind_cache: dict[str, bool] = {}
         self._undo_stack: list[dict] = []
-        self._redo_stack: list[dict] = []
         self._undo_redo_in_progress = False
         self._last_state_snapshot: dict | None = None
         self._search_result_assets_by_path: dict[str, dict] = {}
@@ -459,8 +458,8 @@ class DesktopController(QObject):
     def finish_search_polygon(self) -> None:
         self._search.finish_search_polygon()
 
-    def clear_search_geometry(self) -> None:
-        self._search.clear_search_geometry()
+    def clear_search_geometry(self, *args, **kwargs) -> None:
+        self._search.clear_search_geometry(*args, **kwargs)
 
     def _set_annotation_overlay_visible(self, visible: bool) -> None:
         self._run_js_call("setAnnotationVisibility", bool(visible))
@@ -643,10 +642,6 @@ class DesktopController(QObject):
         try:
             previous_state = self._undo_stack.pop()
 
-            # Push current state to redo stack
-            current_state = self.build_project_payload()
-            self._redo_stack.append(current_state)
-
             # Apply the popped state
             self.apply_project_payload(previous_state)
             self._last_state_snapshot = previous_state
@@ -655,31 +650,6 @@ class DesktopController(QObject):
         except Exception as e:
             self._logger.error("Failed to undo last action: %s", e)
             self.panel.log(f"Undo failed: {e}")
-        finally:
-            self._undo_redo_in_progress = False
-
-    def redo_last_action(self) -> None:
-        """Redo the last undone project action."""
-        if not self._redo_stack:
-            self.panel.log("Nothing to redo.")
-            return
-
-        self._undo_redo_in_progress = True
-        try:
-            next_state = self._redo_stack.pop()
-
-            # Push current state to undo stack
-            current_state = self.build_project_payload()
-            self._undo_stack.append(current_state)
-
-            # Apply the popped state
-            self.apply_project_payload(next_state)
-            self._last_state_snapshot = next_state
-
-            self.panel.log("Redo successful.")
-        except Exception as e:
-            self._logger.error("Failed to redo last action: %s", e)
-            self.panel.log(f"Redo failed: {e}")
         finally:
             self._undo_redo_in_progress = False
 
@@ -708,8 +678,6 @@ class DesktopController(QObject):
                         if len(self._undo_stack) > 50:
                             self._undo_stack.pop(0)
                         self._last_state_snapshot = current
-                        # Clear redo stack on new action
-                        self._redo_stack.clear()
             except Exception as e:
                 self._logger.warning("Failed to capture undo state snapshot: %s", e)
 
@@ -1467,18 +1435,23 @@ class DesktopController(QObject):
 
     def cancel_active_draw(self) -> bool:
         """Cancel only the current in-progress draw without deleting committed drawings."""
+        search_draw_active = self.panel.search_draw_polygon_btn.isChecked()
         cancelled = bool(
             self._add_line_mode_enabled
             or self._annotation_line_start is not None
             or self._distance_measure_mode_enabled
             or self._polygon_draw_mode_enabled
             or self._fly_through_mode_enabled
+            or search_draw_active
         )
         if cancelled:
             self.state.clicked_points.clear()
         self._run_js_call("cancelActiveDraw")
         if self._annotation_line_start is not None:
             self._annotation_line_start = None
+        if search_draw_active:
+            self._set_search_draw_button_checked(False)
+            self._run_js_call("setSearchDrawMode", "none")
         return cancelled
 
     def _toolbar_set_pan_mode(self, enabled: bool | None = None) -> bool:
@@ -1658,9 +1631,6 @@ class DesktopController(QObject):
 
     def _toolbar_export_annotations_geojson(self) -> None:
         self._project_io.export_annotations_geojson()
-
-    def _toolbar_export_geopackage(self) -> None:
-        self._export.export_geopackage()
 
     def _toolbar_export_pdf(self) -> None:
         self._export.export_pdf()

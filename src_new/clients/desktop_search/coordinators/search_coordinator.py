@@ -101,42 +101,50 @@ class SearchCoordinator:
             c.panel.set_search_busy(False)
 
     def set_search_draw_mode(self, mode: str | bool | None = None) -> None:
-        c = self._controller
-        normalized_mode = "polygon"
-        if isinstance(mode, str):
-            lowered = mode.strip().lower()
-            if lowered in {"rectangle", "box", "bbox"}:
-                normalized_mode = "rectangle"
-            elif lowered in {"none", "off", "false", "0"}:
-                normalized_mode = "none"
-        elif mode is False:
-            normalized_mode = "none"
-
-        if hasattr(c.panel, "_set_search_draw_mode") and normalized_mode != "none":
-            c.panel._set_search_draw_mode(normalized_mode)
-
-        if normalized_mode == "none":
-            if c._polygon_drawing_context == "measurement":
-                c._set_measurement_cursor_enabled(False)
-            c.clear_search_geometry()
-            c.panel.log("Search draw disabled.")
-            c._set_search_draw_button_checked(False)
+        if getattr(self, "_setting_search_draw_mode", False):
             return
-        if c._distance_measure_mode_enabled:
-            c._distance_measure_mode_enabled = False
-            c._run_js_call("setDistanceMeasureMode", False)
-        # if c._add_point_mode_enabled:
-        #     c._add_point_mode_enabled = False
-        #     c._set_annotation_overlay_visible(False) (Removed to allow coexistence)
-        c._pan_mode_enabled = False
-        c._run_js_call("setSearchDrawMode", normalized_mode)
-        # Always enable crosshair for drawing activities
-        c._set_measurement_cursor_enabled(True)
-        c._set_search_draw_button_checked(True)
-        if normalized_mode == "rectangle":
-            c.panel.log("Box draw mode enabled.")
-        else:
-            c.panel.log("Polygon draw mode enabled.")
+        self._setting_search_draw_mode = True
+        try:
+            c = self._controller
+            normalized_mode = "polygon"
+            if isinstance(mode, str):
+                lowered = mode.strip().lower()
+                if lowered in {"rectangle", "box", "bbox"}:
+                    normalized_mode = "rectangle"
+                elif lowered in {"none", "off", "false", "0"}:
+                    normalized_mode = "none"
+            elif mode is False:
+                normalized_mode = "none"
+
+            if hasattr(c.panel, "_set_search_draw_mode") and normalized_mode != "none":
+                if not (hasattr(c.panel, "search_draw_mode") and c.panel.search_draw_mode == normalized_mode):
+                    c.panel._set_search_draw_mode(normalized_mode)
+
+            if normalized_mode == "none":
+                if c._polygon_drawing_context == "measurement":
+                    c._set_measurement_cursor_enabled(False)
+                c.clear_search_geometry(rearm_draw=False)
+                c._run_js_call("setSearchDrawMode", "none")
+                c.panel.log("Search draw disabled.")
+                c._set_search_draw_button_checked(False)
+                return
+            if c._distance_measure_mode_enabled:
+                c._distance_measure_mode_enabled = False
+                c._run_js_call("setDistanceMeasureMode", False)
+            # if c._add_point_mode_enabled:
+            #     c._add_point_mode_enabled = False
+            #     c._set_annotation_overlay_visible(False) (Removed to allow coexistence)
+            c._pan_mode_enabled = False
+            c._run_js_call("setSearchDrawMode", normalized_mode)
+            # Always enable crosshair for drawing activities
+            c._set_measurement_cursor_enabled(True)
+            c._set_search_draw_button_checked(True)
+            if normalized_mode == "rectangle":
+                c.panel.log("Box draw mode enabled.")
+            else:
+                c.panel.log("Polygon draw mode enabled.")
+        finally:
+            self._setting_search_draw_mode = False
 
     def finish_search_polygon(self) -> None:
         c = self._controller
@@ -145,16 +153,27 @@ class SearchCoordinator:
 
 
 
-    def clear_search_geometry(self) -> None:
+    def clear_search_geometry(self, *, rearm_draw: bool = True) -> None:
         c = self._controller
+        current_mode = getattr(c.panel, "search_draw_mode", "polygon")
         c._run_js_call("clearSearchGeometry")
         c.state.search_geometry_type = None
         c.state.search_geometry_payload = None
-        c._set_search_draw_button_checked(False)
         c.panel.log("Search geometry cleared.")
+        # Re-arm the active draw mode so the user can immediately draw again.
+        if rearm_draw and current_mode in {"polygon", "rectangle"}:
+            c._run_js_call("setSearchDrawMode", current_mode)
+            c._set_search_draw_button_checked(True)
+            c._set_measurement_cursor_enabled(current_mode == "polygon")
+        else:
+            c._set_search_draw_button_checked(False)
 
     def on_search_geometry(self, geometry_type: str, payload_json: str | dict) -> None:
         c = self._controller
+        if geometry_type == "none":
+            c.state.search_geometry_type = None
+            c.state.search_geometry_payload = None
+            return
         if isinstance(payload_json, dict):
             payload = payload_json
         else:

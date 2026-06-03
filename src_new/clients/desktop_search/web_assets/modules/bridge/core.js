@@ -208,7 +208,7 @@
     return Cesium.Cartesian3.fromRadians(
       cartographic.longitude,
       cartographic.latitude,
-      baseHeight
+      baseHeight + 0.1
     );
   }
 
@@ -607,12 +607,13 @@
         }
         return lifted;
       },
-      {
-        width: 4.5,
-        color: "#00e5ff",
-        alpha: 1.0,
-        clampToGround: false,
-      }
+       {
+         width: 4.5,
+         color: "#00e5ff",
+         alpha: 1.0,
+         clampToGround: false,
+         classificationType: Cesium.ClassificationType.BOTH,
+       }
     );
     requestSceneRender();
   }
@@ -647,6 +648,7 @@
         depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff"),
         arcType: Cesium.ArcType.GEODESIC,
         clampToGround: false,
+        classificationType: Cesium.ClassificationType.BOTH,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
       }
     });
@@ -817,10 +819,10 @@
   let searchRectangleStartPoint = null;
   let searchRectangleCurrentPoint = null;
   let searchRectangleLocked = false;
-  let searchCursorEntity = null;
-  let searchPreviewLineEntity = null;
-  let searchPreviewPolygonEntity = null;
-  let searchAreaLabelEntity = null;
+  window.searchCursorEntity = null;
+  window.searchPreviewLineEntity = null;
+  window.searchPreviewPolygonEntity = null;
+  window.searchAreaLabelEntity = null;
   let polygonVisibilityEnabled = true;
   let searchOverlayVisible = true;
   let panModeActive = false;
@@ -860,28 +862,28 @@
           return polygonVisibilityEnabled;
         },
         getSearchPreviewLineEntity: function () {
-          return searchPreviewLineEntity;
+          return window.searchPreviewLineEntity;
         },
         setSearchPreviewLineEntity: function (value) {
-          searchPreviewLineEntity = value;
+          window.searchPreviewLineEntity = value;
         },
         getSearchPreviewPolygonEntity: function () {
-          return searchPreviewPolygonEntity;
+          return window.searchPreviewPolygonEntity;
         },
         setSearchPreviewPolygonEntity: function (value) {
-          searchPreviewPolygonEntity = value;
+          window.searchPreviewPolygonEntity = value;
         },
         getSearchAreaLabelEntity: function () {
-          return searchAreaLabelEntity;
+          return window.searchAreaLabelEntity;
         },
         setSearchAreaLabelEntity: function (value) {
-          searchAreaLabelEntity = value;
+          window.searchAreaLabelEntity = value;
         },
         getSearchCursorEntity: function () {
-          return searchCursorEntity;
+          return window.searchCursorEntity;
         },
         setSearchCursorEntity: function (value) {
-          searchCursorEntity = value;
+          window.searchCursorEntity = value;
         },
         getSearchVertexEntities: function () {
           return searchVertexEntities;
@@ -1949,9 +1951,9 @@
 
   function resolveComparatorLayerKeys() {
     // Prefer the explicitly selected keys (set via setComparatorLayers).
-    // This guarantees pane count == user selection, preventing ghost panes.
+    // This guarantees pane count == 2.
     if (swipeComparatorExplicitKeys && swipeComparatorExplicitKeys.length >= 2) {
-      return swipeComparatorExplicitKeys.slice();
+      return swipeComparatorExplicitKeys.slice(0, 2);
     }
     // Legacy fallback: use left/right pair if only those two are available
     if (swipeComparatorLeftLayerKey && swipeComparatorRightLayerKey) {
@@ -1962,7 +1964,7 @@
       if (!visible || !layerDefinitions.has(key)) continue;
       visibleKeys.push(key);
     }
-    return visibleKeys.slice(0, 4);
+    return visibleKeys.slice(0, 2);
   }
 
   function syncAnnotationsToPython() {

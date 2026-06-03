@@ -217,16 +217,25 @@ def _sample_elevation_profile(
 
         values: list[float | None] = []
         nodata = src.nodata
-        for sample in src.sample(sample_points, masked=True):
-            sample_value = sample[0]
-            if np.ma.is_masked(sample_value):
+        try:
+            for sample in src.sample(sample_points, masked=True):
+                sample_value = sample[0]
+                if np.ma.is_masked(sample_value):
+                    values.append(None)
+                    continue
+                value = float(sample_value)
+                if nodata is not None and value == float(nodata):
+                    values.append(None)
+                else:
+                    values.append(value)
+        except Exception as exc:
+            logger.warning(
+                "DEM sampling failed for %s: %s. Returning partial/empty profile.",
+                path,
+                exc,
+            )
+            while len(values) < len(sample_points):
                 values.append(None)
-                continue
-            value = float(sample_value)
-            if nodata is not None and value == float(nodata):
-                values.append(None)
-            else:
-                values.append(value)
 
     return values
 

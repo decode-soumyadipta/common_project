@@ -214,10 +214,11 @@ class MainWindow(QMainWindow):
         if dialog.exec() == UploadDialog.DialogCode.Accepted:
             files = dialog.selected_files
             tags = dialog.metadata_tags
+            description = dialog.metadata_description
             logger.info("Upload dialog accepted with %d files", len(files))
 
             # Pass files to monitoring panel for upload
-            self.monitoring_panel.upload_files(files, tags)
+            self.monitoring_panel.upload_files(files, tags, description)
 
     def _refresh_data(self) -> None:
         """Refresh ingestion status and asset list."""

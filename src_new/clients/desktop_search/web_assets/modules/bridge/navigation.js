@@ -800,7 +800,9 @@
               // Hide OSM basemap and restore the default Earth imagery as the base layer
               if (targetViewer.__osmBasemapLayer) targetViewer.__osmBasemapLayer.show = false;
               if (isMain && defaultEarthLayer) defaultEarthLayer.show = true;
-              if (targetViewer.__defaultEarthLayer) targetViewer.__defaultEarthLayer.show = true;
+              if (targetViewer.__defaultEarthLayer) {
+                targetViewer.__defaultEarthLayer.show = isMain;
+              }
             }
         };
 
@@ -1215,7 +1217,7 @@
           const carto = Cesium.Cartographic.fromDegrees(lon, lat);
           const sampledHeight = viewer.scene && viewer.scene.globe ? viewer.scene.globe.getHeight(carto) : null;
           const height = Number.isFinite(sampledHeight) ? Number(sampledHeight) : 0.0;
-          positions.push(Cesium.Cartesian3.fromDegrees(lon, lat, height));
+          positions.push(Cesium.Cartesian3.fromDegrees(lon, lat, height + 0.1));
           cleanCoords.push([lon, lat]);
           lastLon = lon;
           lastLat = lat;
@@ -1230,7 +1232,7 @@
             positions: positions,
             width: 4.5,
             arcType: Cesium.ArcType.GEODESIC,
-            clampToGround: true,
+            clampToGround: false,
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
             material: Cesium.Color.fromCssColorString("#f2c94c"),
             depthFailMaterial: Cesium.Color.fromCssColorString("#f2c94c"),

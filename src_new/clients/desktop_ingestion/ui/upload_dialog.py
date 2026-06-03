@@ -120,6 +120,15 @@ class UploadDialog(QDialog):
             return []
         return [t.strip() for t in raw.split(",") if t.strip()]
 
+    @property
+    def metadata_description(self) -> str:
+        """Return the description text entered by the user.
+
+        Returns:
+            Stripped description string (may be empty).
+        """
+        return self.description_edit.toPlainText().strip()
+
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------

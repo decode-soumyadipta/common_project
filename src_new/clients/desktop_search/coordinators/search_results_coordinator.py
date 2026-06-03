@@ -34,9 +34,17 @@ class SearchResultsCoordinator:
         # Preserve the catalog view when search returns 0 results.
         previous_assets = c._search_result_assets_by_path
         if not assets:
-            c._logger.info("Search returned 0 results; preserving asset catalog")
+            c._logger.info("Search returned 0 results; clearing previous search results")
             c._run_js_call("clearSearchResultMarkers")
-            c.panel.log("No results in search area; showing all available assets.")
+            for stale_path in list(c._search_layer_visibility.keys()):
+                c._run_js_call("setLayerVisibility", stale_path, False)
+                c._loaded_search_layer_keys.discard(stale_path)
+            c._search_result_assets_by_path = {}
+            c._search_layer_visibility = {}
+            c._asset_cache = {}
+            c.panel.assets_combo.clear()
+            c.panel.update_search_results([], {})
+            c.panel.log("No results in search area.")
             return
         
         c.panel.assets_combo.clear()

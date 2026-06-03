@@ -136,7 +136,6 @@ class ProjectIoCoordinator:
         c = self._controller
         if not c._undo_redo_in_progress:
             c._undo_stack.clear()
-            c._redo_stack.clear()
         # JS-side: clear in dependency order
         c._run_js_call("clearAllLayers")          # layers + annotations + markers (via updated clearAllLayers)
         c._run_js_call("clearVectorLayers")        # belt-and-suspenders for vector sources
@@ -158,7 +157,8 @@ class ProjectIoCoordinator:
         c._vector_layers = {}
         c._annotation_records = []
         c._annotation_line_records = []
-        c._annotation_polygon_records = []
+        if not c._undo_redo_in_progress:
+            c._annotation_polygon_records = []
         c._annotation_icon_records = []
         c._annotation_text_records = []
         c._raster_stretch_settings = {}
@@ -589,7 +589,6 @@ class ProjectIoCoordinator:
         c._loading_project = True
         if not c._undo_redo_in_progress:
             c._undo_stack.clear()
-            c._redo_stack.clear()
             c._last_state_snapshot = payload
 
         # ── Phase 1: clear everything ────────────────────────────────────────
@@ -618,13 +617,15 @@ class ProjectIoCoordinator:
         if isinstance(annotations, dict):
             c._annotation_records = list(annotations.get("points") or [])
             c._annotation_line_records = list(annotations.get("lines") or [])
-            c._annotation_polygon_records = list(annotations.get("polygons") or [])
+            if not c._undo_redo_in_progress:
+                c._annotation_polygon_records = list(annotations.get("polygons") or [])
             c._annotation_icon_records = list(annotations.get("icons") or [])
             c._annotation_text_records = list(annotations.get("text_labels") or [])
         else:
             c._annotation_records = []
             c._annotation_line_records = []
-            c._annotation_polygon_records = []
+            if not c._undo_redo_in_progress:
+                c._annotation_polygon_records = []
             c._annotation_icon_records = []
             c._annotation_text_records = []
 

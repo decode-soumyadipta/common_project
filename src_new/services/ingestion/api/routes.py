@@ -115,6 +115,8 @@ class UploadedAsset(BaseModel):
     raster_id: str
     file_name: str
     kind: str
+    tags: str = ""
+    description: str = ""
     upload_date: str
 
 
@@ -223,11 +225,13 @@ def _catalog_raster_in_db(metadata: RasterMetadata, db: Session) -> None:
                 raster_id, file_path, file_name, kind, crs,
                 min_lon, min_lat, max_lon, max_lat,
                 resolution_x, resolution_y, width, height,
+                tags, description,
                 upload_date, geom
             ) VALUES (
                 :raster_id, :file_path, :file_name, :kind, :crs,
                 :min_lon, :min_lat, :max_lon, :max_lat,
                 :resolution_x, :resolution_y, :width, :height,
+                :tags, :description,
                 :upload_date,
                 ST_SetSRID(
                     ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat),
@@ -247,6 +251,8 @@ def _catalog_raster_in_db(metadata: RasterMetadata, db: Session) -> None:
                 resolution_y = EXCLUDED.resolution_y,
                 width        = EXCLUDED.width,
                 height       = EXCLUDED.height,
+                tags         = EXCLUDED.tags,
+                description  = EXCLUDED.description,
                 upload_date  = EXCLUDED.upload_date,
                 geom         = EXCLUDED.geom
             """
@@ -259,11 +265,13 @@ def _catalog_raster_in_db(metadata: RasterMetadata, db: Session) -> None:
                 raster_id, file_path, file_name, kind, crs,
                 min_lon, min_lat, max_lon, max_lat,
                 resolution_x, resolution_y, width, height,
+                tags, description,
                 upload_date
             ) VALUES (
                 :raster_id, :file_path, :file_name, :kind, :crs,
                 :min_lon, :min_lat, :max_lon, :max_lat,
                 :resolution_x, :resolution_y, :width, :height,
+                :tags, :description,
                 :upload_date
             )
             """
@@ -291,6 +299,8 @@ def _catalog_raster_in_db(metadata: RasterMetadata, db: Session) -> None:
             "resolution_y": metadata.resolution_y,
             "width": metadata.width,
             "height": metadata.height,
+            "tags": metadata.tags or "",
+            "description": metadata.description or "",
             "upload_date": upload_date,
         },
     )
@@ -321,6 +331,8 @@ def _catalog_raster_in_db(metadata: RasterMetadata, db: Session) -> None:
 def upload_raster(
     file: UploadFile = File(..., description="Geospatial raster file to ingest."),
     sidecar_json: Optional[str] = Form(None, alias="metadata", description="JSON with optional sidecar file contents."),
+    tags: Optional[str] = Form(None, description="Comma-separated metadata tags."),
+    description: Optional[str] = Form(None, description="Free-text description."),
     background_tasks: BackgroundTasks = BackgroundTasks(),
     db: Session = Depends(get_db),
     cfg: Settings = Depends(get_settings),
@@ -446,6 +458,8 @@ def upload_raster(
         metadata = metadata.model_copy(
             update={
                 "raster_id": raster_id,
+                "tags": tags or "",
+                "description": description or "",
                 "upload_date": datetime.now(timezone.utc),
             }
         )
@@ -561,7 +575,9 @@ def list_assets(db: Session = Depends(get_db)) -> list[UploadedAsset]:
     """Return cataloged assets ordered by upload date (newest first)."""
     query = sa_text(
         """
-        SELECT raster_id, file_name, kind, upload_date
+        SELECT raster_id, file_name, kind, upload_date,
+               COALESCE(tags, '') AS tags,
+               COALESCE(description, '') AS description
         FROM raster_assets
         ORDER BY upload_date DESC
         """
@@ -573,6 +589,8 @@ def list_assets(db: Session = Depends(get_db)) -> list[UploadedAsset]:
             file_name=str(row[1]),
             kind=str(row[2]),
             upload_date=str(row[3]),
+            tags=str(row[4] or ""),
+            description=str(row[5] or ""),
         )
         for row in rows
     ]

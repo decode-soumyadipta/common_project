@@ -10,18 +10,9 @@
     const activeKeys = resolveComparatorLayerKeys();
     if (activeKeys.length < 2) return;
 
-    ensureComparatorViewers(activeKeys.length);
-    
-    // ensureComparatorViewers already activated the correct panes/dividers.
-    // Just make sure panes beyond the active count are hidden.
-    for (var i = activeKeys.length; i < 4; i++) {
-      var pane = document.getElementById("comparatorPane" + i);
-      var div = document.getElementById("comparatorDivider" + i);
-      if (pane) pane.classList.remove("active");
-      if (div) div.classList.remove("active");
-    }
+    ensureComparatorViewers(2);
 
-    activeKeys.forEach((key, idx) => {
+    activeKeys.slice(0, 2).forEach((key, idx) => {
       const def = layerDefinitions.get(key);
       const viewer = comparatorViewers[idx];
       const pane = document.getElementById("comparatorPane" + idx);
@@ -30,7 +21,7 @@
       if (!def || !viewer || !pane) return;
       
       pane.classList.add("active");
-      if (idx < activeKeys.length - 1 && div) div.classList.add("active");
+      if (idx < 1 && div) div.classList.add("active");
 
       resetComparatorViewerLayers(viewer);
       applyLayerDefinitionToViewer(viewer, def, String(idx));
@@ -155,34 +146,21 @@
   const comparatorViewers = [];
   runtime.comparatorViewers = comparatorViewers;
   function ensureComparatorViewers(count) {
-    // CRITICAL (Windows/ANGLE): The comparatorPane divs must have display:block
-    // BEFORE Cesium creates its canvas, otherwise the canvas gets zero size and
-    // stays permanently black.  Activate all needed panes now, before any viewer
-    // is constructed.
+    count = 2;
     var cwRoot = document.getElementById("comparatorWindows");
-    if (cwRoot) cwRoot.setAttribute("data-pane-count", String(count));
+    if (cwRoot) cwRoot.setAttribute("data-pane-count", "2");
 
-    for (var pi = 0; pi < count; pi++) {
+    for (var pi = 0; pi < 2; pi++) {
       var paneEl = document.getElementById("comparatorPane" + pi);
       if (paneEl) paneEl.classList.add("active");
-      if (pi < count - 1) {
+      if (pi === 0) {
         var divEl = document.getElementById("comparatorDivider" + pi);
         if (divEl) divEl.classList.add("active");
       }
     }
-    // Hide panes beyond the requested count
-    for (var hi = count; hi < 4; hi++) {
-      var hPane = document.getElementById("comparatorPane" + hi);
-      var hDiv  = document.getElementById("comparatorDivider" + hi);
-      if (hPane) hPane.classList.remove("active");
-      if (hDiv)  hDiv.classList.remove("active");
-    }
 
-    // ── Tear down viewers beyond the requested count ───────────────────────────
-    // This prevents ghost panes when switching from a larger to a smaller selection
-    // (e.g., going from 4 panes to 2 panes). Cesium viewers are destroyed here
-    // so their canvases are properly cleaned up before we build the new layout.
-    for (var di = comparatorViewers.length - 1; di >= count; di--) {
+    // Tear down viewers beyond 2
+    for (var di = comparatorViewers.length - 1; di >= 2; di--) {
       var dv = comparatorViewers[di];
       if (dv) {
         try { dv.destroy(); } catch (_) {}
@@ -190,7 +168,7 @@
       comparatorViewers.splice(di, 1);
     }
 
-    for (var i = 0; i < count; i++) {
+    for (var i = 0; i < 2; i++) {
       if (comparatorViewers[i]) continue;
       const vId = "comparatorViewer" + i;
       const v = new Cesium.Viewer(vId, {
@@ -221,8 +199,6 @@
       v.scene.globe.loadingDescendantLimit = 16;
       v.scene.globe.loadingQueueThreshold = 100;
       v.scene.fxaa = true;
-      // Start in 3D — use morphTo3D so the scene graph initialises correctly
-      // on Windows/ANGLE (direct scene.mode assignment can leave it in a broken state)
       if (v.scene.mode !== Cesium.SceneMode.SCENE3D) {
         v.scene.morphTo3D(0.0);
       }
@@ -231,8 +207,7 @@
       comparatorViewers[i] = v;
     }
 
-    // Force resize on all viewers — Windows/ANGLE needs this even after the
-    // panes are visible, because the flex layout may not have fully settled yet.
+    // Force resize on all viewers
     function _forceResizeAll() {
       comparatorViewers.forEach(function(v) {
         if (!v) return;

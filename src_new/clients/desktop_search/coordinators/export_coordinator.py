@@ -6,9 +6,12 @@ import os
 import shutil
 from pathlib import Path
 
-from qtpy.QtCore import QRect, Qt, QMarginsF
+from qtpy.QtCore import QRect, Qt, QMarginsF, QThread, Signal
 from qtpy.QtGui import QImage, QPainter, QPageLayout, QPageSize, QPdfWriter
-from qtpy.QtWidgets import QFileDialog, QMessageBox
+from qtpy.QtWidgets import (
+    QFileDialog, QMessageBox, QDialog, QVBoxLayout, QHBoxLayout,
+    QLabel, QPushButton, QProgressBar, QScrollArea, QWidget, QStyle
+)
 
 
 class ExportCoordinator:
@@ -88,39 +91,15 @@ class ExportCoordinator:
             QMessageBox.critical(c.panel, "Export Error", f"Failed to export GeoPackage:\n{str(e)}")
 
     def export_geotiff(self) -> None:
-        """Export individual GeoTIFF files for all visible search results into a folder."""
+        """Export individual searched assets as GeoTIFF using a minimalist dialog."""
         c = self._controller
-        visible_assets = self._get_visible_search_assets()
-
-        if not visible_assets:
-            c.panel.log("No visible search results to export.")
-            return
-
-        dir_path = QFileDialog.getExistingDirectory(
-            c.panel, "Select Export Directory", str(Path.home())
+        assets = list(c._search_result_assets_by_path.values())
+        dialog = ExportGeoTiffDialog(
+            c.panel,
+            assets,
+            resolve_source_path=c._find_best_file_version,
         )
-        if not dir_path:
-            return
-
-        dest_dir = Path(dir_path)
-        c.panel.log(f"Exporting {len(visible_assets)} GeoTIFFs to {dest_dir.name}...")
-
-        success_count = 0
-        for asset in visible_assets:
-            src_path = Path(str(asset.get("file_path", "")))
-            if not src_path.exists():
-                continue
-            
-            dest_path = dest_dir / src_path.name
-            try:
-                shutil.copy2(src_path, dest_path)
-                success_count += 1
-                c.panel.log(f"  Exported: {src_path.name}")
-            except Exception as e:
-                c.panel.log(f"  Failed to export {src_path.name}: {e}")
-
-        c.panel.log(f"GeoTIFF export complete. {success_count} files saved.")
-        QMessageBox.information(c.panel, "Export Complete", f"Exported {success_count} GeoTIFF files to:\n{dest_dir}")
+        dialog.exec()
 
     def export_pdf(self) -> None:
         """Capture the current scene and annotations into a formal PDF report."""
@@ -611,5 +590,331 @@ class ExportCoordinator:
                     self._logger.warning(
                         "Failed to export user vector layer %s: %s", layer_name, ve
                     )
+
+class GeoTiffExportThread(QThread):
+    progress = Signal(int)
+    finished = Signal(bool, str)
+
+    def __init__(self, src_path: str, dest_path: str):
+        super().__init__()
+        self.src_path = src_path
+        self.dest_path = dest_path
+
+    @staticmethod
+    def _resolve_export_source(src_path: str) -> str:
+        """Prefer COG/WebMercator siblings over raw JPEG2000 sources."""
+        original = Path(src_path)
+        candidates: list[tuple[Path, int]] = []
+        stem = original.stem
+        parent = original.parent
+        for path, priority in (
+            (parent / f"{stem}_3857.cog.tif", 4),
+            (parent / f"{stem}_3857.tif", 3),
+            (parent / f"{stem}.cog.tif", 2),
+            (original, 1),
+        ):
+            if path.exists():
+                candidates.append((path, priority))
+        if not candidates:
+            return src_path
+        candidates.sort(key=lambda item: item[1], reverse=True)
+        return str(candidates[0][0])
+
+    def run(self):
+        try:
+            from osgeo import gdal
+            import shutil
+
+            export_src = self.src_path
+            
+            # If the resolved source file is already a GeoTIFF, perform a fast direct copy
+            if export_src.lower().endswith((".tif", ".tiff")):
+                self.progress.emit(10)
+                shutil.copy2(export_src, self.dest_path)
+                self.progress.emit(100)
+                self.finished.emit(True, "")
+                return
+
+            ds = gdal.Open(export_src, gdal.GA_ReadOnly)
+            if not ds:
+                self.finished.emit(
+                    False,
+                    f"Failed to open source file: {Path(export_src).name}",
+                )
+                return
+
+            def progress_callback(complete, message, cb_data):
+                percent = int(complete * 100)
+                self.progress.emit(percent)
+                return 1
+
+            translate_options = gdal.TranslateOptions(
+                format="GTiff",
+                creationOptions=["COMPRESS=DEFLATE", "TILED=YES"],
+                callback=progress_callback,
+            )
+            try:
+                result = gdal.Translate(self.dest_path, ds, options=translate_options)
+            except TypeError:
+                result = gdal.Translate(
+                    self.dest_path,
+                    ds,
+                    format="GTiff",
+                    creationOptions=["COMPRESS=DEFLATE", "TILED=YES"],
+                )
+            ds = None
+            if result is None:
+                self.finished.emit(False, "GDAL translate returned no output.")
+                return
+            result = None
+            if not Path(self.dest_path).exists():
+                self.finished.emit(False, "Export file was not created.")
+                return
+
+            self.finished.emit(True, "")
+        except Exception as e:
+            self.finished.emit(False, str(e))
+
+
+class ExportGeoTiffDialog(QDialog):
+    def __init__(self, parent, assets, resolve_source_path=None):
+        super().__init__(parent)
+        self.assets = assets
+        self._resolve_source_path = resolve_source_path
+        self.threads = {}  # Keep references to running threads
+        self.init_ui()
+
+    def init_ui(self):
+        self.setWindowTitle("Export Assets as GeoTIFF")
+        self.resize(600, 400)
+        self.setMinimumSize(500, 300)
+        
+        # Black text & white minimalist styling
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #ffffff;
+                color: #000000;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            }
+            QLabel {
+                color: #000000;
+                font-size: 13px;
+            }
+            QPushButton {
+                background-color: #ffffff;
+                color: #000000;
+                border: 1px solid #d2d2d7;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-size: 12px;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                background-color: #f5f5f7;
+            }
+            QPushButton:pressed {
+                background-color: #e8e8ed;
+            }
+            QPushButton:disabled {
+                background-color: #f5f5f7;
+                color: #8e8e93;
+                border-color: #e8e8ed;
+            }
+            QProgressBar {
+                border: 1px solid #d2d2d7;
+                border-radius: 4px;
+                text-align: center;
+                background-color: #f5f5f7;
+                color: #000000;
+                font-size: 10px;
+                height: 14px;
+            }
+            QProgressBar::chunk {
+                background-color: #34c759; /* Green loader */
+                border-radius: 3px;
+            }
+            QScrollArea {
+                border: 1px solid #d2d2d7;
+                border-radius: 6px;
+                background-color: #ffffff;
+            }
+        """)
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(16, 16, 16, 16)
+        main_layout.setSpacing(12)
+
+        title_label = QLabel("Searched Assets")
+        title_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #000000;")
+        main_layout.addWidget(title_label)
+
+        # Scroll Area
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        main_layout.addWidget(scroll_area)
+
+        scroll_widget = QWidget()
+        scroll_widget.setStyleSheet("background-color: #ffffff;")
+        scroll_layout = QVBoxLayout(scroll_widget)
+        scroll_layout.setContentsMargins(8, 8, 8, 8)
+        scroll_layout.setSpacing(10)
+        scroll_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        scroll_area.setWidget(scroll_widget)
+
+        if not self.assets:
+            no_assets_label = QLabel("No searched assets found.")
+            no_assets_label.setStyleSheet("color: #8e8e93; font-style: italic; qproperty-alignment: AlignCenter;")
+            scroll_layout.addWidget(no_assets_label)
+        else:
+            for idx, asset in enumerate(self.assets):
+                row_widget = QWidget()
+                row_widget.setStyleSheet("""
+                    QWidget {
+                        background-color: #ffffff;
+                        border-bottom: 1px solid #f5f5f7;
+                    }
+                """)
+                row_layout = QHBoxLayout(row_widget)
+                row_layout.setContentsMargins(8, 8, 8, 8)
+                row_layout.setSpacing(10)
+
+                # Name & Kind info
+                file_path = asset.get("file_path", "")
+                file_name = asset.get("file_name", Path(file_path).name or "Asset")
+                kind = str(asset.get("kind") or "Unknown").upper()
+                name_label = QLabel(f"{file_name} [{kind}]")
+                name_label.setToolTip(file_path)
+                name_label.setStyleSheet("font-weight: 500;")
+                row_layout.addWidget(name_label, stretch=3)
+
+                # Progress & Loader Area
+                progress_container = QWidget()
+                progress_container_layout = QHBoxLayout(progress_container)
+                progress_container_layout.setContentsMargins(0, 0, 0, 0)
+                progress_container_layout.setSpacing(8)
+
+                status_label = QLabel("")
+                status_label.setStyleSheet("color: #8e8e93; font-size: 12px;")
+                progress_container_layout.addWidget(status_label)
+
+                progress_bar = QProgressBar()
+                progress_bar.setValue(0)
+                progress_bar.setVisible(False)
+                progress_bar.setFixedWidth(100)
+                progress_container_layout.addWidget(progress_bar)
+
+                row_layout.addWidget(progress_container, stretch=2)
+
+                # Download button
+                download_btn = QPushButton()
+                download_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowDown))
+                download_btn.setText("Download")
+                
+                # Connect download action
+                download_btn.clicked.connect(lambda checked=False, p=file_path, fn=file_name, btn=download_btn, pb=progress_bar, sl=status_label: self.start_download(p, fn, btn, pb, sl))
+                row_layout.addWidget(download_btn)
+
+                scroll_layout.addWidget(row_widget)
+
+        # Close Button
+        close_btn = QPushButton("Close")
+        close_btn.setFixedWidth(100)
+        close_btn.clicked.connect(self.accept)
+        main_layout.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignRight)
+
+    def start_download(self, file_path, file_name, button, progress_bar, status_label):
+        # Strict guards to prevent double-click / multiple triggers
+        if not button.isEnabled():
+            return
+        if file_path in self.threads:
+            return
+        if status_label.text() == "Done":
+            return
+
+        # Determine suggestion file name
+        sugg_name = Path(file_name).with_suffix(".tif").name
+        dest_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save GeoTIFF",
+            sugg_name,
+            "GeoTIFF (*.tif *.tiff)"
+        )
+        if not dest_path:
+            return
+
+        export_src = file_path
+        if self._resolve_source_path:
+            try:
+                export_src = self._resolve_source_path(file_path)
+            except Exception:
+                export_src = GeoTiffExportThread._resolve_export_source(file_path)
+        else:
+            export_src = GeoTiffExportThread._resolve_export_source(file_path)
+
+        if not Path(export_src).exists():
+            QMessageBox.critical(
+                self,
+                "Export Error",
+                f"Source file not found:\n{export_src}",
+            )
+            return
+
+        # Disable button and update UI
+        button.setEnabled(False)
+        status_label.setStyleSheet("color: #8e8e93;")
+        status_label.setText("Preparing...")
+        progress_bar.setValue(0)
+        progress_bar.setVisible(True)
+
+        # Start background thread
+        thread_key = file_path
+        # Clean up existing thread if any
+        if thread_key in self.threads:
+            existing = self.threads[thread_key]
+            existing.requestInterruption()
+            existing.wait(30000)
+
+        thread = GeoTiffExportThread(export_src, dest_path)
+        thread.progress.connect(progress_bar.setValue)
+        thread.progress.connect(lambda val: status_label.setText(f"Exporting..."))
+        
+        def handle_finished(success, err_msg):
+            progress_bar.setVisible(False)
+            if success:
+                status_label.setStyleSheet("color: #34c759; font-weight: bold;")
+                status_label.setText("Done")
+            else:
+                status_label.setStyleSheet("color: #ff3b30; font-weight: bold;")
+                status_label.setText("Failed")
+                QMessageBox.critical(self, "Export Error", f"Failed to export asset as GeoTIFF:\n{err_msg}")
+                button.setEnabled(True)
+            # Remove reference
+            self.threads.pop(thread_key, None)
+
+        thread.finished.connect(handle_finished)
+        self.threads[thread_key] = thread
+        thread.start()
+
+    def accept(self):
+        for thread in list(self.threads.values()):
+            if thread.isRunning():
+                thread.terminate()
+                thread.wait()
+        super().accept()
+
+    def reject(self):
+        for thread in list(self.threads.values()):
+            if thread.isRunning():
+                thread.terminate()
+                thread.wait()
+        super().reject()
+
+    def closeEvent(self, event):
+        for thread in list(self.threads.values()):
+            if thread.isRunning():
+                thread.terminate()
+                thread.wait()
+        super().closeEvent(event)
+
 
 __all__ = ["ExportCoordinator"]

@@ -234,39 +234,18 @@
                 const cursor = getSearchCursorPoint();
                 const raw = geometry.getSearchPreviewPoints(points, cursor, true);
                 if (raw.length < 2) return [];
-                // Use a small fixed height above ellipsoid so lines are NEVER
-                // culled at any zoom level. clampToGround is intentionally OFF
-                // because GroundPolylinePrimitive ignores disableDepthTestDistance
-                // and has aggressive near-camera frustum culling.
-                const HEIGHT_OFFSET = 0.5; // metres above ellipsoid – just enough to avoid z-fighting
                 const res = raw.map(function (p) {
                   try {
-                    var terrainH = 0;
-                    if (viewer.scene && viewer.scene.globe) {
-                      var h = viewer.scene.globe.getHeight(
-                        cesium.Cartographic.fromDegrees(p.lon, p.lat)
-                      );
-                      if (Number.isFinite(h)) terrainH = h;
-                    }
-                    return cesium.Cartesian3.fromDegrees(p.lon, p.lat, terrainH + HEIGHT_OFFSET);
+                    const h = getGroundHeightAtLonLat(p.lon, p.lat);
+                    return cesium.Cartesian3.fromDegrees(p.lon, p.lat, h + 0.1);
                   } catch (e) { return null; }
                 }).filter(function(v) { return !!v; });
-                // Close the polygon outline when no cursor (polygon is complete)
                 if (!cursor && res.length >= 3) res.push(res[0]);
                 return res;
               }, false),
-              // Bright, thick, always-on-top line
-              material: new cesium.PolylineOutlineMaterialProperty({
-                color: cesium.Color.fromCssColorString("#00f0ff"),
-                outlineColor: cesium.Color.fromCssColorString("#003f5c"),
-                outlineWidth: 2,
-              }),
-              depthFailMaterial: new cesium.PolylineOutlineMaterialProperty({
-                color: cesium.Color.fromCssColorString("#00f0ff"),
-                outlineColor: cesium.Color.fromCssColorString("#003f5c"),
-                outlineWidth: 2,
-              }),
-              width: 6,
+              material: cesium.Color.YELLOW,
+              depthFailMaterial: cesium.Color.YELLOW,
+              width: 4,
               clampToGround: false,
               disableDepthTestDistance: Number.POSITIVE_INFINITY,
               show: new cesium.CallbackProperty(function () {
@@ -293,15 +272,13 @@
                 }).filter(function(v) { return !!v; });
                 return res.length >= 3 ? new cesium.PolygonHierarchy(res) : null;
               }, false),
-              // Clamp preview polygon to ground and use a subtle solid fill so it
-              // appears attached to terrain (not floating).
-              material: cesium.Color.fromCssColorString("#4f79b8").withAlpha(0.22),
+              material: cesium.Color.YELLOW.withAlpha(0.22),
               fill: true,
               outline: false,
-              clampToGround: true,
+              classificationType: cesium.ClassificationType.BOTH,
               perPositionHeight: false,
               show: new cesium.CallbackProperty(function () {
-                return isPolygonDrawPreviewActive() && getSearchPolygonPoints().length >= 2 && getSearchOverlayVisible();
+                return isPolygonDrawPreviewActive() && getSearchPolygonPoints().length >= 2 && getSearchOverlayVisible() && !getIsAnnotationDrawing();
               }, false),
             },
           })
@@ -544,9 +521,10 @@
           } catch (e) { return null; }
         }).filter(function(v) { return !!v; });
 
-        var ellipsoidPoints = frozenPoints.map(function (p) {
+        var points3dH = frozenPoints.map(function (p) {
           try {
-            return cesium.Cartesian3.fromDegrees(p.lon, p.lat, 0.0);
+            var h = getGroundHeightAtLonLat(p.lon, p.lat);
+            return cesium.Cartesian3.fromDegrees(p.lon, p.lat, h + 0.1);
           } catch (e) { return null; }
         }).filter(function(v) { return !!v; });
 
@@ -554,11 +532,12 @@
 
         var lineEntity = viewer.entities.add({
           polyline: {
-            positions: ellipsoidPoints.concat([ellipsoidPoints[0]]),
+            positions: points3dH.concat([points3dH[0]]),
             width: 4.5, // Strong hard sides
             material: polyColor,
             depthFailMaterial: polyColor,
-            clampToGround: true, // Strictly follow terrain
+            clampToGround: false,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
         });
 
@@ -590,13 +569,27 @@
               backgroundColor: cesium.Color.BLACK.withAlpha(0.82),
               heightReference: cesium.HeightReference.CLAMP_TO_GROUND,
               disableDepthTestDistance: Number.POSITIVE_INFINITY,
-              scale: 0.8,
+              scaleByDistance: new cesium.NearFarScalar(2500.0, 0.8, 1700000.0, 0.4),
             },
           });
         }
 
         var anchorPos = points3d[0];
         const nameText = "Polygon " + polyId;
+        
+        var getScaleFactor = function() {
+          if (!viewer || !anchorPos) return 1.0;
+          var distance = cesium.Cartesian3.distance(viewer.camera.position, anchorPos);
+          if (distance <= 2500.0) {
+            return 1.0;
+          } else if (distance >= 1700000.0) {
+            return 0.5;
+          } else {
+            var t = (distance - 2500.0) / (1700000.0 - 2500.0);
+            return 1.0 + t * (0.5 - 1.0);
+          }
+        };
+
         var nameLabelEntity = viewer.entities.add({
           position: anchorPos,
           label: {
@@ -606,10 +599,14 @@
             backgroundColor: cesium.Color.BLACK.withAlpha(0.62),
             backgroundPadding: new cesium.Cartesian2(10, 6),
             font: "500 12px Arial, Helvetica, sans-serif",
-            pixelOffset: new cesium.Cartesian2(12, -8),
+            pixelOffset: new cesium.CallbackProperty(function() {
+              var s = getScaleFactor();
+              return new cesium.Cartesian2(12 * s, -8 * s);
+            }, false),
             horizontalOrigin: cesium.HorizontalOrigin.LEFT,
             verticalOrigin: cesium.VerticalOrigin.BOTTOM,
             heightReference: cesium.HeightReference.CLAMP_TO_GROUND,
+            scaleByDistance: new cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.5),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
         });
@@ -624,10 +621,13 @@
           image: EDIT_ICON,
           width: 17, height: 17,
           color: cesium.Color.WHITE.withAlpha(0.42),
-          pixelOffset: new cesium.Cartesian2(52 + nameWidth, -14),
+          pixelOffset: new cesium.CallbackProperty(function() {
+            var s = getScaleFactor();
+            return new cesium.Cartesian2((52 + nameWidth) * s, -14 * s);
+          }, false),
           horizontalOrigin: cesium.HorizontalOrigin.CENTER,
           verticalOrigin: cesium.VerticalOrigin.CENTER,
-          scaleByDistance: new cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
+          scaleByDistance: new cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.5),
           heightReference: cesium.HeightReference.CLAMP_TO_GROUND,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
@@ -641,14 +641,20 @@
           image: DELETE_ICON,
           width: 17, height: 17,
           color: cesium.Color.WHITE.withAlpha(0.62),
-          pixelOffset: new cesium.Cartesian2(72 + nameWidth, -14),
+          pixelOffset: new cesium.CallbackProperty(function() {
+            var s = getScaleFactor();
+            return new cesium.Cartesian2((72 + nameWidth) * s, -14 * s);
+          }, false),
           horizontalOrigin: cesium.HorizontalOrigin.CENTER,
           verticalOrigin: cesium.VerticalOrigin.CENTER,
-          scaleByDistance: new cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
+          scaleByDistance: new cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.5),
           heightReference: cesium.HeightReference.CLAMP_TO_GROUND,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
+
+      deleteEntity._polyRecordId = polyId;
+      deleteEntity._polyRole = "delete";
 
       nameLabelEntity._editEntity = editEntity;
       nameLabelEntity._deleteEntity = deleteEntity;
@@ -697,13 +703,20 @@
             } catch (e) { return null; }
           }).filter(function (v) { return !!v; });
 
+          var aoiPoints3d = frozenPoints.map(function (p) {
+            try {
+              var h = getGroundHeightAtLonLat(p.lon, p.lat);
+              return cesium.Cartesian3.fromDegrees(p.lon, p.lat, h + 0.1);
+            } catch (e) { return null; }
+          }).filter(function (v) { return !!v; });
+
           // Compute area for label
           var areaSqM = geometry.computePolygonAreaSquareMeters ? geometry.computePolygonAreaSquareMeters(frozenPoints) : 0;
           var areaText = geometry.formatArea ? geometry.formatArea(areaSqM) : "0 m\u00b2";
           var labelPos = geometry.polygonLabelPosition ? geometry.polygonLabelPosition(frozenPoints) : null;
           var labelPosCartesian = labelPos
-            ? cesium.Cartesian3.fromDegrees(labelPos.lon, labelPos.lat, getGroundHeightAtLonLat(labelPos.lon, labelPos.lat))
-            : aoiPoints[0];
+            ? cesium.Cartesian3.fromDegrees(labelPos.lon, labelPos.lat, 0.0)
+            : flatAoiPoints[0];
           var aoiLabelText = "AOI" + (areaText ? "\n" + areaText : "");
 
           // Strict visibility: never create AOI entities unless overlay visible
@@ -715,11 +728,11 @@
           activeAoiEntity = viewer.entities.add({
             position: labelPosCartesian,
             polyline: {
-              positions: flatAoiPoints.concat([flatAoiPoints[0]]),
-              width: 4.5,
-              material: cesium.Color.fromCssColorString("#4f79b8"),
-              clampToGround: true,
-              depthFailMaterial: cesium.Color.fromCssColorString("#4f79b8"),
+              positions: aoiPoints3d.concat([aoiPoints3d[0]]),
+              width: 4.0,
+              material: cesium.Color.CYAN,
+              clampToGround: false,
+              depthFailMaterial: cesium.Color.CYAN,
               disableDepthTestDistance: Number.POSITIVE_INFINITY,
               show: new cesium.CallbackProperty(function() {
                 return deps.getSearchOverlayVisible();
@@ -727,11 +740,11 @@
             },
             polygon: {
               hierarchy: new cesium.PolygonHierarchy(flatAoiPoints),
-              material: cesium.Color.fromCssColorString("#4f79b8").withAlpha(0.32),
+              material: cesium.Color.CYAN.withAlpha(0.22),
               fill: true,
-              outline: true,
+              outline: false,
+              classificationType: cesium.ClassificationType.BOTH,
               perPositionHeight: false,
-              // remove explicit height so polygon clamps to terrain correctly
               show: new cesium.CallbackProperty(function() {
                 return deps.getSearchOverlayVisible();
               }, false)
@@ -762,6 +775,7 @@
         
         updateAoiPanel(frozenPoints);
         deps.setStatus("Search AOI defined.");
+        setSearchPolygonLocked(true);
       }
 
       // --- CLEANUP ---
@@ -840,18 +854,21 @@
 
       if (points3d.length < 3) return;
 
-      var ellipsoidPoints = normalizedPoints.map(function (p) {
-        return cesium.Cartesian3.fromDegrees(p.lon, p.lat, 0.0);
-      });
+      var points3dH = normalizedPoints.map(function (p) {
+        try {
+          var h = getGroundHeightAtLonLat(p.lon, p.lat);
+          return cesium.Cartesian3.fromDegrees(p.lon, p.lat, h + 0.1);
+        } catch (e) { return null; }
+      }).filter(function(v) { return !!v; });
 
       var lineEntity = viewer.entities.add({
         polyline: {
-          positions: ellipsoidPoints.concat([ellipsoidPoints[0]]),
+          positions: points3dH.concat([points3dH[0]]),
           width: 4.5,
           arcType: cesium.ArcType.GEODESIC,
           material: polyColor,
           depthFailMaterial: polyColor,
-          clampToGround: true,
+          clampToGround: false,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
@@ -893,6 +910,19 @@
       if (!textLabel || textLabel.toLowerCase().indexOf("annotation") === 0) {
         textLabel = "Polygon " + polyId;
       }
+      var getScaleFactor = function() {
+        if (!viewer || !anchorPos) return 1.0;
+        var distance = cesium.Cartesian3.distance(viewer.camera.position, anchorPos);
+        if (distance <= 2500.0) {
+          return 1.0;
+        } else if (distance >= 1700000.0) {
+          return 0.5;
+        } else {
+          var t = (distance - 2500.0) / (1700000.0 - 2500.0);
+          return 1.0 + t * (0.5 - 1.0);
+        }
+      };
+
       var nameLabelEntity = viewer.entities.add({
         position: anchorPos,
         label: {
@@ -902,10 +932,14 @@
           backgroundColor: cesium.Color.BLACK.withAlpha(0.62),
           backgroundPadding: new cesium.Cartesian2(10, 6),
           font: "500 12px Arial, Helvetica, sans-serif",
-          pixelOffset: new cesium.Cartesian2(12, -8),
+          pixelOffset: new cesium.CallbackProperty(function() {
+            var s = getScaleFactor();
+            return new cesium.Cartesian2(12 * s, -8 * s);
+          }, false),
           horizontalOrigin: cesium.HorizontalOrigin.LEFT,
           verticalOrigin: cesium.VerticalOrigin.BOTTOM,
           heightReference: cesium.HeightReference.CLAMP_TO_GROUND,
+          scaleByDistance: new cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.5),
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
@@ -920,10 +954,13 @@
           image: EDIT_ICON,
           width: 17, height: 17,
           color: cesium.Color.WHITE.withAlpha(0.42),
-          pixelOffset: new cesium.Cartesian2(52 + restoredNameWidth, -14),
+          pixelOffset: new cesium.CallbackProperty(function() {
+            var s = getScaleFactor();
+            return new cesium.Cartesian2((52 + restoredNameWidth) * s, -14 * s);
+          }, false),
           horizontalOrigin: cesium.HorizontalOrigin.CENTER,
           verticalOrigin: cesium.VerticalOrigin.CENTER,
-          scaleByDistance: new cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
+          scaleByDistance: new cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.5),
           heightReference: cesium.HeightReference.CLAMP_TO_GROUND,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
@@ -937,10 +974,13 @@
           image: DELETE_ICON,
           width: 17, height: 17,
           color: cesium.Color.WHITE.withAlpha(0.62),
-          pixelOffset: new cesium.Cartesian2(72 + restoredNameWidth, -14),
+          pixelOffset: new cesium.CallbackProperty(function() {
+            var s = getScaleFactor();
+            return new cesium.Cartesian2((72 + restoredNameWidth) * s, -14 * s);
+          }, false),
           horizontalOrigin: cesium.HorizontalOrigin.CENTER,
           verticalOrigin: cesium.VerticalOrigin.CENTER,
-          scaleByDistance: new cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
+          scaleByDistance: new cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.5),
           heightReference: cesium.HeightReference.CLAMP_TO_GROUND,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
@@ -980,6 +1020,17 @@
       deps.requestSceneRender();
     }
 
+    function clearSearchAoi() {
+      var viewer = getViewer();
+      if (!viewer) return;
+      if (activeAoiEntity) {
+        try { viewer.entities.remove(activeAoiEntity); } catch(e) {}
+        activeAoiEntity = null;
+      }
+      updateAoiPanel([]);
+      deps.requestSceneRender();
+    }
+
     function clearAllData() {
       var viewer = getViewer();
       if (!viewer) return;
@@ -1014,6 +1065,7 @@
       toggleDrawnPolygonVisibility: toggleDrawnPolygonVisibility,
       toggleAllDrawnPolygonsVisibility: toggleAllDrawnPolygonsVisibility,
       updateComparatorPolygons: updateComparatorPolygons,
+      clearSearchAoi: clearSearchAoi,
       clearAllData: clearAllData,
     };
   }

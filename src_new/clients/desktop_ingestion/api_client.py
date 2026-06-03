@@ -202,7 +202,19 @@ class IngestionApiClient:
             data: dict[str, Any] = {}
             if extra_metadata:
                 import json
-                data["metadata"] = json.dumps(extra_metadata)
+                # Extract tags and description to send as separate form fields
+                tags_value = extra_metadata.pop("tags", None)
+                description_value = extra_metadata.pop("description", None)
+                if tags_value:
+                    if isinstance(tags_value, list):
+                        data["tags"] = ", ".join(tags_value)
+                    else:
+                        data["tags"] = str(tags_value)
+                if description_value:
+                    data["description"] = str(description_value)
+                # Remaining metadata (sidecar files) goes as JSON
+                if extra_metadata:
+                    data["metadata"] = json.dumps(extra_metadata)
 
             response = httpx.post(
                 f"{self._ingestion_url}/upload",

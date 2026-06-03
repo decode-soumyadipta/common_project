@@ -294,12 +294,8 @@ def test_desktop_controller_undo_redo_stack():
             api_server_manager=MagicMock(),
         )
     
-    # Mock project IO and serialization
-    state_seq = [
-        {"version": 1, "state_id": 0, "annotations": {"points": []}},
-        {"version": 1, "state_id": 1, "annotations": {"points": [{"lon": 10.0, "lat": 20.0}]}},
-        {"version": 1, "state_id": 2, "annotations": {"points": [{"lon": 10.0, "lat": 20.0}, {"lon": 11.0, "lat": 21.0}]}},
-    ]
+    # Mock project IO and serialization with a larger state sequence
+    state_seq = [{"version": 1, "state_id": i, "annotations": {"points": []}} for i in range(100)]
     
     current_state_idx = 0
     
@@ -308,18 +304,14 @@ def test_desktop_controller_undo_redo_stack():
         
     def mock_apply_payload(payload, source_path=None):
         nonlocal current_state_idx
-        for idx, s in enumerate(state_seq):
-            if s["state_id"] == payload["state_id"]:
-                current_state_idx = idx
-                break
+        current_state_idx = payload["state_id"]
 
     controller.build_project_payload = mock_build_payload
     controller.apply_project_payload = mock_apply_payload
     controller._last_state_snapshot = state_seq[0]
     
-    # Initially stacks are empty
+    # Initially stack is empty
     assert len(controller._undo_stack) == 0
-    assert len(controller._redo_stack) == 0
     
     # 1. State changes to 1 (Action 1)
     current_state_idx = 1
@@ -327,7 +319,6 @@ def test_desktop_controller_undo_redo_stack():
     # The baseline State 0 should be on the undo stack
     assert len(controller._undo_stack) == 1
     assert controller._undo_stack[0]["state_id"] == 0
-    assert len(controller._redo_stack) == 0
     
     # 2. State changes to 2 (Action 2)
     current_state_idx = 2
@@ -336,7 +327,6 @@ def test_desktop_controller_undo_redo_stack():
     assert len(controller._undo_stack) == 2
     assert controller._undo_stack[0]["state_id"] == 0
     assert controller._undo_stack[1]["state_id"] == 1
-    assert len(controller._redo_stack) == 0
     
     # 3. Undo Action
     controller.undo_last_action()
@@ -344,17 +334,20 @@ def test_desktop_controller_undo_redo_stack():
     assert current_state_idx == 1
     assert len(controller._undo_stack) == 1
     assert controller._undo_stack[0]["state_id"] == 0
-    # Redo stack should now contain State 2
-    assert len(controller._redo_stack) == 1
-    assert controller._redo_stack[0]["state_id"] == 2
     
-    # 4. Redo Action
-    controller.redo_last_action()
-    # Should restore state to 2
-    assert current_state_idx == 2
-    assert len(controller._undo_stack) == 2
-    assert controller._undo_stack[0]["state_id"] == 0
-    assert controller._undo_stack[1]["state_id"] == 1
-    assert len(controller._redo_stack) == 0
+    # 4. Test Stack limit capping (capped at 50)
+    # Restore state_idx back to 1 for consistency
+    current_state_idx = 1
+    # Advance project modification 58 more times (state_idx from 2 to 59)
+    for i in range(2, 60):
+        current_state_idx = i
+        controller._set_project_modified(True)
+        
+    # Stack size should be capped at 50, with the earliest states (0 to 8) discarded
+    assert len(controller._undo_stack) == 50
+    assert controller._undo_stack[0]["state_id"] == 9
+    assert controller._undo_stack[-1]["state_id"] == 58
+    assert controller._last_state_snapshot["state_id"] == 59
+
 
 

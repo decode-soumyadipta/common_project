@@ -172,71 +172,72 @@ class AnnotationCoordinator:
 
         # ─── Restore polygon annotations ───────────────────────────────────────
         # Polygons MUST be closed rings and properly formatted
-        for i, item in enumerate(c._annotation_polygon_records):
-            coords = item.get("coords", [])
-            if not coords:
-                self._logger.warning("Polygon annotation #%d has empty coords", i)
-                continue
-
-            label = str(item.get("label") or f"Polygon {i+1}")
-            
-            try:
-                # Convert to GeoJSON-compatible format: list of [lon, lat] pairs
-                validated_coords = []
-                for coord in coords:
-                    try:
-                        lon = None
-                        lat = None
-                        
-                        if isinstance(coord, (list, tuple)) and len(coord) >= 2:
-                            lon = float(coord[0])
-                            lat = float(coord[1])
-                        elif isinstance(coord, dict) and "lon" in coord and "lat" in coord:
-                            lon = float(coord["lon"])
-                            lat = float(coord["lat"])
-                        else:
-                            self._logger.warning("Polygon annotation #%d: Invalid coord format: %s", i, coord)
-                            continue
-                        
-                        # Validate lon/lat are finite numbers
-                        if not (isinstance(lon, float) and isinstance(lat, float)):
-                            self._logger.warning("Polygon annotation #%d: Non-numeric coords lon=%s lat=%s", i, lon, lat)
-                            continue
-                        
-                        if not (math.isfinite(lon) and math.isfinite(lat)):
-                            self._logger.warning("Polygon annotation #%d: Non-finite coords lon=%s lat=%s", i, lon, lat)
-                            continue
-                        
-                        # Validate lon/lat are in valid ranges
-                        if not (-180 <= lon <= 180 and -90 <= lat <= 90):
-                            self._logger.warning("Polygon annotation #%d: Coords out of valid range lon=%f lat=%f", i, lon, lat)
-                            continue
-                        
-                        validated_coords.append([lon, lat])
-                    except (ValueError, TypeError) as coord_err:
-                        self._logger.warning("Polygon annotation #%d: Failed to parse coord %s: %s", i, coord, coord_err)
-                        continue
-                
-                # Remove duplicate consecutive points
-                deduped_coords = []
-                for coord in validated_coords:
-                    if not deduped_coords or deduped_coords[-1] != coord:
-                        deduped_coords.append(coord)
-                
-                if len(deduped_coords) < 3:
-                    self._logger.warning("Polygon annotation #%d has < 3 unique valid coords (had %d validated)", i, len(validated_coords))
+        if not c._undo_redo_in_progress:
+            for i, item in enumerate(c._annotation_polygon_records):
+                coords = item.get("coords", [])
+                if not coords:
+                    self._logger.warning("Polygon annotation #%d has empty coords", i)
                     continue
+
+                label = str(item.get("label") or f"Polygon {i+1}")
                 
-                # Ensure polygon is closed
-                if deduped_coords[0] != deduped_coords[-1]:
-                    deduped_coords.append(deduped_coords[0])
-                
-                self._logger.debug("Restoring polygon annotation label=%s coords=%d", label, len(deduped_coords))
-                # restoreAnnotationPolygon expects (points, id, label) - use None for auto-generated id
-                c._run_js_call("restoreAnnotationPolygon", deduped_coords, None, label)
-            except Exception as e:
-                self._logger.error("Failed to restore polygon annotation #%d: %s", i, e)
-                continue
+                try:
+                    # Convert to GeoJSON-compatible format: list of [lon, lat] pairs
+                    validated_coords = []
+                    for coord in coords:
+                        try:
+                            lon = None
+                            lat = None
+                            
+                            if isinstance(coord, (list, tuple)) and len(coord) >= 2:
+                                lon = float(coord[0])
+                                lat = float(coord[1])
+                            elif isinstance(coord, dict) and "lon" in coord and "lat" in coord:
+                                lon = float(coord["lon"])
+                                lat = float(coord["lat"])
+                            else:
+                                self._logger.warning("Polygon annotation #%d: Invalid coord format: %s", i, coord)
+                                continue
+                            
+                            # Validate lon/lat are finite numbers
+                            if not (isinstance(lon, float) and isinstance(lat, float)):
+                                self._logger.warning("Polygon annotation #%d: Non-numeric coords lon=%s lat=%s", i, lon, lat)
+                                continue
+                            
+                            if not (math.isfinite(lon) and math.isfinite(lat)):
+                                self._logger.warning("Polygon annotation #%d: Non-finite coords lon=%s lat=%s", i, lon, lat)
+                                continue
+                            
+                            # Validate lon/lat are in valid ranges
+                            if not (-180 <= lon <= 180 and -90 <= lat <= 90):
+                                self._logger.warning("Polygon annotation #%d: Coords out of valid range lon=%f lat=%f", i, lon, lat)
+                                continue
+                            
+                            validated_coords.append([lon, lat])
+                        except (ValueError, TypeError) as coord_err:
+                            self._logger.warning("Polygon annotation #%d: Failed to parse coord %s: %s", i, coord, coord_err)
+                            continue
+                    
+                    # Remove duplicate consecutive points
+                    deduped_coords = []
+                    for coord in validated_coords:
+                        if not deduped_coords or deduped_coords[-1] != coord:
+                            deduped_coords.append(coord)
+                    
+                    if len(deduped_coords) < 3:
+                        self._logger.warning("Polygon annotation #%d has < 3 unique valid coords (had %d validated)", i, len(validated_coords))
+                        continue
+                    
+                    # Ensure polygon is closed
+                    if deduped_coords[0] != deduped_coords[-1]:
+                        deduped_coords.append(deduped_coords[0])
+                    
+                    self._logger.debug("Restoring polygon annotation label=%s coords=%d", label, len(deduped_coords))
+                    # restoreAnnotationPolygon expects (points, id, label) - use None for auto-generated id
+                    c._run_js_call("restoreAnnotationPolygon", deduped_coords, None, label)
+                except Exception as e:
+                    self._logger.error("Failed to restore polygon annotation #%d: %s", i, e)
+                    continue
 
         # ─── Restore raster stretch settings ───────────────────────────────────
         for layer_key, settings in c._raster_stretch_settings.items():
