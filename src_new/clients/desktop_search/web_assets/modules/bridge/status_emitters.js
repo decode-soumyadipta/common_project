@@ -6,6 +6,7 @@
   // ── Status-bar bridge emitters (QGIS-style) ──────────────────────────────
   function emitMouseCoordinates(lon, lat) {
     if (!bridge || !bridge.on_mouse_coordinates) return;
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) return;
     const now = Date.now();
     const throttleMs = isInteracting ? 33 : (currentSceneMode === "2d" ? 60 : _SB_COORD_THROTTLE_MS);
     if (now - _sbLastCoordEmitMs < throttleMs) return;
@@ -25,10 +26,14 @@
     _sbLastCameraEmitMs = now;
     
     try {
-      // Compute approximate scale denominator from camera altitude + canvas size
-      const height = viewer.camera.positionCartographic.height;
+      const carto = viewer.camera.positionCartographic;
+      if (!carto) return;
+
+      const height = carto.height;
+      if (!Number.isFinite(height)) return;
+
       const canvas = viewer.canvas;
-      const fovY = viewer.camera.frustum.fovy || 1.0472;
+      const fovY = (viewer.camera.frustum && typeof viewer.camera.frustum.fovy === "number") ? viewer.camera.frustum.fovy : 1.0472;
       const visibleMeters = 2.0 * height * Math.tan(fovY * 0.5);
       const pixelHeight = canvas.clientHeight || 1;
       const metersPerPixel = visibleMeters / pixelHeight;
@@ -40,17 +45,24 @@
       
       let pitchDeg = Cesium.Math.toDegrees(viewer.camera.pitch);
       
-      bridge.on_camera_changed(scaleDenom, headingDeg, pitchDeg);
+      if (Number.isFinite(scaleDenom) && Number.isFinite(headingDeg) && Number.isFinite(pitchDeg)) {
+        bridge.on_camera_changed(scaleDenom, headingDeg, pitchDeg);
+      }
+      
       if (typeof bridge.on_camera_pose_changed === "function") {
-        const carto = viewer.camera.positionCartographic;
-        if (carto) {
+        const lonDeg = Cesium.Math.toDegrees(carto.longitude);
+        const latDeg = Cesium.Math.toDegrees(carto.latitude);
+        const rollDeg = Cesium.Math.toDegrees(viewer.camera.roll);
+
+        if (Number.isFinite(lonDeg) && Number.isFinite(latDeg) && Number.isFinite(height) &&
+            Number.isFinite(headingDeg) && Number.isFinite(pitchDeg) && Number.isFinite(rollDeg)) {
           bridge.on_camera_pose_changed(
-            Cesium.Math.toDegrees(carto.longitude),
-            Cesium.Math.toDegrees(carto.latitude),
-            carto.height,
+            lonDeg,
+            latDeg,
+            height,
             headingDeg,
             pitchDeg,
-            Cesium.Math.toDegrees(viewer.camera.roll)
+            rollDeg
           );
         }
       }
@@ -201,7 +213,6 @@
         material: Cesium.Color.YELLOW,
         depthFailMaterial: Cesium.Color.YELLOW,
         clampToGround: false,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
         show: new Cesium.CallbackProperty(function () {
           return (searchDrawMode === "rectangle" || searchRectangleLocked) && getSearchOverlayVisible() && !searchRectangleLocked;
         }, false),
@@ -231,8 +242,7 @@
         horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
         verticalOrigin: Cesium.VerticalOrigin.CENTER,
         pixelOffset: new Cesium.Cartesian2(0, 0),
-        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        heightReference: (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
         scale: 0.75,
         show: new Cesium.CallbackProperty(function () {
           return (searchDrawMode === "rectangle" || searchRectangleLocked) && getSearchOverlayVisible() && !searchRectangleLocked;
@@ -300,7 +310,6 @@
           material: Cesium.Color.CYAN,
           depthFailMaterial: Cesium.Color.CYAN,
           clampToGround: false,
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
           show: new Cesium.CallbackProperty(function () {
             return Boolean(window.searchAoiBounds) && getSearchOverlayVisible();
           }, false),
@@ -330,8 +339,7 @@
           horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
           verticalOrigin: Cesium.VerticalOrigin.CENTER,
           pixelOffset: new Cesium.Cartesian2(0, 0),
-          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          heightReference: (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
           scale: 0.75,
           show: new Cesium.CallbackProperty(function () {
             return Boolean(window.searchAoiBounds) && getSearchOverlayVisible();
@@ -374,6 +382,7 @@
     
     // Camera moved → update scale + heading + start tile loading monitor
     viewer.camera.changed.addEventListener(function() {
+      adjustScreenSpaceErrorDynamically();
       if (isInteracting) {
         return;
       }
@@ -385,6 +394,7 @@
     
     // CRITICAL: Force render after camera stops moving (prevents black screens in request-render mode)
     viewer.camera.moveEnd.addEventListener(function() {
+      adjustScreenSpaceErrorDynamically();
       emitCameraChanged();
       if (!_tileLoadingActive) {
         startTileLoadingMonitor();
@@ -447,16 +457,9 @@
         }
       }
 
-      // Terrain exaggeration persistence (enforced at all times to prevent flat-lining/popping during tile loads or interaction)
-      if (typeof activeDemContext !== "undefined" && activeDemContext && activeDemContext.visible !== false) {
-        const target = Math.max(0.1, demVisual.exaggeration);
-        if (Math.abs(viewer.scene.globe.terrainExaggeration - target) > 0.001) {
-          viewer.scene.globe.terrainExaggeration = target;
-        }
-        if (typeof viewer.scene.verticalExaggeration !== "undefined" && Math.abs(viewer.scene.verticalExaggeration - target) > 0.001) {
-          viewer.scene.verticalExaggeration = target;
-        }
-      }
+      // Terrain exaggeration is now managed by the smooth zoom-driven preRender listener
+      // in camera.js (tuneCameraController). Do NOT write terrainExaggeration here —
+      // competing writes between preRender and postRender caused flicker redraws.
 
       if (isInteracting) {
         return;
@@ -517,6 +520,73 @@
       }
     });
   }
+
+  function adjustScreenSpaceErrorDynamically() {
+    const interacting = (typeof isInteracting !== "undefined" ? isInteracting : false);
+
+    function adjustViewerSSE(v, isComp) {
+      if (!v || !v.camera || !v.scene || !v.scene.globe) return;
+
+      // ── DEM ACTIVE: lock at full quality, never degrade during interaction ──
+      // When a DEM terrain is loaded the user expects crisp, stable elevation
+      // rendering at all times.  Raising SSE to 8-12 during drag causes LOD to
+      // drop to coarse tiles → visible elevation flicker / abrupt DEM hide.
+      // Solution: hard-lock SSE to the user-selected quality baseline (or the
+      // GPU-detected default) so the globe mesh never gets coarsened.
+      if (typeof activeDemContext !== "undefined" && activeDemContext) {
+        // Prefer user-set quality SSE; fall back to GPU-detected default
+        const demSSE = (typeof window._userQualitySSE === "number" && window._userQualitySSE > 0)
+          ? window._userQualitySSE
+          : (window._isHighEndGpu ? 1.0 : 1.5);
+        if (Math.abs(v.scene.globe.maximumScreenSpaceError - demSSE) > 0.05) {
+          v.scene.globe.maximumScreenSpaceError = demSSE;
+        }
+        return; // skip altitude-based mapping entirely
+      }
+
+
+      const cartographic = v.camera.positionCartographic;
+      if (!cartographic) return;
+      const groundHeight = v.scene.globe.getHeight(cartographic) || 0.0;
+      const heightAboveGround = Math.max(0.0, cartographic.height - groundHeight);
+      
+      let targetSSE;
+      
+      if (interacting) {
+        // During interaction: use fixed high SSE for responsiveness, no per-altitude changes
+        // (altitude changes rapidly during drag/zoom so we don't want SSE oscillating)
+        targetSSE = window._isHighEndGpu ? 8.0 : 12.0;
+      } else {
+        // Idle: smooth continuous mapping from altitude to SSE (no hard step thresholds)
+        // This prevents the abrupt SSE jumps that caused flickering as altitude crossed a threshold.
+        // altitude 0→500 m: 0.2→0.5   altitude 500→5000: 0.5→1.5   >5000: 1.5→2.0
+        const baseSSE = window._isHighEndGpu ? 1.0 : 1.5;
+        if (heightAboveGround < 300.0) {
+          targetSSE = 0.2;
+        } else if (heightAboveGround < 5000.0) {
+          const t = Math.min(1.0, (heightAboveGround - 300.0) / (5000.0 - 300.0));
+          targetSSE = 0.2 + t * (baseSSE - 0.2);
+        } else {
+          targetSSE = baseSSE;
+        }
+      }
+      
+      // Large hysteresis: only update SSE when it differs by >0.3 to prevent rapid
+      // flip-flopping during tile loading that causes visible terrain flicker.
+      if (Math.abs(v.scene.globe.maximumScreenSpaceError - targetSSE) > 0.3) {
+        v.scene.globe.maximumScreenSpaceError = targetSSE;
+        v.scene.requestRender();
+      }
+    }
+
+    adjustViewerSSE(viewer, false);
+    if (typeof comparatorViewers !== "undefined" && Array.isArray(comparatorViewers)) {
+      comparatorViewers.forEach(v => {
+        if (v) adjustViewerSSE(v, true);
+      });
+    }
+  }
+
 
   let lastHoveredMarker = null;
   let _markerBumpTimer  = null;
@@ -768,39 +838,11 @@
       }
 
       // Try multiple picking strategies to guarantee a coordinate.
-      // Strategy 1: scene.pickPosition (uses depth buffer, most accurate)
-      // Strategy 2: globe.pick (works on terrain surface)
-      // Strategy 3: pickEllipsoid (always works, ignores terrain height)
       let lonLat = null;
       let clickCartesian = null;
 
       if (movement && movement.position) {
-        // Strategy 1: scene.pickPosition — uses depth buffer, most accurate at any zoom
-        // This correctly handles high-resolution imagery where terrain mesh may lag
-        if (viewer.scene.pickPositionSupported) {
-          try {
-            const depthCart = viewer.scene.pickPosition(movement.position);
-            if (depthCart && Cesium.Cartesian3.magnitude(depthCart) > 1.0) {
-              clickCartesian = depthCart;
-            }
-          } catch (_) {}
-        }
-
-        // Strategy 2: globe.pick via ray (works on terrain surface when depth unavailable)
-        if (!clickCartesian) {
-          const ray = viewer.camera.getPickRay(movement.position);
-          if (ray) {
-            clickCartesian = viewer.scene.globe.pick(ray, viewer.scene);
-          }
-        }
-
-        // Strategy 3: ellipsoid fallback (always succeeds, ignores terrain height)
-        if (!clickCartesian) {
-          clickCartesian = viewer.camera.pickEllipsoid(
-            movement.position,
-            viewer.scene.globe.ellipsoid
-          );
-        }
+        clickCartesian = getCartesianFromViewer(viewer, movement.position);
 
         if (clickCartesian) {
           lonLat = cartesianToLonLat(clickCartesian);
@@ -873,8 +915,7 @@
                 color: Cesium.Color.fromCssColorString("#00e5ff"),
                 outlineColor: Cesium.Color.WHITE,
                 outlineWidth: 2,
-                heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-                disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                heightReference: (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
               },
             });
             requestSceneRender();
@@ -953,7 +994,7 @@
         // Keep status-bar lon/lat responsive during drag and after focus operations.
         let fastLonLat = getLonLatFromScreen(movement.endPosition);
         if (!fastLonLat) {
-          const ellipsoidCart = viewer.camera.pickEllipsoid(movement.endPosition, viewer.scene.globe.ellipsoid);
+          const ellipsoidCart = getCartesianFromViewer(viewer, movement.endPosition);
           if (ellipsoidCart) {
             fastLonLat = cartesianToLonLat(ellipsoidCart);
           }
@@ -965,27 +1006,7 @@
       
       // Update rectangle draw preview
       if (searchDrawMode === "rectangle" && searchRectangleStartPoint && !searchRectangleLocked && movement && movement.endPosition) {
-        let currentCartesian = null;
-        if (viewer.scene.pickPositionSupported) {
-          try {
-            const depthCart = viewer.scene.pickPosition(movement.endPosition);
-            if (depthCart && Cesium.Cartesian3.magnitude(depthCart) > 1.0) {
-              currentCartesian = depthCart;
-            }
-          } catch (_) {}
-        }
-        if (!currentCartesian) {
-          const ray = viewer.camera.getPickRay(movement.endPosition);
-          if (ray) {
-            currentCartesian = viewer.scene.globe.pick(ray, viewer.scene);
-          }
-        }
-        if (!currentCartesian) {
-          currentCartesian = viewer.camera.pickEllipsoid(
-            movement.endPosition,
-            viewer.scene.globe.ellipsoid
-          );
-        }
+        let currentCartesian = getCartesianFromViewer(viewer, movement.endPosition);
         if (currentCartesian) {
           const lonLat = cartesianToLonLat(currentCartesian);
           if (lonLat) {
@@ -1015,7 +1036,7 @@
           // Use pickEllipsoid as guaranteed fallback for preview over terrain
           let lonLat = getLonLatFromScreen(movement.endPosition);
           if (!lonLat && movement.endPosition) {
-            const ellipsoidCart = viewer.camera.pickEllipsoid(movement.endPosition, viewer.scene.globe.ellipsoid);
+            const ellipsoidCart = getCartesianFromViewer(viewer, movement.endPosition);
             if (ellipsoidCart) lonLat = cartesianToLonLat(ellipsoidCart);
           }
           if (lonLat) {
@@ -1043,7 +1064,7 @@
         try {
           let lonLat = getLonLatFromScreen(movement.endPosition);
           if (!lonLat && movement.endPosition) {
-            const ellipsoidCart = viewer.camera.pickEllipsoid(movement.endPosition, viewer.scene.globe.ellipsoid);
+            const ellipsoidCart = getCartesianFromViewer(viewer, movement.endPosition);
             if (ellipsoidCart) lonLat = cartesianToLonLat(ellipsoidCart);
           }
           if (lonLat) {
@@ -1073,7 +1094,7 @@
 
             let profileLonLat = getLonLatFromScreen(movement.endPosition);
             if (!profileLonLat && movement.endPosition) {
-              const ellipsoidCart = viewer.camera.pickEllipsoid(movement.endPosition, viewer.scene.globe.ellipsoid);
+              const ellipsoidCart = getCartesianFromViewer(viewer, movement.endPosition);
               if (ellipsoidCart) profileLonLat = cartesianToLonLat(ellipsoidCart);
             }
             if (profileLonLat) {
@@ -1094,7 +1115,7 @@
         try {
           let cursorLonLat = getLonLatFromScreen(movement.endPosition);
           if (!cursorLonLat && movement.endPosition) {
-            const ec = viewer.camera.pickEllipsoid(movement.endPosition, viewer.scene.globe.ellipsoid);
+            const ec = getCartesianFromViewer(viewer, movement.endPosition);
             if (ec) cursorLonLat = cartesianToLonLat(ec);
           }
           if (cursorLonLat) {
@@ -1113,7 +1134,7 @@
             }
             window._profileCursorFrac = frac;
             // Emit to Python so the Qt panel can draw the cursor crosshair
-            if (bridge && bridge.on_profile_cursor) {
+            if (bridge && bridge.on_profile_cursor && Number.isFinite(frac)) {
               bridge.on_profile_cursor(frac);
             }
             requestSceneRender();

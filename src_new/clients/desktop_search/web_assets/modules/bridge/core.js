@@ -62,6 +62,15 @@
   let swipeComparatorRightLayerKey = null;
   let swipeComparatorExplicitKeys = [];   // Full ordered list of selected layer keys (N-pane support)
   let comparatorModeEnabled = false;
+  window.OfflineGISRuntime = window.OfflineGISRuntime || {};
+  Object.defineProperty(window.OfflineGISRuntime, "comparatorModeEnabled", {
+    get: function () { return comparatorModeEnabled; },
+    set: function (val) {
+      comparatorModeEnabled = val;
+      console.log("[offlineGIS] runtime.comparatorModeEnabled set to:", val);
+    },
+    configurable: true
+  });
   let comparatorLeftViewer = null;
   let comparatorRightViewer = null;
   let comparatorLeftLayerType = null;
@@ -180,6 +189,24 @@
     return { min: parts[0], max: parts[1] };
   };
 
+  const getDemTerrainHeightFallback = function () {
+    if (typeof activeDemContext !== "undefined" && activeDemContext && activeDemContext.options && activeDemContext.options.query) {
+      const rescale = activeDemContext.options.query.rescale;
+      if (typeof rescale === "string") {
+        const parts = rescale.split(",").map(Number);
+        if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+          return (parts[0] + parts[1]) * 0.5;
+        }
+      } else if (Array.isArray(rescale) && rescale.length > 0) {
+        const parts = String(rescale[0]).split(",").map(Number);
+        if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+          return (parts[0] + parts[1]) * 0.5;
+        }
+      }
+    }
+    return 0.0;
+  };
+
   function getActiveDemColorMode() {
     return String((activeDemContext && activeDemContext.colorMode) || demVisual.colorMode || "terrain").toLowerCase();
   }
@@ -241,7 +268,10 @@
   function notifyFlyThroughPlaybackProgress(progress) {
     if (bridge && typeof bridge.on_fly_through_playback_progress === "function") {
       try {
-        bridge.on_fly_through_playback_progress(Number(progress));
+        const val = Number(progress);
+        if (Number.isFinite(val)) {
+          bridge.on_fly_through_playback_progress(val);
+        }
       } catch (_) {}
     }
   }
@@ -281,16 +311,29 @@
     }
     times[times.length - 1] = 1.0;
 
-    let spline = null;
-    try {
-      spline = new Cesium.CatmullRomSpline({
-        times: times,
-        points: flyThroughPoints.filter(Boolean),
-      });
-    } catch (e) {
-      log("error", "Failed to build CatmullRomSpline: " + e.message);
-      return null;
-    }
+    const pointsFiltered = flyThroughPoints.filter(Boolean);
+    const spline = {
+      times: times,
+      points: pointsFiltered,
+      evaluate: function(normalized) {
+        const t = Cesium.Math.clamp(normalized, 0.0, 1.0);
+        if (pointsFiltered.length === 0) return null;
+        if (pointsFiltered.length === 1) return pointsFiltered[0].clone();
+        
+        let idx = 0;
+        while (idx < times.length - 2 && times[idx + 1] < t) {
+          idx++;
+        }
+        const t0 = times[idx];
+        const t1 = times[idx + 1];
+        const u = (t1 - t0) > 1e-5 ? (t - t0) / (t1 - t0) : 0.0;
+        
+        const p0 = pointsFiltered[idx];
+        const p1 = pointsFiltered[idx + 1];
+        
+        return Cesium.Cartesian3.lerp(p0, p1, u, new Cesium.Cartesian3());
+      }
+    };
 
     const totalDurationMs = Math.max(1000, (totalDist / (18 * speedFactor)) * 1000);
 
@@ -320,7 +363,7 @@
     }
 
     // Calculate heading using local direction vector at normalized time
-    const dt = 0.002;
+    const dt = 0.01;
     const tMinus = Math.max(0, normalized - dt);
     const tPlus = Math.min(1, normalized + dt);
 
@@ -705,13 +748,12 @@
         }
         return lifted;
       },
-       {
-         width: 1.2,
-         color: "#00e5ff",
-         alpha: 1.0,
-         clampToGround: true,
-         classificationType: Cesium.ClassificationType.BOTH,
-       }
+        {
+          width: 1.2,
+          color: "#00e5ff",
+          alpha: 1.0,
+          clampToGround: false,
+        }
     );
     requestSceneRender();
   }
@@ -741,13 +783,11 @@
     flyThroughPathEntity = viewer.entities.add({
       polyline: {
         positions: flyThroughPoints.map(liftFlyThroughPoint).filter(Boolean),
-        width: 1.2,
+        width: 0.8,
         material: Cesium.Color.fromCssColorString("#00e5ff"),
         depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff"),
         arcType: Cesium.ArcType.GEODESIC,
-        clampToGround: true,
-        classificationType: Cesium.ClassificationType.BOTH,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        clampToGround: false,
       }
     });
   }
@@ -829,10 +869,12 @@
   const SHOW_COUNTRY_BOUNDARY_OVERLAY = false;
   // DEM rendering uses imagery-only pipeline (colormap drape + hillshade overlay on EllipsoidTerrainProvider)
   // No client-side terrain decoding — crash-proof for any raster size on macOS and Windows/NVIDIA.
-  // TERRAIN_SAMPLE_SIZE is set to 65 for smoother LOD transitions and finer detail.
-  // 65 increases terrain fidelity while keeping decode cost manageable on desktop GPUs.
-  const TERRAIN_SAMPLE_SIZE = 65;
-  const DEM_MAX_TERRAIN_LEVEL = 14;
+  // TERRAIN_SAMPLE_SIZE: 129 = 2^7+1 (valid heightmap grid size). Higher values give a
+  // finer vertex mesh per tile — eliminates zig-zag/slanting edge artifacts and provides
+  // smoother elevation at borders. Decode cost is O(N^2) so 129 vs 65 is 4× more work
+  // per tile but still well within desktop GPU budget for the 3–4 cm/pixel DEM dataset.
+  const TERRAIN_SAMPLE_SIZE = 129;
+  const DEM_MAX_TERRAIN_LEVEL = 16;
   const DEM_HILLSHADE_AZIMUTH = 45;
   const DEM_HILLSHADE_ALTITUDE = 45;
   function createComparatorPaneVisualState() {
@@ -1141,27 +1183,46 @@
   }
 
   function getCartesianFromViewer(targetViewer, screenPosition) {
-    if (!targetViewer || !screenPosition) {
+    if (!targetViewer || !screenPosition || !targetViewer.scene) {
       return null;
     }
     const scene = targetViewer.scene;
     let cartesian = null;
-    if (scene.pickPositionSupported) {
-      try {
-        const depthCart = scene.pickPosition(screenPosition);
-        if (depthCart && Cesium.Cartesian3.magnitude(depthCart) > 1.0) {
-          cartesian = depthCart;
+    try {
+      // 1. globe.pick — most accurate, works when terrain tiles are loaded
+      if (scene.globe) {
+        const ray = targetViewer.camera.getPickRay(screenPosition);
+        if (ray) {
+          cartesian = scene.globe.pick(ray, scene);
         }
-      } catch (_) {}
-    }
-    if (!cartesian) {
-      const ray = targetViewer.camera.getPickRay(screenPosition);
-      if (ray) {
-        cartesian = scene.globe.pick(ray, scene);
       }
-    }
-    if (!cartesian) {
-      cartesian = targetViewer.camera.pickEllipsoid(screenPosition, scene.globe.ellipsoid);
+      // 2. pickPosition — works for rendered geometry (DEMs, entities)
+      if (!cartesian && scene.pickPositionSupported) {
+        try {
+          const depthCart = scene.pickPosition(screenPosition);
+          if (depthCart && Cesium.Cartesian3.magnitude(depthCart) > 1.0) {
+            cartesian = depthCart;
+          }
+        } catch (_) {}
+      }
+      // 3. pickEllipsoid — always succeeds if the screen point is over the globe.
+      // This is the critical fallback for DEM panes in 3D mode where globe.pick
+      // returns null when terrain tiles haven't loaded at that pixel.
+      if (!cartesian) {
+        const ellipsoid = scene.globe ? scene.globe.ellipsoid : Cesium.Ellipsoid.WGS84;
+        cartesian = targetViewer.camera.pickEllipsoid(screenPosition, ellipsoid);
+      }
+      // 4. Re-project 2D map-space Cartesian back to globe Cartesian if needed
+      if (cartesian && scene.mode === Cesium.SceneMode.SCENE2D) {
+        const projection = scene.mapProjection;
+        if (projection) {
+          const carto = projection.unproject(cartesian);
+          const ellipsoid = scene.globe ? scene.globe.ellipsoid : Cesium.Ellipsoid.WGS84;
+          cartesian = Cesium.Cartographic.toCartesian(carto, ellipsoid);
+        }
+      }
+    } catch (err) {
+      log("debug", "getCartesianFromViewer error: " + err.message);
     }
     return cartesian || null;
   }
@@ -1182,6 +1243,56 @@
     };
   }
 
+  function sampleTerrainHeightsForPath(coords, isClosed = false, samplesPerSegment = 10) {
+    if (!viewer || !viewer.scene || !viewer.scene.globe || !coords || coords.length < 2) {
+      return coords || [];
+    }
+    const ellipsoid = viewer.scene.globe.ellipsoid || Cesium.Ellipsoid.WGS84;
+    
+    // Convert all input coordinates to Cartographic
+    const cartographics = coords.map(function(c) {
+      try {
+        return Cesium.Cartographic.fromCartesian(c, ellipsoid);
+      } catch (e) {
+        return null;
+      }
+    }).filter(Boolean);
+
+    if (cartographics.length < 2) {
+      return coords;
+    }
+
+    if (isClosed && cartographics.length >= 3) {
+      cartographics.push(cartographics[0]);
+    }
+
+    const points = [];
+    for (let segment = 0; segment < cartographics.length - 1; segment++) {
+      const start = cartographics[segment];
+      const end = cartographics[segment + 1];
+      if (!start || !end) continue;
+      
+      const count = segment === cartographics.length - 2 ? samplesPerSegment : samplesPerSegment - 1;
+      for (let i = 0; i <= count; i++) {
+        const t = i / samplesPerSegment;
+        const lon = start.longitude + (end.longitude - start.longitude) * t;
+        const lat = start.latitude + (end.latitude - start.latitude) * t;
+        const carto = new Cesium.Cartographic(lon, lat);
+        
+        const terrainHeight = viewer.scene.globe.getHeight(carto);
+        const height = (typeof terrainHeight === "number" && Number.isFinite(terrainHeight)) ? terrainHeight : 0.0;
+        
+        // Lift slightly above ground to prevent depth culling/z-fighting
+        const cartesian = Cesium.Cartesian3.fromRadians(lon, lat, height + 0.15);
+        points.push(cartesian);
+      }
+    }
+    return points;
+  }
+
+  // Expose helper on offlineGIS runtime
+  window.offlineGIS.sampleTerrainHeightsForPath = sampleTerrainHeightsForPath;
+
   function getLonLatFromViewer(targetViewer, screenPosition) {
     return cartesianToLonLat(getCartesianFromViewer(targetViewer, screenPosition));
   }
@@ -1201,17 +1312,15 @@
     if (!crosshairElement) {
       return;
     }
-    let x = 0.0;
-    let y = 0.0;
     if (screenPosition && Number.isFinite(screenPosition.x) && Number.isFinite(screenPosition.y)) {
-      x = Number(screenPosition.x);
-      y = Number(screenPosition.y);
-    } else if (targetViewer && targetViewer.canvas) {
-      x = targetViewer.canvas.clientWidth * 0.5;
-      y = targetViewer.canvas.clientHeight * 0.5;
+      // Position the overlay crosshair at exact pixel coords within the pane.
+      // The ::before/::after pseudo-elements extend -20px in each direction around this point.
+      crosshairElement.style.left = screenPosition.x.toFixed(1) + "px";
+      crosshairElement.style.top  = screenPosition.y.toFixed(1) + "px";
+      crosshairElement.style.display = "block";
+    } else {
+      crosshairElement.style.display = "none";
     }
-    crosshairElement.style.left = `${x.toFixed(2)}px`;
-    crosshairElement.style.top = `${y.toFixed(2)}px`;
   }
 
   function updateComparatorCrosshair(lon, lat, leftScreenPosition, rightScreenPosition) {
@@ -1272,11 +1381,105 @@
     if (!targetViewer || !worldCartesian) {
       return null;
     }
-    const projected = sceneToWindowCoordinates(targetViewer.scene, worldCartesian);
-    if (!projected || !Number.isFinite(projected.x) || !Number.isFinite(projected.y)) {
-      return null;
-    }
-    return new Cesium.Cartesian2(Number(projected.x), Number(projected.y));
+    try {
+      if (isNaN(worldCartesian.x) || isNaN(worldCartesian.y) || isNaN(worldCartesian.z)) {
+        return null;
+      }
+      let carto = null;
+      let cartesianToProject = worldCartesian;
+      if (targetViewer.scene) {
+        const ellipsoid = targetViewer.scene.globe ? targetViewer.scene.globe.ellipsoid : Cesium.Ellipsoid.WGS84;
+        carto = Cesium.Cartographic.fromCartesian(worldCartesian, ellipsoid);
+        if (carto && !isNaN(carto.longitude) && !isNaN(carto.latitude)) {
+          let height = 0.0;
+          const hasTerrain = targetViewer.terrainProvider &&
+                             targetViewer.terrainProvider.constructor &&
+                             targetViewer.terrainProvider.constructor.name !== "EllipsoidTerrainProvider";
+
+          if (targetViewer.scene.mode !== Cesium.SceneMode.SCENE2D && targetViewer.scene.globe) {
+            if (hasTerrain) {
+              const terrainHeight = targetViewer.scene.globe.getHeight(carto);
+              if (typeof terrainHeight === "number" && !isNaN(terrainHeight)) {
+                // Clamp to terrain surface + 10m offset so the point is always
+                // above the terrain mesh and visible to SceneTransforms.
+                height = terrainHeight + 10.0;
+              } else {
+                // Terrain tiles not loaded yet for this position — use a generous
+                // above-ellipsoid offset so the point isn't occluded by terrain.
+                height = 100.0;
+              }
+            } else {
+              height = 0.0;
+            }
+          }
+          carto.height = height;
+          const projectedCart = Cesium.Cartographic.toCartesian(carto, ellipsoid);
+          if (projectedCart && !isNaN(projectedCart.x) && !isNaN(projectedCart.y) && !isNaN(projectedCart.z)) {
+            cartesianToProject = projectedCart;
+          }
+        }
+      }
+
+      // Primary: use Cesium's SceneTransforms (works perfectly in 2D/Columbus/3D views)
+      let projected = null;
+      try {
+        projected = sceneToWindowCoordinates(targetViewer.scene, cartesianToProject);
+      } catch (e) {}
+
+      if (projected && Number.isFinite(projected.x) && Number.isFinite(projected.y) && !isNaN(projected.x) && !isNaN(projected.y)) {
+        // Validate the projected pixel is within (or near) the canvas bounds
+        const cw = targetViewer.canvas.clientWidth;
+        const ch = targetViewer.canvas.clientHeight;
+        if (projected.x >= -cw && projected.x <= 2 * cw && projected.y >= -ch && projected.y <= 2 * ch) {
+          return new Cesium.Cartesian2(Number(projected.x), Number(projected.y));
+        }
+      }
+
+      // Fallback: direct camera viewProjection matrix projection.
+      // Works on tilted 3D DEM scenes where SceneTransforms returns null.
+      try {
+        const camera = targetViewer.camera;
+        const scene = targetViewer.scene;
+        if (!camera || !scene) return null;
+        const cw = targetViewer.canvas.clientWidth;
+        const ch = targetViewer.canvas.clientHeight;
+        if (cw <= 0 || ch <= 0) return null;
+
+        const viewProj = Cesium.Matrix4.multiply(
+          camera.frustum.projectionMatrix,
+          camera.viewMatrix,
+          new Cesium.Matrix4()
+        );
+
+        let clipInputVec;
+        if (scene.mode === Cesium.SceneMode.SCENE2D && carto) {
+          const projection = scene.mapProjection;
+          if (projection) {
+            const projectedCoord = projection.project(carto);
+            clipInputVec = new Cesium.Cartesian4(projectedCoord.x, projectedCoord.y, 0.0, 1.0);
+          } else {
+            clipInputVec = new Cesium.Cartesian4(cartesianToProject.x, cartesianToProject.y, cartesianToProject.z, 1.0);
+          }
+        } else {
+          clipInputVec = new Cesium.Cartesian4(cartesianToProject.x, cartesianToProject.y, cartesianToProject.z, 1.0);
+        }
+
+        const clip = Cesium.Matrix4.multiplyByVector(viewProj, clipInputVec, new Cesium.Cartesian4());
+
+        if (clip.w <= 0.0) return null;   // behind camera
+
+        const ndcX = clip.x / clip.w;
+        const ndcY = clip.y / clip.w;
+        if (Number.isFinite(ndcX) && Number.isFinite(ndcY) && !isNaN(ndcX) && !isNaN(ndcY)) {
+          const screenX = (ndcX + 1.0) * 0.5 * cw;
+          const screenY = (1.0 - ndcY) * 0.5 * ch;
+          return new Cesium.Cartesian2(screenX, screenY);
+        }
+      } catch (err) {
+        return null;
+      }
+    } catch (err) {}
+    return null;
   }
 
   function getComparatorDemPitchRadians() {
@@ -1303,7 +1506,25 @@
     }
     const heading = Number.isFinite(sourceHeading) ? Number(sourceHeading) : 0.0;
     const pitch = getComparatorDemPitchRadians();
-    const sphere = Cesium.BoundingSphere.fromRectangle3D(focusRect, Cesium.Ellipsoid.WGS84, 0.0);
+    const centerLon = (focusRect.west + focusRect.east) * 0.5;
+    const centerLat = (focusRect.south + focusRect.north) * 0.5;
+    const centerCarto = new Cesium.Cartographic(centerLon, centerLat);
+    let terrainHeight = undefined;
+    if (targetViewer.scene.globe && typeof targetViewer.scene.globe.getHeight === "function") {
+      const h = targetViewer.scene.globe.getHeight(centerCarto);
+      if (typeof h === "number" && Number.isFinite(h)) {
+        terrainHeight = h;
+      }
+    }
+    if (terrainHeight === undefined || terrainHeight === null || isNaN(terrainHeight)) {
+      terrainHeight = typeof getDemTerrainHeightFallback === "function"
+          ? getDemTerrainHeightFallback()
+          : 0.0;
+    }
+    if (targetViewer.scene.globe && typeof targetViewer.scene.globe.terrainExaggeration === "number") {
+      terrainHeight *= targetViewer.scene.globe.terrainExaggeration;
+    }
+    const sphere = Cesium.BoundingSphere.fromRectangle3D(focusRect, Cesium.Ellipsoid.WGS84, terrainHeight);
     const sourceRange = Number(sourceRangeMeters);
     const derivedRange = Math.max(sphere.radius * 1.9, 900.0);
     const range = Number.isFinite(sourceRange) && sourceRange > 50.0 ? Math.max(sourceRange, 900.0) : derivedRange;
@@ -1318,7 +1539,8 @@
     if (!targetViewer || !focusRect) {
       return;
     }
-    if (layerType === "dem") {
+    const is2d = targetViewer.scene && targetViewer.scene.mode === Cesium.SceneMode.SCENE2D;
+    if (layerType === "dem" && !is2d) {
       setComparatorDemCameraFromRectangle(targetViewer, focusRect, targetViewer.camera.heading);
       return;
     }
@@ -1396,15 +1618,39 @@
   function syncComparatorTerrainProviders() {
     if (typeof comparatorViewers !== "undefined" && Array.isArray(comparatorViewers)) {
       comparatorViewers.forEach(targetViewer => {
-        if (!targetViewer) return;
+        if (!targetViewer || !targetViewer.scene) return;
+        const is2d = targetViewer.scene.mode === Cesium.SceneMode.SCENE2D;
         const layerKey = targetViewer.__comparatorLayerKey || null;
         const definition = layerKey ? layerDefinitions.get(layerKey) : null;
         const layerType = definition ? (definition.layerType || definition.type) : null;
         const isDem = String(layerType || "").toLowerCase() === "dem";
-        
-        if (isDem) {
-           if (activeDemTerrainProvider && targetViewer.terrainProvider !== activeDemTerrainProvider) {
-             targetViewer.terrainProvider = activeDemTerrainProvider;
+        if (isDem && !is2d) {
+           const signatureChanged = targetViewer.__customTerrainSignature !== layerKey;
+           if (signatureChanged || !targetViewer.__customTerrainProvider) {
+             log("info", "DEM_RENDER: Building NEW terrain provider for comparator pane=" + targetViewer.__comparatorPaneKey + " key=" + layerKey);
+             const terrainQuery = {
+               ...definition.query,
+               resampling: "bilinear",
+             };
+             delete terrainQuery.colormap_name;
+             delete terrainQuery.colormap;
+             delete terrainQuery.algorithm;
+             const terrainUrl = buildUrlWithQuery(definition.xyzUrl, terrainQuery);
+
+             const customTerrainProvider = new OfflineCustomTerrainProvider({
+               url: terrainUrl,
+               minLevel: definition.minLevel,
+               maxLevel: definition.maxLevel || DEM_MAX_TERRAIN_LEVEL,
+               options: {
+                 query: definition.query,
+                 bounds: definition.bounds
+               }
+             });
+             targetViewer.__customTerrainProvider = customTerrainProvider;
+             targetViewer.__customTerrainSignature = layerKey;
+           }
+           if (targetViewer.terrainProvider !== targetViewer.__customTerrainProvider) {
+             targetViewer.terrainProvider = targetViewer.__customTerrainProvider;
            }
         } else {
            if (targetViewer.terrainProvider && targetViewer.terrainProvider.constructor && targetViewer.terrainProvider.constructor.name !== "EllipsoidTerrainProvider") {
@@ -1451,8 +1697,9 @@
         targetViewer.scene.morphTo2D(0.0);
       }
       if (focusRect) {
-        focusComparatorViewerToRectangle(targetViewer, layerType, focusRect);
+        focusComparatorViewerToRectangle(targetViewer, resolvedLayerType, focusRect);
       }
+      syncComparatorTerrainProviders();
       return;
     }
 
@@ -1467,8 +1714,9 @@
       }
     }
     if (focusRect) {
-      focusComparatorViewerToRectangle(targetViewer, layerType, focusRect);
+      focusComparatorViewerToRectangle(targetViewer, resolvedLayerType, focusRect);
     }
+    syncComparatorTerrainProviders();
   }
 
   function rectangleWidthRadians(rectangle) {
@@ -1627,54 +1875,81 @@
           if (comparatorModeEnabled) updateComparatorCenterReadout(v, idx);
         }, { passive: true });
 
-        // Mousemove → project geo position to all other panes' crosshairs.
-        // Keep the update rate close to the display refresh rate.
+        // Clean up previous DOM listeners
+        if (v.__comparatorMouseMoveListener) {
+          container.removeEventListener("mousemove", v.__comparatorMouseMoveListener);
+          v.__comparatorMouseMoveListener = null;
+        }
+        if (v.__comparatorMouseLeaveListener) {
+          container.removeEventListener("mouseleave", v.__comparatorMouseLeaveListener);
+          v.__comparatorMouseLeaveListener = null;
+        }
+
         let lastMouseMoveTime = 0;
         const MOUSE_MOVE_THROTTLE_MS = 16;
-        container.addEventListener("mousemove", function (event) {
-          if (!comparatorModeEnabled || !v) return;
-          
+
+        const mouseMoveListener = function (event) {
+          const isEnabled = window.OfflineGISRuntime && window.OfflineGISRuntime.comparatorModeEnabled;
+          if (!isEnabled || !v || !v.canvas) return;
+
+          const rect = v.canvas.getBoundingClientRect();
+          const x = event.clientX - rect.left;
+          const y = event.clientY - rect.top;
+          const srcPos = new Cesium.Cartesian2(x, y);
+
           // Throttle mouse move processing
           const now = Date.now();
           if (now - lastMouseMoveTime < MOUSE_MOVE_THROTTLE_MS) return;
           lastMouseMoveTime = now;
-          
-          var rect = container.getBoundingClientRect();
-          if (rect.width <= 0 || rect.height <= 0) return;
-          var localX = event.clientX - rect.left;
-          var localY = event.clientY - rect.top;
-          var srcPos = new Cesium.Cartesian2(localX, localY);
+
           var srcCartesian = getCartesianFromViewer(v, srcPos);
-          var srcLonLat = srcCartesian
-            ? cartesianToLonLat(srcCartesian)
-            : getLonLatFromViewer(v, srcPos);
+          var srcLonLat = srcCartesian ? cartesianToLonLat(srcCartesian) : null;
+
           var projectedCartesian = srcCartesian || (srcLonLat
             ? Cesium.Cartesian3.fromDegrees(Number(srcLonLat.lon), Number(srcLonLat.lat))
             : null);
 
-          // Update crosshair on every pane
+          // Update crosshair on every pane EXCEPT the source pane.
+          // The source pane uses the native OS crosshair cursor (set via CSS cursor:crosshair),
+          // so drawing an overlay there would create a double-cursor effect.
           var _total = comparatorViewers.filter(Boolean).length;
           for (var _pi = 0; _pi < _total; _pi++) {
-            var targetV = comparatorViewers[_pi];
-            var crosshair = document.querySelector("#comparatorPane" + _pi + " .comparatorCrosshair");
-            if (!crosshair) continue;
-
-            var screenPos;
             if (_pi === idx) {
-              screenPos = srcPos;
-            } else if (projectedCartesian && targetV) {
-              screenPos = projectCartesianToViewer(targetV, projectedCartesian);
-            } else {
-              screenPos = null;
+              // Source pane: always hide overlay — native cursor handles this pane
+              var srcCrosshair = document.querySelector("#comparatorPane" + _pi + " .comparatorCrosshair");
+              if (srcCrosshair) srcCrosshair.style.display = "none";
+              continue;
             }
 
+            var targetV = comparatorViewers[_pi];
+            var crosshair = document.querySelector("#comparatorPane" + _pi + " .comparatorCrosshair");
+            if (!crosshair || !targetV) continue;
+
+            // Project the geo-coordinate into the target pane's screen space
+            var screenPos = projectedCartesian ? projectCartesianToViewer(targetV, projectedCartesian) : null;
             applyCrosshairScreenPosition(crosshair, targetV, screenPos);
           }
 
           if (srcLonLat) {
             emitMouseCoordinates(srcLonLat.lon, srcLonLat.lat);
           }
-        });
+        };
+
+        const mouseLeaveListener = function () {
+          // Hide overlay crosshairs in all panes when mouse leaves
+          var _total = comparatorViewers.filter(Boolean).length;
+          for (var _pi = 0; _pi < _total; _pi++) {
+            var crosshair = document.querySelector("#comparatorPane" + _pi + " .comparatorCrosshair");
+            if (crosshair) {
+              crosshair.style.display = "none";
+            }
+          }
+        };
+
+        container.addEventListener("mousemove", mouseMoveListener);
+        container.addEventListener("mouseleave", mouseLeaveListener);
+        v.__comparatorMouseMoveListener = mouseMoveListener;
+        v.__comparatorMouseLeaveListener = mouseLeaveListener;
       })(_bi);
     }
     bindComparatorPaneSelectionHandlers();
@@ -1958,7 +2233,25 @@
         function _applyDemCamera() {
           if (!_demViewer || !_demViewer.scene) return;
           var pitch = getComparatorDemPitchRadians();
-          var sphere = Cesium.BoundingSphere.fromRectangle3D(_demRect, Cesium.Ellipsoid.WGS84, 0.0);
+          var centerLon = (_demRect.west + _demRect.east) * 0.5;
+          var centerLat = (_demRect.south + _demRect.north) * 0.5;
+          var centerCarto = new Cesium.Cartographic(centerLon, centerLat);
+          var terrainHeight = undefined;
+          if (_demViewer.scene.globe && typeof _demViewer.scene.globe.getHeight === "function") {
+            const h = _demViewer.scene.globe.getHeight(centerCarto);
+            if (typeof h === "number" && Number.isFinite(h)) {
+              terrainHeight = h;
+            }
+          }
+          if (terrainHeight === undefined || terrainHeight === null || isNaN(terrainHeight)) {
+            terrainHeight = typeof getDemTerrainHeightFallback === "function"
+                ? getDemTerrainHeightFallback()
+                : 0.0;
+          }
+          if (_demViewer.scene.globe && typeof _demViewer.scene.globe.terrainExaggeration === "number") {
+            terrainHeight *= _demViewer.scene.globe.terrainExaggeration;
+          }
+          var sphere = Cesium.BoundingSphere.fromRectangle3D(_demRect, Cesium.Ellipsoid.WGS84, terrainHeight);
           var range = Math.max(sphere.radius * 1.9, 900.0);
           log("debug", "COMP_DEM pane=" + _demPaneKey +
             " applying camera pitch=" + Cesium.Math.toDegrees(pitch).toFixed(1) +
@@ -2216,7 +2509,8 @@
     },
     resetDrawnPolygonCounter: function () {
       drawnPolygonCounter = 0;
-    }
+    },
+    getDemTerrainHeightFallback: getDemTerrainHeightFallback
   });
 
   // ═══════════════════════════════════════════════════════════════════════════

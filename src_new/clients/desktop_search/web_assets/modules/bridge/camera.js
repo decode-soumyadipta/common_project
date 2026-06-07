@@ -7,6 +7,19 @@
   //   applyDefaultStartupFocus, _updateCompass, Asia camera lock postRender
   // ═══════════════════════════════════════════════════════════════════════════
 
+  function logCameraState(prefix) {
+    if (!viewer || !viewer.camera) return;
+    const camera = viewer.camera;
+    const pos = camera.position;
+    const carto = camera.positionCartographic;
+    log("info", "[CAMERA_LOG] " + prefix + ": pos=" + (pos ? "(" + pos.x.toFixed(1) + ", " + pos.y.toFixed(1) + ", " + pos.z.toFixed(1) + ")" : "null") + 
+        " carto=" + (carto ? "(lon=" + Cesium.Math.toDegrees(carto.longitude).toFixed(5) + ", lat=" + Cesium.Math.toDegrees(carto.latitude).toFixed(5) + ", alt=" + carto.height.toFixed(1) + ")" : "null") +
+        " heading=" + (Number.isFinite(camera.heading) ? Cesium.Math.toDegrees(camera.heading).toFixed(1) : "0") +
+        " pitch=" + (Number.isFinite(camera.pitch) ? Cesium.Math.toDegrees(camera.pitch).toFixed(1) : "0"));
+  }
+  window.offlineGIS = window.offlineGIS || {};
+  window.offlineGIS.logCameraState = logCameraState;
+
   function applyDefaultSceneSettings() {
     if (!viewer) return;
     // Smooth implementation settings - balanced performance and quality
@@ -19,8 +32,17 @@
   /**
    * Swap the terrain provider while keeping the camera locked on the current view.
    * Cesium 1.78 fires camera resets asynchronously after terrainProvider changes.
-   * We lock the camera for 5 post-render frames to absorb all async resets.
+   * We lock the camera for 800ms and intercept flights/views to absorb all async resets.
    */
+  let _isTerrainSwapping = false;
+  let _originalFlyTo = null;
+  let _originalFlyToBoundingSphere = null;
+  let _originalSetView = null;
+  let _originalViewBoundingSphere = null;
+  let _pendingCameraAction = null;
+  let _terrainSwapTimeout = null;
+  let _terrainSwapIntervals = [];
+
   function _swapTerrainProviderLocked(newProvider) {
     if (!viewer || !newProvider) {
       log("warn", "DEM_RENDER: _swapTerrainProviderLocked called with invalid params viewer=" + !!viewer + " provider=" + !!newProvider);
@@ -31,9 +53,57 @@
       return;
     }
 
-    log("info", "DEM_RENDER: Swapping terrain provider without camera lock");
+    logCameraState("Before terrain swap");
+    log("info", "DEM_RENDER: Swapping terrain provider with camera lock & interceptor");
     log("info", "DEM_RENDER: Old provider type: " + (viewer.terrainProvider.constructor ? viewer.terrainProvider.constructor.name : "unknown"));
     
+    // Save original camera methods if we haven't already
+    if (!_originalFlyTo) {
+      _originalFlyTo = viewer.camera.flyTo;
+      _originalFlyToBoundingSphere = viewer.camera.flyToBoundingSphere;
+      _originalSetView = viewer.camera.setView;
+      _originalViewBoundingSphere = viewer.camera.viewBoundingSphere;
+    }
+
+    // Cancel any existing timeout/intervals if we are swapping already
+    if (_terrainSwapTimeout) {
+      clearTimeout(_terrainSwapTimeout);
+      _terrainSwapTimeout = null;
+    }
+    _terrainSwapIntervals.forEach(clearTimeout);
+    _terrainSwapIntervals = [];
+
+    // Set swapping flag
+    _isTerrainSwapping = true;
+
+    // Disable camera inputs during terrain swap to prevent controller state corruption
+    if (viewer.scene && viewer.scene.screenSpaceCameraController) {
+      viewer.scene.screenSpaceCameraController.enableInputs = false;
+    }
+
+    // Keep rendering active during terrain swap to let tiles stream in
+    viewer.scene.requestRenderMode = false;
+
+    const isTransition = !!window._is2DTo3DTransition;
+    log("info", "DEM_RENDER: Swapping terrain provider. isTransition=" + isTransition);
+
+    // Clone the camera state before swap (always done to lock position during swap)
+    const savedPosition = viewer.camera.position ? Cesium.Cartesian3.clone(viewer.camera.position) : null;
+    const savedHeading = viewer.camera.heading;
+    const savedPitch = viewer.camera.pitch;
+    const savedRoll = viewer.camera.roll;
+
+    // Override the camera methods to intercept flights during swap
+    viewer.camera.flyTo = function (options) {
+      log("info", "DEM_RENDER: flyTo intercepted during terrain swap");
+      _pendingCameraAction = { type: "flyTo", args: [options] };
+    };
+    viewer.camera.flyToBoundingSphere = function (sphere, options) {
+      log("info", "DEM_RENDER: flyToBoundingSphere intercepted during terrain swap");
+      _pendingCameraAction = { type: "flyToBoundingSphere", args: [sphere, options] };
+    };
+
+    // Swap the terrain provider
     viewer.terrainProvider = newProvider;
     
     log("info", "DEM_RENDER: New provider type: " + (newProvider.constructor ? newProvider.constructor.name : "unknown"));
@@ -43,6 +113,119 @@
     if (window.offlineGIS && typeof window.offlineGIS.realignMarkersToTerrain === "function") {
       window.offlineGIS.realignMarkersToTerrain();
     }
+
+    // Function to restore saved camera state
+    function restoreCameraState() {
+      if (!viewer || !viewer.camera || !savedPosition || !Number.isFinite(savedHeading)) return;
+      // Use the original setView to restore state without triggering interceptor
+      _originalSetView.call(viewer.camera, {
+        destination: savedPosition,
+        orientation: {
+          heading: savedHeading,
+          pitch: savedPitch,
+          roll: savedRoll
+        }
+      });
+    }
+
+    // Restore immediately to lock view
+    restoreCameraState();
+
+    // Setup periodic restores to absorb any async resets from Cesium
+    const intervals = [10, 30, 50, 80, 120, 180, 250, 350, 450, 550, 650];
+    intervals.forEach(t => {
+      _terrainSwapIntervals.push(setTimeout(restoreCameraState, t));
+    });
+
+    // End the swap state after 800ms to allow Cesium to fully settle
+    _terrainSwapTimeout = setTimeout(function () {
+      logCameraState("Terrain swap lock ended (before restore)");
+      log("info", "DEM_RENDER: Terrain swap lock ended. Settling camera.");
+      
+      // Clean up timers
+      _terrainSwapIntervals.forEach(clearTimeout);
+      _terrainSwapIntervals = [];
+
+      // Restore original camera methods
+      if (viewer && viewer.camera) {
+        viewer.camera.flyTo = _originalFlyTo;
+        viewer.camera.flyToBoundingSphere = _originalFlyToBoundingSphere;
+        viewer.camera.setView = _originalSetView;
+        viewer.camera.viewBoundingSphere = _originalViewBoundingSphere;
+      }
+      
+      _isTerrainSwapping = false;
+      window._is2DTo3DTransition = false;
+      _terrainSwapTimeout = null;
+
+      // Restore camera inputs after swap settles
+      if (viewer && viewer.scene && viewer.scene.screenSpaceCameraController) {
+        configureCameraControllerForMode(currentSceneMode);
+      }
+
+      // Helper: drive the render loop until globe tiles finish loading.
+      // Uses globe.tilesLoaded to detect completion; falls back to a 4-second
+      // maximum so we never spin forever even if tiles never resolve.
+      function _driveRenderUntilTilesLoaded() {
+        if (!viewer || !viewer.scene) return;
+        viewer.scene.requestRenderMode = false;   // keep engine hot while tiles stream
+        var _elapsed = 0;
+        var _iv = setInterval(function () {
+          if (!viewer || !viewer.scene) { clearInterval(_iv); return; }
+          viewer.scene.requestRender();
+          _elapsed += 50;
+          var tilesLoaded = viewer.scene.globe ? viewer.scene.globe.tilesLoaded : false;
+          if ((tilesLoaded && _elapsed >= 500) || _elapsed >= 4000) {
+            clearInterval(_iv);
+            log("info", "DEM_RENDER: Tile render burst complete tilesLoaded=" + tilesLoaded + " elapsed=" + _elapsed);
+            if (viewer && viewer.scene) {
+              viewer.scene.requestRenderMode = true;
+              viewer.scene.requestRender();
+            }
+          }
+        }, 50);
+      }
+
+      // If a camera action was intercepted, execute it now!
+      if (_pendingCameraAction) {
+        const action = _pendingCameraAction;
+        _pendingCameraAction = null;
+        try {
+          log("info", "DEM_RENDER: Executing pending camera action of type " + action.type);
+          if (viewer && viewer.camera) {
+            // Keep requestRenderMode=false so Cesium renders every frame during the
+            // flight. The focusLoadedRegion3D complete/cancel callbacks own the
+            // post-flight tile burst — do NOT start _driveRenderUntilTilesLoaded
+            // here, because it would check tilesLoaded at the PRE-POSITION camera
+            // angle (not the destination angle) and stop rendering mid-flight.
+            viewer.scene.requestRenderMode = false;
+            if (action.type === "flyTo") {
+              viewer.camera.flyTo.apply(viewer.camera, action.args);
+            } else if (action.type === "flyToBoundingSphere") {
+              const sphere = action.args[0];
+              const opts = action.args[1];
+              log("info", "DEM_RENDER: Pending flyToBoundingSphere details center=" + 
+                  (sphere && sphere.center ? "(" + sphere.center.x.toFixed(1) + ", " + sphere.center.y.toFixed(1) + ", " + sphere.center.z.toFixed(1) + ")" : "null") +
+                  " radius=" + (sphere ? sphere.radius.toFixed(1) : "null") +
+                  " heading=" + (opts && opts.offset ? opts.offset.heading : "null") +
+                  " pitch=" + (opts && opts.offset ? opts.offset.pitch : "null") +
+                  " range=" + (opts && opts.offset ? opts.offset.range : "null")
+              );
+              viewer.camera.flyToBoundingSphere.apply(viewer.camera, action.args);
+            }
+            logCameraState("After executing pending action");
+          }
+        } catch (flightErr) {
+          log("error", "DEM_RENDER: Failed to execute pending camera flight: " + flightErr);
+          _driveRenderUntilTilesLoaded();
+        }
+      } else {
+        // No pending flight — still need to stream tiles into view.
+        // Drive rendering until globe reports tiles loaded.
+        log("info", "DEM_RENDER: No pending camera action — driving tile render burst");
+        _driveRenderUntilTilesLoaded();
+      }
+    }, 800);
   }
 
   function applyDemSceneSettings() {
@@ -60,6 +243,21 @@
     viewer.scene.fog.enabled = false;  // No fog
     viewer.scene.skyAtmosphere.show = false;  // No atmosphere
     viewer.shadows = false;  // No shadows
+
+    // ── OPAQUE DEM: block everything behind the terrain surface ────────────────
+    // depthTestAgainstTerrain=true makes Cesium depth-cull any primitive (entity
+    // billboard, label, polyline) whose fragment is behind the rendered terrain mesh.
+    // We also explicitly disable globe translucency so the terrain tiles are never
+    // treated as partially transparent — ensuring zero see-through at any zoom level.
+    viewer.scene.globe.depthTestAgainstTerrain = true;
+    if (viewer.scene.globe.translucency) {
+      viewer.scene.globe.translucency.enabled = false;
+    }
+    // undergroundColor = null means the underground plane is hidden; combined with
+    // depthTest this fully occludes geometry behind the DEM surface.
+    if (typeof viewer.scene.globe.undergroundColor !== "undefined") {
+      viewer.scene.globe.undergroundColor = Cesium.Color.BLACK;
+    }
     
     // ═══════════════════════════════════════════════════════════════════════════
     // DYNAMIC GPU SCALING: Intel vs NVIDIA
@@ -68,7 +266,7 @@
       // HIGH-END CONFIGURATION (NVIDIA/Dedicated GPU)
       viewer.resolutionScale = 1.0;                       // Crisp native resolution
       viewer.scene.globe.depthTestAgainstTerrain = true;  // Proper layer sorting
-      viewer.scene.logarithmicDepthBuffer = true;         // Smooth camera dragging
+      viewer.scene.logarithmicDepthBuffer = false;         // Smooth camera dragging
       viewer.scene.globe.maximumScreenSpaceError = 1.0;   // Static high quality fidelity
       viewer.scene.globe.tileCacheSize = 800;             // Large cache without GC stutters
       viewer.scene.globe.preloadAncestors = true;         // Smooth transitions
@@ -76,12 +274,12 @@
       viewer.scene.globe.loadingDescendantLimit = 8;
       viewer.scene.globe.loadingQueueThreshold = 100;
       
-      log("info", "DEM settings applied [MAX GPU CONFIG]: res=1.0 depthTest=true logDepth=true sse=1.0");
+      log("info", "DEM settings applied [MAX GPU CONFIG]: res=1.0 depthTest=true logDepth=false sse=1.0");
     } else {
       // SAFE FALLBACK CONFIGURATION (Intel Integrated GPU / Mac)
       viewer.resolutionScale = 1.0;                       // Crisp native resolution
       viewer.scene.globe.depthTestAgainstTerrain = true;  // Proper layer sorting
-      viewer.scene.logarithmicDepthBuffer = true;         // Smooth camera dragging
+      viewer.scene.logarithmicDepthBuffer = false;         // Smooth camera dragging
       viewer.scene.globe.maximumScreenSpaceError = 1.5;   // Static balanced geometry for integrated GPU
       viewer.scene.globe.tileCacheSize = 400;             // Moderate cache for smoother pans
       viewer.scene.globe.preloadAncestors = true;         // Reduce tile churn during drag
@@ -116,28 +314,58 @@
     controller.minimumZoomDistance = 10.0;  // 10 meters minimum height
     controller.maximumZoomDistance = 100000000.0;  // 100,000 km maximum
     
-    // Bulletproof camera collision avoidance loop
     viewer.scene.preRender.addEventListener(function () {
       if (!viewer || !viewer.camera || !viewer.scene.globe) return;
-      
-      // Enforce terrain exaggeration consistency on every frame to prevent mountains from flat-lining/popping
-      if (typeof activeDemContext !== "undefined" && activeDemContext && activeDemContext.visible !== false) {
-        const target = Math.max(0.1, demVisual.exaggeration);
-        if (Math.abs(viewer.scene.globe.terrainExaggeration - target) > 0.001) {
-          viewer.scene.globe.terrainExaggeration = target;
-        }
-        if (typeof viewer.scene.verticalExaggeration !== "undefined" && Math.abs(viewer.scene.verticalExaggeration - target) > 0.001) {
-          viewer.scene.verticalExaggeration = target;
+
+      // ── Dynamic 2D frustum width clamp ──────────────────────────────────────
+      // Enforce strict minimum and maximum limits for the 2D frustum width to prevent
+      // out-of-bounds Web Mercator projection errors/crashes (TypeError: southwest of undefined)
+      // from pinch-to-zoom, right-click drag, double click, keyboard, etc.
+      if (viewer.scene.mode === Cesium.SceneMode.SCENE2D) {
+        const camera = viewer.camera;
+        if (camera.frustum) {
+          let currentWidth = undefined;
+          let isOffCenter = false;
+          if (typeof camera.frustum.width !== "undefined") {
+            currentWidth = camera.frustum.width;
+          } else if (typeof camera.frustum.right !== "undefined" && typeof camera.frustum.left !== "undefined") {
+            currentWidth = camera.frustum.right - camera.frustum.left;
+            isOffCenter = true;
+          }
+          
+          if (typeof currentWidth !== "undefined" && Number.isFinite(currentWidth)) {
+            const MIN_2D_LIMIT = 1.0;
+            const MAX_2D_LIMIT = 15000000.0;
+            if (currentWidth < MIN_2D_LIMIT || currentWidth > MAX_2D_LIMIT || !Number.isFinite(currentWidth)) {
+              let targetWidth = currentWidth;
+              if (currentWidth > MAX_2D_LIMIT) {
+                targetWidth = MAX_2D_LIMIT;
+              } else {
+                targetWidth = MIN_2D_LIMIT; // Catches NaN and < MIN
+              }
+              
+              if (!isOffCenter) {
+                camera.frustum.width = targetWidth;
+              } else {
+                const S = currentWidth > 0 ? (targetWidth / currentWidth) : 1.0;
+                camera.frustum.left = camera.frustum.left * S;
+                camera.frustum.right = camera.frustum.right * S;
+                camera.frustum.top = camera.frustum.top * S;
+                camera.frustum.bottom = camera.frustum.bottom * S;
+              }
+            }
+          }
         }
       }
-      
+
+      // ── Camera collision avoidance ─────────────────────────────────────────
       const camera = viewer.camera;
       const positionCartographic = camera.positionCartographic;
       if (!positionCartographic) return;
       
       const terrainHeight = viewer.scene.globe.getHeight(positionCartographic);
       const h = (typeof terrainHeight === "number" && Number.isFinite(terrainHeight)) ? terrainHeight : 0.0;
-      const minHeight = h + 10.0; // Keep camera at least 10 meters above terrain/ellipsoid
+      const minHeight = h + 10.0; // Keep camera at least 10 metres above terrain/ellipsoid
       
       if (positionCartographic.height < minHeight) {
         const cartographic = Cesium.Cartographic.clone(positionCartographic);
@@ -561,7 +789,25 @@
       paddedBounds.east,
       paddedBounds.north
     );
-    const sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, 0.0);
+    const centerLon = (paddedBounds.west + paddedBounds.east) * 0.5;
+    const centerLat = (paddedBounds.south + paddedBounds.north) * 0.5;
+    const centerCarto = new Cesium.Cartographic(Cesium.Math.toRadians(centerLon), Cesium.Math.toRadians(centerLat));
+    let terrainHeight = undefined;
+    if (viewer.scene.globe && typeof viewer.scene.globe.getHeight === "function") {
+      const h = viewer.scene.globe.getHeight(centerCarto);
+      if (typeof h === "number" && Number.isFinite(h)) {
+        terrainHeight = h;
+      }
+    }
+    if (terrainHeight === undefined || terrainHeight === null || isNaN(terrainHeight)) {
+      terrainHeight = (window.offlineGIS && typeof window.offlineGIS.getDemTerrainHeightFallback === "function")
+          ? window.offlineGIS.getDemTerrainHeightFallback()
+          : 0.0;
+    }
+    if (viewer.scene.globe && typeof viewer.scene.globe.terrainExaggeration === "number") {
+      terrainHeight *= viewer.scene.globe.terrainExaggeration;
+    }
+    const sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, terrainHeight);
     const range = Math.max(compute3DFocusRange(paddedBounds), sphere.radius * 1.3);
     const duration = Number.isFinite(durationSeconds) ? durationSeconds : 1.0;
     const heading = Number.isFinite(viewer.camera.heading) ? viewer.camera.heading : 0.0;
@@ -580,6 +826,9 @@
         " duration=" +
         String(duration)
     );
+    
+    // Keep rendering active during AND after flight so tiles stream in with no blank globe
+    viewer.scene.requestRenderMode = false;
     viewer.camera.cancelFlight();
     viewer.camera.flyToBoundingSphere(focusSphere, {
       offset: new Cesium.HeadingPitchRange(
@@ -588,8 +837,49 @@
         range
       ),
       duration: duration,
+      complete: function() {
+        if (viewer && viewer.scene) {
+          // Ensure continuous rendering for post-flight tile streaming.
+          // requestRenderMode may have been re-enabled during the flight;
+          // reset it here so the burst keeps Cesium hot while tiles finish.
+          viewer.scene.requestRenderMode = false;
+          var _t = 0;
+          var _iv = setInterval(function() {
+            if (!viewer || !viewer.scene) { clearInterval(_iv); return; }
+            viewer.scene.requestRender();
+            _t += 50;
+            var loaded = viewer.scene.globe ? viewer.scene.globe.tilesLoaded : false;
+            if ((loaded && _t >= 500) || _t >= 4000) {
+              clearInterval(_iv);
+              log("info", "focusLoadedRegion3D: tile burst done tilesLoaded=" + loaded + " elapsed=" + _t);
+              if (viewer && viewer.scene) {
+                viewer.scene.requestRenderMode = true;
+                viewer.scene.requestRender();
+              }
+            }
+          }, 50);
+        }
+      },
+      cancel: function() {
+        if (viewer && viewer.scene) {
+          // Even on cancel keep driving renders until tiles settle
+          var _t = 0;
+          var _iv = setInterval(function() {
+            if (!viewer || !viewer.scene) { clearInterval(_iv); return; }
+            viewer.scene.requestRender();
+            _t += 50;
+            var loaded = viewer.scene.globe ? viewer.scene.globe.tilesLoaded : false;
+            if ((loaded && _t >= 300) || _t >= 2000) {
+              clearInterval(_iv);
+              if (viewer && viewer.scene) {
+                viewer.scene.requestRenderMode = true;
+                viewer.scene.requestRender();
+              }
+            }
+          }, 50);
+        }
+      }
     });
-    viewer.scene.requestRender();
   }
 
   // ─────────────────────────────────────────────────────────────────────────

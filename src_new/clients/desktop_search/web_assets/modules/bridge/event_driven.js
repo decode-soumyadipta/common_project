@@ -111,8 +111,7 @@
           for (let i = 0; i < viewer.imageryLayers.length; i++) {
             const layer = viewer.imageryLayers.get(i);
             if (layer && layer.imageryProvider) {
-              // Apply performance optimizations to existing layers
-              layer.imageryProvider.maximumLevel = Math.min(layer.imageryProvider.maximumLevel || 18, 16);
+              // Keep native zoom levels to preserve imagery clarity at close range
             }
           }
         }

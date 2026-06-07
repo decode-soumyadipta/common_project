@@ -702,7 +702,7 @@ class MainWindow(QMainWindow):
         # --- Dropdown / Selection Phase ---
         if action_label == "Comparator" and checked:
             self._show_comparator_dropdown()
-            # Note: We don't return here yet, we still let the controller/refresh run
+            return
         elif action_label == "Layer Compositor" and checked:
             self._show_layer_compositor_overlay()
         elif action_label == "Export":
@@ -775,6 +775,15 @@ class MainWindow(QMainWindow):
             action.setChecked(False)
             return
 
+        # Save visibility snapshot before the mode modifies any layers
+        if hasattr(self, "compositor_overlay") and self.compositor_overlay:
+            if self.compositor_overlay._saved_visibility is None:
+                self.compositor_overlay._saved_visibility = {}
+                for path in self.controller._search_result_assets_by_path:
+                    self.compositor_overlay._saved_visibility[path] = bool(
+                        self.controller._search_layer_visibility.get(path, False)
+                    )
+
         self.compositor_overlay.update_layers()
         self.compositor_overlay.show()
         self.compositor_overlay.raise_()
@@ -782,6 +791,9 @@ class MainWindow(QMainWindow):
 
         self._position_compositor_overlay()
         action.setChecked(True)
+
+        # Initialize compositor 2D view and fit all imagery assets to screen
+        self.compositor_overlay.initialize_compositor_view()
 
     def _create_menu_bar(self) -> None:
         menu_bar = self.menuBar()
@@ -833,10 +845,22 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(exit_action)
 
+        settings_menu = menu_bar.addMenu("&Settings")
+        quality_action = QAction("Rendering Quality...", self)
+        quality_action.setStatusTip("Adjust map rendering quality for your machine")
+        quality_action.triggered.connect(self._open_settings_dialog)
+        settings_menu.addAction(quality_action)
+
         help_menu = menu_bar.addMenu("&Help")
         docs_action = QAction("Documentation", self)
         docs_action.triggered.connect(self._open_help_url)
         help_menu.addAction(docs_action)
+
+    def _open_settings_dialog(self) -> None:
+        """Open the Rendering Quality settings dialog."""
+        from src_new.clients.desktop_search.ui.dialogs.settings_dialog import SettingsDialog
+        dlg = SettingsDialog(self, self.controller)
+        dlg.exec()
 
     def _open_help_url(self) -> None:
         from src_new.shared.ui_components.help_dialog import HelpDialog
@@ -879,6 +903,10 @@ class MainWindow(QMainWindow):
             self.fly_through_height_slider.set_fly_through_active(active)
             if active:
                 self.fly_through_height_slider.update_position()
+        if hasattr(self, "map_overlay_controls") and self.map_overlay_controls:
+            if active:
+                self.map_overlay_controls.scene_mode_combo.setCurrentText("3D Globe")
+            self.map_overlay_controls.scene_mode_combo.setEnabled(not active)
 
     def moveEvent(self, event: object) -> None:
         """Handle window move event.
@@ -936,6 +964,8 @@ class MainWindow(QMainWindow):
                 self.fly_through_timeline_bar.set_fly_through_active(False)
             if hasattr(self, "fly_through_height_slider"):
                 self.fly_through_height_slider.set_fly_through_active(False)
+            if hasattr(self, "map_overlay_controls") and self.map_overlay_controls:
+                self.map_overlay_controls.scene_mode_combo.setEnabled(True)
             self.controller._fly_through_mode_enabled = False
             action = self.toolbar_actions.get("Fly Through")
             if action is not None:
@@ -1047,6 +1077,65 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(close_btn)
         layout.addLayout(header_layout)
 
+        # Separator line
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
+        layout.addWidget(line)
+
+        # Interactive Map Picker Section (on top)
+        picker_section = QFrame()
+        picker_section.setObjectName("pickerSection")
+        picker_section.setStyleSheet("""
+            QFrame#pickerSection {
+                background: #f1f5f9;
+                border: 1px solid #e2e8f0;
+                border-radius: 6px;
+                padding: 8px;
+            }
+        """)
+        picker_layout = QVBoxLayout(picker_section)
+        picker_layout.setContentsMargins(6, 6, 6, 6)
+        picker_layout.setSpacing(6)
+
+        pick_btn = QPushButton("Pick Assets from Map")
+        pick_btn.setCheckable(True)
+        pick_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #ffffff;
+                border: 1px solid #c9d3df;
+                border-radius: 4px;
+                padding: 6px;
+                font-size: 11px;
+                font-weight: bold;
+                color: #1f6fd2;
+            }
+            QPushButton:hover {
+                background-color: #f8fafc;
+            }
+            QPushButton:checked {
+                background-color: #ffb300;
+                color: #1a2a3a;
+                border: 1px solid #ff9100;
+            }
+        """)
+        picker_layout.addWidget(pick_btn)
+
+        # Display picked asset names
+        self._comparator_popup.label_asset1 = QLabel("Asset 1: (Click on map to pick)")
+        self._comparator_popup.label_asset1.setStyleSheet("color: #64748b; font-size: 11px; font-weight: normal;")
+        self._comparator_popup.label_asset2 = QLabel("Asset 2: (Click on map to pick)")
+        self._comparator_popup.label_asset2.setStyleSheet("color: #64748b; font-size: 11px; font-weight: normal;")
+        picker_layout.addWidget(self._comparator_popup.label_asset1)
+        picker_layout.addWidget(self._comparator_popup.label_asset2)
+
+        layout.addWidget(picker_section)
+
+        # List Section Label
+        list_label = QLabel("Or select manually from list:")
+        list_label.setStyleSheet("color: #475569; font-size: 11px; font-weight: normal;")
+        layout.addWidget(list_label)
+
         # List Widget
         layer_list = QListWidget(self._comparator_popup)
         layer_list.setMinimumHeight(150)
@@ -1070,30 +1159,6 @@ class MainWindow(QMainWindow):
         info_label = QLabel("Select exactly 2 layers.")
         layout.addWidget(info_label)
 
-        # Map Picker Button
-        pick_btn = QPushButton("Pick Assets from Map")
-        pick_btn.setCheckable(True)
-        pick_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #f1f5f9;
-                border: 1px solid #c9d3df;
-                border-radius: 4px;
-                padding: 6px;
-                font-size: 11px;
-                font-weight: bold;
-                color: #475569;
-            }
-            QPushButton:hover {
-                background-color: #e2e8f0;
-            }
-            QPushButton:checked {
-                background-color: #ffb300;
-                color: #1a2a3a;
-                border: 1px solid #ff9100;
-            }
-        """)
-        layout.addWidget(pick_btn)
-
         apply_button = QPushButton("Apply")
         layout.addWidget(apply_button)
         applied = {"done": False}
@@ -1101,6 +1166,16 @@ class MainWindow(QMainWindow):
         # Store elements on the popup instance for map picking lookup
         self._comparator_popup.pick_btn = pick_btn
         self._comparator_popup.layer_list = layer_list
+        self._comparator_popup.apply_button = apply_button
+        self._comparator_popup.info_label = info_label
+        
+        # Initialize picked_assets list based on initial checks
+        initial_checked = []
+        for i in range(layer_list.count()):
+            item = layer_list.item(i)
+            if item.checkState() == Qt.CheckState.Checked:
+                initial_checked.append(str(item.data(Qt.ItemDataRole.UserRole) or ""))
+        self._comparator_popup.picked_assets = initial_checked
 
         def close_popup() -> None:
             self._comparator_popup.close()
@@ -1111,16 +1186,26 @@ class MainWindow(QMainWindow):
             self.controller._comparator_picker_active = checked
             self.controller._set_measurement_cursor_enabled(checked)
             if checked:
+                # Clear existing picks to start fresh on map pick action
+                self._comparator_popup.picked_assets = []
+                self._comparator_popup.label_asset1.setText("Asset 1: (Click on map to pick)")
+                self._comparator_popup.label_asset1.setStyleSheet("color: #64748b; font-size: 11px; font-weight: normal;")
+                self._comparator_popup.label_asset2.setText("Asset 2: (Click on map to pick)")
+                self._comparator_popup.label_asset2.setStyleSheet("color: #64748b; font-size: 11px; font-weight: normal;")
+                
+                # Uncheck all items in the list widget as we're starting a new map pick sequence
+                layer_list.blockSignals(True)
+                for i in range(layer_list.count()):
+                    layer_list.item(i).setCheckState(Qt.CheckState.Unchecked)
+                layer_list.blockSignals(False)
+                
+                _sync_layout_by_selection()
                 self.panel.log("Comparator Picker: Click on any 2 assets on the map.")
 
         pick_btn.toggled.connect(toggle_picker)
 
         def _selected_count() -> int:
-            return sum(
-                1
-                for i in range(layer_list.count())
-                if layer_list.item(i).checkState() == Qt.CheckState.Checked
-            )
+            return len(self._comparator_popup.picked_assets)
 
         def _sync_layout_by_selection() -> None:
             selected_count = _selected_count()
@@ -1132,32 +1217,52 @@ class MainWindow(QMainWindow):
                 apply_button.setEnabled(False)
 
         def enforce_max_selection(changed_item: QListWidgetItem) -> None:
-            checked_items = [
-                layer_list.item(i)
-                for i in range(layer_list.count())
-                if layer_list.item(i).checkState() == Qt.CheckState.Checked
-            ]
-            if len(checked_items) <= 2:
-                _sync_layout_by_selection()
+            checked_items = []
+            for i in range(layer_list.count()):
+                item = layer_list.item(i)
+                if item.checkState() == Qt.CheckState.Checked:
+                    checked_items.append(str(item.data(Qt.ItemDataRole.UserRole) or ""))
+            
+            if len(checked_items) > 2:
+                layer_list.blockSignals(True)
+                changed_item.setCheckState(Qt.CheckState.Unchecked)
+                layer_list.blockSignals(False)
+                info_label.setText("Maximum 2 layers are allowed.")
                 return
-            layer_list.blockSignals(True)
-            changed_item.setCheckState(Qt.CheckState.Unchecked)
-            layer_list.blockSignals(False)
-            info_label.setText("Maximum 2 layers are allowed.")
+
+            self._comparator_popup.picked_assets = checked_items
+            
+            # Real-time populate the names in the section below the pick button
+            names = []
+            for path in checked_items:
+                asset = self.controller._search_result_assets_by_path.get(path)
+                name = str(asset.get("file_name") or Path(path).name if asset else Path(path).name)
+                names.append(name)
+                
+            if len(names) >= 1:
+                self._comparator_popup.label_asset1.setText(f"Asset 1: {names[0]}")
+                self._comparator_popup.label_asset1.setStyleSheet("color: #1f6fd2; font-size: 11px; font-weight: bold;")
+            else:
+                self._comparator_popup.label_asset1.setText("Asset 1: (Click on map to pick)")
+                self._comparator_popup.label_asset1.setStyleSheet("color: #64748b; font-size: 11px; font-weight: normal;")
+                
+            if len(names) >= 2:
+                self._comparator_popup.label_asset2.setText(f"Asset 2: {names[1]}")
+                self._comparator_popup.label_asset2.setStyleSheet("color: #1f6fd2; font-size: 11px; font-weight: bold;")
+            else:
+                self._comparator_popup.label_asset2.setText("Asset 2: (Click on map to pick)")
+                self._comparator_popup.label_asset2.setStyleSheet("color: #64748b; font-size: 11px; font-weight: normal;")
+                
             _sync_layout_by_selection()
 
         layer_list.itemChanged.connect(enforce_max_selection)
+        
+        # Populate initial check names
+        enforce_max_selection(None)
         _sync_layout_by_selection()
 
         def apply_selection() -> None:
-            selected_paths: list[str] = []
-            for i in range(layer_list.count()):
-                item = layer_list.item(i)
-                if item.checkState() != Qt.CheckState.Checked:
-                    continue
-                selected_paths.append(str(item.data(Qt.ItemDataRole.UserRole) or ""))
-
-            selected_paths = [path for path in selected_paths if path]
+            selected_paths = list(self._comparator_popup.picked_assets)
             if len(selected_paths) != 2:
                 self.panel.log("Select exactly 2 layers for comparator.")
                 action.setChecked(False)

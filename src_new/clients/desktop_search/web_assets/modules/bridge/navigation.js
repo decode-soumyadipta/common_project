@@ -42,6 +42,41 @@
         }
       },
 
+      switchTo2DForImageryPicker: function () {
+        if (!viewer) return;
+        try {
+          window._prePickSceneMode = detectSceneMode();
+          log("info", "switchTo2DForImageryPicker: saved pre-pick mode: " + window._prePickSceneMode);
+          if (typeof setSceneModeInternal === "function") {
+            setSceneModeInternal("2d");
+          } else {
+            viewer.scene.morphTo2D(0.0);
+          }
+        } catch (e) {
+          log("error", "switchTo2DForImageryPicker failed: " + e);
+        }
+      },
+
+      restoreSceneModeAfterImageryPicker: function () {
+        if (!viewer) return;
+        try {
+          const targetMode = window._prePickSceneMode || "3d";
+          log("info", "restoreSceneModeAfterImageryPicker: restoring to: " + targetMode);
+          if (typeof setSceneModeInternal === "function") {
+            setSceneModeInternal(targetMode);
+          } else {
+            if (targetMode === "2d") {
+              viewer.scene.morphTo2D(0.0);
+            } else {
+              viewer.scene.morphTo3D(0.0);
+            }
+          }
+          window._prePickSceneMode = null;
+        } catch (e) {
+          log("error", "restoreSceneModeAfterImageryPicker failed: " + e);
+        }
+      },
+
       // NOTE: focusBoundsWithPadding is defined further below (authoritative definition).
       // An earlier duplicate was removed — Object.assign last-write-wins, so the first
       // copy was dead code and has been eliminated to prevent reader confusion.
@@ -58,9 +93,12 @@
           const centerLon = (paddedWest + paddedEast) * 0.5;
           const centerLat = (paddedSouth + paddedNorth) * 0.5;
           const centerCarto = new Cesium.Cartographic(Cesium.Math.toRadians(centerLon), Cesium.Math.toRadians(centerLat));
-          const terrainHeight = (viewer.scene.globe && typeof viewer.scene.globe.getHeight === "function")
+          let terrainHeight = (viewer.scene.globe && typeof viewer.scene.globe.getHeight === "function")
               ? (viewer.scene.globe.getHeight(centerCarto) || 0.0)
               : 0.0;
+          if (viewer.scene.globe && typeof viewer.scene.globe.terrainExaggeration === "number") {
+            terrainHeight *= viewer.scene.globe.terrainExaggeration;
+          }
           const sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, terrainHeight);
           const range = Math.max(compute3DFocusRange({ west: paddedWest, south: paddedSouth, east: paddedEast, north: paddedNorth }), sphere.radius * 1.5, 300.0);
           
@@ -113,7 +151,47 @@
         if (!viewer) return;
         setActiveTileBounds({ west: west, south: south, east: east, north: north });
         const rect = Cesium.Rectangle.fromDegrees(west, south, east, north);
-        const sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, 0.0);
+
+        if (viewer.scene.mode === Cesium.SceneMode.SCENE2D) {
+          viewer.camera.cancelFlight();
+          const wasRequestRenderMode = viewer.scene.requestRenderMode;
+          viewer.scene.requestRenderMode = false;
+          viewer.camera.flyTo({
+            destination: rect,
+            duration: 2.0,
+            complete: function() {
+              if (!viewer || !viewer.scene) return;
+              viewer.scene.requestRenderMode = wasRequestRenderMode;
+              var t = 0;
+              var iv = setInterval(function() {
+                if (!viewer || !viewer.scene) { clearInterval(iv); return; }
+                viewer.scene.requestRender();
+                t += 100;
+                if (t >= 1500) { clearInterval(iv); }
+              }, 100);
+            },
+            cancel: function() {
+              if (viewer && viewer.scene) {
+                viewer.scene.requestRenderMode = wasRequestRenderMode;
+                viewer.scene.requestRender();
+              }
+            }
+          });
+          requestSceneRender();
+          log("info", "Fly-to bounds (2D) west=" + west + " south=" + south + " east=" + east + " north=" + north);
+          return;
+        }
+
+        const centerLon = (west + east) * 0.5;
+        const centerLat = (south + north) * 0.5;
+        const centerCarto = new Cesium.Cartographic(Cesium.Math.toRadians(centerLon), Cesium.Math.toRadians(centerLat));
+        let terrainHeight = (viewer.scene.globe && typeof viewer.scene.globe.getHeight === "function")
+            ? (viewer.scene.globe.getHeight(centerCarto) || 0.0)
+            : 0.0;
+        if (viewer.scene.globe && typeof viewer.scene.globe.terrainExaggeration === "number") {
+          terrainHeight *= viewer.scene.globe.terrainExaggeration;
+        }
+        const sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, terrainHeight);
         const range = Math.max(compute3DFocusRange({ west, south, east, north }), sphere.radius * 1.5, 300.0);
         // Persist range so pitch slider can orbit without recomputing live distance
         _cameraOrbitRange = range;
@@ -158,7 +236,33 @@
         const paddedSouth = Math.max( -90, south - padLat);
         const paddedNorth = Math.min(  90, north + padLat);
         const rect = Cesium.Rectangle.fromDegrees(paddedWest, paddedSouth, paddedEast, paddedNorth);
-        const sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, 0.0);
+
+        if (viewer.scene.mode === Cesium.SceneMode.SCENE2D) {
+          viewer.camera.cancelFlight();
+          viewer.scene.requestRenderMode = false;
+          viewer.camera.flyTo({
+            destination: rect,
+            duration: 1.2,
+            complete: function() {
+              if (viewer && viewer.scene) {
+                viewer.scene.requestRenderMode = true;
+                viewer.scene.requestRender();
+              }
+            }
+          });
+          return;
+        }
+
+        const centerLon = (paddedWest + paddedEast) * 0.5;
+        const centerLat = (paddedSouth + paddedNorth) * 0.5;
+        const centerCarto = new Cesium.Cartographic(Cesium.Math.toRadians(centerLon), Cesium.Math.toRadians(centerLat));
+        let terrainHeight = (viewer.scene.globe && typeof viewer.scene.globe.getHeight === "function")
+            ? (viewer.scene.globe.getHeight(centerCarto) || 0.0)
+            : 0.0;
+        if (viewer.scene.globe && typeof viewer.scene.globe.terrainExaggeration === "number") {
+          terrainHeight *= viewer.scene.globe.terrainExaggeration;
+        }
+        const sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, terrainHeight);
         const range = Math.max(compute3DFocusRange({ west: paddedWest, south: paddedSouth, east: paddedEast, north: paddedNorth }), sphere.radius * 1.5, 300.0);
         // Persist range so pitch slider can orbit without recomputing live distance
         _cameraOrbitRange = range;
@@ -202,14 +306,40 @@
         const paddedSouth = Math.max( -90, south - padLat);
         const paddedNorth = Math.min(  90, north + padLat);
         setActiveTileBounds({ west: west, south: south, east: east, north: north });
-        // SEARCH FIX: Use 3D oblique view (-40° pitch) so search results appear on the globe
         const rect = Cesium.Rectangle.fromDegrees(paddedWest, paddedSouth, paddedEast, paddedNorth);
+
+        if (viewer.scene.mode === Cesium.SceneMode.SCENE2D) {
+          viewer.camera.cancelFlight();
+          const wasRequestRenderMode = viewer.scene.requestRenderMode;
+          viewer.scene.requestRenderMode = false;
+          viewer.camera.flyTo({
+            destination: rect,
+            duration: 1.8,
+            complete: function() {
+              if (viewer && viewer.scene) {
+                viewer.scene.requestRenderMode = wasRequestRenderMode;
+                viewer.scene.requestRender();
+              }
+            },
+            cancel: function() {
+              if (viewer && viewer.scene) {
+                viewer.scene.requestRenderMode = wasRequestRenderMode;
+                viewer.scene.requestRender();
+              }
+            }
+          });
+          return;
+        }
+
         const centerLon = (paddedWest + paddedEast) * 0.5;
         const centerLat = (paddedSouth + paddedNorth) * 0.5;
         const centerCarto = new Cesium.Cartographic(Cesium.Math.toRadians(centerLon), Cesium.Math.toRadians(centerLat));
-        const terrainHeight = (viewer.scene.globe && typeof viewer.scene.globe.getHeight === "function")
+        let terrainHeight = (viewer.scene.globe && typeof viewer.scene.globe.getHeight === "function")
             ? (viewer.scene.globe.getHeight(centerCarto) || 0.0)
             : 0.0;
+        if (viewer.scene.globe && typeof viewer.scene.globe.terrainExaggeration === "number") {
+          terrainHeight *= viewer.scene.globe.terrainExaggeration;
+        }
         const sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, terrainHeight);
         const range = Math.max(compute3DFocusRange({ west: paddedWest, south: paddedSouth, east: paddedEast, north: paddedNorth }), sphere.radius * 1.5, 300.0);
         const wasRequestRenderMode = viewer.scene.requestRenderMode;
@@ -238,6 +368,76 @@
         requestSceneRender();
         log("info", "Focus bounds with padding=" + padFactor + " (3D oblique) west=" + west + " south=" + south + " east=" + east + " north=" + north);
       },
+      lockCameraToCompositorAsset: function (bounds) {
+        if (!viewer || !bounds) return;
+        try {
+          window._activeCompositorBounds = bounds;
+          const rect = Cesium.Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north);
+          const centerLon = (bounds.west + bounds.east) * 0.5;
+          const centerLat = (bounds.south + bounds.north) * 0.5;
+          const centerCarto = new Cesium.Cartographic(Cesium.Math.toRadians(centerLon), Cesium.Math.toRadians(centerLat));
+          
+          let terrainHeight = (viewer.scene.globe && typeof viewer.scene.globe.getHeight === "function")
+              ? (viewer.scene.globe.getHeight(centerCarto) || 0.0)
+              : 0.0;
+          if (terrainHeight <= 0.01 && window.offlineGIS && typeof window.offlineGIS.getDemTerrainHeightFallback === "function") {
+            terrainHeight = window.offlineGIS.getDemTerrainHeightFallback() || 0.0;
+          }
+          if (viewer.scene.globe && typeof viewer.scene.globe.terrainExaggeration === "number") {
+            terrainHeight *= viewer.scene.globe.terrainExaggeration;
+          }
+          
+          const centerCartesian = Cesium.Cartesian3.fromDegrees(centerLon, centerLat, terrainHeight);
+          const transform = Cesium.Transforms.eastNorthUpToFixedFrame(centerCartesian);
+          
+          const sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, terrainHeight);
+          const range = Math.max(compute3DFocusRange(bounds), sphere.radius * 1.5, 300.0);
+          
+          viewer.camera.cancelFlight();
+          
+          if (viewer.scene.mode === Cesium.SceneMode.SCENE2D) {
+            viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+            viewer.camera.viewBoundingSphere(sphere, new Cesium.HeadingPitchRange(0.0, Cesium.Math.toRadians(-90.0), range));
+            viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+          } else {
+            viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+            const hpr = new Cesium.HeadingPitchRange(
+              viewer.camera.heading || 0.0,
+              Cesium.Math.toRadians(-40.0),
+              range
+            );
+            viewer.camera.flyToBoundingSphere(sphere, {
+              offset: hpr,
+              duration: 1.5,
+              complete: function () {
+                try {
+                  if (window._activeCompositorBounds === bounds) {
+                    viewer.camera.lookAtTransform(transform, new Cesium.HeadingPitchRange(
+                      viewer.camera.heading || 0.0,
+                      viewer.camera.pitch || Cesium.Math.toRadians(-40.0),
+                      range
+                    ));
+                    log("info", "lockCameraToCompositorAsset complete: Locked camera transform to compositor asset center.");
+                  }
+                } catch (err) {
+                  log("error", "lockCameraToCompositorAsset complete callback failed: " + err);
+                }
+              }
+            });
+          }
+        } catch(e) {
+          log("error", "lockCameraToCompositorAsset failed: " + e);
+        }
+      },
+      unlockCameraFromCompositorAsset: function () {
+        if (!viewer) return;
+        try {
+          window._activeCompositorBounds = null;
+          viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+        } catch(e) {
+          log("error", "unlockCameraFromCompositorAsset failed: " + e);
+        }
+      },
       flyThroughBounds: function (west, south, east, north) {
         startFlyThroughBounds(west, south, east, north);
       },
@@ -264,7 +464,7 @@
           (options && options.is_dem === true) ||
           String(kind || "").toLowerCase() === "dem" ||
           String(name || "").toLowerCase().includes("dem");
-        if (isDem) {
+        if (isDem && viewer.scene.mode !== Cesium.SceneMode.SCENE2D) {
           window.offlineGIS.addDemLayer(name, xyzUrl, options || {});
           return;
         }
@@ -499,11 +699,13 @@
         layerDefinitions.set(layerKey, {
           key: layerKey,
           label: String(name || layerKey),
-          type: "imagery",
+          type: isDem ? "dem" : "imagery",
           url: providerUrl,
           minLevel: minLevel,
           maxLevel: maxLevel,
           bounds: normalizedBounds,
+          query: options && options.query ? options.query : {},
+          xyzUrl: xyzUrl,
         });
         layerVisibilityState.set(layerKey, true);
         applySwipeComparatorSplit();
@@ -533,6 +735,13 @@
       },
       addDemLayer: function (name, xyzUrl, options) {
         if (!viewer) return;
+        if (viewer.scene.mode === Cesium.SceneMode.SCENE2D) {
+          log("info", "addDemLayer: Scene is in 2D mode, loading DEM as a 2D tile layer.");
+          var opts = options || {};
+          opts.is_dem = true;
+          window.offlineGIS.addTileLayer(name, xyzUrl, "dem", opts);
+          return;
+        }
         log(
           "info",
           "addDemLayer request name=" +
@@ -553,7 +762,15 @@
         // if (replaceExisting) {
         //   clearManagedImageryLayers();
         // }
-        setSceneModeInternal("3d");
+        // Only trigger a scene-mode switch when the caller explicitly asks for it
+        // (apply_scene_mode defaults to true if not set).
+        // When apply_scene_mode=false, the Python side manages mode transitions
+        // separately, and calling setSceneModeInternal here would start a second
+        // competing terrain swap that cancels the first one's pending camera action.
+        const applySceneMode = !(options && options.apply_scene_mode === false);
+        if (applySceneMode) {
+          setSceneModeInternal("3d");
+        }
         setSceneModeControlEnabled(true);
         syncSceneModeToggle("3d");
         const normalizedBounds = normalizeBounds(options && options.bounds ? options.bounds : null);
@@ -657,9 +874,10 @@
         swipeComparatorRightLayerKey = null;
       },
       setLayerVisibility: function (layerKey, visible) {
-        const applied = setLayerVisibilityByKey(String(layerKey || ""), Boolean(visible));
+        const normalizedKey = String(layerKey || "").replace(/\\/g, "/");
+        const applied = setLayerVisibilityByKey(normalizedKey, Boolean(visible));
         if (!applied) {
-          log("warn", "Layer visibility update ignored key=" + String(layerKey));
+          log("debug", "Layer visibility update ignored (layer not loaded) key=" + normalizedKey);
         }
       },
       removeLayerByKey: function (layerKey) {
@@ -688,6 +906,10 @@
       clearAllLayers: function () {
         clearManagedImageryLayers();
         clearDemTerrainMode();
+        if (window._demPedestalEntity) {
+          viewer.entities.remove(window._demPedestalEntity);
+          window._demPedestalEntity = null;
+        }
         clearVectorLayers();
         if (typeof clearMeasurementEntities === "function") clearMeasurementEntities();
         if (typeof clearMeasurementPreviewEntities === "function") clearMeasurementPreviewEntities();
@@ -1115,8 +1337,8 @@
             color: Cesium.Color.fromCssColorString("#f2c94c"),
             outlineColor: Cesium.Color.fromCssColorString("#1d1d1d"),
             outlineWidth: 1,
-            heightReference: Cesium.HeightReference.NONE,
-            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            heightReference: (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
+
           },
         });
         anchorEntity.show = annotationVisibilityEnabled;
@@ -1138,10 +1360,10 @@
             pixelOffset: new Cesium.Cartesian2(12, -8),
             horizontalOrigin: Cesium.HorizontalOrigin.LEFT,
             verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-            heightReference: Cesium.HeightReference.NONE,
+            heightReference: (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.45),
             translucencyByDistance: new Cesium.NearFarScalar(3000.0, 1.0, 2400000.0, 0.62),
-            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+
           },
         });
         labelEntity.show = annotationVisibilityEnabled;
@@ -1150,8 +1372,19 @@
 
         const pointNameWidth = measureTextWidth(pointName, "600 15px Arial, Helvetica, sans-serif");
 
+        // Shared position callback — buttons track the anchor entity's terrain-clamped position.
+        function makeAnchorBoundCallback() {
+          return new Cesium.CallbackProperty(function () {
+            if (anchorEntity && anchorEntity.position) {
+              var pos = anchorEntity.position.getValue(Cesium.JulianDate.now());
+              if (pos) return pos;
+            }
+            return anchorPosition;
+          }, false);
+        }
+
         const editEntity = viewer.entities.add({
-          position: anchorPosition,
+          position: makeAnchorBoundCallback(),
           billboard: {
             image: ANNOTATION_EDIT_ICON_IMAGE,
             width: 17,
@@ -1175,7 +1408,7 @@
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
             heightReference: Cesium.HeightReference.NONE,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
-            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+
           },
         });
         editEntity.show = annotationVisibilityEnabled;
@@ -1185,7 +1418,7 @@
         editEntity._annotationLabelEntity = labelEntity;
 
         const deleteEntity = viewer.entities.add({
-          position: anchorPosition,
+          position: makeAnchorBoundCallback(),
           billboard: {
             image: ANNOTATION_DELETE_ICON_IMAGE,
             width: 17,
@@ -1209,7 +1442,7 @@
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
             heightReference: Cesium.HeightReference.NONE,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.62),
-            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+
           },
         });
         deleteEntity.show = annotationVisibilityEnabled;
@@ -1287,7 +1520,6 @@
             width: 4.5,
             arcType: Cesium.ArcType.GEODESIC,
             clampToGround: false,
-            disableDepthTestDistance: Number.POSITIVE_INFINITY,
             material: Cesium.Color.fromCssColorString("#f2c94c"),
             depthFailMaterial: Cesium.Color.fromCssColorString("#f2c94c"),
           },
@@ -1325,17 +1557,28 @@
             }, false),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-            heightReference: Cesium.HeightReference.NONE,
+            heightReference: (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.5),
-            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+
           },
         });
         labelEntity.show = annotationVisibilityEnabled;
         labelEntity._annotationId = annotationId;
         labelEntity._annotationRole = "label";
 
+        // Buttons track label entity position (mirrors point annotation tight-coupling pattern)
+        function makeLabelBoundCallback() {
+          return new Cesium.CallbackProperty(function () {
+            if (labelEntity && labelEntity.position) {
+              var pos = labelEntity.position.getValue(Cesium.JulianDate.now());
+              if (pos) return pos;
+            }
+            return midPos;
+          }, false);
+        }
+
         const editEntity = viewer.entities.add({
-          position: midPos,
+          position: makeLabelBoundCallback(),
           billboard: {
             image: ANNOTATION_EDIT_ICON_IMAGE,
             width: 17,
@@ -1359,7 +1602,7 @@
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
             heightReference: Cesium.HeightReference.NONE,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.5),
-            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+
           },
         });
         editEntity.show = annotationVisibilityEnabled;
@@ -1369,7 +1612,7 @@
         editEntity._annotationLabelEntity = labelEntity;
 
         const deleteEntity = viewer.entities.add({
-          position: midPos,
+          position: makeLabelBoundCallback(),
           billboard: {
             image: ANNOTATION_DELETE_ICON_IMAGE,
             width: 17,
@@ -1393,7 +1636,7 @@
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
             heightReference: Cesium.HeightReference.NONE,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.5),
-            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+
           },
         });
         deleteEntity.show = annotationVisibilityEnabled;

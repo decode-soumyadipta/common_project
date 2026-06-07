@@ -370,6 +370,12 @@ function getCartesianFromViewer(viewer, screenPosition) {
     cartesian = viewer.camera.pickEllipsoid(screenPosition, scene.globe.ellipsoid);
   }
   
+  if (cartesian && scene.mode === window.Cesium.SceneMode.SCENE2D) {
+    const projection = scene.mapProjection;
+    const carto = projection.unproject(cartesian);
+    cartesian = window.Cesium.Cartographic.toCartesian(carto, scene.globe.ellipsoid);
+  }
+  
   return cartesian || null;
 }
 

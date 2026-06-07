@@ -60,13 +60,19 @@
   let tileLoadListenerRegistered = false;
   function registerTileLoadListener() {
     if (tileLoadListenerRegistered || !viewer || !viewer.scene || !viewer.scene.globe) return;
+    
     viewer.scene.globe.tileLoadProgressEvent.addEventListener(function (queueLength) {
-      if (queueLength === 0) {
-        if (window.offlineGIS && typeof window.offlineGIS.realignMarkersToTerrain === "function") {
-          window.offlineGIS.realignMarkersToTerrain();
-        }
+      if (window.offlineGIS && typeof window.offlineGIS.realignMarkersToTerrain === "function") {
+        window.offlineGIS.realignMarkersToTerrain();
       }
     });
+
+    viewer.camera.moveEnd.addEventListener(function() {
+      if (window.offlineGIS && typeof window.offlineGIS.realignMarkersToTerrain === "function") {
+        window.offlineGIS.realignMarkersToTerrain();
+      }
+    });
+    
     tileLoadListenerRegistered = true;
   }
 
@@ -174,7 +180,10 @@
               verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
               horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
               heightReference: Cesium.HeightReference.NONE,
-              disableDepthTestDistance: Number.POSITIVE_INFINITY,
+              // NOTE: disableDepthTestDistance intentionally NOT set here.
+              // With depthTestAgainstTerrain=true on the globe, markers on the far
+              // side of the DEM must be occluded. CLAMP_TO_GROUND keeps them on
+              // the visible surface when on this side.
             },
           });
 
@@ -189,6 +198,7 @@
       },
       realignMarkersToTerrain: function () {
         if (viewer && viewer.scene && viewer.scene.globe) {
+          // Realign search result markers
           for (let index = 0; index < searchResultMarkerEntities.length; index += 1) {
             const entity = searchResultMarkerEntities[index];
             if (entity && entity.position) {
@@ -197,12 +207,36 @@
                 const cartographic = Cesium.Cartographic.fromCartesian(positionVal);
                 if (cartographic) {
                   const sampledHeight = viewer.scene.globe.getHeight(cartographic);
-                  const h = Number.isFinite(sampledHeight) ? Number(sampledHeight) : 0.0;
-                  entity.position = Cesium.Cartesian3.fromDegrees(
-                    Cesium.Math.toDegrees(cartographic.longitude),
-                    Cesium.Math.toDegrees(cartographic.latitude),
-                    h + 5.0
-                  );
+                  if (Number.isFinite(sampledHeight)) {
+                    entity.position = Cesium.Cartesian3.fromDegrees(
+                      Cesium.Math.toDegrees(cartographic.longitude),
+                      Cesium.Math.toDegrees(cartographic.latitude),
+                      Number(sampledHeight) + 5.0
+                    );
+                  }
+                }
+              }
+            }
+          }
+
+          // Realign custom text labels (annotations)
+          if (typeof annotationEntities !== "undefined" && Array.isArray(annotationEntities)) {
+            for (let i = 0; i < annotationEntities.length; i++) {
+              const entity = annotationEntities[i];
+              if (entity && entity._annotationRole === "text-label" && entity.position) {
+                const positionVal = entity.position.getValue(Cesium.JulianDate.now());
+                if (positionVal) {
+                  const cartographic = Cesium.Cartographic.fromCartesian(positionVal);
+                  if (cartographic) {
+                    const sampledHeight = viewer.scene.globe.getHeight(cartographic);
+                    if (Number.isFinite(sampledHeight)) {
+                      entity.position = Cesium.Cartesian3.fromDegrees(
+                        Cesium.Math.toDegrees(cartographic.longitude),
+                        Cesium.Math.toDegrees(cartographic.latitude),
+                        Number(sampledHeight)
+                      );
+                    }
+                  }
                 }
               }
             }
@@ -246,6 +280,22 @@
         }
         lastMapClickCartesian = null;
         
+        // ── Shared position callback — buttons are always co-located with the label ──────
+        // Using a CallbackProperty that returns the label entity's *current* world
+        // position ensures both buttons move in exact lock-step even when CLAMP_TO_GROUND
+        // adjusts the label during terrain tile refinement. heightReference is NONE for
+        // buttons because disableDepthTestDistance=INFINITY already makes them always
+        // visible, so we must NOT have Cesium independently re-clamp each button entity.
+        function makeBoundPositionCallback() {
+          return new Cesium.CallbackProperty(function () {
+            if (labelEntity && labelEntity.position) {
+              var pos = labelEntity.position.getValue(Cesium.JulianDate.now());
+              if (pos) return pos;
+            }
+            return anchorPosition;
+          }, false);
+        }
+
         // Large white text label (no anchor point, just text)
         const labelEntity = viewer.entities.add({
           position: anchorPosition,
@@ -262,9 +312,9 @@
             pixelOffset: new Cesium.Cartesian2(0, 0),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
-            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+            heightReference: (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.5),
-            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            // No disableDepthTestDistance — DEM must occlude labels on far side of terrain.
           },
         });
         labelEntity.show = annotationVisibilityEnabled;
@@ -273,7 +323,7 @@
         
         // Edit button
         const editEntity = viewer.entities.add({
-          position: anchorPosition,
+          position: makeBoundPositionCallback(),
           billboard: {
             image: ANNOTATION_EDIT_ICON_IMAGE,
             width: 18,
@@ -295,9 +345,8 @@
             }, false),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
-            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+            heightReference: Cesium.HeightReference.NONE,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.5),
-            disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
         });
         editEntity.show = annotationVisibilityEnabled;
@@ -307,7 +356,7 @@
         
         // Delete button
         const deleteEntity = viewer.entities.add({
-          position: anchorPosition,
+          position: makeBoundPositionCallback(),
           billboard: {
             image: ANNOTATION_DELETE_ICON_IMAGE,
             width: 18,
@@ -329,9 +378,8 @@
             }, false),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
-            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+            heightReference: Cesium.HeightReference.NONE,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.5),
-            disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
         });
         deleteEntity.show = annotationVisibilityEnabled;
@@ -522,6 +570,7 @@
         resetNorthUp();
         log("debug", "North-up orientation reset");
       },
+
       setSwipeComparator: function (enabled) {
         setSwipeComparatorEnabled(Boolean(enabled));
         log("debug", "Comparator=" + String(Boolean(enabled)));
@@ -532,27 +581,52 @@
         
         const layer = managedImageryLayers.get(layerKey);
         if (layer) {
+          // Guard: the DEM drape and hillshade layers are stored in managedImageryLayers
+          // for layer-ordering, but the compositor opacity slider must NEVER touch them.
+          // Drape controls the DEM colorization and hillshade controls terrain shading —
+          // those are managed by Display Settings, not the compositor.
+          const isDemDrape      = (layer === activeDemDrapeLayer);
+          const isDemHillshade  = (layer === activeDemHillshadeLayer);
+          if (isDemDrape || isDemHillshade) {
+            log("debug", "setLayerAlpha: skipping DEM layer " + (isDemDrape ? "drape" : "hillshade") + " key=" + layerKey);
+            return;
+          }
           layer.alpha = numAlpha;
-        } else if (activeDemContext && activeDemContext.layerKey === layerKey) {
-          if (activeDemDrapeLayer) {
-            activeDemDrapeLayer.alpha = numAlpha;
-          }
-          if (activeDemHillshadeLayer) {
-            const scaledHillshade = Math.max(
-              0.0,
-              Math.min(1.0, demVisual.hillshadeAlpha * numAlpha)
-            );
-            activeDemHillshadeLayer.alpha = scaledHillshade;
-            activeDemHillshadeLayer.show =
-              (activeDemContext.visible !== false) && scaledHillshade > 0.01;
-          }
         }
         requestSceneRender();
       },
+
+      setQualitySettings: function (settings) {
+        // settings = { sse, resolutionScale, tileCacheSize, loadingDescendantLimit }
+        if (!viewer) return;
+        const sse           = Number(settings.sse);
+        const resSc         = Number(settings.resolutionScale);
+        const cacheSize     = Number(settings.tileCacheSize);
+        const descLimit     = Number(settings.loadingDescendantLimit);
+
+        if (Number.isFinite(sse) && sse > 0 && viewer.scene.globe) {
+          viewer.scene.globe.maximumScreenSpaceError = sse;
+          // Also persist as the active DEM SSE baseline so DEM lock doesn't override
+          window._userQualitySSE = sse;
+        }
+        if (Number.isFinite(resSc) && resSc > 0) {
+          viewer.resolutionScale = resSc;
+        }
+        if (Number.isFinite(cacheSize) && cacheSize > 0 && viewer.scene.globe) {
+          viewer.scene.globe.tileCacheSize = cacheSize;
+        }
+        if (Number.isFinite(descLimit) && descLimit > 0 && viewer.scene.globe) {
+          viewer.scene.globe.loadingDescendantLimit = descLimit;
+        }
+        requestSceneRender();
+        log("info", "Quality settings applied: SSE=" + sse + " res=" + resSc + " cache=" + cacheSize + " desc=" + descLimit);
+      },
+
       setComparator: function (enabled) {
         setSwipeComparatorEnabled(Boolean(enabled));
         log("debug", "Comparator=" + String(Boolean(enabled)));
       },
+
       requestComparatorPaneState: function () {
         notifyComparatorPaneState(comparatorSelectedPane);
       },
@@ -695,17 +769,30 @@
             const f = (typeof window._profileCursorFrac === "number")
               ? Math.max(0.0, Math.min(1.0, window._profileCursorFrac))
               : 0.5;
-            // Interpolate along the true geodesic arc — pixel-accurate for any resolution
+            // Interpolate along the true geodesic arc
             const interp = _geodesicForCursor.interpolateUsingFraction(f);
-            return Cesium.Cartesian3.fromRadians(interp.longitude, interp.latitude);
+            // Sample terrain height so the dot sits ON the DEM surface, not underground
+            let terrainH = 0.0;
+            try {
+              if (viewer.scene.globe) {
+                const cartoCursor = Cesium.Cartographic.fromRadians(interp.longitude, interp.latitude);
+                const sampled = viewer.scene.globe.getHeight(cartoCursor);
+                if (typeof sampled === "number" && Number.isFinite(sampled)) {
+                  terrainH = sampled;
+                }
+              }
+            } catch (_) {}
+            return Cesium.Cartesian3.fromRadians(interp.longitude, interp.latitude, terrainH + 2.0);
           }, false),
           point: {
             pixelSize: 8,
             color: yellow,
             outlineColor: Cesium.Color.fromCssColorString("#3a2800"),
             outlineWidth: 1.5,
+            heightReference: Cesium.HeightReference.NONE,
           },
         });
+
         window._profileCursorFrac = 0.5;
       },
       setProfileCursorMode: function (enabled) {
@@ -744,7 +831,7 @@
         const cyan = Cesium.Color.fromCssColorString("#00e5ff");
         window._profileStartEntity = viewer.entities.add({
           position: Cesium.Cartesian3.fromDegrees(Number(lon), Number(lat)),
-          point: { pixelSize: 9, color: cyan, outlineColor: Cesium.Color.BLACK, outlineWidth: 1.5, heightReference: Cesium.HeightReference.CLAMP_TO_GROUND },
+          point: { pixelSize: 9, color: cyan, outlineColor: Cesium.Color.BLACK, outlineWidth: 1.5, heightReference: (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND },
           label: {
             text: "A",
             font: "bold 11px sans-serif",
@@ -753,7 +840,7 @@
             outlineColor: Cesium.Color.BLACK,
             outlineWidth: 2,
             pixelOffset: new Cesium.Cartesian2(10, -10),
-            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+            heightReference: (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
           },
         });
         // Store start coords — preview line is recreated on every mouse move

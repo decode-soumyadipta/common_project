@@ -3,8 +3,8 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
-from qtpy.QtCore import Qt
-from qtpy.QtGui import QColor, QBrush
+from qtpy.QtCore import Qt, QPointF, QSize
+from qtpy.QtGui import QColor, QBrush, QIcon, QPainter, QPainterPath, QPixmap, QPen
 from qtpy.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -19,6 +19,54 @@ _logger = logging.getLogger(__name__)
 
 
 class ControlPanelSearchMixin:
+    def _create_eye_icon(self, is_visible: bool, size: int = 16, color_hex: str = "#444444") -> QIcon:
+        """Create a professional vector-drawn eye icon (and slashed eye for hidden state)."""
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        color = QColor(color_hex)
+        
+        w = size * 0.85
+        h = size * 0.45
+        cx = size / 2.0
+        cy = size / 2.0
+        
+        path = QPainterPath()
+        path.moveTo(cx - w/2.0, cy)
+        path.quadTo(cx, cy - h, cx + w/2.0, cy)
+        path.quadTo(cx, cy + h, cx - w/2.0, cy)
+        
+        pen = QPen(color, 1.25)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.drawPath(path)
+        
+        # Iris
+        iris_radius = size * 0.18
+        painter.setBrush(color)
+        painter.drawEllipse(QPointF(cx, cy), iris_radius, iris_radius)
+        
+        # Pupil/Highlight if visible
+        if is_visible:
+            painter.setBrush(Qt.GlobalColor.white)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(QPointF(cx - iris_radius*0.3, cy - iris_radius*0.3), iris_radius*0.3, iris_radius*0.3)
+        
+        # Slashed line if hidden
+        if not is_visible:
+            slash_pen = QPen(QColor("#d32f2f"), 1.5)
+            slash_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(slash_pen)
+            painter.drawLine(
+                int(cx - w/2.0 + 1), int(cy - h/2.0 - 1),
+                int(cx + w/2.0 - 1), int(cy + h/2.0 + 1)
+            )
+            
+        painter.end()
+        return QIcon(pixmap)
+
     def _on_search_table_item_clicked(self, item: QTableWidgetItem) -> None:
         row = item.row()
         # Focus on click for any data column (0-3), ignoring action buttons (4, 5)
@@ -145,7 +193,8 @@ class ControlPanelSearchMixin:
                     btn = container.findChild(QPushButton)
                     if btn:
                         btn.blockSignals(True)
-                        btn.setText("👁" if is_visible else "")
+                        btn.setIcon(self._create_eye_icon(is_visible))
+                        btn.setIconSize(QSize(16, 16))
                         btn.setToolTip("Hide from map" if is_visible else "Show on map")
                         btn.setProperty("is_visible", is_visible)
                         btn.blockSignals(False)
@@ -157,7 +206,8 @@ class ControlPanelSearchMixin:
             # Update header show_all_btn state
             all_visible = self._calculate_all_visible_state(sorted_assets, visibility_map)
             self._show_all_visible_state = all_visible
-            self.show_all_btn.setText("👁" if all_visible else "○")
+            self.show_all_btn.setIcon(self._create_eye_icon(all_visible))
+            self.show_all_btn.setIconSize(QSize(14, 14))
             self.show_all_btn.setToolTip("Hide all results from map" if all_visible else "Show all results on map")
             return
 
@@ -213,9 +263,9 @@ class ControlPanelSearchMixin:
             _logger.debug(f"DEBUG: Creating row {row} for {kind} - {file_name}")
 
             # Create visibility toggle button with eye icons
-            toggle_button = QPushButton(
-                "👁" if is_visible else ""
-            )  # Eye / Blank (hidden)
+            toggle_button = QPushButton()
+            toggle_button.setIcon(self._create_eye_icon(is_visible))
+            toggle_button.setIconSize(QSize(16, 16))
             toggle_button.setObjectName("searchVisibilityToggle")
             toggle_button.setToolTip("Hide from map" if is_visible else "Show on map")
             toggle_button.setFixedSize(32, 24)
@@ -225,7 +275,6 @@ class ControlPanelSearchMixin:
                     background: transparent;
                     border: 1px solid #d0d0d0;
                     border-radius: 3px;
-                    font-size: 14px;
                     padding: 0px;
                 }
                 QPushButton:hover {
@@ -256,7 +305,7 @@ class ControlPanelSearchMixin:
                 )  # Store normalized path
 
                 _logger.debug(
-                    f"  Button created: text={'👁' if is_visible else ''}, is_visible={is_visible}, path={normalized_path}"
+                    f"  Button created: is_visible={is_visible}, path={normalized_path}"
                 )
 
                 def make_toggle_handler(btn, path):
@@ -268,12 +317,11 @@ class ControlPanelSearchMixin:
                         _logger.debug(f"  current_visible: {current_visible}")
                         _logger.debug(f"  new_visible: {new_visible}")
                         # Update button immediately for responsive feel
-                        btn.setText("👁" if new_visible else "")
+                        btn.setIcon(self._create_eye_icon(new_visible))
                         btn.setToolTip(
                             "Hide from map" if new_visible else "Show on map"
                         )
                         btn.setProperty("is_visible", new_visible)
-                        _logger.debug(f"  Button updated: text={'👁' if new_visible else ''}")
                         # Emit signal to update map
                         _logger.debug(
                             f"  Emitting signal: search_result_visibility_toggled({path}, {new_visible})"
@@ -297,7 +345,8 @@ class ControlPanelSearchMixin:
                                     
                         all_visible = self._calculate_all_visible_state(temp_assets, temp_vis_map)
                         self._show_all_visible_state = all_visible
-                        self.show_all_btn.setText("👁" if all_visible else "○")
+                        self.show_all_btn.setIcon(self._create_eye_icon(all_visible))
+                        self.show_all_btn.setIconSize(QSize(14, 14))
                         self.show_all_btn.setToolTip("Hide all results from map" if all_visible else "Show all results on map")
 
                     return handler
@@ -365,31 +414,26 @@ class ControlPanelSearchMixin:
             # Red delete button (QGIS style)
             delete_btn = QPushButton("\u2715")  # Multiplication X / Close cross
             delete_btn.setToolTip(f"Remove layer: {file_name}")
-            delete_btn.setFixedSize(24, 24)
+            delete_btn.setFixedSize(18, 18)
             delete_btn.setStyleSheet(
                 """
                 QPushButton {
-                    background-color: #ffe5e5;
-                    border: 1px solid #ff9999;
-                    border-radius: 4px;
+                    background: transparent;
+                    border: none;
                     color: #cc0000;
                     font-weight: bold;
-                    font-size: 14px;
+                    font-size: 13px;
+                    margin: 0px;
                     padding: 0px;
                 }
                 QPushButton:hover {
-                    background-color: #ffcccc;
-                    border: 1px solid #ff4d4d;
+                    color: #ff3333;
                 }
                 QPushButton:pressed {
-                    background-color: #ff9999;
+                    color: #990000;
                 }
             """
             )
-            delete_btn.setText("\u2715")  # Multiplication X / Close cross - feels like a delete icon
-            
-            # Using a custom icon if possible, but Unicode \u2715 is a safe red 'x' as often seen in QGIS for 'Remove Layer'
-            
             delete_btn.clicked.connect(
                 lambda checked, p=normalized_path: self.search_layer_delete_requested.emit(p)
             )
@@ -421,7 +465,8 @@ class ControlPanelSearchMixin:
         # Update header show_all_btn state
         all_visible = self._calculate_all_visible_state(sorted_assets, visibility_map)
         self._show_all_visible_state = all_visible
-        self.show_all_btn.setText("👁" if all_visible else "○")
+        self.show_all_btn.setIcon(self._create_eye_icon(all_visible))
+        self.show_all_btn.setIconSize(QSize(14, 14))
         self.show_all_btn.setToolTip("Hide all results from map" if all_visible else "Show all results on map")
 
         _logger.debug(
@@ -454,12 +499,35 @@ class ControlPanelSearchMixin:
             )
             self.vector_layers_table.setItem(row, 1, source_item)
 
-            visibility_button = QPushButton("👁" if is_visible else "")
+            visibility_button = QPushButton()
+            visibility_button.setIcon(self._create_eye_icon(is_visible))
+            visibility_button.setIconSize(QSize(16, 16))
             visibility_button.setObjectName("searchVisibilityToggle")
             visibility_button.setToolTip(
                 "Hide from map" if is_visible else "Show on map"
             )
             visibility_button.setFixedSize(32, 24)
+            visibility_button.setStyleSheet(
+                """
+                QPushButton {
+                    background: transparent;
+                    border: 1px solid #d0d0d0;
+                    border-radius: 3px;
+                    padding: 0px;
+                }
+                QPushButton:hover {
+                    background: #f0f0f0;
+                    border: 1px solid #0066cc;
+                }
+                QPushButton:pressed {
+                    background: #e0e0e0;
+                }
+                QPushButton:disabled {
+                    color: #cccccc;
+                    border: 1px solid #e0e0e0;
+                }
+                """
+            )
             visibility_button.setProperty("is_visible", is_visible)
             visibility_button.setProperty("layer_key", layer_key)
 
@@ -467,7 +535,7 @@ class ControlPanelSearchMixin:
                 def handler():
                     current_visible = btn.property("is_visible")
                     new_visible = not current_visible
-                    btn.setText("👁" if new_visible else "")
+                    btn.setIcon(self._create_eye_icon(new_visible))
                     btn.setToolTip(
                         "Hide from map" if new_visible else "Show on map"
                     )
@@ -479,29 +547,34 @@ class ControlPanelSearchMixin:
             visibility_button.clicked.connect(
                 make_toggle_handler(visibility_button, layer_key)
             )
-            self.vector_layers_table.setCellWidget(row, 2, visibility_button)
+            
+            toggle_container = QWidget()
+            toggle_layout = QHBoxLayout(toggle_container)
+            toggle_layout.setContentsMargins(0, 0, 0, 0)
+            toggle_layout.setAlignment(Qt.AlignCenter)
+            toggle_layout.addWidget(visibility_button)
+            self.vector_layers_table.setCellWidget(row, 2, toggle_container)
 
             delete_button = QPushButton("\u2715")  # Multiplication X / Close cross
             delete_button.setObjectName("vectorDeleteButton")
             delete_button.setToolTip(f"Remove layer: {label}")
-            delete_button.setFixedSize(24, 24)
+            delete_button.setFixedSize(18, 18)
             delete_button.setStyleSheet(
                 """
                 QPushButton#vectorDeleteButton {
-                    background-color: #ffe5e5;
-                    border: 1px solid #ff9999;
-                    border-radius: 4px;
+                    background: transparent;
+                    border: none;
                     color: #cc0000;
                     font-weight: bold;
-                    font-size: 14px;
+                    font-size: 13px;
+                    margin: 0px;
                     padding: 0px;
                 }
                 QPushButton#vectorDeleteButton:hover {
-                    background-color: #ffcccc;
-                    border: 1px solid #ff4d4d;
+                    color: #ff3333;
                 }
                 QPushButton#vectorDeleteButton:pressed {
-                    background-color: #ff9999;
+                    color: #990000;
                 }
             """
             )
@@ -511,7 +584,13 @@ class ControlPanelSearchMixin:
                     self.vector_layer_delete_requested.emit(key)
                 )
             )
-            self.vector_layers_table.setCellWidget(row, 3, delete_button)
+            
+            delete_container = QWidget()
+            delete_layout = QHBoxLayout(delete_container)
+            delete_layout.setContentsMargins(0, 0, 0, 0)
+            delete_layout.setAlignment(Qt.AlignCenter)
+            delete_layout.addWidget(delete_button)
+            self.vector_layers_table.setCellWidget(row, 3, delete_container)
 
     def _set_search_results_table_visible_rows(self, visible_rows: int) -> None:
         header_height = self.search_results_table.horizontalHeader().sizeHint().height()
@@ -533,7 +612,8 @@ class ControlPanelSearchMixin:
     def _setup_show_all_button(self) -> None:
         header = self.search_results_table.horizontalHeader()
         self.show_all_btn = QToolButton(header)
-        self.show_all_btn.setText("○")
+        self.show_all_btn.setIcon(self._create_eye_icon(False))
+        self.show_all_btn.setIconSize(QSize(14, 14))
         self.show_all_btn.setToolTip("Show all results on map")
         self.show_all_btn.setFixedSize(20, 20)
         self.show_all_btn.setStyleSheet(
@@ -583,7 +663,8 @@ class ControlPanelSearchMixin:
 
     def _on_show_all_clicked(self) -> None:
         self._show_all_visible_state = not self._show_all_visible_state
-        self.show_all_btn.setText("👁" if self._show_all_visible_state else "○")
+        self.show_all_btn.setIcon(self._create_eye_icon(self._show_all_visible_state))
+        self.show_all_btn.setIconSize(QSize(14, 14))
         
         file_paths = []
         table = self.search_results_table
@@ -599,7 +680,8 @@ class ControlPanelSearchMixin:
             if container:
                 btn = container.findChild(QPushButton)
                 if btn:
-                    btn.setText("👁" if self._show_all_visible_state else "")
+                    btn.setIcon(self._create_eye_icon(self._show_all_visible_state))
+                    btn.setIconSize(QSize(16, 16))
                     btn.setToolTip("Hide from map" if self._show_all_visible_state else "Show on map")
                     btn.setProperty("is_visible", self._show_all_visible_state)
                     
@@ -1147,7 +1229,9 @@ class ControlPanelSearchMixin:
 
         # Visibility button (column 4)
         is_visible = row_data.get("is_visible", True)
-        visibility_button = QPushButton("👁" if is_visible else "")
+        visibility_button = QPushButton()
+        visibility_button.setIcon(self._create_eye_icon(is_visible))
+        visibility_button.setIconSize(QSize(16, 16))
         visibility_button.setObjectName("searchVisibilityToggle")
         visibility_button.setToolTip("Hide from map" if is_visible else "Show on map")
         visibility_button.setFixedSize(32, 24)
@@ -1157,7 +1241,6 @@ class ControlPanelSearchMixin:
                 background: transparent;
                 border: 1px solid #d0d0d0;
                 border-radius: 3px;
-                font-size: 14px;
                 padding: 0px;
             }
             QPushButton:hover {
@@ -1177,7 +1260,7 @@ class ControlPanelSearchMixin:
             def handler():
                 current_visible = btn.property("is_visible")
                 new_visible = not current_visible
-                btn.setText("👁" if new_visible else "")
+                btn.setIcon(self._create_eye_icon(new_visible))
                 btn.setToolTip("Hide from map" if new_visible else "Show on map")
                 btn.setProperty("is_visible", new_visible)
                 # Emit signal to update map
@@ -1199,24 +1282,23 @@ class ControlPanelSearchMixin:
         # Red delete button (QGIS style) (column 5)
         delete_btn = QPushButton("\u2715")  # Multiplication X / Close cross
         delete_btn.setToolTip(f"Remove layer: {row_data['file_name']}")
-        delete_btn.setFixedSize(24, 24)
+        delete_btn.setFixedSize(18, 18)
         delete_btn.setStyleSheet(
             """
             QPushButton {
-                background-color: #ffe5e5;
-                border: 1px solid #ff9999;
-                border-radius: 4px;
+                background: transparent;
+                border: none;
                 color: #cc0000;
                 font-weight: bold;
-                font-size: 14px;
+                font-size: 13px;
+                margin: 0px;
                 padding: 0px;
             }
             QPushButton:hover {
-                background-color: #ffcccc;
-                border: 1px solid #ff4d4d;
+                color: #ff3333;
             }
             QPushButton:pressed {
-                background-color: #ff9999;
+                color: #990000;
             }
         """
         )
@@ -1265,7 +1347,9 @@ class ControlPanelSearchMixin:
         if not visibility_widget:
             # Recreate if missing (Qt drag-drop often clears cell widgets)
             is_visible = row_data.get("is_visible", True)
-            toggle_button = QPushButton("👁" if is_visible else "")
+            toggle_button = QPushButton()
+            toggle_button.setIcon(self._create_eye_icon(is_visible))
+            toggle_button.setIconSize(QSize(16, 16))
             toggle_button.setObjectName("searchVisibilityToggle")
             toggle_button.setToolTip("Hide from map" if is_visible else "Show on map")
             toggle_button.setFixedSize(32, 24)
@@ -1275,7 +1359,6 @@ class ControlPanelSearchMixin:
                     background: transparent;
                     border: 1px solid #d0d0d0;
                     border-radius: 3px;
-                    font-size: 14px;
                     padding: 0px;
                 }
                 QPushButton:hover {
@@ -1298,7 +1381,7 @@ class ControlPanelSearchMixin:
                 def handler():
                     current_visible = btn.property("is_visible")
                     new_visible = not current_visible
-                    btn.setText("👁" if new_visible else "")
+                    btn.setIcon(self._create_eye_icon(new_visible))
                     btn.setToolTip("Hide from map" if new_visible else "Show on map")
                     btn.setProperty("is_visible", new_visible)
                     self.search_result_visibility_toggled.emit(path, new_visible)
@@ -1319,7 +1402,8 @@ class ControlPanelSearchMixin:
             if not visibility_button:
                 visibility_button = visibility_widget
             is_visible = row_data.get("is_visible", True)
-            visibility_button.setText("👁" if is_visible else "")
+            visibility_button.setIcon(self._create_eye_icon(is_visible))
+            visibility_button.setIconSize(QSize(16, 16))
             visibility_button.setProperty("is_visible", is_visible)
             visibility_button.setProperty("file_path", row_data["file_path"])
 
@@ -1329,24 +1413,23 @@ class ControlPanelSearchMixin:
             # Recreate if missing (Qt drag-drop often clears cell widgets)
             delete_btn = QPushButton("\u2715")
             delete_btn.setToolTip(f"Remove layer: {row_data['file_name']}")
-            delete_btn.setFixedSize(24, 24)
+            delete_btn.setFixedSize(18, 18)
             delete_btn.setStyleSheet(
                 """
                 QPushButton {
-                    background-color: #ffe5e5;
-                    border: 1px solid #ff9999;
-                    border-radius: 4px;
+                    background: transparent;
+                    border: none;
                     color: #cc0000;
                     font-weight: bold;
-                    font-size: 14px;
+                    font-size: 13px;
+                    margin: 0px;
                     padding: 0px;
                 }
                 QPushButton:hover {
-                    background-color: #ffcccc;
-                    border: 1px solid #ff4d4d;
+                    color: #ff3333;
                 }
                 QPushButton:pressed {
-                    background-color: #ff9999;
+                    color: #990000;
                 }
             """
             )

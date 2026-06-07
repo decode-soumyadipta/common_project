@@ -239,12 +239,11 @@
                     return cesium.Cartesian3.fromDegrees(p.lon, p.lat, 0.0);
                   } catch (e) { return null; }
                 }).filter(function(v) { return !!v; });
-                if (!cursor && res.length >= 3) res.push(res[0]);
-                return res;
+                return window.offlineGIS.sampleTerrainHeightsForPath(res, !cursor, 15);
               }, false),
               material: cesium.Color.YELLOW,
-              width: 4,
-              clampToGround: true,
+              width: 2.0,
+              clampToGround: false,
               show: new cesium.CallbackProperty(function () {
                 return isPolygonDrawPreviewActive() && getSearchPolygonPoints().length >= 1;
               }, false),
@@ -445,14 +444,11 @@
             return acc;
           }, []);
           const positions = cesium.Cartesian3.fromDegreesArray(degreesArray);
-          const polylinePositions = cesium.Cartesian3.fromDegreesArray(
-            degreesArray.concat([pts[0].lon, pts[0].lat])
-          );
           const polylineDesc = {
-            positions: polylinePositions,
-            width: isDrawn ? 3.0 : 2.0,
+            positions: window.offlineGIS.sampleTerrainHeightsForPath(positions, true, 15),
+            width: isDrawn ? 2.0 : 1.5,
             material: color,
-            clampToGround: true,
+            clampToGround: false,
           };
           const polygonDesc = {
             hierarchy: new cesium.PolygonHierarchy(positions),
@@ -525,10 +521,10 @@
 
         var lineEntity = viewer.entities.add({
           polyline: {
-            positions: points3d.concat([points3d[0]]),
-            width: 4.5, // Strong hard sides
+            positions: window.offlineGIS.sampleTerrainHeightsForPath(points3d, true, 15),
+            width: 2.0, // Thin boundary sides
             material: polyColor,
-            clampToGround: true,
+            clampToGround: false,
           },
         });
 
@@ -594,7 +590,7 @@
             }, false),
             horizontalOrigin: cesium.HorizontalOrigin.LEFT,
             verticalOrigin: cesium.VerticalOrigin.BOTTOM,
-            heightReference: cesium.HeightReference.NONE,
+            heightReference: cesium.HeightReference.CLAMP_TO_GROUND,
             scaleByDistance: new cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.5),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
@@ -617,7 +613,7 @@
           horizontalOrigin: cesium.HorizontalOrigin.CENTER,
           verticalOrigin: cesium.VerticalOrigin.CENTER,
           scaleByDistance: new cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.5),
-          heightReference: cesium.HeightReference.NONE,
+          heightReference: cesium.HeightReference.CLAMP_TO_GROUND,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
@@ -637,7 +633,7 @@
           horizontalOrigin: cesium.HorizontalOrigin.CENTER,
           verticalOrigin: cesium.VerticalOrigin.CENTER,
           scaleByDistance: new cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.5),
-          heightReference: cesium.HeightReference.NONE,
+          heightReference: cesium.HeightReference.CLAMP_TO_GROUND,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
@@ -710,10 +706,10 @@
           activeAoiEntity = viewer.entities.add({
             position: labelPosCartesian,
             polyline: {
-              positions: flatAoiPoints.concat([flatAoiPoints[0]]),
-              width: 4.0,
+              positions: window.offlineGIS.sampleTerrainHeightsForPath(flatAoiPoints, true, 15),
+              width: 2.0,
               material: cesium.Color.CYAN,
-              clampToGround: true,
+              clampToGround: false,
               show: new cesium.CallbackProperty(function() {
                 return deps.getSearchOverlayVisible();
               }, false)
@@ -839,11 +835,11 @@
 
       var lineEntity = viewer.entities.add({
         polyline: {
-          positions: points3d.concat([points3d[0]]),
-          width: 4.5,
-          arcType: cesium.ArcType.GEODESIC,
+          positions: window.offlineGIS.sampleTerrainHeightsForPath(points3d, true, 15),
+          width: 2.0,
+          arcType: cesium.ArcType.NONE,
           material: polyColor,
-          clampToGround: true,
+          clampToGround: false,
         },
       });
 

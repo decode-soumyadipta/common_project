@@ -67,11 +67,15 @@ class ElevationProfileCoordinator:
         """Cancel/stop elevation profile mode and clear all map overlays."""
         self._active = False
         self._clicks = []
-        # Use only CSS-based cursor (not Qt-based) to avoid double cursors
+        # Remove profile crosshair cursor and any preview overlays
         self._c._run_js_call("setProfileCursorMode", False)
         self._c._run_js_call("clearProfilePreview")
         self._c._run_js_call("clearProfileLine")
-        self._c._run_js_call("setPanMode", True)
+        # Restore default cursor and camera controls without enabling the grab-hand
+        # pan cursor.  setPanMode(True) was previously called here but it adds the
+        # CSS 'pan-mode-active' class which forces a grab cursor — not desired after
+        # the user simply turns off the elevation profile button.
+        self._c._run_js_call("setPanMode", False)
         self._logger.info("Elevation profile mode deactivated")
         # Hide the Qt panel and collapse the splitter
         if self._panel is not None and self._panel.isVisible():
@@ -152,6 +156,32 @@ class ElevationProfileCoordinator:
         points = self._clicks[-2:]
         (lon1, lat1), (lon2, lat2) = points[0], points[1]
 
+        # Check if points lie within DEM bounds and alert the user if outside
+        dem_asset = None
+        for asset in self._c._search_result_assets_by_path.values():
+            if asset.get("file_path") == dem_path:
+                dem_asset = asset
+                break
+        if dem_asset:
+            bounds = self._c._asset_bounds(dem_asset)
+            if bounds:
+                west, south, east, north = (
+                    bounds.get("west", 0.0), bounds.get("south", 0.0),
+                    bounds.get("east", 0.0), bounds.get("north", 0.0)
+                )
+                pts_inside = [west <= pt[0] <= east and south <= pt[1] <= north for pt in points]
+                if not any(pts_inside):
+                    self._c.panel.log(
+                        f"⚠️ Both points are outside the selected DEM — "
+                        f"DEM covers lon [{west:.4f}–{east:.4f}] lat [{south:.4f}–{north:.4f}]. "
+                        "Please draw your line within the DEM boundary."
+                    )
+                    self._logger.warning(
+                        "Profile line is outside DEM bounds. dem_path=%s, bounds=%s",
+                        dem_path, bounds,
+                    )
+                    return  # No point calling the API — it will return all None
+
         try:
             result = self._c.api.extract_profile(dem_path, points, samples=samples)
         except httpx.HTTPError as exc:
@@ -161,7 +191,7 @@ class ElevationProfileCoordinator:
 
         values = result.get("values", [])
         if not values:
-            self._c.panel.log("Profile extraction returned no values.")
+            self._c.panel.log("Profile extraction returned no data. Make sure your line is drawn within the DEM area.")
             return
 
         self._c._last_profile_values = [float(v) for v in values if v is not None]
@@ -173,7 +203,9 @@ class ElevationProfileCoordinator:
             )
         if not self._c._last_profile_values:
             self._c.panel.log(
-                "Profile extraction returned only null values — check DEM nodata settings."
+                "⚠️ All elevation samples are NoData. "
+                "Ensure your line endpoints are within the DEM's valid data extent "
+                "(not in nodata/masked regions)."
             )
             return
         distance_m = self._geodesic_distance_m(lon1, lat1, lon2, lat2)

@@ -280,16 +280,15 @@
         polyline: {
           positions: new Cesium.CallbackProperty(function() {
             if (window._profilePreviewStart && window._profilePreviewEnd) {
-              return [window._profilePreviewStart, window._profilePreviewEnd];
+              return window.offlineGIS.sampleTerrainHeightsForPath([window._profilePreviewStart, window._profilePreviewEnd], false, 50);
             }
             return [];
           }, false),
-          width: 4.5,
-          arcType: Cesium.ArcType.GEODESIC,
+          width: 2.0,
+          arcType: Cesium.ArcType.NONE,
           material: Cesium.Color.fromCssColorString("#00e5ff"),
           depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff"),
           clampToGround: false,
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
       log("debug", "Profile preview line entity created");
@@ -315,16 +314,15 @@
           polyline: {
             positions: new Cesium.CallbackProperty(function() {
               if (measurementPreviewStart && measurementPreviewEnd) {
-                return [measurementPreviewStart, measurementPreviewEnd];
+                return window.offlineGIS.sampleTerrainHeightsForPath([measurementPreviewStart, measurementPreviewEnd], false, 50);
               }
               return [];
             }, false),
-            width: 4.5,
-            arcType: Cesium.ArcType.GEODESIC,
+            width: 2.0,
+            arcType: Cesium.ArcType.NONE,
             material: Cesium.Color.fromCssColorString("#00e5ff"),
             depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff"),
-            clampToGround: true, // Clamp to terrain surface
-            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            clampToGround: false,
           },
         });
       }
@@ -359,16 +357,15 @@
           polyline: {
             positions: new Cesium.CallbackProperty(function() {
               if (lineDrawPreviewStart && lineDrawPreviewEnd) {
-                return [lineDrawPreviewStart, lineDrawPreviewEnd];
+                return window.offlineGIS.sampleTerrainHeightsForPath([lineDrawPreviewStart, lineDrawPreviewEnd], false, 50);
               }
               return [];
             }, false),
-            width: 4.5,
-            arcType: Cesium.ArcType.GEODESIC,
+            width: 2.0,
+            arcType: Cesium.ArcType.NONE,
             material: Cesium.Color.fromCssColorString("#00e5ff"),
             depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff"),
-            clampToGround: true, // Clamp to terrain surface
-            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            clampToGround: false,
             show: new Cesium.CallbackProperty(function () {
               return Boolean(lineDrawModeEnabled && lineDrawPreviewStart && lineDrawPreviewEnd);
             }, false),
@@ -486,13 +483,12 @@
 
       const newLine = viewer.entities.add({
         polyline: {
-          positions: [start, end],
-          width: 4.5, // Increased width for better visibility
-          arcType: Cesium.ArcType.GEODESIC,
+          positions: window.offlineGIS.sampleTerrainHeightsForPath([start, end], false, 60),
+          width: 2.0, // Thinner width for high-precision visibility
+          arcType: Cesium.ArcType.NONE,
           material: Cesium.Color.fromCssColorString("#00e5ff"), // Standard Cyan
           depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff"),
-          clampToGround: true, // Clamp to terrain surface
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          clampToGround: false,
         },
       });
 
@@ -511,8 +507,7 @@
           horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
           verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
           pixelOffset: new Cesium.Cartesian2(0, -14),
-          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND, // Clamp to terrain surface
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          heightReference: (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND, // Clamp to terrain surface
           scale: 1.0,
         },
       });
@@ -524,8 +519,7 @@
               color: Cesium.Color.fromCssColorString("#00e5ff"),
               outlineColor: Cesium.Color.TRANSPARENT,
             outlineWidth: 0,
-              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND, // Clamp to terrain surface
-            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+              heightReference: (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND, // Clamp to terrain surface
           }
       });
       const pt2 = viewer.entities.add({
@@ -535,8 +529,7 @@
               color: Cesium.Color.fromCssColorString("#00e5ff"),
               outlineColor: Cesium.Color.TRANSPARENT,
             outlineWidth: 0,
-              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND, // Clamp to terrain surface
-            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+              heightReference: (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND, // Clamp to terrain surface
           }
       });
 

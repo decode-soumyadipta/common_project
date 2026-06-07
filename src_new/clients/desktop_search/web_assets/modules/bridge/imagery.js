@@ -149,6 +149,10 @@
       viewer.entities.remove(window._demBoundaryWallEntity);
       window._demBoundaryWallEntity = null;
     }
+    if (window._demPedestalEntity) {
+      viewer.entities.remove(window._demPedestalEntity);
+      window._demPedestalEntity = null;
+    }
     activeDemContext = null;
     activeDemTerrainSignature = null;
     activeDemDrapeUrl = null;
@@ -159,7 +163,7 @@
     }
     viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
     if (defaultEarthLayer) {
-      defaultEarthLayer.show = !window._currentBasemapVisibility;
+      defaultEarthLayer.show = true;
     }
     if (viewer && viewer.scene && viewer.scene.globe) {
       viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#1a2535");
@@ -168,7 +172,7 @@
     }
     if (typeof comparatorViewers !== "undefined" && Array.isArray(comparatorViewers)) {
       comparatorViewers.forEach(v => {
-        if (v && v.__defaultEarthLayer) v.__defaultEarthLayer.show = !window._currentBasemapVisibility;
+        if (v && v.__defaultEarthLayer) v.__defaultEarthLayer.show = true;
         if (v && v.scene && v.scene.globe) v.scene.globe.baseColor = Cesium.Color.fromCssColorString("#1a2535");
       });
     }
@@ -320,19 +324,39 @@
       console.warn("DEBUG: setLayerVisibilityByKey - invalid viewer or layerKey");
       return false;
     }
-    layerVisibilityState.set(layerKey, Boolean(visible));
-    console.log(`DEBUG: Updated layerVisibilityState for ${layerKey} = ${Boolean(visible)}`);
+    const normalizedKey = String(layerKey).replace(/\\/g, "/");
+    layerVisibilityState.set(normalizedKey, Boolean(visible));
+    console.log(`DEBUG: Updated layerVisibilityState for ${normalizedKey} = ${Boolean(visible)}`);
 
-    const definition = layerDefinitions.get(layerKey);
-    const isDem = (definition && definition.type === "dem") || (activeDemContext && activeDemContext.layerKey === layerKey);
+    const definition = layerDefinitions.get(normalizedKey);
+    const isDem = (definition && definition.type === "dem") || (activeDemContext && activeDemContext.layerKey === normalizedKey);
 
     if (isDem) {
       const shouldShow = Boolean(visible);
-      console.log(`DEBUG: Found DEM layer for ${layerKey}, setting visible=${shouldShow}`);
+      console.log(`DEBUG: Found DEM layer for ${normalizedKey}, setting visible=${shouldShow}`);
+      
+      if (viewer.scene.mode === Cesium.SceneMode.SCENE2D) {
+        const imageryLayer = managedImageryLayers.get(normalizedKey);
+        if (imageryLayer) {
+          imageryLayer.show = shouldShow;
+          if (shouldShow) {
+            activeImageryLayer = imageryLayer;
+          } else if (activeImageryLayer === imageryLayer) {
+            activeImageryLayer = null;
+          }
+          applySwipeComparatorSplit();
+          if (comparatorModeEnabled) {
+            refreshComparatorLayers();
+          }
+          requestSceneRender();
+          console.log(`DEBUG: 2D DEM layer visibility updated for ${normalizedKey}`);
+          return true;
+        }
+      }
       
       if (shouldShow) {
         // If there's an active DEM and it's different, hide it first
-        if (activeDemContext && activeDemContext.layerKey !== layerKey) {
+        if (activeDemContext && activeDemContext.layerKey !== normalizedKey) {
           console.log(`DEBUG: Deactivating previous active DEM ${activeDemContext.layerKey}`);
           const prevKey = activeDemContext.layerKey;
           layerVisibilityState.set(prevKey, false);
@@ -340,10 +364,10 @@
         }
         
         // Make the requested DEM the activeDemContext
-        if (!activeDemContext || activeDemContext.layerKey !== layerKey) {
+        if (!activeDemContext || activeDemContext.layerKey !== normalizedKey) {
           if (definition) {
             activeDemContext = {
-              layerKey: layerKey,
+              layerKey: normalizedKey,
               name: definition.label,
               xyzUrl: definition.xyzUrl,
               options: {
@@ -364,26 +388,25 @@
         applyDemLayer();
         
       } else {
-        if (activeDemContext && activeDemContext.layerKey === layerKey) {
+        if (activeDemContext && activeDemContext.layerKey === normalizedKey) {
           activeDemContext.visible = false;
           hideDemColorbar();
           setSceneModeControlEnabled(true);
           setStatus("DEM layer hidden.");
-          log("info", "DEM layer hidden key=" + layerKey);
-          viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
-          if (viewer && viewer.scene && viewer.scene.globe) {
-            viewer.scene.globe.terrainExaggeration = 1.0;
-            if (typeof viewer.scene.verticalExaggeration !== "undefined") {
-              viewer.scene.verticalExaggeration = 1.0;
-            }
-            // Restore highest quality base map screen space error on ellipsoid
-            viewer.scene.globe.maximumScreenSpaceError = 0.8;
-          }
+          log("info", "DEM layer hidden key=" + normalizedKey);
           if (activeDemDrapeLayer) {
             activeDemDrapeLayer.show = false;
           }
           if (activeDemHillshadeLayer) {
             activeDemHillshadeLayer.show = false;
+          }
+          if (window._demBoundaryWallEntity) {
+            viewer.entities.remove(window._demBoundaryWallEntity);
+            window._demBoundaryWallEntity = null;
+          }
+          if (window._demPedestalEntity) {
+            viewer.entities.remove(window._demPedestalEntity);
+            window._demPedestalEntity = null;
           }
         }
       }
@@ -404,10 +427,10 @@
       return true;
     }
 
-    const imageryLayer = managedImageryLayers.get(layerKey);
+    const imageryLayer = managedImageryLayers.get(normalizedKey);
     if (imageryLayer) {
       const shouldShow = Boolean(visible);
-      console.log(`DEBUG: Found imagery layer for ${layerKey}, setting show=${shouldShow}`);
+      console.log(`DEBUG: Found imagery layer for ${normalizedKey}, setting show=${shouldShow}`);
       imageryLayer.show = shouldShow;
       if (shouldShow) {
         activeImageryLayer = imageryLayer;
@@ -428,7 +451,7 @@
         refreshComparatorLayers();
       }
       requestSceneRender();
-      console.log(`DEBUG: Imagery layer visibility updated successfully for ${layerKey}`);
+      console.log(`DEBUG: Imagery layer visibility updated successfully for ${normalizedKey}`);
       return true;
     }
 

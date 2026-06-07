@@ -101,6 +101,21 @@ def main() -> int:
         app.setApplicationName("resGIS")
         app.setOrganizationName("NTRO, Gov. of India")
 
+        # ── macOS: override the Dock/taskbar name ──────────────────────────
+        # By default macOS shows the Python interpreter name ("python3.11").
+        # Setting NSBundle's CFBundleName and NSProcessInfo.processName makes
+        # the Dock, Force-Quit list, and menu bar show "resGIS" instead.
+        if platform.system() == "Darwin":
+            try:
+                from Foundation import NSBundle, NSProcessInfo  # type: ignore[import]
+                bundle_info = NSBundle.mainBundle().infoDictionary()
+                if bundle_info is not None:
+                    bundle_info["CFBundleName"]       = "resGIS"
+                    bundle_info["CFBundleDisplayName"] = "resGIS"
+                NSProcessInfo.processInfo().setValue_forKey_("resGIS", "processName")
+            except Exception:
+                pass  # PyObjC not available — graceful degradation
+
         # Set application icon (taskbar, window title bar, dock/taskbar icon)
         _logo_path = Path(__file__).resolve().parent.parent.parent / "assets" / "resGIS_logo.png"
         if _logo_path.exists():

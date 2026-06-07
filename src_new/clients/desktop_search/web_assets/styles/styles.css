@@ -51,7 +51,8 @@ body,
   border-radius: 0;
   box-sizing: border-box;
   overflow: hidden;
-  cursor: pointer;
+  /* Native OS crosshair cursor in comparator panes */
+  cursor: crosshair;
   transition: border-color 140ms ease, box-shadow 140ms ease;
   display: none;
 }
@@ -116,38 +117,39 @@ body,
   text-overflow: ellipsis;
 }
 
+/* Geo-linked crosshair overlay — shown in OTHER panes only (source pane uses native cursor) */
 .comparatorCrosshair {
   position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 18px;
-  height: 18px;
-  margin-left: -9px;
-  margin-top: -9px;
-  z-index: 4;
+  /* default hidden; JS positions it via left/top */
+  display: none;
+  width: 0;
+  height: 0;
+  z-index: 10;
   pointer-events: none;
-  opacity: 0.85;
 }
 
-.comparatorCrosshair::before,
+/* Vertical bar */
+.comparatorCrosshair::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: -20px;
+  width: 2px;
+  height: 40px;
+  background: rgba(255, 222, 89, 0.92);
+  box-shadow: 0 0 4px rgba(255, 222, 89, 0.5);
+}
+
+/* Horizontal bar */
 .comparatorCrosshair::after {
   content: "";
   position: absolute;
-  background: rgba(255, 255, 255, 0.95);
-}
-
-.comparatorCrosshair::before {
-  left: 8px;
-  top: 0;
-  width: 2px;
-  height: 18px;
-}
-
-.comparatorCrosshair::after {
-  left: 0;
-  top: 8px;
-  width: 18px;
+  left: -20px;
+  top: -1px;
+  width: 40px;
   height: 2px;
+  background: rgba(255, 222, 89, 0.92);
+  box-shadow: 0 0 4px rgba(255, 222, 89, 0.5);
 }
 
 

@@ -90,6 +90,7 @@ class EventCoordinator:
 
         if normalized == "debug" and (
             "SCENE_DEBUG" in message
+            or "CURSOR_DEBUG" in message
             or "addTileLayer request" in message
             or "addDemLayer request" in message
             or "Imagery provider configured" in message

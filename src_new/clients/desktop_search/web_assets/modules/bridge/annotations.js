@@ -122,9 +122,9 @@
                 animComplete = true;
                 setTimeout(() => {
                   iconEntity.position = anchorPosition;
-                  iconEntity.billboard.heightReference = Cesium.HeightReference.CLAMP_TO_GROUND;
+                  iconEntity.billboard.heightReference = (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND;
                   deleteEntity.position = anchorPosition;
-                  deleteEntity.billboard.heightReference = Cesium.HeightReference.CLAMP_TO_GROUND;
+                  deleteEntity.billboard.heightReference = (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND;
                   if (typeof window.syncAnnotationsToPython === "function") {
                     window.syncAnnotationsToPython();
                   }
@@ -151,8 +151,8 @@
             verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             heightReference: initialHeightRef,
-            disableDepthTestDistance: Number.POSITIVE_INFINITY,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.5),
+
           },
         });
         iconEntity.show = annotationVisibilityEnabled;
@@ -191,9 +191,9 @@
               }, false),
               horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
               verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+              heightReference: (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
               scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.5),
-              disableDepthTestDistance: Number.POSITIVE_INFINITY,
+  
             },
           });
           labelEntity.show = annotationVisibilityEnabled;
@@ -225,9 +225,9 @@
               }, false),
               horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
               verticalOrigin: Cesium.VerticalOrigin.CENTER,
-              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+              heightReference: (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
               scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.5),
-              disableDepthTestDistance: Number.POSITIVE_INFINITY,
+  
             },
           });
           editEntity.show = annotationVisibilityEnabled;
@@ -266,7 +266,7 @@
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
             heightReference: initialHeightRef,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.5),
-            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+
           },
         });
         deleteEntity.show = annotationVisibilityEnabled;

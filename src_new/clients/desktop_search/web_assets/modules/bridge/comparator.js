@@ -210,6 +210,46 @@
       }
       v.camera.percentageChanged = 0.001;
       
+      // Dynamic 2D frustum width clamp for comparator viewers
+      v.scene.preRender.addEventListener(function () {
+        if (v && v.scene && v.scene.mode === Cesium.SceneMode.SCENE2D) {
+          const camera = v.camera;
+          if (camera.frustum) {
+            let currentWidth = undefined;
+            let isOffCenter = false;
+            if (typeof camera.frustum.width !== "undefined") {
+              currentWidth = camera.frustum.width;
+            } else if (typeof camera.frustum.right !== "undefined" && typeof camera.frustum.left !== "undefined") {
+              currentWidth = camera.frustum.right - camera.frustum.left;
+              isOffCenter = true;
+            }
+            
+            if (typeof currentWidth !== "undefined" && Number.isFinite(currentWidth)) {
+              const MIN_2D_LIMIT = 1.0;
+              const MAX_2D_LIMIT = 15000000.0;
+              if (currentWidth < MIN_2D_LIMIT || currentWidth > MAX_2D_LIMIT || !Number.isFinite(currentWidth)) {
+                let targetWidth = currentWidth;
+                if (currentWidth > MAX_2D_LIMIT) {
+                  targetWidth = MAX_2D_LIMIT;
+                } else {
+                  targetWidth = MIN_2D_LIMIT;
+                }
+                
+                if (!isOffCenter) {
+                  camera.frustum.width = targetWidth;
+                } else {
+                  const S = currentWidth > 0 ? (targetWidth / currentWidth) : 1.0;
+                  camera.frustum.left = camera.frustum.left * S;
+                  camera.frustum.right = camera.frustum.right * S;
+                  camera.frustum.top = camera.frustum.top * S;
+                  camera.frustum.bottom = camera.frustum.bottom * S;
+                }
+              }
+            }
+          }
+        }
+      });
+      
       comparatorViewers[i] = v;
     }
 
@@ -474,7 +514,12 @@
         if (bounds && typeof comparatorViewers !== "undefined") {
           const rect = Cesium.Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north);
           comparatorViewers.forEach(function(v) {
-            if (v) focusComparatorViewerToRectangle(v, "imagery", rect);
+            if (v) {
+              const layerKey = v.__comparatorLayerKey || null;
+              const definition = layerKey ? layerDefinitions.get(layerKey) : null;
+              const resolvedLayerType = definition ? (definition.layerType || definition.type) : "imagery";
+              focusComparatorViewerToRectangle(v, resolvedLayerType, rect);
+            }
           });
         }
       }

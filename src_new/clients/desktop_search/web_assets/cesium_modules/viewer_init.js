@@ -158,7 +158,7 @@ export function initializeViewer(containerId, options = {}) {
   // Additional performance optimizations
   viewer.scene.fxaa = false;  // Disable FXAA post-processing
   viewer.scene.highDynamicRange = false;  // Disable HDR for performance
-  viewer.scene.logarithmicDepthBuffer = true;  // Required for smooth 3D camera dragging
+  viewer.scene.logarithmicDepthBuffer = false;  // Disabled to prevent GroundPolyline culling at high zoom levels
   viewer.scene.globe.showWaterEffect = false;  // Disable water effect
   viewer.scene.globe.showSkirts = true;  // Keep skirts to avoid gaps between tiles
   
@@ -216,9 +216,11 @@ function detectGPU(log) {
         if (renderer) {
           gpuInfo.renderer = renderer;
           const r = renderer.toLowerCase();
-          // Detect dedicated GPUs (NVIDIA, AMD Radeon RX/Pro)
-          if (r.indexOf("nvidia") !== -1 || r.indexOf("rtx") !== -1 || r.indexOf("gtx") !== -1 || 
-              r.indexOf("quadro") !== -1 || (r.indexOf("amd") !== -1 && r.indexOf("radeon rx") !== -1)) {
+          // Detect dedicated GPUs (NVIDIA, AMD Radeon RX/Pro) or high-performance Apple Silicon
+          if (r.indexOf("nvidia") !== -1 || r.indexOf("rtx") !== -1 || r.indexOf("gtx") !== -1 ||
+              r.indexOf("quadro") !== -1 || (r.indexOf("amd") !== -1 && r.indexOf("radeon rx") !== -1) ||
+              r.indexOf("apple") !== -1 || r.indexOf("m1") !== -1 || r.indexOf("m2") !== -1 ||
+              r.indexOf("m3") !== -1 || r.indexOf("m4") !== -1 || r.indexOf("m5") !== -1) {
             gpuInfo.isHighEnd = true;
           }
           if (r.indexOf("quadro") !== -1) {
@@ -272,27 +274,32 @@ function applyGPUAdaptiveSettings(viewer, gpuInfo, log) {
   if (gpuInfo.isEntryWorkstation) {
     // ── BALANCED WORKSTATION (Entry Quadro) ──────────────────────────────
     viewer.resolutionScale = 1.0;
-    viewer.scene.logarithmicDepthBuffer = true;
+    viewer.scene.logarithmicDepthBuffer = false;
     viewer.scene.globe.depthTestAgainstTerrain = true;
     viewer.scene.globe.tileCacheSize = 600;
-    viewer.scene.globe.maximumScreenSpaceError = 2.2;
+    viewer.scene.globe.maximumScreenSpaceError = 0.8; // High resolution base map for AOI stage
     viewer.scene.globe.preloadAncestors = true;
     viewer.scene.globe.preloadSiblings = true;
     viewer.scene.globe.loadingDescendantLimit = 6;
 
     if (log) {
-      log("info", "[INIT BALANCED GPU CONFIG] Entry Quadro detected — balanced fidelity for smooth GPU performance");
+      log("info", "[INIT BALANCED GPU CONFIG] Entry Quadro detected — balanced fidelity with high resolution base map");
     }
   } else if (gpuInfo.isHighEnd) {
-    // ── MAX CONFIG (NVIDIA / Quadro RTX / AMD RX) ────────────────────────
+    // ── MAX CONFIG (NVIDIA / Quadro RTX / AMD RX / Apple Silicon) ────────
     viewer.resolutionScale = 1.0;          // Full native resolution
-    viewer.scene.logarithmicDepthBuffer = true;
+    viewer.scene.logarithmicDepthBuffer = false;
     viewer.scene.globe.depthTestAgainstTerrain = true;
-    viewer.scene.globe.tileCacheSize = 800; // Large cache for high-fidelity assets
-    viewer.scene.globe.maximumScreenSpaceError = 2.0; // High fidelity for workstation
+    viewer.scene.globe.tileCacheSize = 2500; // Large cache to prevent reload thrashing
+    viewer.scene.globe.maximumScreenSpaceError = 0.5; // Force double subdivision precision for seamless mesh edges
     viewer.scene.globe.preloadAncestors = true;
     viewer.scene.globe.preloadSiblings = true;
-    viewer.scene.globe.loadingDescendantLimit = 8;
+    viewer.scene.globe.loadingDescendantLimit = 16; // Load parallel subdivisions faster
+    
+    // WebGL pipeline optimizations
+    Cesium.RequestScheduler.maximumRequestsPerServer = 24;
+    Cesium.RequestScheduler.maximumRequests = 100;
+    Cesium.TaskProcessor.LIMIT = 12;
     
     // NVIDIA GL hint
     if (viewer.scene.context && viewer.scene.context._gl) {
@@ -301,12 +308,12 @@ function applyGPUAdaptiveSettings(viewer, gpuInfo, log) {
     }
     
     if (log) {
-      log("info", "[INIT MAX GPU CONFIG] NVIDIA/Quadro workstation GPU detected — Extreme fidelity enabled");
+      log("info", "[INIT MAX GPU CONFIG] NVIDIA/Apple workstation GPU detected — Extreme fidelity and high resolution base map enabled");
     }
   } else {
     // ── SAFE CONFIG (Intel integrated / unknown) ──────────────────────────
     viewer.resolutionScale = 1.0;          // Full native resolution to maintain imagery quality
-    viewer.scene.logarithmicDepthBuffer = true;
+    viewer.scene.logarithmicDepthBuffer = false;
     viewer.scene.globe.depthTestAgainstTerrain = true; // Essential for true 3D fidelity
     viewer.scene.globe.tileCacheSize = 400;  // Optimized cache for smoother panning on Windows
     viewer.scene.globe.maximumScreenSpaceError = 3.0;  // Balanced performance/quality for Intel UHD

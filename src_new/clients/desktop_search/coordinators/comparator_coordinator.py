@@ -141,6 +141,9 @@ class ComparatorCoordinator:
     def apply_comparator_selection(self, selected_paths: list[str]) -> bool:
         import json as _json
         c = self._controller
+        if c._comparator_visibility_snapshot is None:
+            c._comparator_visibility_snapshot = dict(c._search_layer_visibility)
+
         selected = [
             path for path in selected_paths if path in c._search_result_assets_by_path
         ]
@@ -178,6 +181,25 @@ class ComparatorCoordinator:
             c._search_layer_visibility,
         )
         c._refresh_search_result_markers()
+
+        # Auto-zoom to the selected imagery asset center/bounds
+        zoom_bounds = None
+        for path in selected:
+            asset = c._search_result_assets_by_path.get(path)
+            if asset and not c._is_dem_asset(asset):
+                bounds = c._asset_bounds(asset)
+                if bounds:
+                    zoom_bounds = bounds
+                    break
+        if zoom_bounds:
+            c._run_js_call(
+                "focusBounds",
+                zoom_bounds["west"],
+                zoom_bounds["south"],
+                zoom_bounds["east"],
+                zoom_bounds["north"]
+            )
+
         return self._toolbar_toggle_comparator(enabled=True)
 
     def apply_swipe_comparator_selection(self, selected_paths: list[str]) -> bool:
@@ -190,13 +212,31 @@ class ComparatorCoordinator:
             (not c._swipe_comparator_enabled) if enabled is None else bool(enabled)
         )
 
-        if next_state and candidate_count < 2:
-            if self._auto_enable_second_comparator_imagery_layer():
-                candidate_count = self.comparator_candidate_count()
+        if next_state:
+            if c._comparator_visibility_snapshot is None:
+                c._comparator_visibility_snapshot = dict(c._search_layer_visibility)
+            if candidate_count < 2:
+                if self._auto_enable_second_comparator_imagery_layer():
+                    candidate_count = self.comparator_candidate_count()
 
         if next_state and candidate_count < 2:
             c.panel.log("Comparator needs at least two visible raster layers.")
             c._swipe_comparator_enabled = False
+            if c._comparator_visibility_snapshot is not None:
+                snapshot = c._comparator_visibility_snapshot
+                c._comparator_visibility_snapshot = None
+                for path in c._search_result_assets_by_path:
+                    if path in snapshot:
+                        c._search_layer_visibility[path] = bool(snapshot[path])
+                if c._event_driven_enabled:
+                    c._sync_search_visibility_layers_event_driven()
+                else:
+                    c._sync_search_visibility_layers()
+                c.panel.update_search_results(
+                    list(c._search_result_assets_by_path.values()),
+                    c._search_layer_visibility,
+                )
+                c._refresh_search_result_markers()
             return False
 
         c._swipe_comparator_enabled = next_state

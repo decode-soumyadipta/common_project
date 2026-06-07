@@ -127,6 +127,10 @@ class MeasurementCoordinator:
         for path, asset in c._search_result_assets_by_path.items():
             if c._search_layer_visibility.get(path, False) and c._is_dem_asset(asset):
                 return str(asset.get("file_path") or "") or None
+        # Fallback: find the first DEM asset in search results
+        for path, asset in c._search_result_assets_by_path.items():
+            if c._is_dem_asset(asset):
+                return str(asset.get("file_path") or "") or None
         return None
 
     # Volume analysis is retired.

@@ -212,7 +212,23 @@ class DesktopController(QObject):
         # Defer startup network and process work so the main window can render immediately instead of appearing as a silent/no-window launch.
         QTimer.singleShot(0, self._bootstrap_startup_tasks)
 
+    def _set_status(self, message: str) -> None:
+        """Set status message on both the activity log and the status bar."""
+        if hasattr(self, "panel") and self.panel:
+            self.panel.log(message)
+            win = self.panel.window()
+            if hasattr(win, "gis_status_bar") and win.gis_status_bar:
+                try:
+                    win.gis_status_bar.on_loading_progress(100, message)
+                except Exception:
+                    pass
+                try:
+                    win.statusBar().showMessage(message, 5000)
+                except Exception:
+                    pass
+
     def _bootstrap_startup_tasks(self) -> None:
+
         try:
             self._prepare_api_runtime()
             self.refresh_assets()
@@ -950,6 +966,7 @@ class DesktopController(QObject):
 
     def _handle_comparator_map_click(self, lon: float, lat: float) -> bool:
         from qtpy.QtCore import Qt
+        from pathlib import Path
         window = self.panel.window()
         if not hasattr(window, "_comparator_popup") or not window._comparator_popup:
             return False
@@ -970,32 +987,61 @@ class DesktopController(QObject):
                     break
                     
         if target_path:
+            if not hasattr(popup, "picked_assets"):
+                popup.picked_assets = []
+                
+            if target_path in popup.picked_assets:
+                return True
+                
+            popup.picked_assets.append(target_path)
+            
+            # Sync names and colors in the label displays
+            names = []
+            for path in popup.picked_assets:
+                asset = self._search_result_assets_by_path.get(path)
+                name = str(asset.get("file_name") or Path(path).name if asset else Path(path).name)
+                names.append(name)
+                
+            if len(names) >= 1:
+                popup.label_asset1.setText(f"Asset 1: {names[0]}")
+                popup.label_asset1.setStyleSheet("color: #1f6fd2; font-size: 11px; font-weight: bold;")
+            else:
+                popup.label_asset1.setText("Asset 1: (Click on map to pick)")
+                popup.label_asset1.setStyleSheet("color: #64748b; font-size: 11px; font-weight: normal;")
+                
+            if len(names) >= 2:
+                popup.label_asset2.setText(f"Asset 2: {names[1]}")
+                popup.label_asset2.setStyleSheet("color: #1f6fd2; font-size: 11px; font-weight: bold;")
+            else:
+                popup.label_asset2.setText("Asset 2: (Click on map to pick)")
+                popup.label_asset2.setStyleSheet("color: #64748b; font-size: 11px; font-weight: normal;")
+                
+            # Synchronize with list widget check states
             layer_list = getattr(popup, "layer_list", None)
             if layer_list:
-                target_item = None
+                layer_list.blockSignals(True)
                 for i in range(layer_list.count()):
                     item = layer_list.item(i)
-                    if item.data(Qt.ItemDataRole.UserRole) == target_path:
-                        target_item = item
-                        break
-                if target_item:
-                    if target_item.checkState() != Qt.CheckState.Checked:
-                        checked_items = [
-                            layer_list.item(i)
-                            for i in range(layer_list.count())
-                            if layer_list.item(i).checkState() == Qt.CheckState.Checked
-                        ]
-                        if len(checked_items) >= 2:
-                            checked_items[0].setCheckState(Qt.CheckState.Unchecked)
-                        target_item.setCheckState(Qt.CheckState.Checked)
-                        
-                    checked_count = sum(
-                        1
-                        for i in range(layer_list.count())
-                        if layer_list.item(i).checkState() == Qt.CheckState.Checked
-                    )
-                    if checked_count == 2:
-                        popup.pick_btn.setChecked(False)
+                    item_path = item.data(Qt.ItemDataRole.UserRole)
+                    if item_path in popup.picked_assets:
+                        item.setCheckState(Qt.CheckState.Checked)
+                    else:
+                        item.setCheckState(Qt.CheckState.Unchecked)
+                layer_list.blockSignals(False)
+                
+            # Sync Apply button and info label
+            selected_count = len(popup.picked_assets)
+            if selected_count == 2:
+                popup.info_label.setText("Exactly 2 layers selected.")
+                popup.apply_button.setEnabled(True)
+            else:
+                popup.info_label.setText(f"Select exactly 2 layers (selected: {selected_count}).")
+                popup.apply_button.setEnabled(False)
+                
+            # If we picked 2 assets, deactivate picker mode
+            if selected_count >= 2:
+                popup.pick_btn.setChecked(False)
+                
             return True
         return False
 
@@ -1361,16 +1407,18 @@ class DesktopController(QObject):
 
     def disable_layer_compositor(self) -> None:
         self._run_js_call("setSwipeComparator", False)
+        window = self.panel.window()
+        if hasattr(window, "compositor_overlay") and window.compositor_overlay:
+            window.compositor_overlay.restore_pre_compositor_state()
         self.panel.log("Layer Compositor disabled.")
 
     def apply_layer_compositor_settings(
         self, enable_swipe: bool, swipe_paths: list[str], layer_alphas: dict[str, float]
     ) -> bool:
         for path, alpha in layer_alphas.items():
-            asset = self._search_result_assets_by_path.get(path)
-            if asset:
-                layer_key = path
-                self._run_js_call("setLayerAlpha", layer_key, alpha)
+            # Call directly — the JS setLayerAlpha handles unknown keys gracefully.
+            # The old `if asset:` guard blocked calls for freshly added layers.
+            self._run_js_call("setLayerAlpha", path, alpha)
 
         if enable_swipe and len(swipe_paths) >= 2:
             left_path, right_path = swipe_paths[0], swipe_paths[1]

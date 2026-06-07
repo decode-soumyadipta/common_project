@@ -32,14 +32,14 @@
 
   function emitMapClick(lon, lat) {
     const bridge = getBridge();
-    if (bridge && bridge.on_map_click) {
+    if (bridge && bridge.on_map_click && Number.isFinite(lon) && Number.isFinite(lat)) {
       bridge.on_map_click(lon, lat);
     }
   }
 
   function emitMeasurementUpdated(meters) {
     const bridge = getBridge();
-    if (bridge && bridge.on_measurement) {
+    if (bridge && bridge.on_measurement && Number.isFinite(meters)) {
       bridge.on_measurement(meters);
     }
   }
@@ -76,8 +76,18 @@
     root.setAttribute("aria-hidden", enabled ? "false" : "true");
     map.style.display = enabled ? "none" : "block";
 
+    const comparatorViewers = getComparatorViewers();
+
     if (enabled) {
-      const comparatorViewers = getComparatorViewers();
+      // Re-enable live render loop for comparator viewers when shown
+      if (Array.isArray(comparatorViewers)) {
+        comparatorViewers.forEach(function (v) {
+          if (v && v.scene) {
+            v.scene.requestRenderMode = false;       // live rendering while visible
+            v.scene.maximumRenderTimeChange = 0;
+          }
+        });
+      }
       const resizeAndRender = function () {
         if (Array.isArray(comparatorViewers)) {
           comparatorViewers.forEach(function (v) {
@@ -93,8 +103,41 @@
       setTimeout(resizeAndRender, 50);
       setTimeout(resizeAndRender, 300);
       setTimeout(resizeAndRender, 800);
+    } else {
+      // ── HIDDEN: stop comparator render loops to eliminate lag ─────────────
+      // Comparator viewers run their own WebGL render loop continuously.
+      // Switching requestRenderMode=true + maximumRenderTimeChange=Infinity
+      // tells Cesium to only render on explicit requestRender() calls, so they
+      // consume no GPU/CPU while hidden — preventing the lag in normal mode.
+      if (Array.isArray(comparatorViewers)) {
+        comparatorViewers.forEach(function (v) {
+          if (v && v.scene) {
+            v.scene.requestRenderMode = true;
+            v.scene.maximumRenderTimeChange = Infinity;
+          }
+        });
+      }
+
+      // ── RESTORE imagery layer alphas to 1.0 ───────────────────────────────
+      // When the compositor or comparator changes alpha values and then closes,
+      // the main viewer's layers may still be at reduced opacity. Reset them
+      // all to full visibility so images always show over the DEM correctly.
+      try {
+        const viewer = getViewer();
+        if (viewer && viewer.imageryLayers) {
+          for (var _li = 0; _li < viewer.imageryLayers.length; _li++) {
+            var _lay = viewer.imageryLayers.get(_li);
+            if (_lay && _lay.alpha < 1.0) {
+              _lay.alpha = 1.0;
+            }
+            if (_lay) _lay.show = true;
+          }
+          if (viewer.scene) viewer.scene.requestRender();
+        }
+      } catch (_e) {}
     }
   }
+
 
   function normalizeBounds(bounds) {
     if (!bounds) {

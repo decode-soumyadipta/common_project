@@ -90,7 +90,16 @@
 
   function setSceneModeInternal(mode) {
     if (!viewer) return;
+    try {
+      viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+    } catch (_) {}
     const normalized = String(mode || "3d").toLowerCase() === "2d" ? "2d" : "3d";
+    if (normalized === "3d" && currentSceneMode !== "3d") {
+      window._is2DTo3DTransition = true;
+      setTimeout(function () {
+        window._is2DTo3DTransition = false;
+      }, 1500);
+    }
     let actualMode = detectSceneMode();
     sceneDebug(
       "setSceneModeInternal enter requested=" +
@@ -134,6 +143,9 @@
       sceneDebug("setSceneModeInternal no-op branch normalized matches current=" + normalized);
       configureCameraControllerForMode(normalized);
       syncSceneModeToggle(normalized);
+      if (window._activeCompositorBounds && window.offlineGIS && typeof window.offlineGIS.lockCameraToCompositorAsset === "function") {
+        window.offlineGIS.lockCameraToCompositorAsset(window._activeCompositorBounds);
+      }
       requestSceneRender();
       return;
     }
@@ -143,6 +155,10 @@
     configureCameraControllerForMode(normalized);
     if (normalized === "2d") {
       sceneDebug("setSceneModeInternal morphTo2D begin pendingFocus=" + String(pendingFocusAfterMorph));
+      
+      // Note: No EllipsoidTerrainProvider swap needed here. Maximum 2D zoom-out
+      // clamp in dem_terrain.js prevents out-of-bounds quadtree projection errors.
+
       // Instant morph (0-duration) to avoid lag and frame drops
       viewer.scene.morphTo2D(0.0);
       currentSceneMode = "2d";
@@ -152,6 +168,25 @@
         comparatorViewers.forEach(v => setComparatorViewerModeByType(v));
       }
       updateBasemapBlendForCurrentMode();
+      
+      // Focus on active asset after morph in 2D
+      window.requestAnimationFrame(function () {
+        if (viewer.terrainProvider && !(viewer.terrainProvider instanceof Cesium.EllipsoidTerrainProvider)) {
+          viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+        }
+        if (window._activeCompositorBounds && window.offlineGIS && typeof window.offlineGIS.lockCameraToCompositorAsset === "function") {
+          window.offlineGIS.lockCameraToCompositorAsset(window._activeCompositorBounds);
+        } else {
+          const bounds = activeTileBounds || lastLoadedBounds;
+          if (bounds) {
+            if (typeof focusLoadedRegion2D === "function") {
+              focusLoadedRegion2D(1.0);
+            }
+          }
+        }
+        requestSceneRender();
+      });
+
       // Force immediate re-render after instant morph
       requestSceneRender();
       window.requestAnimationFrame(requestSceneRender);
@@ -163,6 +198,7 @@
     // Instant morph (0-duration) to avoid lag and frame drops
     viewer.scene.morphTo3D(0.0);
     currentSceneMode = "3d";
+
     applySceneModePerformanceHints("3d");
     syncSceneModeToggle("3d");
     if (comparatorModeEnabled && typeof comparatorViewers !== "undefined" && Array.isArray(comparatorViewers)) {
@@ -180,20 +216,32 @@
     // After morphTo3D, re-attach terrain provider and focus on active asset.
     // morphTo3D(0) resets the terrain provider — we must restore it.
     window.requestAnimationFrame(function () {
+      if (window.offlineGIS && typeof window.offlineGIS.logCameraState === "function") {
+        window.offlineGIS.logCameraState("At requestAnimationFrame of morphTo3D");
+      }
+
+
+
       if (activeDemTerrainProvider && activeDemContext && activeDemContext.visible !== false) {
         if (viewer.terrainProvider !== activeDemTerrainProvider) {
           _swapTerrainProviderLocked(activeDemTerrainProvider);
         }
+        if (activeDemDrapeLayer) activeDemDrapeLayer.show = true;
+        if (activeDemHillshadeLayer) activeDemHillshadeLayer.show = true;
         viewer.scene.globe.terrainExaggeration = Math.max(0.1, demVisual.exaggeration);
         // Also set verticalExaggeration for Cesium 1.90+ compatibility
         if (typeof viewer.scene.verticalExaggeration !== "undefined") {
           viewer.scene.verticalExaggeration = Math.max(0.1, demVisual.exaggeration);
         }
       }
-      // Focus on active asset after morph with 3D pitch
-      const bounds = activeTileBounds || lastLoadedBounds;
-      if (bounds) {
-        schedule3DFocusAfterMorph(1.0);
+      if (window._activeCompositorBounds && window.offlineGIS && typeof window.offlineGIS.lockCameraToCompositorAsset === "function") {
+        window.offlineGIS.lockCameraToCompositorAsset(window._activeCompositorBounds);
+      } else {
+        // Focus on active asset after morph with 3D pitch
+        const bounds = activeTileBounds || lastLoadedBounds;
+        if (bounds) {
+          schedule3DFocusAfterMorph(1.0);
+        }
       }
       requestSceneRender();
     });
@@ -219,7 +267,25 @@
     }
 
     const rect = Cesium.Rectangle.fromDegrees(west, south, east, north);
-    const sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, 0.0);
+    const centerLon = (west + east) * 0.5;
+    const centerLat = (south + north) * 0.5;
+    const centerCarto = new Cesium.Cartographic(Cesium.Math.toRadians(centerLon), Cesium.Math.toRadians(centerLat));
+    let terrainHeight = undefined;
+    if (viewer.scene.globe && typeof viewer.scene.globe.getHeight === "function") {
+      const h = viewer.scene.globe.getHeight(centerCarto);
+      if (typeof h === "number" && Number.isFinite(h)) {
+        terrainHeight = h;
+      }
+    }
+    if (terrainHeight === undefined || terrainHeight === null || isNaN(terrainHeight)) {
+      terrainHeight = (window.offlineGIS && typeof window.offlineGIS.getDemTerrainHeightFallback === "function")
+          ? window.offlineGIS.getDemTerrainHeightFallback()
+          : 0.0;
+    }
+    if (viewer.scene.globe && typeof viewer.scene.globe.terrainExaggeration === "number") {
+      terrainHeight *= viewer.scene.globe.terrainExaggeration;
+    }
+    const sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, terrainHeight);
     const nearRange = Math.max(compute3DFocusRange(lastLoadedBounds), sphere.radius * 1.4);
     const farRange = Math.min(Math.max(nearRange * 3.25, 280.0), 4500000.0);
 
@@ -272,4 +338,7 @@
     log("info", "Fly-through started for selected bounds");
   }
 
-
+  window.offlineGIS = window.offlineGIS || {};
+  Object.assign(window.offlineGIS, {
+    setSceneModeInternal: setSceneModeInternal,
+  });

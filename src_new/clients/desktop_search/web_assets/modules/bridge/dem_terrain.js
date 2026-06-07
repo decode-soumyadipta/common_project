@@ -124,17 +124,25 @@
 
       if (demVisible) {
         log("info", "DEM_RENDER: Swapping to new terrain provider (DEM visible)");
-        _swapTerrainProviderLocked(customTerrainProvider);
+        var providerToUse = (viewer.scene.mode === Cesium.SceneMode.SCENE2D)
+          ? new Cesium.EllipsoidTerrainProvider()
+          : customTerrainProvider;
+        _swapTerrainProviderLocked(providerToUse);
         log("info", "DEM_RENDER: Terrain provider swap complete, current provider type=" + 
-            (viewer.terrainProvider === customTerrainProvider ? "CUSTOM" : "OTHER"));
+            (viewer.terrainProvider === providerToUse ? (viewer.scene.mode === Cesium.SceneMode.SCENE2D ? "ELLIPSOID" : "CUSTOM") : "OTHER"));
       }
-    } else if (demVisible && viewer.terrainProvider !== activeDemTerrainProvider) {
-      // Re-show after hide — reuse existing provider, no rebuild
-      log("info", "DEM_RENDER: Reusing existing terrain provider (was hidden, now visible)");
-      _swapTerrainProviderLocked(activeDemTerrainProvider);
-      log("info", "DEM_RENDER: Terrain provider reactivated");
     } else if (demVisible) {
-      log("info", "DEM_RENDER: Terrain provider already active, no swap needed");
+      // Re-show after hide — reuse existing provider, no rebuild
+      var providerToUse = (viewer.scene.mode === Cesium.SceneMode.SCENE2D)
+        ? new Cesium.EllipsoidTerrainProvider()
+        : activeDemTerrainProvider;
+      if (viewer.terrainProvider !== providerToUse) {
+        log("info", "DEM_RENDER: Reusing existing terrain provider (was hidden, now visible)");
+        _swapTerrainProviderLocked(providerToUse);
+        log("info", "DEM_RENDER: Terrain provider reactivated");
+      } else {
+        log("info", "DEM_RENDER: Terrain provider already active, no swap needed");
+      }
     }
 
     log("info", "DEM_RENDER: Current terrain provider: " + 
@@ -159,13 +167,15 @@
     if (!activeDemDrapeLayer || drapeUrlChanged) {
       if (activeDemDrapeLayer) {
         viewer.imageryLayers.remove(activeDemDrapeLayer, false);
-        
-        // CRITICAL FIX: Remove old DEM drape layer from managedImageryLayers map
-        if (activeDemContext && activeDemContext.layerKey) {
-          managedImageryLayers.delete(activeDemContext.layerKey);
-        }
-        
         activeDemDrapeLayer = null;
+      }
+      // CRITICAL: If there is an existing 2D drape layer in managedImageryLayers for this DEM, remove it first to avoid duplicates
+      if (activeDemContext && activeDemContext.layerKey) {
+        const existing2DLayer = managedImageryLayers.get(activeDemContext.layerKey);
+        if (existing2DLayer && existing2DLayer !== activeDemDrapeLayer) {
+          viewer.imageryLayers.remove(existing2DLayer, true);
+        }
+        managedImageryLayers.delete(activeDemContext.layerKey);
       }
       const drapeProvider = new Cesium.UrlTemplateImageryProvider({
         url: drapeUrl,
@@ -286,14 +296,14 @@
 
     // Keep the globe/basemap visible underneath the DEM
     if (defaultEarthLayer) {
-      defaultEarthLayer.show = !window._currentBasemapVisibility;
+      defaultEarthLayer.show = true;
     }
     if (viewer && viewer.scene && viewer.scene.globe) {
       viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#1a2535");
     }
     if (typeof comparatorViewers !== "undefined" && Array.isArray(comparatorViewers)) {
       comparatorViewers.forEach(v => {
-        if (v && v.__defaultEarthLayer) v.__defaultEarthLayer.show = !window._currentBasemapVisibility;
+        if (v && v.__defaultEarthLayer) v.__defaultEarthLayer.show = true;
         if (v && v.scene && v.scene.globe) v.scene.globe.baseColor = Cesium.Color.fromCssColorString("#1a2535");
       });
     }
@@ -376,134 +386,16 @@
       _tileLoadingActive = false;
     }
 
-    // Clean up existing DEM boundary wall if it exists
+    // Clean up existing DEM boundary wall and pedestal if they exist
     if (window._demBoundaryWallEntity) {
       viewer.entities.remove(window._demBoundaryWallEntity);
       window._demBoundaryWallEntity = null;
     }
-
-    let west, south, east, north;
-    if (Array.isArray(bounds) && bounds.length === 4) {
-      [west, south, east, north] = bounds;
-    } else if (bounds && typeof bounds === 'object') {
-      west = bounds.west;
-      south = bounds.south;
-      east = bounds.east;
-      north = bounds.north;
+    if (window._demPedestalEntity) {
+      viewer.entities.remove(window._demPedestalEntity);
+      window._demPedestalEntity = null;
     }
-    const hasValidCoords = (typeof west === 'number' && typeof south === 'number' && typeof east === 'number' && typeof north === 'number');
 
-    if (demVisible && hasValidCoords) {
-      // Calculate deltas for tight boundary wall alignment (expansion ~1m outside, sampling ~5m inside)
-      const extLatDelta = 0.00001;
-      const insideLatDelta = 0.00005;
-      const cosLat = Math.cos(Cesium.Math.toRadians((south + north) / 2));
-      const extLonDelta = extLatDelta / Math.max(0.1, cosLat);
-      const insideLonDelta = insideLatDelta / Math.max(0.1, cosLat);
-      
-      const westExpanded = west - extLonDelta;
-      const eastExpanded = east + extLonDelta;
-      const southExpanded = south - extLatDelta;
-      const northExpanded = north + extLatDelta;
-      
-      const westInside = west + insideLonDelta;
-      const eastInside = east - insideLonDelta;
-      const southInside = south + insideLatDelta;
-      const northInside = north - insideLatDelta;
-      
-      const numSegments = 50;
-      const samplePositions = [];
-      const expandedPositions = [];
-      
-      // South boundary (west to east)
-      for (let i = 0; i <= numSegments; i++) {
-        const t = i / numSegments;
-        samplePositions.push(Cesium.Cartographic.fromDegrees(westInside + (eastInside - westInside) * t, southInside));
-        expandedPositions.push(Cesium.Cartographic.fromDegrees(westExpanded + (eastExpanded - westExpanded) * t, southExpanded));
-      }
-      // East boundary (south to north)
-      for (let i = 1; i <= numSegments; i++) {
-        const t = i / numSegments;
-        samplePositions.push(Cesium.Cartographic.fromDegrees(eastInside, southInside + (northInside - southInside) * t));
-        expandedPositions.push(Cesium.Cartographic.fromDegrees(eastExpanded, southExpanded + (northExpanded - southExpanded) * t));
-      }
-      // North boundary (east to west)
-      for (let i = 1; i <= numSegments; i++) {
-        const t = i / numSegments;
-        samplePositions.push(Cesium.Cartographic.fromDegrees(eastInside - (eastInside - westInside) * t, northInside));
-        expandedPositions.push(Cesium.Cartographic.fromDegrees(eastExpanded - (eastExpanded - westExpanded) * t, northExpanded));
-      }
-      // West boundary (north to south)
-      for (let i = 1; i < numSegments; i++) {
-        const t = i / numSegments;
-        samplePositions.push(Cesium.Cartographic.fromDegrees(westInside, northInside - (northInside - southInside) * t));
-        expandedPositions.push(Cesium.Cartographic.fromDegrees(westExpanded, northExpanded - (northExpanded - southExpanded) * t));
-      }
-      samplePositions.push(Cesium.Cartographic.fromDegrees(westInside, southInside));
-      expandedPositions.push(Cesium.Cartographic.fromDegrees(westExpanded, southExpanded));
-      
-      // Sample terrain heights shifted inside the DEM and build/refine the boundary wall asynchronously
-      let samplingPromise;
-      try {
-        if (viewer.terrainProvider && viewer.terrainProvider.availability) {
-          samplingPromise = Cesium.sampleTerrainMostDetailed(viewer.terrainProvider, samplePositions);
-        } else {
-          samplingPromise = Promise.reject(new Error("Active terrain provider has no availability property"));
-        }
-      } catch (err) {
-        samplingPromise = Promise.reject(err);
-      }
-
-      Promise.resolve(samplingPromise).then((updatedPositions) => {
-        if (!activeDemContext || activeDemContext.visible === false || viewer.terrainProvider !== activeDemTerrainProvider) {
-          return;
-        }
-        
-        const refinedMaxHeights = [];
-        const refinedMinHeights = [];
-        let hasElevations = false;
-        
-        for (let i = 0; i < updatedPositions.length; i++) {
-          const sampledPos = updatedPositions[i];
-          const height = (sampledPos && typeof sampledPos.height === 'number') ? Math.max(0.0, sampledPos.height) : 0.0;
-          if (height > 5.0) {
-            refinedMaxHeights.push(height);
-            hasElevations = true;
-          } else {
-            refinedMaxHeights.push(-100.0);
-          }
-          refinedMinHeights.push(-100.0);
-        }
-        
-        // Clean up previous wall entity to avoid duplicate overlays
-        if (window._demBoundaryWallEntity) {
-          viewer.entities.remove(window._demBoundaryWallEntity);
-          window._demBoundaryWallEntity = null;
-        }
-        
-        // Only draw the boundary wall if there are actual mountain/elevation rises at the boundary
-        if (hasElevations) {
-          const wallCartesians = expandedPositions.map(pos => 
-            Cesium.Cartesian3.fromRadians(pos.longitude, pos.latitude)
-          );
-          
-          window._demBoundaryWallEntity = viewer.entities.add({
-            name: "DEM Boundary Wall",
-            wall: {
-              positions: wallCartesians,
-              maximumHeights: refinedMaxHeights,
-              minimumHeights: refinedMinHeights,
-              material: Cesium.Color.fromCssColorString("#2b2b2b").withAlpha(1.0),
-              outline: false,
-            }
-          });
-        }
-        viewer.scene.requestRender();
-      }).catch(err => {
-        log("warn", "Failed to sample terrain heights for DEM wall: " + err.message);
-      });
-    }
-    
     requestSceneRender();
   }
 
@@ -552,7 +444,7 @@
       if (this.supported) {
         const workerCode = `
           self.onmessage = async function(e) {
-            const { id, blob, rMin, span, W, H } = e.data;
+            const { id, blob, rMin, span, W, H, tileRect, datasetBounds } = e.data;
             try {
               const img = await createImageBitmap(blob);
               const imgW = img.width || 256;
@@ -564,14 +456,39 @@
               const data = imgData.data;
               
               const output = new Float32Array(W * H);
+              
+              // Hard-boundary clipping: pixels outside the dataset bounds get height=0,
+              // pixels inside get their full decoded height with NO tapering/blending.
+              // A gradual taper (previous approach) creates an artificial elevation ramp
+              // that looks like an abrupt wall when zooming — removing it entirely makes
+              // edges clean and zoom-level-agnostic.
+              const hasBoundsClip = !!(tileRect && datasetBounds);
+
               for (let r = 0; r < H; r++) {
                 const srcY = Math.min(imgH - 1, Math.round(r * (imgH - 1) / (H - 1)));
+                let lat = 0;
+                if (hasBoundsClip) {
+                  lat = tileRect.north - (r / (H - 1)) * (tileRect.north - tileRect.south);
+                }
+
                 for (let c = 0; c < W; c++) {
                   const srcX = Math.min(imgW - 1, Math.round(c * (imgW - 1) / (W - 1)));
                   const srcIdx = srcY * imgW + srcX;
                   const alpha = data[srcIdx * 4 + 3];
-                  if (alpha >= 255) {
-                    output[r * W + c] = rMin + (data[srcIdx * 4] / 255.0) * span;
+                  if (alpha > 0) {
+                    let height = rMin + (data[srcIdx * 4] / 255.0) * span;
+                    if (alpha < 255) {
+                      height *= (alpha / 255.0);
+                    }
+                    if (hasBoundsClip) {
+                      const lon = tileRect.west + (c / (W - 1)) * (tileRect.east - tileRect.west);
+                      if (lon < datasetBounds.west || lon > datasetBounds.east ||
+                          lat < datasetBounds.south || lat > datasetBounds.north) {
+                        output[r * W + c] = 0.0;
+                        continue;
+                      }
+                    }
+                    output[r * W + c] = height;
                   } else {
                     output[r * W + c] = 0.0;
                   }
@@ -615,7 +532,7 @@
       }
     }
     
-    decode(blob, rMin, span, W, H) {
+    decode(blob, rMin, span, W, H, tileRect, datasetBounds) {
       if (!this.supported || this.workers.length === 0) {
         return Promise.reject(new Error("Worker pool not supported or initialized"));
       }
@@ -633,7 +550,9 @@
           rMin,
           span,
           W,
-          H
+          H,
+          tileRect: tileRect || null,
+          datasetBounds: datasetBounds || null
         });
       });
     }
@@ -650,10 +569,14 @@
     this.errorEvent = new Cesium.Event();
     
     this._url = options.url;
-    this._min = options.minLevel || 0;
-    this._max = options.maxLevel || DEM_MAX_TERRAIN_LEVEL;
+    this._min = Number.isInteger(options.minLevel) ? options.minLevel : 0;
+    this._max = Number.isInteger(options.maxLevel) ? options.maxLevel : DEM_MAX_TERRAIN_LEVEL;
     this._rangeMin = 0;
     this._rangeMax = 0;
+
+    // Cache decoded terrain heightmaps to avoid redundant decodes/requests
+    this._tileCache = new Map();
+    this._maxCacheSize = 1000;
 
     // Mock availability to satisfy Cesium's internal requirements (e.g. sampleTerrainMostDetailed)
     const self = this;
@@ -693,6 +616,47 @@
     if (level > this._max) {
       return Cesium.when.reject(new Error("Exceeded max level"));
     }
+    // CRITICAL FIX: Tiles below minLevel must return flat terrain, NOT be fetched
+    // from TiTiler.  TiTiler overview tiles at low zoom (e.g. level 0-9 for a
+    // minLevel=10 DEM) contain 99%+ nodata pixels encoded as -32767m in Terrarium
+    // format.  The decoded heights of -32768m produce catastrophic terrain geometry
+    // that crashes/blanks the Cesium renderer whenever the camera is far enough out
+    // to trigger low-level tile requests (e.g. during a 2D→3D transition).
+    if (level < this._min) {
+      const _W = TERRAIN_SAMPLE_SIZE, _H = TERRAIN_SAMPLE_SIZE;
+      const flatBuf = new Float32Array(_W * _H); // all zeros = sea level
+      return Cesium.when(new Cesium.HeightmapTerrainData({
+        buffer: flatBuf,
+        width: _W,
+        height: _H,
+        structure: { heightScale: 1.0, heightOffset: 0.0, elementsPerHeight: 1, stride: 1 }
+      }));
+    }
+    
+    // Add debugging
+    if (typeof window._terrainRequestCount === "undefined") {
+      window._terrainRequestCount = 0;
+      window._terrainResolveCount = 0;
+    }
+    window._terrainRequestCount++;
+    if (window._terrainRequestCount <= 30) {
+      log("info", "[TERRAIN_DEBUG] Request #" + window._terrainRequestCount + ": x=" + x + " y=" + y + " level=" + level);
+    }
+    
+    const self = this;
+    const cacheKey = `${x}_${y}_${level}`;
+    if (self._tileCache && self._tileCache.has(cacheKey)) {
+      const cached = self._tileCache.get(cacheKey);
+      // Move to end for LRU
+      self._tileCache.delete(cacheKey);
+      self._tileCache.set(cacheKey, cached);
+      
+      window._terrainResolveCount++;
+      if (window._terrainResolveCount <= 30) {
+        log("info", "[TERRAIN_DEBUG] Resolve #" + window._terrainResolveCount + " (cached): x=" + x + " y=" + y + " level=" + level);
+      }
+      return Cesium.when(cached);
+    }
     
     const W = TERRAIN_SAMPLE_SIZE;
     const H = TERRAIN_SAMPLE_SIZE;
@@ -704,12 +668,25 @@
       if (!intersection) {
         // Tile is completely outside the bounds. Return flat terrain.
         const output = new Float32Array(W * H);
-        return Cesium.when(new Cesium.HeightmapTerrainData({
+        const flatData = new Cesium.HeightmapTerrainData({
           buffer: output,
           width: W,
           height: H,
           structure: { heightScale: 1.0, heightOffset: 0.0, elementsPerHeight: 1, stride: 1 }
-        }));
+        });
+        if (self._tileCache) {
+          if (self._tileCache.size >= self._maxCacheSize) {
+            const firstKey = self._tileCache.keys().next().value;
+            if (firstKey !== undefined) self._tileCache.delete(firstKey);
+          }
+          self._tileCache.set(cacheKey, flatData);
+        }
+        
+        window._terrainResolveCount++;
+        if (window._terrainResolveCount <= 30) {
+          log("info", "[TERRAIN_DEBUG] Resolve #" + window._terrainResolveCount + " (outside bounds): x=" + x + " y=" + y + " level=" + level);
+        }
+        return Cesium.when(flatData);
       }
     }
     
@@ -718,6 +695,22 @@
     const span = this._rangeMax - rMin;
     
     return Cesium.when(new Promise((resolve, reject) => {
+      const originalResolve = resolve;
+      resolve = (data) => {
+        window._terrainResolveCount++;
+        if (window._terrainResolveCount <= 30) {
+          log("info", "[TERRAIN_DEBUG] Resolve #" + window._terrainResolveCount + " (fetched): x=" + x + " y=" + y + " level=" + level);
+        }
+        if (self._tileCache) {
+          if (self._tileCache.size >= self._maxCacheSize) {
+            const firstKey = self._tileCache.keys().next().value;
+            if (firstKey !== undefined) self._tileCache.delete(firstKey);
+          }
+          self._tileCache.set(cacheKey, data);
+        }
+        originalResolve(data);
+      };
+      
       fetch(tileUrl)
         .then(response => {
           if (!response.ok) {
@@ -727,7 +720,14 @@
         })
         .then(blob => {
           // Decode using worker pool
-          terrainDecodeWorkerPool.decode(blob, rMin, span, W, H)
+          const tileRect = self.tilingScheme.tileXYToRectangle(x, y, level);
+          const tileRectDeg = {
+            west: Cesium.Math.toDegrees(tileRect.west),
+            south: Cesium.Math.toDegrees(tileRect.south),
+            east: Cesium.Math.toDegrees(tileRect.east),
+            north: Cesium.Math.toDegrees(tileRect.north)
+          };
+          terrainDecodeWorkerPool.decode(blob, rMin, span, W, H, tileRectDeg, self._bounds)
             .then(output => {
               resolve(new Cesium.HeightmapTerrainData({
                 buffer: output,
@@ -772,14 +772,35 @@
                   const data = imgData.data;
                   const output = new Float32Array(W * H);
                   
+                  // Hard-boundary clipping (main-thread fallback mirrors the worker logic).
+                  // No tapering/blending — pixels outside dataset bounds get 0, inside get full height.
+                  const datasetBounds = self._bounds;
+                  const hasBoundsClip = !!(tileRectDeg && datasetBounds);
+
                   for (let r = 0; r < H; r++) {
                     const srcY = Math.min(imgH - 1, Math.round(r * (imgH - 1) / (H - 1)));
+                    let lat = 0;
+                    if (hasBoundsClip) {
+                      lat = tileRectDeg.north - (r / (H - 1)) * (tileRectDeg.north - tileRectDeg.south);
+                    }
                     for (let c = 0; c < W; c++) {
                       const srcX = Math.min(imgW - 1, Math.round(c * (imgW - 1) / (W - 1)));
                       const srcIdx = srcY * imgW + srcX;
                       const alpha = data[srcIdx * 4 + 3];
-                      if (alpha >= 255) {
-                        output[r * W + c] = rMin + (data[srcIdx * 4] / 255.0) * span;
+                      if (alpha > 0) {
+                        let height = rMin + (data[srcIdx * 4] / 255.0) * span;
+                        if (alpha < 255) {
+                          height *= (alpha / 255.0);
+                        }
+                        if (hasBoundsClip) {
+                          const lon = tileRectDeg.west + (c / (W - 1)) * (tileRectDeg.east - tileRectDeg.west);
+                          if (lon < datasetBounds.west || lon > datasetBounds.east ||
+                              lat < datasetBounds.south || lat > datasetBounds.north) {
+                            output[r * W + c] = 0.0;
+                            continue;
+                          }
+                        }
+                        output[r * W + c] = height;
                       } else {
                         output[r * W + c] = 0.0;
                       }
@@ -840,7 +861,15 @@
   };
 
   OfflineCustomTerrainProvider.prototype.getLevelMaximumGeometricError = function (level) {
-    return 7785.0 / Math.pow(2, level);
+    if (level >= 28) {
+      return 0.0;
+    }
+    // Standard Cesium heightmap geometric error formula:
+    //   GE(0) = 2 * ellipsoidMaxRadius * PI * heightmapQuality / (tilePixels * numTiles)
+    // heightmapQuality = 0.25 (Cesium standard), tilePixels = TERRAIN_SAMPLE_SIZE = 129
+    // This forces Cesium to refine tiles more aggressively at each zoom level,
+    // giving sharper edges and eliminates slanting/zig-zag boundary artifacts.
+    return (2.0 * 6378137.0 * Math.PI * 0.25) / (129.0 * Math.pow(2, level));
   };
   OfflineCustomTerrainProvider.prototype.getTileDataAvailable = function (x, y, level) {
     return level <= this._max;
@@ -1021,18 +1050,43 @@
       // CRITICAL FIX (Bug 4): Prevent applyDemLayer from resetting camera
       // when changing style dropdown
       if (viewer && viewer.camera) {
+        var is2D = (viewer.scene.mode === Cesium.SceneMode.SCENE2D);
         var savedPos = viewer.camera.position.clone();
         var savedHdg = viewer.camera.heading;
         var savedPitch = viewer.camera.pitch;
         var savedRoll = viewer.camera.roll;
+        
+        var savedFrustumWidth, savedFrustumLeft, savedFrustumRight, savedFrustumTop, savedFrustumBottom;
+        if (is2D && viewer.camera.frustum) {
+          savedFrustumWidth = viewer.camera.frustum.width;
+          savedFrustumLeft = viewer.camera.frustum.left;
+          savedFrustumRight = viewer.camera.frustum.right;
+          savedFrustumTop = viewer.camera.frustum.top;
+          savedFrustumBottom = viewer.camera.frustum.bottom;
+        }
+
         applyDemLayer();
+        
         // Lock camera for 5 frames to absorb async resets from layer changes
         var framesLeft = 5;
         var lockHandle = viewer.scene.postRender.addEventListener(function () {
-          viewer.camera.setView({
-            destination: savedPos,
-            orientation: { heading: savedHdg, pitch: savedPitch, roll: savedRoll },
-          });
+          if (is2D) {
+            viewer.camera.position.x = savedPos.x;
+            viewer.camera.position.y = savedPos.y;
+            viewer.camera.position.z = savedPos.z;
+            if (viewer.camera.frustum) {
+              if (typeof savedFrustumWidth !== "undefined") viewer.camera.frustum.width = savedFrustumWidth;
+              if (typeof savedFrustumLeft !== "undefined") viewer.camera.frustum.left = savedFrustumLeft;
+              if (typeof savedFrustumRight !== "undefined") viewer.camera.frustum.right = savedFrustumRight;
+              if (typeof savedFrustumTop !== "undefined") viewer.camera.frustum.top = savedFrustumTop;
+              if (typeof savedFrustumBottom !== "undefined") viewer.camera.frustum.bottom = savedFrustumBottom;
+            }
+          } else {
+            viewer.camera.setView({
+              destination: savedPos,
+              orientation: { heading: savedHdg, pitch: savedPitch, roll: savedRoll },
+            });
+          }
           framesLeft -= 1;
           if (framesLeft <= 0) lockHandle();
         });
@@ -1091,6 +1145,18 @@
       if (scene.maximumRenderTimeChange !== desiredMaxChange) {
         scene.maximumRenderTimeChange = desiredMaxChange;
       }
+      if (typeof comparatorViewers !== "undefined" && Array.isArray(comparatorViewers)) {
+        comparatorViewers.forEach(v => {
+          if (v && v.scene) {
+            if (v.scene.requestRenderMode !== desiredMode) {
+              v.scene.requestRenderMode = desiredMode;
+            }
+            if (v.scene.maximumRenderTimeChange !== desiredMaxChange) {
+              v.scene.maximumRenderTimeChange = desiredMaxChange;
+            }
+          }
+        });
+      }
     }
 
     function applyInteractionTilePolicy(active) {
@@ -1112,6 +1178,9 @@
         isInteracting = true;
         setIdleRenderMode(false);
         applyInteractionTilePolicy(true);
+        if (typeof adjustScreenSpaceErrorDynamically === "function") {
+          adjustScreenSpaceErrorDynamically();
+        }
       }
       scene.requestRender();
     }
@@ -1125,6 +1194,9 @@
         isInteracting = false;
         setIdleRenderMode(true);
         applyInteractionTilePolicy(false);
+        if (typeof adjustScreenSpaceErrorDynamically === "function") {
+          adjustScreenSpaceErrorDynamically();
+        }
         scene.requestRender();
         idleTimer = null;
       }, IDLE_DELAY_MS);
@@ -1161,6 +1233,8 @@
     const WHEEL_ZOOM_STEP = 0.15;  // 15% of current altitude per tick — snappier
     let wheelZoomImpulse = 0;
     let wheelZoomRaf = null;
+    let lastClientX = 0;
+    let lastClientY = 0;
 
     canvas.addEventListener("wheel", function (event) {
       event.preventDefault();
@@ -1171,6 +1245,10 @@
 
       const delta = event.deltaY !== 0 ? event.deltaY : -event.wheelDelta;
       wheelZoomImpulse += delta < 0 ? 1 : -1;
+      
+      // Capture coordinates synchronously before RAF executes
+      lastClientX = event.clientX;
+      lastClientY = event.clientY;
 
       if (wheelZoomRaf !== null) {
         return;
@@ -1181,46 +1259,146 @@
         const camera = targetViewer.camera;
         const scene = targetViewer.scene;
 
-        const posCart = camera.positionCartographic;
-        if (!posCart || !Number.isFinite(posCart.height)) {
-          wheelZoomImpulse = 0;
-          scheduleIdle();
-          return;
-        }
-
-        const altitude = Math.max(posCart.height, 50.0);
         const stepCount = Math.max(-10, Math.min(10, wheelZoomImpulse));
         const zoomingIn = stepCount > 0;
         wheelZoomImpulse = 0;
 
         if (scene.mode === Cesium.SceneMode.SCENE2D) {
-          const zoomAmount = altitude * WHEEL_ZOOM_STEP * Math.abs(stepCount || 1);
-          if (zoomingIn) {
-            camera.zoomIn(zoomAmount);
+          log("debug", "[ZOOM2D] Wheel zoom triggered in 2D mode, stepCount=" + stepCount + ", zoomingIn=" + zoomingIn);
+          const rect = canvas.getBoundingClientRect();
+          const mouseX = lastClientX - rect.left;
+          const mouseY = lastClientY - rect.top;
+          
+          const cw = canvas.clientWidth;
+          const ch = canvas.clientHeight;
+          log("debug", "[ZOOM2D] rect=" + JSON.stringify(rect) + ", mouseX=" + mouseX + ", mouseY=" + mouseY + ", cw=" + cw + ", ch=" + ch);
+
+          if (cw > 0 && ch > 0 && Number.isFinite(mouseX) && Number.isFinite(mouseY)) {
+            const nx = (mouseX / cw) - 0.5;
+            const ny = 0.5 - (mouseY / ch);
+            
+            let oldWidth = undefined;
+            let isOffCenter = false;
+            if (camera.frustum) {
+              if (typeof camera.frustum.width !== "undefined") {
+                oldWidth = camera.frustum.width;
+              } else if (typeof camera.frustum.right !== "undefined" && typeof camera.frustum.left !== "undefined") {
+                oldWidth = camera.frustum.right - camera.frustum.left;
+                isOffCenter = true;
+              }
+            }
+            log("debug", "[ZOOM2D] oldWidth=" + oldWidth + ", isOffCenter=" + isOffCenter + ", pos.x=" + camera.position.x + ", pos.y=" + camera.position.y + ", pos.z=" + camera.position.z);
+
+            if (Number.isFinite(oldWidth) && Number.isFinite(camera.position.x) && Number.isFinite(camera.position.y) && Number.isFinite(camera.position.z)) {
+              // Calculate mouse position in projected space
+              const mouseProjX = camera.position.x + nx * oldWidth;
+              const mouseProjY = camera.position.y + ny * (oldWidth * (ch / cw));
+              log("debug", "[ZOOM2D] mouseProjX=" + mouseProjX + ", mouseProjY=" + mouseProjY + ", nx=" + nx + ", ny=" + ny);
+              
+              // Calculate target width using symmetric exponential zoom
+              const factor = Math.pow(1.0 + WHEEL_ZOOM_STEP, Math.abs(stepCount || 1));
+              let targetWidth = zoomingIn ? (oldWidth / factor) : (oldWidth * factor);
+              
+              const MIN_2D_WIDTH = 1.0;
+              const MAX_2D_LIMIT = 15000000.0; 
+              const aspect = cw / ch;
+              let maxWidth = MAX_2D_LIMIT;
+              if (aspect < 1.0) {
+                // Portrait mode: height is larger, so scale down maxWidth to respect MAX_2D_LIMIT vertically
+                maxWidth = MAX_2D_LIMIT * aspect;
+              }
+              targetWidth = Math.max(MIN_2D_WIDTH, Math.min(maxWidth, targetWidth));
+              log("debug", "[ZOOM2D] targetWidth=" + targetWidth + ", MIN_2D_WIDTH=" + MIN_2D_WIDTH + ", maxWidth=" + maxWidth);
+              
+              const S = oldWidth > 0 ? (targetWidth / oldWidth) : 1.0;
+              
+              // Adjust camera position in projected space to anchor to mouse position
+              const newX = mouseProjX + S * (camera.position.x - mouseProjX);
+              const newY = mouseProjY + S * (camera.position.y - mouseProjY);
+              log("debug", "[ZOOM2D] S=" + S + ", newX=" + newX + ", newY=" + newY);
+
+              if (Number.isFinite(newX) && Number.isFinite(newY)) {
+                if (!isOffCenter) {
+                  camera.frustum.width = targetWidth;
+                } else {
+                  camera.frustum.left = camera.frustum.left * S;
+                  camera.frustum.right = camera.frustum.right * S;
+                  camera.frustum.top = camera.frustum.top * S;
+                  camera.frustum.bottom = camera.frustum.bottom * S;
+                }
+                camera.position.x = newX;
+                camera.position.y = newY;
+                const actualWidth = isOffCenter ? (camera.frustum.right - camera.frustum.left) : camera.frustum.width;
+                log("debug", "[ZOOM2D] Zoom applied: width=" + actualWidth + ", pos.x=" + camera.position.x + ", pos.y=" + camera.position.y);
+              } else {
+                log("warn", "[ZOOM2D] Calculated coordinates newX or newY are not finite!");
+              }
+            } else {
+              log("warn", "[ZOOM2D] Camera properties (width/x/y/z) are not finite numbers!");
+            }
           } else {
-            camera.zoomOut(zoomAmount);
+            let oldWidth = undefined;
+            let isOffCenter = false;
+            if (camera.frustum) {
+              if (typeof camera.frustum.width !== "undefined") {
+                oldWidth = camera.frustum.width;
+              } else if (typeof camera.frustum.right !== "undefined" && typeof camera.frustum.left !== "undefined") {
+                oldWidth = camera.frustum.right - camera.frustum.left;
+                isOffCenter = true;
+              }
+            }
+            log("debug", "[ZOOM2D] Fallback zoom, oldWidth=" + oldWidth);
+            if (Number.isFinite(oldWidth)) {
+              const factor = Math.pow(1.0 + WHEEL_ZOOM_STEP, Math.abs(stepCount || 1));
+              let targetWidth = zoomingIn ? (oldWidth / factor) : (oldWidth * factor);
+              const MIN_2D_WIDTH = 1.0;
+              const MAX_2D_LIMIT = 15000000.0;
+              targetWidth = Math.max(MIN_2D_WIDTH, Math.min(MAX_2D_LIMIT, targetWidth));
+              
+              if (!isOffCenter) {
+                camera.frustum.width = targetWidth;
+              } else {
+                const S = oldWidth > 0 ? (targetWidth / oldWidth) : 1.0;
+                camera.frustum.left = camera.frustum.left * S;
+                camera.frustum.right = camera.frustum.right * S;
+                camera.frustum.top = camera.frustum.top * S;
+                camera.frustum.bottom = camera.frustum.bottom * S;
+              }
+              const actualWidth = isOffCenter ? (camera.frustum.right - camera.frustum.left) : camera.frustum.width;
+              log("debug", "[ZOOM2D] Fallback applied: width=" + actualWidth);
+            }
           }
         } else {
+          const posCart = camera.positionCartographic;
+          if (!posCart || !Number.isFinite(posCart.height)) {
+            wheelZoomImpulse = 0;
+            scheduleIdle();
+            return;
+          }
+          const altitude = Math.max(posCart.height, 50.0);
+
           // Ray-cast to find the terrain/ellipsoid intersection under the mouse pointer
           const rect = canvas.getBoundingClientRect();
-          const mouseX = event.clientX - rect.left;
-          const mouseY = event.clientY - rect.top;
+          const mouseX = lastClientX - rect.left;
+          const mouseY = lastClientY - rect.top;
           const mousePosition = new Cesium.Cartesian2(mouseX, mouseY);
           
           let targetCartesian = null;
-          const ray = camera.getPickRay(mousePosition);
-          if (ray) {
-            targetCartesian = scene.globe.pick(ray, scene);
-            if (!targetCartesian) {
-              const intersection = Cesium.IntersectionTests.rayEllipsoid(ray, scene.globe.ellipsoid);
-              if (intersection) {
-                targetCartesian = Cesium.Ray.getPoint(ray, intersection.start);
+          if (Number.isFinite(mouseX) && Number.isFinite(mouseY)) {
+            const ray = camera.getPickRay(mousePosition);
+            if (ray) {
+              targetCartesian = scene.globe.pick(ray, scene);
+              if (!targetCartesian) {
+                const intersection = Cesium.IntersectionTests.rayEllipsoid(ray, scene.globe.ellipsoid);
+                if (intersection) {
+                  targetCartesian = Cesium.Ray.getPoint(ray, intersection.start);
+                }
               }
             }
           }
 
           let nextPos;
-          if (targetCartesian) {
+          if (targetCartesian && Number.isFinite(targetCartesian.x) && Number.isFinite(targetCartesian.y) && Number.isFinite(targetCartesian.z)) {
             const distance = Cesium.Cartesian3.distance(camera.position, targetCartesian);
             // Limit maximum step distance relative to current altitude to prevent violent jumps
             const maxStepDist = Math.min(distance, altitude * 2.0);
@@ -1246,29 +1424,31 @@
             nextPos = Cesium.Cartesian3.add(camera.position, move, new Cesium.Cartesian3());
           }
 
-          const nextCarto = Cesium.Cartographic.fromCartesian(nextPos);
-          if (nextCarto && Number.isFinite(nextCarto.height)) {
-            // Retrieve actual terrain height under the next position to enforce collision bounds
-            const terrainHeight = scene.globe.getHeight(nextCarto);
-            const h = (typeof terrainHeight === "number" && Number.isFinite(terrainHeight)) ? terrainHeight : 0.0;
-            const minHeight = h + 10.0; // Enforce safe minimum of 10m above ground
-            
-            if (nextCarto.height < minHeight) {
-              nextCarto.height = minHeight;
-              const adjustedPos = Cesium.Cartographic.toCartesian(nextCarto, scene.globe.ellipsoid);
-              if (adjustedPos) {
-                nextPos = adjustedPos;
+          if (nextPos && Number.isFinite(nextPos.x) && Number.isFinite(nextPos.y) && Number.isFinite(nextPos.z)) {
+            const nextCarto = Cesium.Cartographic.fromCartesian(nextPos);
+            if (nextCarto && Number.isFinite(nextCarto.height)) {
+              // Retrieve actual terrain height under the next position to enforce collision bounds
+              const terrainHeight = scene.globe.getHeight(nextCarto);
+              const h = (typeof terrainHeight === "number" && Number.isFinite(terrainHeight)) ? terrainHeight : 0.0;
+              const minHeight = h + 10.0; // Enforce safe minimum of 10m above ground
+              
+              if (nextCarto.height < minHeight) {
+                nextCarto.height = minHeight;
+                const adjustedPos = Cesium.Cartographic.toCartesian(nextCarto, scene.globe.ellipsoid);
+                if (adjustedPos && Number.isFinite(adjustedPos.x) && Number.isFinite(adjustedPos.y) && Number.isFinite(adjustedPos.z)) {
+                  nextPos = adjustedPos;
+                }
               }
+ 
+              camera.setView({
+                destination: nextPos,
+                orientation: {
+                  heading: camera.heading,
+                  pitch: camera.pitch,
+                  roll: camera.roll
+                }
+              });
             }
-
-            camera.setView({
-              destination: nextPos,
-              orientation: {
-                heading: camera.heading,
-                pitch: camera.pitch,
-                roll: camera.roll,
-              },
-            });
           }
         }
 
@@ -1312,6 +1492,18 @@
       setStatus("Cesium.js not found. Add local Cesium assets under web_assets/cesium.");
       log("error", "Cesium runtime not found");
       return;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // CRITICAL PATCH: Prevent 2D zoom crash due to infinite tile subdivision
+    // ─────────────────────────────────────────────────────────────────────────
+    if (Cesium.EllipsoidTerrainProvider && Cesium.EllipsoidTerrainProvider.prototype && Cesium.EllipsoidTerrainProvider.prototype.getLevelMaximumGeometricError) {
+      const origEllipsoidError = Cesium.EllipsoidTerrainProvider.prototype.getLevelMaximumGeometricError;
+      Cesium.EllipsoidTerrainProvider.prototype.getLevelMaximumGeometricError = function(level) {
+        if (level >= 28) return 0.0;
+        return origEllipsoidError.apply(this, arguments);
+      };
+      log("info", "Cesium.EllipsoidTerrainProvider.prototype.getLevelMaximumGeometricError patched to cap at level 28.");
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1426,7 +1618,7 @@
     viewer.useDefaultRenderLoop = true;
     viewer.scene.requestRenderMode = false; // Always live for maximum smoothness
     viewer.scene.maximumRenderTimeChange = 0;
-    viewer.scene.globe.maximumScreenSpaceError = 2.0; // Balanced high-quality terrain
+    viewer.scene.globe.maximumScreenSpaceError = 1.0; // High-fidelity terrain — locked at max quality
     viewer.scene.globe.tileCacheSize = 800;  // Optimized cache to reduce memory footprint and GC stutters
     viewer.scene.fog.enabled = false;  // Disable fog for performance
     viewer.scene.skyAtmosphere.show = false;  // Disable atmosphere for performance
@@ -1446,7 +1638,7 @@
     // Additional performance optimizations
     viewer.scene.fxaa = false;  // Disable FXAA post-processing
     viewer.scene.highDynamicRange = false;  // Disable HDR for performance
-    viewer.scene.logarithmicDepthBuffer = true;  // Required for smooth 3D camera dragging and Z-fighting prevention
+    viewer.scene.logarithmicDepthBuffer = false;  // Disabled to prevent GroundPolyline culling at high zoom levels
     viewer.scene.globe.showWaterEffect = false;  // Disable water effect
     viewer.scene.globe.showSkirts = true;  // Keep skirts to avoid gaps between tiles
     
@@ -1504,7 +1696,7 @@
       // ── MAX CONFIG (NVIDIA / Quadro) ──────────────────────────────────────
       MAX_CONCURRENT_TERRAIN_DECODES = 8;   // Parallel terrain decodes for workstation
       viewer.resolutionScale = 1.0;          // Full native resolution
-      viewer.scene.logarithmicDepthBuffer = true;
+      viewer.scene.logarithmicDepthBuffer = false;
       viewer.scene.globe.depthTestAgainstTerrain = true;
       viewer.scene.globe.tileCacheSize = 800; // Large cache for high-fidelity assets without GC stutters
       viewer.scene.globe.maximumScreenSpaceError = 1.0; // Static high-fidelity error threshold
@@ -1524,7 +1716,7 @@
       // ── SAFE CONFIG (Intel integrated / unknown) ──────────────────────────
       MAX_CONCURRENT_TERRAIN_DECODES = 2;   // Slightly more parallel decodes for modern Intel
       viewer.resolutionScale = 1.0;          // Full native resolution to maintain imagery quality
-      viewer.scene.logarithmicDepthBuffer = true;
+      viewer.scene.logarithmicDepthBuffer = false;
       viewer.scene.globe.depthTestAgainstTerrain = true; // Essential for true 3D fidelity
       viewer.scene.globe.tileCacheSize = 400;  // Optimized cache for smoother panning on Windows
       viewer.scene.globe.maximumScreenSpaceError = 1.5;  // Static balanced error threshold
@@ -1843,8 +2035,19 @@
         if (bounds) {
           if (currentSceneMode === "2d") {
             focusLoadedRegion2D(0.6);
-          } else if (window.offlineGIS && typeof window.offlineGIS.focusBoundsWithPadding === "function") {
-            window.offlineGIS.focusBoundsWithPadding(bounds.west, bounds.south, bounds.east, bounds.north, 1.2);
+          } else if (currentSceneMode === "3d") {
+            // CRITICAL FIX: Skip premature focus during 2D→3D terrain transition.
+            // The rAF in setSceneModeInternal already calls schedule3DFocusAfterMorph
+            // AFTER the terrain provider swap, so firing focusBoundsWithPadding here
+            // (before the swap) would race against the intercepted camera lock and
+            // leave the globe blank.  Let the rAF handle it.
+            if (!window._is2DTo3DTransition) {
+              if (window.offlineGIS && typeof window.offlineGIS.focusBoundsWithPadding === "function") {
+                window.offlineGIS.focusBoundsWithPadding(bounds.west, bounds.south, bounds.east, bounds.north, 1.2);
+              }
+            } else {
+              sceneDebug("morphComplete: skipping focusBoundsWithPadding during _is2DTo3DTransition — rAF handles it");
+            }
           }
         } else if (pendingTerrainSceneAfterMorph) {
           focusPreferredRegion3D(1.0);
