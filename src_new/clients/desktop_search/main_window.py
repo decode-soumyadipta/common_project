@@ -972,6 +972,11 @@ class MainWindow(QMainWindow):
         if action is None:
             return
 
+        if hasattr(self, "_comparator_popup") and self._comparator_popup and self._comparator_popup.isVisible():
+            self._comparator_popup.close()
+            action.setChecked(False)
+            return
+
         layers = self.controller.available_comparator_layer_options()
         if len(layers) < 2:
             self.panel.log("Comparator needs at least two layers in current region.")
@@ -983,9 +988,9 @@ class MainWindow(QMainWindow):
             action.setChecked(False)
             return
 
-        popup = QDialog(self, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
-        popup.setObjectName("comparatorDropdown")
-        popup.setStyleSheet(
+        self._comparator_popup = QDialog(self, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
+        self._comparator_popup.setObjectName("comparatorDropdown")
+        self._comparator_popup.setStyleSheet(
             """
             QDialog#comparatorDropdown {
                 background: #f8fafc;
@@ -1015,14 +1020,35 @@ class MainWindow(QMainWindow):
             """
         )
 
-        layout = QVBoxLayout(popup)
+        layout = QVBoxLayout(self._comparator_popup)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
 
+        # Header with title and native close cross sign button
+        header_layout = QHBoxLayout()
         title = QLabel("Comparator")
-        layout.addWidget(title)
+        close_btn = QPushButton("×")
+        close_btn.setFixedSize(20, 20)
+        close_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                color: #5a6a7e;
+                font-size: 18px;
+                font-weight: bold;
+                border: none;
+                padding: 0;
+            }
+            QPushButton:hover {
+                color: #e44040;
+            }
+        """)
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+        header_layout.addWidget(close_btn)
+        layout.addLayout(header_layout)
 
-        layer_list = QListWidget(popup)
+        # List Widget
+        layer_list = QListWidget(self._comparator_popup)
         layer_list.setMinimumHeight(150)
         checked_count = 0
         for layer in layers:
@@ -1044,9 +1070,50 @@ class MainWindow(QMainWindow):
         info_label = QLabel("Select exactly 2 layers.")
         layout.addWidget(info_label)
 
+        # Map Picker Button
+        pick_btn = QPushButton("Pick Assets from Map")
+        pick_btn.setCheckable(True)
+        pick_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f1f5f9;
+                border: 1px solid #c9d3df;
+                border-radius: 4px;
+                padding: 6px;
+                font-size: 11px;
+                font-weight: bold;
+                color: #475569;
+            }
+            QPushButton:hover {
+                background-color: #e2e8f0;
+            }
+            QPushButton:checked {
+                background-color: #ffb300;
+                color: #1a2a3a;
+                border: 1px solid #ff9100;
+            }
+        """)
+        layout.addWidget(pick_btn)
+
         apply_button = QPushButton("Apply")
         layout.addWidget(apply_button)
         applied = {"done": False}
+
+        # Store elements on the popup instance for map picking lookup
+        self._comparator_popup.pick_btn = pick_btn
+        self._comparator_popup.layer_list = layer_list
+
+        def close_popup() -> None:
+            self._comparator_popup.close()
+
+        close_btn.clicked.connect(close_popup)
+
+        def toggle_picker(checked: bool) -> None:
+            self.controller._comparator_picker_active = checked
+            self.controller._set_measurement_cursor_enabled(checked)
+            if checked:
+                self.panel.log("Comparator Picker: Click on any 2 assets on the map.")
+
+        pick_btn.toggled.connect(toggle_picker)
 
         def _selected_count() -> int:
             return sum(
@@ -1094,7 +1161,7 @@ class MainWindow(QMainWindow):
             if len(selected_paths) != 2:
                 self.panel.log("Select exactly 2 layers for comparator.")
                 action.setChecked(False)
-                popup.close()
+                self._comparator_popup.close()
                 return
 
             success = self.controller.apply_comparator_selection(selected_paths)
@@ -1104,17 +1171,23 @@ class MainWindow(QMainWindow):
             else:
                 action.setChecked(False)
             self._refresh_toolbar_action_state()
-            popup.close()
+            self._comparator_popup.close()
 
         apply_button.clicked.connect(apply_selection)
 
-        popup.adjustSize()
-        global_pos = anchor.mapToGlobal(anchor.rect().bottomLeft())
-        popup.move(global_pos)
-        popup.exec()
+        def on_finished(result: int) -> None:
+            if not applied["done"]:
+                action.setChecked(False)
+            self.controller._comparator_picker_active = False
+            self.controller._set_measurement_cursor_enabled(False)
+            self._refresh_toolbar_action_state()
 
-        if not applied["done"]:
-            action.setChecked(False)
+        self._comparator_popup.finished.connect(on_finished)
+
+        self._comparator_popup.adjustSize()
+        global_pos = anchor.mapToGlobal(anchor.rect().bottomLeft())
+        self._comparator_popup.move(global_pos)
+        self._comparator_popup.show()
 
     def _show_export_dropdown(self) -> None:
         """Show export options dropdown under the Export toolbar button."""
@@ -1500,13 +1573,13 @@ class MainWindow(QMainWindow):
                 background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #eef6ff, stop:1 #d9eaff);
                 border: 1px solid #b3d1ff;
                 border-radius: 6px;
-                padding: 1px 4px;
+                padding: 0px 2px;
             }
             QLineEdit {
                 background-color: #ffffff;
                 border: 1px solid #b3d1ff;
                 border-radius: 4px;
-                padding: 1px 4px;
+                padding: 0px 2px;
                 color: #2b2b2b;
                 font-size: 11px;
                 font-weight: 500;
@@ -1535,8 +1608,8 @@ class MainWindow(QMainWindow):
         """)
 
         _goto_layout = QHBoxLayout(_goto_container)
-        _goto_layout.setContentsMargins(2, 1, 2, 1)
-        _goto_layout.setSpacing(4)
+        _goto_layout.setContentsMargins(1, 0, 1, 0)
+        _goto_layout.setSpacing(2)
 
         self.goto_lat_input = QLineEdit()
         self.goto_lat_input.setPlaceholderText("Lat")
@@ -1553,8 +1626,8 @@ class MainWindow(QMainWindow):
         _goto_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         _goto_btn.clicked.connect(self._on_goto_coordinates_clicked)
 
-        _goto_layout.addWidget(self.goto_lat_input)
         _goto_layout.addWidget(self.goto_lon_input)
+        _goto_layout.addWidget(self.goto_lat_input)
         _goto_layout.addWidget(_goto_btn)
 
         toolbar.addWidget(_goto_container)
@@ -1579,7 +1652,7 @@ class MainWindow(QMainWindow):
             
             # Robust native spacer to shift the logo leftwards without triggering Qt's stylesheet margin layout bugs
             _right_margin_spacer = _QWidget()
-            _right_margin_spacer.setFixedWidth(20)
+            _right_margin_spacer.setFixedWidth(50)
             toolbar.addWidget(_right_margin_spacer)
 
         return (

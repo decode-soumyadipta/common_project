@@ -617,20 +617,14 @@
         const plan = buildFlyThroughPlaybackPlan();
         if (!plan) return null;
         const state = getFlyThroughStateForProgress(normalized, plan);
-        if (!state) return null;
-        const easedProgress = Cesium.EasingFunction.QUADRATIC_IN_OUT(state.localProgress);
-        const dest = Cesium.Cartesian3.lerp(
-          state.startPos,
-          state.endPos,
-          easedProgress,
-          new Cesium.Cartesian3()
-        );
-        const carto = Cesium.Cartographic.fromCartesian(dest);
+        if (!state || !state.groundPos) return null;
+        const carto = Cesium.Cartographic.fromCartesian(state.groundPos);
         if (!carto) return null;
+        const heightOffset = Math.max(1.0, Math.min(2000.0, Number(flyThroughPlaybackHeightMeters) || 900.0));
         return {
           lon: Cesium.Math.toDegrees(carto.longitude),
           lat: Cesium.Math.toDegrees(carto.latitude),
-          height: carto.height
+          height: carto.height + heightOffset
         };
       },
       setComparatorMode: function (enabled) {

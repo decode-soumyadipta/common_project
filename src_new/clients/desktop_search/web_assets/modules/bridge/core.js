@@ -252,77 +252,110 @@
     }
 
     const speedFactor = Math.max(0.1, Math.min(5.0, Number(flyThroughSpeedMultiplier) || 1.0));
-    const segments = [];
-    let totalDurationMs = 0;
+    const distances = [0];
+    let totalDist = 0;
 
     for (let index = 0; index < flyThroughPoints.length - 1; index += 1) {
       const p1 = flyThroughPoints[index];
       const p2 = flyThroughPoints[index + 1];
       if (!p1 || !p2) {
+        distances.push(totalDist);
         continue;
       }
 
       const carto1 = Cesium.Cartographic.fromCartesian(p1);
       const carto2 = Cesium.Cartographic.fromCartesian(p2);
-      const heightOffset = Math.max(1.0, Math.min(2000.0, Number(flyThroughPlaybackHeightMeters) || 900.0));
-      const startPos = Cesium.Cartesian3.fromRadians(
-        carto1.longitude,
-        carto1.latitude,
-        carto1.height + heightOffset
-      );
-      const endPos = Cesium.Cartesian3.fromRadians(
-        carto2.longitude,
-        carto2.latitude,
-        carto2.height + heightOffset
-      );
-      const distance = Cesium.Cartesian3.distance(p1, p2);
-      const durationMs = Math.max(350, (distance / (18 * speedFactor)) * 1000);
-      segments.push({
-        startPos: startPos,
-        endPos: endPos,
-        heading: new Cesium.EllipsoidGeodesic(carto1, carto2).startHeading,
-        durationMs: durationMs,
-      });
-      totalDurationMs += durationMs;
+      const geodesic = new Cesium.EllipsoidGeodesic(carto1, carto2);
+      totalDist += geodesic.surfaceDistance;
+      distances.push(totalDist);
     }
 
-    return segments.length
-      ? { segments: segments, totalDurationMs: totalDurationMs }
-      : null;
+    // Generate normalized strictly increasing time parameters [0.0, 1.0]
+    const times = distances.map(function (d) {
+      return totalDist > 0 ? d / totalDist : 0.0;
+    });
+    for (let i = 1; i < times.length; i++) {
+      if (times[i] <= times[i - 1]) {
+        times[i] = times[i - 1] + 0.0001;
+      }
+    }
+    times[times.length - 1] = 1.0;
+
+    let spline = null;
+    try {
+      spline = new Cesium.CatmullRomSpline({
+        times: times,
+        points: flyThroughPoints.filter(Boolean),
+      });
+    } catch (e) {
+      log("error", "Failed to build CatmullRomSpline: " + e.message);
+      return null;
+    }
+
+    const totalDurationMs = Math.max(1000, (totalDist / (18 * speedFactor)) * 1000);
+
+    return {
+      spline: spline,
+      totalDurationMs: totalDurationMs,
+      totalDist: totalDist,
+    };
   }
 
   function getFlyThroughStateForProgress(progress, plan) {
     const normalized = Math.max(0, Math.min(1, Number(progress) || 0));
     const playbackPlan = plan || buildFlyThroughPlaybackPlan();
-    if (!playbackPlan || playbackPlan.segments.length === 0) {
+    if (!playbackPlan || !playbackPlan.spline) {
       return null;
     }
 
-    const totalDurationMs = Math.max(1, playbackPlan.totalDurationMs);
-    const targetMs = normalized * totalDurationMs;
-    let segmentStartMs = 0;
+    const spline = playbackPlan.spline;
+    const totalDurationMs = playbackPlan.totalDurationMs;
 
-    for (let index = 0; index < playbackPlan.segments.length; index += 1) {
-      const segment = playbackPlan.segments[index];
-      const segmentEndMs = segmentStartMs + segment.durationMs;
-      const isLastSegment = index === playbackPlan.segments.length - 1;
-      if (targetMs <= segmentEndMs || isLastSegment) {
-        const localProgress = segment.durationMs > 0
-          ? Math.max(0, Math.min(1, (targetMs - segmentStartMs) / segment.durationMs))
-          : 1.0;
-        return {
-          startPos: segment.startPos,
-          endPos: segment.endPos,
-          heading: segment.heading,
-          localProgress: localProgress,
-          progress: normalized,
-          totalDurationMs: totalDurationMs,
-        };
-      }
-      segmentStartMs = segmentEndMs;
+    let groundPos = null;
+    try {
+      groundPos = spline.evaluate(normalized);
+    } catch (e) {
+      log("error", "Spline evaluation failed: " + e.message);
+      return null;
     }
 
-    return null;
+    // Calculate heading using local direction vector at normalized time
+    const dt = 0.002;
+    const tMinus = Math.max(0, normalized - dt);
+    const tPlus = Math.min(1, normalized + dt);
+
+    const pMinus = spline.evaluate(tMinus);
+    const pPlus = spline.evaluate(tPlus);
+    const direction = Cesium.Cartesian3.subtract(pPlus, pMinus, new Cesium.Cartesian3());
+
+    let rawHeading = 0.0;
+    if (Cesium.Cartesian3.magnitude(direction) > 1e-4) {
+      const enuMatrix = Cesium.Transforms.eastNorthUpToFixedFrame(groundPos);
+      const east = Cesium.Matrix4.getColumn(enuMatrix, 0, new Cesium.Cartesian3());
+      const north = Cesium.Matrix4.getColumn(enuMatrix, 1, new Cesium.Cartesian3());
+      const localDirectionX = Cesium.Cartesian3.dot(direction, east);
+      const localDirectionY = Cesium.Cartesian3.dot(direction, north);
+
+      if (Math.abs(localDirectionX) > 1e-7 || Math.abs(localDirectionY) > 1e-7) {
+        rawHeading = Math.atan2(localDirectionX, localDirectionY);
+      } else {
+        rawHeading = window._flyThroughLastHeading !== undefined && window._flyThroughLastHeading !== null
+          ? window._flyThroughLastHeading
+          : 0.0;
+      }
+    } else {
+      rawHeading = window._flyThroughLastHeading !== undefined && window._flyThroughLastHeading !== null
+        ? window._flyThroughLastHeading
+        : 0.0;
+    }
+
+    return {
+      groundPos: groundPos,
+      rawHeading: rawHeading,
+      progress: normalized,
+      localProgress: normalized,
+      totalDurationMs: totalDurationMs,
+    };
   }
 
   function applyFlyThroughCameraState(state) {
@@ -330,56 +363,64 @@
       return;
     }
 
-    const easedProgress = Cesium.EasingFunction.QUADRATIC_IN_OUT(state.localProgress);
-    let destination = Cesium.Cartesian3.lerp(
-      state.startPos,
-      state.endPos,
-      easedProgress,
-      new Cesium.Cartesian3()
-    );
-
-    // Dynamic terrain height tracking & collision avoidance
-    const destinationCarto = Cesium.Cartographic.fromCartesian(destination);
-    if (destinationCarto) {
-      const terrainHeight = viewer.scene.globe.getHeight(destinationCarto);
-      const heightOffset = Math.max(1.0, Math.min(2000.0, Number(flyThroughPlaybackHeightMeters) || 900.0));
-      
-      let finalHeight = destinationCarto.height;
-      
-      if (Number.isFinite(terrainHeight)) {
-        const targetHeight = terrainHeight + heightOffset;
-        const safetyHeight = terrainHeight + 20.0; // Clear at least 20m above terrain
-        
-        if (window._flyThroughLastAdjustedHeight === undefined || window._flyThroughLastAdjustedHeight === null) {
-          window._flyThroughLastAdjustedHeight = targetHeight;
-        } else {
-          // Dynamic low-pass filter: ascend quickly to prevent terrain collisions, descend slowly for flight stability
-          const isAscending = targetHeight > window._flyThroughLastAdjustedHeight;
-          const alpha = isAscending ? 0.12 : 0.03;
-          
-          window._flyThroughLastAdjustedHeight = window._flyThroughLastAdjustedHeight * (1.0 - alpha) + targetHeight * alpha;
-        }
-        
-        // Enforce safety clearance
-        window._flyThroughLastAdjustedHeight = Math.max(window._flyThroughLastAdjustedHeight, safetyHeight);
-        finalHeight = window._flyThroughLastAdjustedHeight;
-      } else {
-        // Fallback to interpolated height, resetting cached height for new frames
-        window._flyThroughLastAdjustedHeight = null;
-      }
-      
-      destination = Cesium.Cartesian3.fromRadians(
-        destinationCarto.longitude,
-        destinationCarto.latitude,
-        finalHeight
-      );
+    const groundPos = state.groundPos;
+    const groundCarto = Cesium.Cartographic.fromCartesian(groundPos);
+    if (!groundCarto) {
+      return;
     }
+
+    const terrainHeight = viewer.scene.globe.getHeight(groundCarto);
+    const heightOffset = Math.max(1.0, Math.min(2000.0, Number(flyThroughPlaybackHeightMeters) || 900.0));
+
+    let finalHeight = groundCarto.height + heightOffset;
+    const safetyHeight = (Number.isFinite(terrainHeight) ? terrainHeight : 0.0) + 20.0; // Clear at least 20m above terrain
+
+    if (Number.isFinite(terrainHeight)) {
+      const targetHeight = terrainHeight + heightOffset;
+      if (window._flyThroughLastAdjustedHeight === undefined || window._flyThroughLastAdjustedHeight === null) {
+        window._flyThroughLastAdjustedHeight = targetHeight;
+      } else {
+        // Dynamic low-pass filter: ascend quickly to prevent terrain collisions, descend slowly for flight stability
+        const isAscending = targetHeight > window._flyThroughLastAdjustedHeight;
+        const alpha = isAscending ? 0.12 : 0.03;
+        window._flyThroughLastAdjustedHeight = window._flyThroughLastAdjustedHeight * (1.0 - alpha) + targetHeight * alpha;
+      }
+      finalHeight = Math.max(window._flyThroughLastAdjustedHeight, safetyHeight);
+    } else {
+      window._flyThroughLastAdjustedHeight = null;
+    }
+
+    // Smooth heading with wrap-around interpolation
+    const currentHeading = state.rawHeading;
+    if (window._flyThroughLastHeading === undefined || window._flyThroughLastHeading === null) {
+      window._flyThroughLastHeading = currentHeading;
+    } else {
+      let diff = currentHeading - window._flyThroughLastHeading;
+      diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+      const headingAlpha = 0.10; // smooth turnaround factor
+      window._flyThroughLastHeading = window._flyThroughLastHeading + diff * headingAlpha;
+    }
+
+    // Smooth pitch with low-pass filter
+    const targetPitch = Cesium.Math.toRadians(flyThroughPlaybackPitchDegrees);
+    if (window._flyThroughLastPitch === undefined || window._flyThroughLastPitch === null) {
+      window._flyThroughLastPitch = targetPitch;
+    } else {
+      const pitchAlpha = 0.10; // smooth pitch factor
+      window._flyThroughLastPitch = window._flyThroughLastPitch * (1.0 - pitchAlpha) + targetPitch * pitchAlpha;
+    }
+
+    const destination = Cesium.Cartesian3.fromRadians(
+      groundCarto.longitude,
+      groundCarto.latitude,
+      finalHeight
+    );
 
     viewer.camera.setView({
       destination: destination,
       orientation: {
-        heading: state.heading,
-        pitch: Cesium.Math.toRadians(flyThroughPlaybackPitchDegrees),
+        heading: window._flyThroughLastHeading,
+        pitch: window._flyThroughLastPitch,
         roll: 0.0,
       },
     });
@@ -493,6 +534,8 @@
     flyThroughPlaybackProgress = 0.0;
     flyThroughPlaybackLastTimestamp = 0;
     window._flyThroughLastAdjustedHeight = null;
+    window._flyThroughLastHeading = null;
+    window._flyThroughLastPitch = null;
 
     if (!flyThroughOriginalView) {
       flyThroughOriginalView = {
@@ -529,6 +572,8 @@
     flyThroughIsPlaying = false;
     cancelFlyThroughPlaybackFrame();
     window._flyThroughLastAdjustedHeight = null;
+    window._flyThroughLastHeading = null;
+    window._flyThroughLastPitch = null;
     notifyFlyThroughPlaybackState("paused");
     setStatus("Fly through paused.");
   }
@@ -562,6 +607,8 @@
     flyThroughPlaybackLastTimestamp = 0;
     flyThroughStopRequested = false;
     window._flyThroughLastAdjustedHeight = null;
+    window._flyThroughLastHeading = null;
+    window._flyThroughLastPitch = null;
 
     const restoreView = function () {
       if (viewer && viewer.scene && viewer.scene.screenSpaceCameraController) {
@@ -659,10 +706,10 @@
         return lifted;
       },
        {
-         width: 4.5,
+         width: 1.2,
          color: "#00e5ff",
          alpha: 1.0,
-         clampToGround: false,
+         clampToGround: true,
          classificationType: Cesium.ClassificationType.BOTH,
        }
     );
@@ -694,11 +741,11 @@
     flyThroughPathEntity = viewer.entities.add({
       polyline: {
         positions: flyThroughPoints.map(liftFlyThroughPoint).filter(Boolean),
-        width: 4.5,
+        width: 1.2,
         material: Cesium.Color.fromCssColorString("#00e5ff"),
         depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff"),
         arcType: Cesium.ArcType.GEODESIC,
-        clampToGround: false,
+        clampToGround: true,
         classificationType: Cesium.ClassificationType.BOTH,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
       }
@@ -1830,22 +1877,12 @@
     targetViewer.__comparatorPrimaryLayer = null;
     targetViewer.__comparatorHillshadeLayer = null;
 
-    const localBackgroundProvider = OfflineGISUtils.createIntelligentOsmProvider(Cesium, {
-      url: `${LOCAL_SATELLITE_TILE_ROOT}/{z}/{x}/{y}.png`,
-      tilingScheme: new Cesium.WebMercatorTilingScheme(),
-      rectangle: Cesium.Rectangle.fromDegrees(60.0, 5.0, 105.0, 55.0),
-      credit: new Cesium.Credit("© OpenStreetMap contributors", false),
-      enablePickFeatures: false,
-      tileWidth: 256,
-      tileHeight: 256,
-    });
-    // Suppress tile error logging for comparator background — 404s for missing tiles are expected
-    localBackgroundProvider.errorEvent.addEventListener(function (error) {
-      error.retry = false;  // don't retry, just skip silently
+    const localBackgroundProvider = new Cesium.TileMapServiceImageryProvider({
+      url: Cesium.buildModuleUrl("Assets/Textures/NaturalEarthII"),
     });
     const localBackgroundLayer = targetViewer.imageryLayers.addImageryProvider(localBackgroundProvider);
     localBackgroundLayer.alpha = 1.0;
-    localBackgroundLayer.show = false;
+    localBackgroundLayer.show = true;
     targetViewer.__defaultEarthLayer = localBackgroundLayer;
 
     if (!targetViewer.__osmBasemapLayer) {

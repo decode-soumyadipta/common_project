@@ -10,6 +10,7 @@ from qtpy.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QPushButton,
     QSlider,
     QVBoxLayout,
     QWidget,
@@ -25,6 +26,8 @@ class LayerCompositorOverlay(QWidget):
     def __init__(self, parent: QWidget, controller: DesktopController):
         super().__init__(parent, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
         self.controller = controller
+        self.active_picker = None
+        self._saved_visibility = None
         self.setObjectName("compositorOverlay")
         self.setStyleSheet(
             """
@@ -141,11 +144,35 @@ class LayerCompositorOverlay(QWidget):
         row.addWidget(QLabel("Layer:"))
 
         combo = QComboBox(card)
-        combo.setMinimumWidth(170)
-        combo.setMaximumWidth(190)
+        combo.setMinimumWidth(110)
+        combo.setMaximumWidth(130)
         for layer in layers:
             combo.addItem(str(layer.get("label") or "Layer"), layer.get("path"))
         row.addWidget(combo, 0)
+
+        pick_btn = QPushButton("Pick", card)
+        pick_btn.setCheckable(True)
+        pick_btn.setFixedWidth(50)
+        pick_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f1f5f9;
+                border: 1px solid #c9d3df;
+                border-radius: 4px;
+                padding: 2px;
+                font-size: 11px;
+                font-weight: bold;
+                color: #475569;
+            }
+            QPushButton:hover {
+                background-color: #e2e8f0;
+            }
+            QPushButton:checked {
+                background-color: #ffb300;
+                color: #1a2a3a;
+                border: 1px solid #ff9100;
+            }
+        """)
+        row.addWidget(pick_btn, 0)
 
         card_layout.addLayout(row)
 
@@ -170,13 +197,17 @@ class LayerCompositorOverlay(QWidget):
             "combo": combo,
             "slider": slider,
             "value_label": value_label,
+            "pick_btn": pick_btn,
         }
 
         combo.currentIndexChanged.connect(
-            lambda _index, kind_name=kind: self._sync_kind_slider(kind_name)
+            lambda _index, kind_name=kind: self._on_combo_index_changed(kind_name)
         )
         slider.valueChanged.connect(
             lambda value, kind_name=kind: self._on_kind_slider_changed(kind_name, value)
+        )
+        pick_btn.clicked.connect(
+            lambda checked, kind_name=kind: self._on_pick_btn_clicked(kind_name, checked)
         )
 
         if layers:
@@ -185,6 +216,7 @@ class LayerCompositorOverlay(QWidget):
             combo.setEnabled(False)
             slider.setEnabled(False)
             value_label.setText("n/a")
+            pick_btn.setEnabled(False)
 
         return card
 
@@ -255,6 +287,148 @@ class LayerCompositorOverlay(QWidget):
         row_layout.addWidget(kind_label, 0)
 
         return row
+
+    def _on_combo_index_changed(self, kind: str) -> None:
+        self._sync_kind_slider(kind)
+        self.focus_and_show_only_selected()
+
+    def _on_pick_btn_clicked(self, kind: str, checked: bool) -> None:
+        if checked:
+            # Uncheck the other picker
+            other_kind = "dem" if kind == "imagery" else "imagery"
+            other_ctrl = self._kind_controls.get(other_kind)
+            if other_ctrl and "pick_btn" in other_ctrl:
+                other_ctrl["pick_btn"].setChecked(False)
+            
+            self.active_picker = kind
+            
+            # Save visibility if not already saved
+            if self._saved_visibility is None:
+                self._saved_visibility = {}
+                for path in self.controller._search_result_assets_by_path:
+                    self._saved_visibility[path] = bool(self.controller._search_layer_visibility.get(path, False))
+            
+            # Show ONLY layers of the active picker kind on the map
+            for path, asset in self.controller._search_result_assets_by_path.items():
+                is_dem = self.controller._is_dem_asset(asset)
+                asset_kind = "dem" if is_dem else "imagery"
+                visible = (asset_kind == kind)
+                self.controller._run_js_call("setLayerVisibility", path, visible)
+                
+            # Set cursor to native cross cursor on the map viewport
+            self.controller._set_measurement_cursor_enabled(True)
+            self.controller.panel.log(f"Compositor: Click on an {kind} asset on the map to pick it.")
+        else:
+            if self.active_picker == kind:
+                self.active_picker = None
+                self.controller._set_measurement_cursor_enabled(False)
+                # Restore original visibility
+                if self._saved_visibility is not None:
+                    for path, visible in self._saved_visibility.items():
+                        self.controller._run_js_call("setLayerVisibility", path, visible)
+                    self._saved_visibility = None
+
+    def focus_and_show_only_selected(self) -> None:
+        imagery_ctrl = self._kind_controls.get("imagery")
+        dem_ctrl = self._kind_controls.get("dem")
+        if not imagery_ctrl or not dem_ctrl:
+            return
+        
+        img_combo = imagery_ctrl.get("combo")
+        dem_combo = dem_ctrl.get("combo")
+        if not img_combo or not dem_combo:
+            return
+            
+        img_path = img_combo.currentData()
+        dem_path = dem_combo.currentData()
+        if not img_path or not dem_path:
+            return
+            
+        # Set only these two visible on the map, hide everything else
+        for path in list(self.controller._search_layer_visibility.keys()):
+            visible = (path == img_path or path == dem_path)
+            self.controller._search_layer_visibility[path] = visible
+            self.controller._run_js_call("setLayerVisibility", path, visible)
+            
+        # Update the search results UI list checked items
+        self.controller.panel.update_search_results(
+            list(self.controller._search_result_assets_by_path.values()),
+            self.controller._search_layer_visibility,
+        )
+        
+        # Calculate union of bounds and zoom to fit
+        img_asset = self.controller._search_result_assets_by_path.get(img_path)
+        dem_asset = self.controller._search_result_assets_by_path.get(dem_path)
+        
+        img_bounds = self.controller._asset_bounds(img_asset) if img_asset else None
+        dem_bounds = self.controller._asset_bounds(dem_asset) if dem_asset else None
+        
+        union_bounds = None
+        if img_bounds and dem_bounds:
+            union_bounds = {
+                "west": min(img_bounds["west"], dem_bounds["west"]),
+                "south": min(img_bounds["south"], dem_bounds["south"]),
+                "east": max(img_bounds["east"], dem_bounds["east"]),
+                "north": max(img_bounds["north"], dem_bounds["north"]),
+            }
+        elif img_bounds:
+            union_bounds = img_bounds
+        elif dem_bounds:
+            union_bounds = dem_bounds
+            
+        if union_bounds:
+            self.controller._run_js_call(
+                "instantFocusBounds",
+                union_bounds["west"],
+                union_bounds["south"],
+                union_bounds["east"],
+                union_bounds["north"],
+            )
+            self.controller.panel.log("Focused and draped selected imagery and DEM assets.")
+
+    def handle_map_click(self, lon: float, lat: float) -> bool:
+        if not self.active_picker:
+            return False
+            
+        # Search through assets to find one of active_picker kind that covers (lon, lat)
+        target_path = None
+        for path, asset in self.controller._search_result_assets_by_path.items():
+            is_dem = self.controller._is_dem_asset(asset)
+            asset_kind = "dem" if is_dem else "imagery"
+            if asset_kind != self.active_picker:
+                continue
+            bounds = self.controller._asset_bounds(asset)
+            if bounds:
+                west = bounds.get("west", 0.0)
+                south = bounds.get("south", 0.0)
+                east = bounds.get("east", 0.0)
+                north = bounds.get("north", 0.0)
+                if west <= lon <= east and south <= lat <= north:
+                    target_path = path
+                    break
+                    
+        if target_path:
+            # Dropdown sync: Select in combo box
+            controls = self._kind_controls.get(self.active_picker)
+            if controls and "combo" in controls:
+                combo = controls["combo"]
+                idx = combo.findData(target_path)
+                if idx >= 0:
+                    combo.setCurrentIndex(idx)
+                    
+            # Turn off picker
+            btn = controls.get("pick_btn")
+            if btn:
+                btn.setChecked(False)
+                
+            self.active_picker = None
+            self.controller._set_measurement_cursor_enabled(False)
+            
+            # Apply visible layers for selected ones
+            self.focus_and_show_only_selected()
+            return True
+            
+        return False
 
     def apply_state(self, _state_dict: dict) -> None:
         """Apply saved state to the layer compositor overlay."""

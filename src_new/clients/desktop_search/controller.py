@@ -106,6 +106,7 @@ class DesktopController(QObject):
             str, bool
         ] = {}  # Track last synced state to avoid unnecessary JS calls
         self._loaded_search_layer_keys: set[str] = set()
+        self._comparator_picker_active = False
         self._active_dem_search_layer_key: str | None = None
         self._last_visible_focus_signature: tuple[float, float, float, float] | None = (
             None
@@ -936,7 +937,67 @@ class DesktopController(QObject):
 
 
     def on_map_click(self, lon: float, lat: float) -> None:
+        window = self.panel.window()
+        if hasattr(window, "compositor_overlay") and window.compositor_overlay:
+            if window.compositor_overlay.handle_map_click(lon, lat):
+                return
+
+        if getattr(self, "_comparator_picker_active", False):
+            if self._handle_comparator_map_click(lon, lat):
+                return
+
         self._event.on_map_click(lon, lat)
+
+    def _handle_comparator_map_click(self, lon: float, lat: float) -> bool:
+        from qtpy.QtCore import Qt
+        window = self.panel.window()
+        if not hasattr(window, "_comparator_popup") or not window._comparator_popup:
+            return False
+        popup = window._comparator_popup
+        if not popup.isVisible() or not getattr(popup, "pick_btn", None) or not popup.pick_btn.isChecked():
+            return False
+            
+        target_path = None
+        for path, asset in self._search_result_assets_by_path.items():
+            bounds = self._asset_bounds(asset)
+            if bounds:
+                west = bounds.get("west", 0.0)
+                south = bounds.get("south", 0.0)
+                east = bounds.get("east", 0.0)
+                north = bounds.get("north", 0.0)
+                if west <= lon <= east and south <= lat <= north:
+                    target_path = path
+                    break
+                    
+        if target_path:
+            layer_list = getattr(popup, "layer_list", None)
+            if layer_list:
+                target_item = None
+                for i in range(layer_list.count()):
+                    item = layer_list.item(i)
+                    if item.data(Qt.ItemDataRole.UserRole) == target_path:
+                        target_item = item
+                        break
+                if target_item:
+                    if target_item.checkState() != Qt.CheckState.Checked:
+                        checked_items = [
+                            layer_list.item(i)
+                            for i in range(layer_list.count())
+                            if layer_list.item(i).checkState() == Qt.CheckState.Checked
+                        ]
+                        if len(checked_items) >= 2:
+                            checked_items[0].setCheckState(Qt.CheckState.Unchecked)
+                        target_item.setCheckState(Qt.CheckState.Checked)
+                        
+                    checked_count = sum(
+                        1
+                        for i in range(layer_list.count())
+                        if layer_list.item(i).checkState() == Qt.CheckState.Checked
+                    )
+                    if checked_count == 2:
+                        popup.pick_btn.setChecked(False)
+            return True
+        return False
 
     def on_annotations_sync(self, payload_json: str) -> None:
         """Receive continuous real-time annotations synchronization from JavaScript."""
