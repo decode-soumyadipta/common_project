@@ -1,17 +1,26 @@
 name: offline-3d-gis
 channels:
   - conda-forge
+  - defaults
 dependencies:
-  - python=3.11
+  - python=3.11           # Must be 3.11 — PyQtWebEngine wheel is only on 3.11
   - pip
-  - gdal>=3.10.3
-  - libgdal-jp2openjpeg  # Explicitly required for raw .j2k codestream support
-  - rasterio=1.4.3
-  - pyproj
-  - shapely=2.0.7
-  - scipy
-  - numpy
+
+  # ── Geospatial (conda-forge gives native GDAL with full driver support) ──
+  - gdal>=3.10.3          # Core raster I/O; also installs osgeo Python bindings
+  - libgdal-jp2openjpeg   # Raw .j2k codestream support (mandatory for J2K ingestion)
+  - rasterio=1.4.3        # COG/GeoTIFF reading and projection
+  - pyproj                # Coordinate reference system transformations
+  - shapely=2.0.7         # Geometry operations
+  - scipy                 # Elevation profile interpolation, terrain analysis
+  - numpy                 # Numerical arrays
+
+  # ── pip packages (everything not available on conda-forge for py3.11) ──
   - pip:
-      - -e .[desktop,geo,dev]
-      - opencv-python>=4.13,<5.0   # Video export and image processing
-      - pillow>=12.0,<13.0          # Image I/O support for video frames
+      - -e .[desktop,geo,dev]   # Installs core + optional extras from pyproject.toml
+                                 # Includes: fastapi, uvicorn, httpx, sqlalchemy,
+                                 #           pydantic-settings, titiler, psycopg,
+                                 #           python-multipart, python-dotenv,
+                                 #           qtpy, PyQt5, PyQtWebEngine, qtawesome,
+                                 #           rasterio (geo extra), pyproj, shapely,
+                                 #           scipy, pysolar, opencv-python, pillow
