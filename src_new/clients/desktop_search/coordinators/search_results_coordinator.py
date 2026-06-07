@@ -157,13 +157,6 @@ class SearchResultsCoordinator:
         if ordered_keys:
             c._run_js_call("enforceLayerDisplayOrder", ordered_keys)
 
-        # FIX 2 — Fly-to: single controlled fly-to AFTER layers+order are set, so the globe is never blank during flight.
-        c._focus_visible_search_assets_with_enhanced_behavior(
-            force=not had_visible_assets,
-            is_first_search=not had_visible_assets,
-            asset_count=len(assets),
-        )
-
         c.panel.update_search_results(
             list(c._search_result_assets_by_path.values()),
             c._search_layer_visibility,

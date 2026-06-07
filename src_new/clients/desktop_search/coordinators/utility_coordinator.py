@@ -142,6 +142,7 @@ class UtilityCoordinator:
             c._layer_loading_timeout_timer.start(c._layer_loading_timeout_ms)
         else:
             c._layer_loading_timeout_timer.stop()
+            c._layer_loading_timeout_ms = 30000
         c.panel.set_layer_loading(active, message)
         from qtpy.QtWidgets import QApplication
         QApplication.processEvents()

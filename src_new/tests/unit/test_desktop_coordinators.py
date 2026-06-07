@@ -395,5 +395,82 @@ def test_export_dialog_thread_retention(monkeypatch):
     assert mock_thread in dialog.finished_threads
 
 
+def test_layer_coordinator_toggle_search_results_visibility_batch():
+    from src_new.clients.desktop_search.coordinators.layer_coordinator import LayerCoordinator
+
+    mock_controller = MagicMock()
+    mock_controller._search_result_assets_by_path = {
+        "/path/1": {"file_name": "asset1.tif", "file_path": "/path/1"},
+        "/path/2": {"file_name": "asset2.tif", "file_path": "/path/2"}
+    }
+    mock_controller._search_layer_visibility = {
+        "/path/1": False,
+        "/path/2": False
+    }
+    mock_controller._loaded_search_layer_keys = set()
+    mock_controller._visibility_sync_in_progress = False
+    mock_controller._event_driven_enabled = True
+    mock_controller._is_dem_asset.return_value = False
+
+    coordinator = LayerCoordinator(mock_controller)
+
+    # Call batch visibility toggle to make all visible
+    coordinator.toggle_search_results_visibility_batch(["/path/1", "/path/2"], True)
+
+    # Assert visibility state updated
+    assert mock_controller._search_layer_visibility["/path/1"] is True
+    assert mock_controller._search_layer_visibility["/path/2"] is True
+    # Verify single-pass visibility sync was called
+    mock_controller._sync_search_visibility_layers_event_driven.assert_called_once()
+
+
+def test_control_panel_search_calculate_all_visible_state():
+    from src_new.clients.desktop_search.control_panel_search import ControlPanelSearchMixin
+    
+    class DummySearchPanel(ControlPanelSearchMixin):
+        def __init__(self):
+            pass
+            
+    panel = DummySearchPanel()
+    
+    # Case 1: No assets
+    assert panel._calculate_all_visible_state([], {}) is False
+    
+    # Case 2: Only imagery, all visible
+    assets = [
+        {"file_path": "/path/1", "kind": "image"},
+        {"file_path": "/path/2", "kind": "image"}
+    ]
+    vis_map = {"/path/1": True, "/path/2": True}
+    assert panel._calculate_all_visible_state(assets, vis_map) is True
+    
+    # Case 3: Only imagery, some hidden
+    vis_map = {"/path/1": True, "/path/2": False}
+    assert panel._calculate_all_visible_state(assets, vis_map) is False
+    
+    # Case 4: Multiple DEMs, one visible (due to DEM exclusivity)
+    dem_assets = [
+        {"file_path": "/path/dem1", "kind": "dem"},
+        {"file_path": "/path/dem2", "kind": "dem"}
+    ]
+    vis_map = {"/path/dem1": True, "/path/dem2": False}
+    assert panel._calculate_all_visible_state(dem_assets, vis_map) is True
+    
+    # Case 5: Multiple DEMs, all hidden
+    vis_map = {"/path/dem1": False, "/path/dem2": False}
+    assert panel._calculate_all_visible_state(dem_assets, vis_map) is False
+    
+    # Case 6: Mixed imagery and DEMs, imagery all visible and one DEM visible
+    mixed_assets = assets + dem_assets
+    vis_map = {"/path/1": True, "/path/2": True, "/path/dem1": True, "/path/dem2": False}
+    assert panel._calculate_all_visible_state(mixed_assets, vis_map) is True
+    
+    # Case 7: Mixed imagery and DEMs, imagery not all visible
+    vis_map = {"/path/1": True, "/path/2": False, "/path/dem1": True, "/path/dem2": False}
+    assert panel._calculate_all_visible_state(mixed_assets, vis_map) is False
+
+
+
+
 
 

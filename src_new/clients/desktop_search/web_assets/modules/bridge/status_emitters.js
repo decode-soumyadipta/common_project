@@ -411,11 +411,22 @@
       // Real-time progress bar — driven by native tile queue length
       // We process this regardless of isInteracting to ensure the bar always reflects reality.
       if (queueLength > 0) {
+        if (!_tileLoadingActive) {
+          _tileLoadingActive = true;
+          window._lastLoadingPercent = 0;
+          _tileQueuePeak = queueLength;
+        }
         _tileQueuePeak = Math.max(_tileQueuePeak, queueLength);
         const loaded = _tileQueuePeak - queueLength;
-        const percent = _tileQueuePeak > 0 ? Math.min(95, Math.round((loaded / _tileQueuePeak) * 100)) : 10;
+        let percent = _tileQueuePeak > 0 ? Math.min(95, Math.round((loaded / _tileQueuePeak) * 100)) : 10;
+        
+        if (typeof window._lastLoadingPercent === 'number') {
+          percent = Math.max(window._lastLoadingPercent, percent);
+        }
+        window._lastLoadingPercent = percent;
+
         emitLoadingProgress(percent, "Loading tiles");
-        _tileLoadingActive = true;
+        
         // Cancel any pending drain timer — queue is still active
         if (_tileQueuePeak > 0 && typeof _tileDrainTimer !== 'undefined' && _tileDrainTimer) {
           clearTimeout(_tileDrainTimer);
@@ -431,24 +442,24 @@
             emitLoadingProgress(100, "Complete");
             _tileLoadingActive = false;
             _tileQueuePeak = 0;
+            window._lastLoadingPercent = 0;
           }, 200);
+        }
+      }
+
+      // Terrain exaggeration persistence (enforced at all times to prevent flat-lining/popping during tile loads or interaction)
+      if (typeof activeDemContext !== "undefined" && activeDemContext && activeDemContext.visible !== false) {
+        const target = Math.max(0.1, demVisual.exaggeration);
+        if (Math.abs(viewer.scene.globe.terrainExaggeration - target) > 0.001) {
+          viewer.scene.globe.terrainExaggeration = target;
+        }
+        if (typeof viewer.scene.verticalExaggeration !== "undefined" && Math.abs(viewer.scene.verticalExaggeration - target) > 0.001) {
+          viewer.scene.verticalExaggeration = target;
         }
       }
 
       if (isInteracting) {
         return;
-      }
-
-      // Terrain exaggeration persistence (only when idle to avoid jitter)
-      if (queueLength === 0 && activeDemContext && activeDemContext.visible !== false) {
-        const target = Math.max(0.1, demVisual.exaggeration);
-        if (Math.abs(viewer.scene.globe.terrainExaggeration - target) > 0.001) {
-          viewer.scene.globe.terrainExaggeration = target;
-        }
-        // Also persist verticalExaggeration for Cesium 1.90+
-        if (typeof viewer.scene.verticalExaggeration !== "undefined" && Math.abs(viewer.scene.verticalExaggeration - target) > 0.001) {
-          viewer.scene.verticalExaggeration = target;
-        }
       }
     });
     const compassEl = document.getElementById("compassWidget");

@@ -564,6 +564,9 @@ class DesktopController(QObject):
     def toggle_search_result_visibility(self, file_path: str, visible: bool) -> None:
         self._layer.toggle_search_result_visibility(file_path, visible)
 
+    def toggle_search_results_visibility_batch(self, file_paths: list[str], visible: bool) -> None:
+        self._layer.toggle_search_results_visibility_batch(file_paths, visible)
+
     def _sync_search_visibility_layers(self) -> None:
         """Sync layer visibility between UI and globe with debug logging - optimized to only update changed layers."""
         self._sync_focus.sync_search_visibility_layers()

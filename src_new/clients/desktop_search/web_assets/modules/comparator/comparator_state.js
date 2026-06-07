@@ -5,7 +5,7 @@
   function createPaneVisualState(imageryDefaults, demDefaults) {
     const brightness = Number(imageryDefaults && imageryDefaults.brightness) || 1.0;
     const contrast = Number(imageryDefaults && imageryDefaults.contrast) || 1.0;
-    const exaggeration = Number(demDefaults && demDefaults.exaggeration) || 1.0;
+    const exaggeration = Number(demDefaults && demDefaults.exaggeration) || 0.6;
     const hillshadeAlpha = Number(demDefaults && demDefaults.hillshadeAlpha) || 0.0;
 
     return {

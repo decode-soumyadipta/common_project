@@ -11,6 +11,7 @@ from qtpy.QtWidgets import (
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QWidget,
 )
 
@@ -25,6 +26,31 @@ class ControlPanelSearchMixin:
             file_path = self.search_results_table.item(row, 1).data(Qt.ItemDataRole.UserRole)
             if file_path:
                 self.asset_focus_requested.emit(file_path)
+
+    def _calculate_all_visible_state(self, assets: list[dict], visibility_map: dict[str, bool]) -> bool:
+        if not assets:
+            return False
+        has_imagery = False
+        all_imagery_visible = True
+        has_dem = False
+        any_dem_visible = False
+        for asset in assets:
+            path = str(asset.get("file_path") or "").replace("\\", "/")
+            kind = str(asset.get("kind") or "").lower()
+            is_visible = visibility_map.get(path, False)
+            if kind == "dem":
+                has_dem = True
+                if is_visible:
+                    any_dem_visible = True
+            else:
+                has_imagery = True
+                if not is_visible:
+                    all_imagery_visible = False
+        if has_imagery and not all_imagery_visible:
+            return False
+        if has_dem and not any_dem_visible:
+            return False
+        return True
 
     def update_search_results(
         self, assets: list[dict], visibility_by_path: dict[str, bool] | None = None
@@ -119,7 +145,7 @@ class ControlPanelSearchMixin:
                     btn = container.findChild(QPushButton)
                     if btn:
                         btn.blockSignals(True)
-                        btn.setText("👁" if is_visible else "👁‍🗨")
+                        btn.setText("👁" if is_visible else "")
                         btn.setToolTip("Hide from map" if is_visible else "Show on map")
                         btn.setProperty("is_visible", is_visible)
                         btn.blockSignals(False)
@@ -127,6 +153,12 @@ class ControlPanelSearchMixin:
             for path in self._layer_order_registry:
                 if path in visibility_map:
                     self._layer_order_registry[path]["is_visible"] = visibility_map[path]
+
+            # Update header show_all_btn state
+            all_visible = self._calculate_all_visible_state(sorted_assets, visibility_map)
+            self._show_all_visible_state = all_visible
+            self.show_all_btn.setText("👁" if all_visible else "○")
+            self.show_all_btn.setToolTip("Hide all results from map" if all_visible else "Show all results on map")
             return
 
         self.search_results_table.setRowCount(0)
@@ -182,8 +214,8 @@ class ControlPanelSearchMixin:
 
             # Create visibility toggle button with eye icons
             toggle_button = QPushButton(
-                "👁" if is_visible else "👁‍🗨"
-            )  # Eye / Eye with speech bubble (crossed)
+                "👁" if is_visible else ""
+            )  # Eye / Blank (hidden)
             toggle_button.setObjectName("searchVisibilityToggle")
             toggle_button.setToolTip("Hide from map" if is_visible else "Show on map")
             toggle_button.setFixedSize(32, 24)
@@ -224,7 +256,7 @@ class ControlPanelSearchMixin:
                 )  # Store normalized path
 
                 _logger.debug(
-                    f"  Button created: text={'👁' if is_visible else '👁‍🗨'}, is_visible={is_visible}, path={normalized_path}"
+                    f"  Button created: text={'👁' if is_visible else ''}, is_visible={is_visible}, path={normalized_path}"
                 )
 
                 def make_toggle_handler(btn, path):
@@ -236,17 +268,37 @@ class ControlPanelSearchMixin:
                         _logger.debug(f"  current_visible: {current_visible}")
                         _logger.debug(f"  new_visible: {new_visible}")
                         # Update button immediately for responsive feel
-                        btn.setText("👁" if new_visible else "👁‍🗨")
+                        btn.setText("👁" if new_visible else "")
                         btn.setToolTip(
                             "Hide from map" if new_visible else "Show on map"
                         )
                         btn.setProperty("is_visible", new_visible)
-                        _logger.debug(f"  Button updated: text={'👁' if new_visible else '👁‍🗨'}")
+                        _logger.debug(f"  Button updated: text={'👁' if new_visible else ''}")
                         # Emit signal to update map
                         _logger.debug(
                             f"  Emitting signal: search_result_visibility_toggled({path}, {new_visible})"
                         )
                         self.search_result_visibility_toggled.emit(path, new_visible)
+
+                        # Update header show_all_btn state immediately
+                        temp_vis_map = {}
+                        table = self.search_results_table
+                        temp_assets = []
+                        for r in range(table.rowCount()):
+                            row_container = table.cellWidget(r, 4)
+                            if row_container:
+                                row_btn = row_container.findChild(QPushButton)
+                                if row_btn:
+                                    row_path = row_btn.property("file_path")
+                                    row_is_visible = new_visible if row_path == path else bool(row_btn.property("is_visible"))
+                                    temp_vis_map[row_path] = row_is_visible
+                                    row_kind = table.item(r, 2).text().lower()
+                                    temp_assets.append({"file_path": row_path, "kind": row_kind})
+                                    
+                        all_visible = self._calculate_all_visible_state(temp_assets, temp_vis_map)
+                        self._show_all_visible_state = all_visible
+                        self.show_all_btn.setText("👁" if all_visible else "○")
+                        self.show_all_btn.setToolTip("Hide all results from map" if all_visible else "Show all results on map")
 
                     return handler
 
@@ -365,6 +417,13 @@ class ControlPanelSearchMixin:
             )
 
         # Don't enable sorting - it conflicts with drag-and-drop self.search_results_table.setSortingEnabled(True)
+
+        # Update header show_all_btn state
+        all_visible = self._calculate_all_visible_state(sorted_assets, visibility_map)
+        self._show_all_visible_state = all_visible
+        self.show_all_btn.setText("👁" if all_visible else "○")
+        self.show_all_btn.setToolTip("Hide all results from map" if all_visible else "Show all results on map")
+
         _logger.debug(
             f"\nDEBUG: Search results table populated with {self.search_results_table.rowCount()} rows"
         )
@@ -395,7 +454,7 @@ class ControlPanelSearchMixin:
             )
             self.vector_layers_table.setItem(row, 1, source_item)
 
-            visibility_button = QPushButton("👁" if is_visible else "👁‍🗨")
+            visibility_button = QPushButton("👁" if is_visible else "")
             visibility_button.setObjectName("searchVisibilityToggle")
             visibility_button.setToolTip(
                 "Hide from map" if is_visible else "Show on map"
@@ -408,7 +467,7 @@ class ControlPanelSearchMixin:
                 def handler():
                     current_visible = btn.property("is_visible")
                     new_visible = not current_visible
-                    btn.setText("👁" if new_visible else "👁‍🗨")
+                    btn.setText("👁" if new_visible else "")
                     btn.setToolTip(
                         "Hide from map" if new_visible else "Show on map"
                     )
@@ -465,11 +524,87 @@ class ControlPanelSearchMixin:
         self.search_results_table.setMaximumHeight(total_height)
 
     def _ensure_search_results_header(self) -> None:
-        labels = ["⋮⋮", "File", "Kind", "CRS", "View", "Delete"]
+        labels = ["⋮⋮", "File", "Kind", "CRS", "", "Delete"]
         if self.search_results_table.columnCount() != len(labels):
             self.search_results_table.setColumnCount(len(labels))
         self.search_results_table.setHorizontalHeaderLabels(labels)
         self.search_results_table.horizontalHeader().setVisible(True)
+
+    def _setup_show_all_button(self) -> None:
+        header = self.search_results_table.horizontalHeader()
+        self.show_all_btn = QToolButton(header)
+        self.show_all_btn.setText("○")
+        self.show_all_btn.setToolTip("Show all results on map")
+        self.show_all_btn.setFixedSize(20, 20)
+        self.show_all_btn.setStyleSheet(
+            """
+            QToolButton {
+                background: #f0f0f0;
+                border: 1px solid #0066cc;
+                border-radius: 3px;
+                color: #0066cc;
+                font-weight: bold;
+                padding: 0px;
+            }
+            QToolButton:hover {
+                background: #e0f0ff;
+            }
+            QToolButton:pressed {
+                background: #cce5ff;
+            }
+            """
+        )
+        
+        self._show_all_visible_state = False
+        self.show_all_btn.clicked.connect(self._on_show_all_clicked)
+        
+        header.geometriesChanged.connect(self._update_show_all_button_geometry)
+        header.sectionResized.connect(lambda idx, old, new: self._update_show_all_button_geometry())
+        self._update_show_all_button_geometry()
+
+    def _update_show_all_button_geometry(self) -> None:
+        if not hasattr(self, "show_all_btn") or self.show_all_btn is None:
+            return
+        header = self.search_results_table.horizontalHeader()
+        col_idx = 4
+        if col_idx >= header.count():
+            return
+            
+        x = header.sectionPosition(col_idx)
+        w = header.sectionSize(col_idx)
+        h = header.height()
+        
+        btn_w = 20
+        btn_h = 20
+        btn_x = x + (w - btn_w) // 2
+        btn_y = (h - btn_h) // 2
+        
+        self.show_all_btn.setGeometry(btn_x, btn_y, btn_w, btn_h)
+
+    def _on_show_all_clicked(self) -> None:
+        self._show_all_visible_state = not self._show_all_visible_state
+        self.show_all_btn.setText("👁" if self._show_all_visible_state else "○")
+        
+        file_paths = []
+        table = self.search_results_table
+        for row in range(table.rowCount()):
+            item = table.item(row, 1)
+            if item:
+                path = item.data(Qt.ItemDataRole.UserRole)
+                if path:
+                    file_paths.append(path)
+                    
+        for row in range(table.rowCount()):
+            container = table.cellWidget(row, 4)
+            if container:
+                btn = container.findChild(QPushButton)
+                if btn:
+                    btn.setText("👁" if self._show_all_visible_state else "")
+                    btn.setToolTip("Hide from map" if self._show_all_visible_state else "Show on map")
+                    btn.setProperty("is_visible", self._show_all_visible_state)
+                    
+        if file_paths:
+            self.search_results_visibility_batch_toggled.emit(file_paths, self._show_all_visible_state)
 
     def _ensure_vector_layers_header(self) -> None:
         labels = ["Name", "Source", "View", "Delete"]
@@ -1012,7 +1147,7 @@ class ControlPanelSearchMixin:
 
         # Visibility button (column 4)
         is_visible = row_data.get("is_visible", True)
-        visibility_button = QPushButton("👁" if is_visible else "👁‍🗨")
+        visibility_button = QPushButton("👁" if is_visible else "")
         visibility_button.setObjectName("searchVisibilityToggle")
         visibility_button.setToolTip("Hide from map" if is_visible else "Show on map")
         visibility_button.setFixedSize(32, 24)
@@ -1042,7 +1177,7 @@ class ControlPanelSearchMixin:
             def handler():
                 current_visible = btn.property("is_visible")
                 new_visible = not current_visible
-                btn.setText("👁" if new_visible else "👁‍🗨")
+                btn.setText("👁" if new_visible else "")
                 btn.setToolTip("Hide from map" if new_visible else "Show on map")
                 btn.setProperty("is_visible", new_visible)
                 # Emit signal to update map
@@ -1130,7 +1265,7 @@ class ControlPanelSearchMixin:
         if not visibility_widget:
             # Recreate if missing (Qt drag-drop often clears cell widgets)
             is_visible = row_data.get("is_visible", True)
-            toggle_button = QPushButton("👁" if is_visible else "👁‍🗨")
+            toggle_button = QPushButton("👁" if is_visible else "")
             toggle_button.setObjectName("searchVisibilityToggle")
             toggle_button.setToolTip("Hide from map" if is_visible else "Show on map")
             toggle_button.setFixedSize(32, 24)
@@ -1163,7 +1298,7 @@ class ControlPanelSearchMixin:
                 def handler():
                     current_visible = btn.property("is_visible")
                     new_visible = not current_visible
-                    btn.setText("👁" if new_visible else "👁‍🗨")
+                    btn.setText("👁" if new_visible else "")
                     btn.setToolTip("Hide from map" if new_visible else "Show on map")
                     btn.setProperty("is_visible", new_visible)
                     self.search_result_visibility_toggled.emit(path, new_visible)
@@ -1184,7 +1319,7 @@ class ControlPanelSearchMixin:
             if not visibility_button:
                 visibility_button = visibility_widget
             is_visible = row_data.get("is_visible", True)
-            visibility_button.setText("👁" if is_visible else "👁‍🗨")
+            visibility_button.setText("👁" if is_visible else "")
             visibility_button.setProperty("is_visible", is_visible)
             visibility_button.setProperty("file_path", row_data["file_path"])
 

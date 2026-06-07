@@ -91,6 +91,12 @@ class Settings(BaseSettings):
     gdal_http_merge_consecutive_ranges: str = "YES"
     """GDAL_HTTP_MERGE_CONSECUTIVE_RANGES value. Reduces HTTP round-trips."""
 
+    gdal_cachemax: int = 1024
+    """GDAL raster block cache size in MB. Increase on machines with more RAM."""
+
+    gdal_use_opencl: bool = False
+    """Enable GDAL OpenCL GPU acceleration for warp operations (NVIDIA/AMD). Set GDAL_USE_OPENCL=true in .env on Windows with CUDA-capable GDAL builds."""
+
     # ------------------------------------------------------------------------- 8. Security / network -------------------------------------------------------------------------
     allowed_hosts: str = "127.0.0.1"
     """Comma-separated list of allowed client IP addresses for LAN security."""
@@ -149,12 +155,108 @@ class Settings(BaseSettings):
         Call this before any GDAL/Rasterio operation to ensure consistent
         performance tuning across all services.
         """
+        import sys
+        import platform
+
+        prefix = sys.prefix
+        is_windows = platform.system() == "Windows"
+
+        if is_windows:
+            gdal_bin = os.path.join(prefix, "Library", "bin")
+            gdal_plugins = os.path.join(prefix, "Library", "lib", "gdalplugins")
+            gdal_data = os.path.join(prefix, "Library", "share", "gdal")
+            proj_data = os.path.join(prefix, "Library", "share", "proj")
+        else:
+            gdal_bin = ""
+            gdal_plugins = os.path.join(prefix, "lib", "gdalplugins")
+            gdal_data = os.path.join(prefix, "share", "gdal")
+            proj_data = os.path.join(prefix, "share", "proj")
+
+        # 1. Apply Windows DLL dependencies path
+        if is_windows and gdal_bin and os.path.exists(gdal_bin):
+            if gdal_bin not in os.environ.get("PATH", ""):
+                os.environ["PATH"] = gdal_bin + os.pathsep + os.environ.get("PATH", "")
+            if hasattr(os, "add_dll_directory"):
+                try:
+                    os.add_dll_directory(gdal_bin)
+                except Exception:
+                    pass
+
+        # 2. Set GDAL driver path if plugins exist
+        if gdal_plugins and os.path.exists(gdal_plugins):
+            os.environ.setdefault("GDAL_DRIVER_PATH", gdal_plugins)
+
+        # 3. Set GDAL data path if it exists
+        if gdal_data and os.path.exists(gdal_data):
+            os.environ.setdefault("GDAL_DATA", gdal_data)
+
+        # 4. Set PROJ data paths if they exist
+        if proj_data and os.path.exists(proj_data):
+            os.environ.setdefault("PROJ_DATA", proj_data)
+            os.environ.setdefault("PROJ_LIB", proj_data)  # compat legacy
+
+        # 5. Apply general performance variables
+        os.environ["GDAL_CACHEMAX"] = str(self.gdal_cachemax)
+        os.environ["GDAL_NUM_THREADS"] = "ALL_CPUS"
+
+        # 5b. GPU acceleration (Windows NVIDIA / AMD OpenCL)
+        if self.gdal_use_opencl:
+            os.environ["GDAL_USE_OPENCL"] = "YES"
         os.environ.setdefault(
             "GDAL_DISABLE_READDIR_ON_OPEN", self.gdal_disable_readdir_on_open
         )
         os.environ.setdefault(
             "GDAL_HTTP_MERGE_CONSECUTIVE_RANGES", self.gdal_http_merge_consecutive_ranges
         )
+
+        # 6. Monkeypatch rasterio.open to support sidecar .prj files by writing .aux.xml sidecars
+        try:
+            import rasterio
+            if getattr(rasterio.open, "__module__", "") == "rasterio" and not getattr(rasterio, "_patched_for_sidecar_prj", False):
+                _orig_open = rasterio.open
+                from pathlib import Path
+
+                def custom_open(fp, mode="r", *args, **kwargs):
+                    if mode == "r" and (isinstance(fp, (str, Path)) or hasattr(fp, "__fspath__")):
+                        try:
+                            p = Path(fp)
+                            if p.suffix.lower() in {".j2k", ".jp2"}:
+                                prj = p.with_suffix(".prj")
+                                aux = p.with_name(p.name + ".aux.xml")
+                                if not aux.exists():
+                                    wkt = ""
+                                    if prj.exists():
+                                        prj_text = prj.read_text().strip()
+                                        if "|||" in prj_text:
+                                            prj_text = prj_text.split("|||")[0].strip()
+                                        if prj_text:
+                                            wkt = prj_text
+                                    if not wkt:
+                                        from rasterio.crs import CRS
+                                        wkt = CRS.from_epsg(4326).to_wkt()
+                                    if wkt:
+                                        xml_content = f'<PAMDataset>\n  <SRS dataAxisToSRSAxisMapping="1,2">{wkt}</SRS>\n</PAMDataset>\n'
+                                        aux.write_text(xml_content, encoding="utf-8")
+                                
+                                # Temporarily change GDAL_DISABLE_READDIR_ON_OPEN so GDAL scans for our aux.xml file
+                                old_val = os.environ.get("GDAL_DISABLE_READDIR_ON_OPEN")
+                                os.environ["GDAL_DISABLE_READDIR_ON_OPEN"] = "NO"
+                                try:
+                                    return _orig_open(fp, mode, *args, **kwargs)
+                                finally:
+                                    if old_val is not None:
+                                        os.environ["GDAL_DISABLE_READDIR_ON_OPEN"] = old_val
+                                    else:
+                                        os.environ.pop("GDAL_DISABLE_READDIR_ON_OPEN", None)
+                        except Exception:
+                            pass
+                    return _orig_open(fp, mode, *args, **kwargs)
+
+                rasterio.open = custom_open
+                rasterio._patched_for_sidecar_prj = True
+        except ImportError:
+            pass
+
 
 
 def _build_settings() -> Settings:

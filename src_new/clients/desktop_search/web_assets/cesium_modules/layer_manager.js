@@ -410,6 +410,11 @@ export function clearDemTerrainMode(viewer, log) {
     activeDemHillshadeLayer = null;
   }
   
+  if (window._demBoundaryWallEntity) {
+    viewer.entities.remove(window._demBoundaryWallEntity);
+    window._demBoundaryWallEntity = null;
+  }
+  
   activeDemContext = null;
   
   if (log) {

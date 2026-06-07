@@ -140,8 +140,8 @@ export function initializeViewer(containerId, options = {}) {
   viewer.useDefaultRenderLoop = true;
   viewer.scene.requestRenderMode = false; // Always live for maximum smoothness
   viewer.scene.maximumRenderTimeChange = 0;
-  viewer.scene.globe.maximumScreenSpaceError = 1.0; // High quality terrain
-  viewer.scene.globe.tileCacheSize = 800;  // Larger cache for ultra-smooth panning
+  viewer.scene.globe.maximumScreenSpaceError = 2.0; // Balanced high-quality terrain
+  viewer.scene.globe.tileCacheSize = 800; // Optimized cache for ultra-smooth panning
   viewer.scene.fog.enabled = false;  // Disable fog for performance
   viewer.scene.skyAtmosphere.show = false;  // Disable atmosphere for performance (air-gap compliance)
   viewer.scene.sun.show = false;  // Disable sun for performance
@@ -151,9 +151,8 @@ export function initializeViewer(containerId, options = {}) {
   viewer.scene.globe.enableLighting = false;  // Disable lighting for performance
   viewer.scene.globe.depthTestAgainstTerrain = true;  // Required for proper DEM layer sorting
   
-  // Optimize tile loading for maximum sharpness and speed
-  viewer.scene.globe.maximumScreenSpaceError = 0.5;  // Force maximum resolution loading
-  viewer.scene.globe.preloadAncestors = false;  // Do not load blurry parent tiles
+  // Optimize tile loading for smoother experience
+  viewer.scene.globe.preloadAncestors = true;   // Preload ancestor tiles to prevent gaps when zooming out
   viewer.scene.globe.preloadSiblings = true;  // Preload for smoother panning
   
   // Additional performance optimizations
@@ -203,7 +202,8 @@ export function initializeViewer(containerId, options = {}) {
 function detectGPU(log) {
   const gpuInfo = {
     renderer: "Unknown",
-    isHighEnd: false
+    isHighEnd: false,
+    isEntryWorkstation: false
   };
   
   try {
@@ -221,6 +221,21 @@ function detectGPU(log) {
               r.indexOf("quadro") !== -1 || (r.indexOf("amd") !== -1 && r.indexOf("radeon rx") !== -1)) {
             gpuInfo.isHighEnd = true;
           }
+          if (r.indexOf("quadro") !== -1) {
+            const entryModels = [
+              "quadro 1000",
+              "quadro p1000",
+              "quadro t1000",
+              "quadro p620",
+              "quadro p600",
+              "quadro t600",
+              "quadro t400",
+              "quadro k620",
+              "quadro k1200",
+              "quadro m1200",
+            ];
+            gpuInfo.isEntryWorkstation = entryModels.some((model) => r.indexOf(model) !== -1);
+          }
         }
       }
     }
@@ -231,7 +246,8 @@ function detectGPU(log) {
   }
   
   if (log) {
-    log("info", "GPU Detected: " + gpuInfo.renderer + " (High-End: " + gpuInfo.isHighEnd + ")");
+    const tier = gpuInfo.isEntryWorkstation ? "Entry Workstation" : (gpuInfo.isHighEnd ? "High-End" : "Integrated/Unknown");
+    log("info", "GPU Detected: " + gpuInfo.renderer + " (" + tier + ")");
   }
   
   return gpuInfo;
@@ -253,16 +269,30 @@ function applyGPUAdaptiveSettings(viewer, gpuInfo, log) {
   viewer.scene.globe.enableLighting = false;
   viewer.scene.globe.showGroundAtmosphere = false;
   
-  if (gpuInfo.isHighEnd) {
-    // ── MAX CONFIG (NVIDIA / Quadro) ──────────────────────────────────────
+  if (gpuInfo.isEntryWorkstation) {
+    // ── BALANCED WORKSTATION (Entry Quadro) ──────────────────────────────
+    viewer.resolutionScale = 1.0;
+    viewer.scene.logarithmicDepthBuffer = true;
+    viewer.scene.globe.depthTestAgainstTerrain = true;
+    viewer.scene.globe.tileCacheSize = 600;
+    viewer.scene.globe.maximumScreenSpaceError = 2.2;
+    viewer.scene.globe.preloadAncestors = true;
+    viewer.scene.globe.preloadSiblings = true;
+    viewer.scene.globe.loadingDescendantLimit = 6;
+
+    if (log) {
+      log("info", "[INIT BALANCED GPU CONFIG] Entry Quadro detected — balanced fidelity for smooth GPU performance");
+    }
+  } else if (gpuInfo.isHighEnd) {
+    // ── MAX CONFIG (NVIDIA / Quadro RTX / AMD RX) ────────────────────────
     viewer.resolutionScale = 1.0;          // Full native resolution
     viewer.scene.logarithmicDepthBuffer = true;
     viewer.scene.globe.depthTestAgainstTerrain = true;
-    viewer.scene.globe.tileCacheSize = 1000; // Large cache for high-fidelity assets
-    viewer.scene.globe.maximumScreenSpaceError = 0.5; // Ultra fidelity for workstation
-    viewer.scene.globe.preloadAncestors = false;  // Do not load blurry parent tiles
+    viewer.scene.globe.tileCacheSize = 800; // Large cache for high-fidelity assets
+    viewer.scene.globe.maximumScreenSpaceError = 2.0; // High fidelity for workstation
+    viewer.scene.globe.preloadAncestors = true;
     viewer.scene.globe.preloadSiblings = true;
-    viewer.scene.globe.loadingDescendantLimit = 16;
+    viewer.scene.globe.loadingDescendantLimit = 8;
     
     // NVIDIA GL hint
     if (viewer.scene.context && viewer.scene.context._gl) {
@@ -278,14 +308,14 @@ function applyGPUAdaptiveSettings(viewer, gpuInfo, log) {
     viewer.resolutionScale = 1.0;          // Full native resolution to maintain imagery quality
     viewer.scene.logarithmicDepthBuffer = true;
     viewer.scene.globe.depthTestAgainstTerrain = true; // Essential for true 3D fidelity
-    viewer.scene.globe.tileCacheSize = 800;  // Larger cache for smoother panning on Windows
-    viewer.scene.globe.maximumScreenSpaceError = 0.5;  // Max quality even for Intel UHD
-    viewer.scene.globe.preloadAncestors = false; // Do not load blurry parent tiles
+    viewer.scene.globe.tileCacheSize = 400;  // Optimized cache for smoother panning on Windows
+    viewer.scene.globe.maximumScreenSpaceError = 3.0;  // Balanced performance/quality for Intel UHD
+    viewer.scene.globe.preloadAncestors = true; // Enabled for smoother zoom transitions
     viewer.scene.globe.preloadSiblings = true;
-    viewer.scene.globe.loadingDescendantLimit = 8;  // Faster tile loading
+    viewer.scene.globe.loadingDescendantLimit = 4;  // Faster tile loading
     
     if (log) {
-      log("info", "[INIT SAFE INTEL CONFIG] Integrated GPU optimized for maximum quality (res=1.0 sse=0.5 cache=800)");
+      log("info", "[INIT SAFE INTEL CONFIG] Integrated GPU optimized for smooth performance (res=1.0 sse=3.0 cache=400)");
     }
   }
 }

@@ -21,7 +21,7 @@
 
   function clampDemSettings(exaggeration, hillshadeAlpha) {
     return {
-      exaggeration: Math.max(0.1, Number(exaggeration) || 1.0),
+      exaggeration: Math.max(0.1, Number(exaggeration) || 0.6),
       hillshadeAlpha: Math.max(0.0, Math.min(1.0, Number(hillshadeAlpha) || 0.0)),
     };
   }

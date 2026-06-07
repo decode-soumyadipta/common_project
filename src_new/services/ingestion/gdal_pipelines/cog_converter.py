@@ -193,6 +193,24 @@ class CogConverter:
                         RESAMPLING=settings.cog_overview_resampling,
                         OVERVIEWS="AUTO",
                     )
+                # Assign CRS to temp_cog_path if it lacks one
+                with rasterio.open(temp_cog_path, "r+") as dst:
+                    if dst.crs is None:
+                        prj_path = source.with_suffix(".prj")
+                        assigned_crs = None
+                        if prj_path.exists():
+                            try:
+                                prj_content = prj_path.read_text().strip()
+                                if prj_content:
+                                    from rasterio.crs import CRS
+                                    assigned_crs = CRS.from_user_input(prj_content)
+                            except Exception:
+                                pass
+                        if assigned_crs is None:
+                            from rasterio.crs import CRS
+                            assigned_crs = CRS.from_epsg(4326)
+                        dst.crs = assigned_crs
+                        LOGGER.info("Assigned fallback CRS to COG after Attempt 1 copy: %s", assigned_crs)
                 temp_cog_path.replace(cog_path)
                 LOGGER.info(
                     "COG conversion succeeded source=%s target=%s operation=cog_convert",
@@ -232,6 +250,7 @@ class CogConverter:
 
                     # Check for sidecar PRJ file to get native CRS
                     prj_path = source.with_suffix(".prj")
+                    has_crs = False
                     if prj_path.exists():
                         try:
                             prj_content = prj_path.read_text().strip()
@@ -239,8 +258,13 @@ class CogConverter:
                                 from rasterio.crs import CRS
                                 profile["crs"] = CRS.from_user_input(prj_content)
                                 LOGGER.info("Applied sidecar CRS from %s during fallback conversion", prj_path.name)
+                                has_crs = True
                         except Exception as prj_exc:
                             LOGGER.warning("Failed to apply sidecar CRS from %s: %s", prj_path.name, prj_exc)
+                    if not has_crs and profile.get("crs") is None:
+                        from rasterio.crs import CRS
+                        profile["crs"] = CRS.from_epsg(4326)
+                        LOGGER.warning("No CRS or sidecar PRJ found for fallback conversion of %s. Defaulting to EPSG:4326.", source.name)
 
                     with rasterio.open(temp_cog_path, "w", **profile) as dst:
                         for ji, window in src.block_windows(1):
@@ -354,18 +378,45 @@ class CogConverter:
             from osgeo import gdal  # type: ignore
 
             gdal.UseExceptions()
+
+            # Check if source has CRS, find sidecar PRJ or assign default EPSG:4326 if missing
+            src_ds = gdal.Open(str(source))
+            a_srs = None
+            if src_ds is not None:
+                spatial_ref = src_ds.GetSpatialRef()
+                if spatial_ref is None:
+                    prj_path = source.with_suffix(".prj")
+                    if prj_path.exists():
+                        try:
+                            prj_content = prj_path.read_text().strip()
+                            if prj_content:
+                                a_srs = prj_content
+                        except Exception:
+                            pass
+                    if a_srs is None:
+                        a_srs = "EPSG:4326"
+                src_ds = None
+
+            translate_kwargs = {
+                "format": "GTiff",
+                "creationOptions": creation_options,
+            }
+            if a_srs:
+                translate_kwargs["outputSRS"] = a_srs
+
             options = gdal.TranslateOptions(
-                format="GTiff",
-                creationOptions=creation_options,
                 *(extra_args or []),
+                **translate_kwargs
             )
             result_ds = gdal.Translate(str(target), str(source), options=options)
             if result_ds is None:
+                err_msg = gdal.GetLastErrorMsg()
                 LOGGER.error(
                     "gdal.Translate returned None source=%s target=%s "
-                    "operation=gdal_translate",
+                    "operation=gdal_translate error=%s",
                     source,
                     target,
+                    err_msg,
                 )
                 return False
             result_ds = None  # Close dataset
@@ -376,12 +427,14 @@ class CogConverter:
             )
             return True
         except Exception as exc:  # noqa: BLE001
+            err_msg = gdal.GetLastErrorMsg() if 'gdal' in locals() else ""
             LOGGER.error(
                 "gdal.Translate failed source=%s target=%s operation=gdal_translate "
-                "error=%s",
+                "error=%s gdal_error=%s",
                 source,
                 target,
                 exc,
+                err_msg,
             )
             return False
 
@@ -420,19 +473,46 @@ class CogConverter:
             from osgeo import gdal  # type: ignore
 
             gdal.UseExceptions()
+
+            # Check if source has CRS, find sidecar PRJ or assign default EPSG:4326 if missing
+            src_ds = gdal.Open(str(source))
+            src_srs = None
+            if src_ds is not None:
+                spatial_ref = src_ds.GetSpatialRef()
+                if spatial_ref is None:
+                    prj_path = source.with_suffix(".prj")
+                    if prj_path.exists():
+                        try:
+                            prj_content = prj_path.read_text().strip()
+                            if prj_content:
+                                src_srs = prj_content
+                        except Exception:
+                            pass
+                    if src_srs is None:
+                        src_srs = "EPSG:4326"
+                src_ds = None
+
+            warp_kwargs = {
+                "format": "GTiff",
+                "dstSRS": target_srs,
+                "creationOptions": creation_options,
+            }
+            if src_srs:
+                warp_kwargs["srcSRS"] = src_srs
+
             options = gdal.WarpOptions(
-                format="GTiff",
-                dstSRS=target_srs,
-                creationOptions=creation_options,
                 *(extra_args or []),
+                **warp_kwargs
             )
             result_ds = gdal.Warp(str(target), str(source), options=options)
             if result_ds is None:
+                err_msg = gdal.GetLastErrorMsg()
                 LOGGER.error(
                     "gdal.Warp returned None source=%s target=%s "
-                    "operation=gdal_warp",
+                    "operation=gdal_warp error=%s",
                     source,
                     target,
+                    err_msg,
                 )
                 return False
             result_ds = None  # Close dataset
@@ -443,11 +523,13 @@ class CogConverter:
             )
             return True
         except Exception as exc:  # noqa: BLE001
+            err_msg = gdal.GetLastErrorMsg() if 'gdal' in locals() else ""
             LOGGER.error(
-                "gdal.Warp failed source=%s target=%s operation=gdal_warp error=%s",
+                "gdal.Warp failed source=%s target=%s operation=gdal_warp error=%s gdal_error=%s",
                 source,
                 target,
                 exc,
+                err_msg,
             )
             return False
 
@@ -455,68 +537,76 @@ class CogConverter:
 
     @staticmethod
     def _try_gdal_translate(source: Path, target: Path) -> bool:
-        """Attempt a GDAL CLI translate when Python GDAL/rasterio fails.
+        """Attempt GDAL Translate using Python GDAL bindings.
 
-        Mirrors the original ``CogPreparationService._try_gdal_translate``
-        implementation to preserve call semantics (Requirement 9.2).
+        This replaces the subprocess CLI call to avoid issues with broken
+        system/Homebrew GDAL library dependencies.
         """
-        gdal_translate = shutil.which("gdal_translate")
-        if gdal_translate is None:
-            LOGGER.warning(
-                "gdal_translate not available on PATH; cannot fallback "
-                "source=%s operation=gdal_translate_cli",
-                source,
-            )
-            return False
-
-        creation_options = CogConverter._build_gdal_translate_options(source)
-
-        command = [gdal_translate, "-of", "GTiff"]
-        for option in creation_options:
-            command.extend(["-co", option])
-        command.extend([str(source), str(target)])
-
+        settings.apply_gdal_env()
         try:
-            result = subprocess.run(
-                command,
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-        except Exception as exc:  # noqa: BLE001
-            LOGGER.warning(
-                "gdal_translate CLI failed to start source=%s "
-                "operation=gdal_translate_cli error=%s",
-                source,
-                exc,
-            )
-            return False
+            from osgeo import gdal  # type: ignore
 
-        if result.returncode != 0:
-            LOGGER.warning(
-                "gdal_translate CLI failed source=%s operation=gdal_translate_cli "
-                "stderr=%s",
-                source,
-                result.stderr.strip(),
-            )
-            return False
+            gdal.UseExceptions()
 
-        if not target.exists():
-            LOGGER.warning(
-                "gdal_translate CLI reported success but output missing "
-                "source=%s target=%s operation=gdal_translate_cli",
+            creation_options = CogConverter._build_gdal_translate_options(source)
+
+            # Check if source has CRS, find sidecar PRJ or assign default EPSG:4326 if missing
+            src_ds = gdal.Open(str(source))
+            a_srs = None
+            if src_ds is not None:
+                spatial_ref = src_ds.GetSpatialRef()
+                if spatial_ref is None:
+                    prj_path = source.with_suffix(".prj")
+                    if prj_path.exists():
+                        try:
+                            prj_content = prj_path.read_text().strip()
+                            if prj_content:
+                                a_srs = prj_content
+                        except Exception:
+                            pass
+                    if a_srs is None:
+                        a_srs = "EPSG:4326"
+                src_ds = None
+
+            translate_kwargs = {
+                "format": "GTiff",
+                "creationOptions": creation_options,
+            }
+            if a_srs:
+                translate_kwargs["outputSRS"] = a_srs
+
+            options = gdal.TranslateOptions(**translate_kwargs)
+            result_ds = gdal.Translate(str(target), str(source), options=options)
+            if result_ds is None:
+                err_msg = gdal.GetLastErrorMsg()
+                LOGGER.error(
+                    "Python gdal.Translate fallback returned None source=%s target=%s "
+                    "error=%s",
+                    source,
+                    target,
+                    err_msg,
+                )
+                return False
+
+            # Build overview pyramids so it behaves as a valid, optimized Cloud Optimized GeoTIFF (COG).
+            result_ds.BuildOverviews("NEAREST", [2, 4, 8, 16])
+            result_ds = None  # Close dataset
+            LOGGER.info(
+                "Python gdal.Translate fallback succeeded source=%s target=%s",
                 source,
                 target,
             )
+            return True
+        except Exception as exc:  # noqa: BLE001
+            err_msg = gdal.GetLastErrorMsg() if 'gdal' in locals() else ""
+            LOGGER.error(
+                "Python gdal.Translate fallback failed source=%s target=%s error=%s gdal_error=%s",
+                source,
+                target,
+                exc,
+                err_msg,
+            )
             return False
-
-        LOGGER.info(
-            "gdal_translate CLI fallback succeeded source=%s target=%s "
-            "operation=gdal_translate_cli",
-            source,
-            target,
-        )
-        return True
 
     @staticmethod
     def _build_gdal_translate_options(source: Path) -> list[str]:

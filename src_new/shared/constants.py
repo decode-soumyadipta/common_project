@@ -57,6 +57,12 @@ TILE_MIN_ZOOM: int = 0
 TILE_MAX_ZOOM: int = 22
 """Maximum zoom level for tile pyramid."""
 
+MBTILES_TILE_SIZE: int = 256
+"""Tile size in pixels for MBTiles databases (fixed by MBTiles spec)."""
+
+TILE_CACHE_DEFAULT_SIZE: int = 512
+"""Default number of rendered tile entries to keep in the server-side LRU cache."""
+
 # --------------------------------------------------------------------------- Upload / file size limits ---------------------------------------------------------------------------
 
 MAX_UPLOAD_SIZE_DEFAULT: int = 10 * 1024 * 1024 * 1024  # 10 GB
@@ -130,6 +136,8 @@ __all__ = [
     "TILE_SIZE_PREVIEW",
     "TILE_MIN_ZOOM",
     "TILE_MAX_ZOOM",
+    "MBTILES_TILE_SIZE",
+    "TILE_CACHE_DEFAULT_SIZE",
     # Upload limits
     "MAX_UPLOAD_SIZE_DEFAULT",
     "MAX_UPLOAD_SIZE_SMALL",

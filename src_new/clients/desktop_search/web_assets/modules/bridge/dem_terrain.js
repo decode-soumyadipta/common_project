@@ -91,7 +91,14 @@
     // ── 3D DEM Rendering Pipeline ──────────────────────────────────────────
     // Build the terrain provider ONLY when the DEM is first loaded or the URL changes.
     // Never rebuild for exaggeration or color mode — those are handled in-place.
-    const terrainUrl = drapeUrl;
+    const terrainQuery = {
+      ...rasterQuery,
+      resampling: "bilinear",
+    };
+    delete terrainQuery.colormap_name;
+    delete terrainQuery.colormap;
+    delete terrainQuery.algorithm;
+    const terrainUrl = buildUrlWithQuery(activeDemContext.xyzUrl, terrainQuery);
     const terrainSignatureChanged = activeDemTerrainSignature !== activeDemContext.layerKey;
 
     log("info", "DEM_RENDER: Terrain provider check" +
@@ -184,7 +191,7 @@
       
       log("info", "DEM_RENDER: Adding drape layer to viewer");
       activeDemDrapeLayer = viewer.imageryLayers.addImageryProvider(drapeProvider);
-      activeDemDrapeLayer.preloadAncestorTiles = false;
+      activeDemDrapeLayer.preloadAncestorTiles = true;
       if (window.Cesium && window.Cesium.TextureMinificationFilter && window.Cesium.TextureMagnificationFilter) {
         activeDemDrapeLayer.minificationFilter = window.Cesium.TextureMinificationFilter.NEAREST;
         activeDemDrapeLayer.magnificationFilter = window.Cesium.TextureMagnificationFilter.NEAREST;
@@ -249,7 +256,7 @@
       attachTileErrorHandler(hillshadeProvider, activeDemContext.name + "-hillshade");
       activeDemHillshadeLayer = viewer.imageryLayers.addImageryProvider(hillshadeProvider);
       log("info", "DEM_RENDER: HILLSHADE DEBUG: Layer added to viewer, index=" + viewer.imageryLayers.indexOf(activeDemHillshadeLayer) + " totalLayers=" + viewer.imageryLayers.length);
-      activeDemHillshadeLayer.preloadAncestorTiles = false;
+      activeDemHillshadeLayer.preloadAncestorTiles = true;
       if (window.Cesium && window.Cesium.TextureMinificationFilter && window.Cesium.TextureMagnificationFilter) {
         activeDemHillshadeLayer.minificationFilter = window.Cesium.TextureMinificationFilter.NEAREST;
         activeDemHillshadeLayer.magnificationFilter = window.Cesium.TextureMagnificationFilter.NEAREST;
@@ -276,6 +283,20 @@
     log("info", "DEM_RENDER: HILLSHADE DEBUG: AFTER set alpha=" + activeDemHillshadeLayer.alpha + " show=" + activeDemHillshadeLayer.show);
 
     applyDemSceneSettings();
+
+    // Keep the globe/basemap visible underneath the DEM
+    if (defaultEarthLayer) {
+      defaultEarthLayer.show = !window._currentBasemapVisibility;
+    }
+    if (viewer && viewer.scene && viewer.scene.globe) {
+      viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#1a2535");
+    }
+    if (typeof comparatorViewers !== "undefined" && Array.isArray(comparatorViewers)) {
+      comparatorViewers.forEach(v => {
+        if (v && v.__defaultEarthLayer) v.__defaultEarthLayer.show = !window._currentBasemapVisibility;
+        if (v && v.scene && v.scene.globe) v.scene.globe.baseColor = Cesium.Color.fromCssColorString("#1a2535");
+      });
+    }
     
     // CRITICAL FIX: Only ensure basemap is at bottom, don't force other layer positions
     // This allows user reordering to work properly without conflicts
@@ -354,6 +375,134 @@
     if (typeof _tileLoadingActive !== "undefined") {
       _tileLoadingActive = false;
     }
+
+    // Clean up existing DEM boundary wall if it exists
+    if (window._demBoundaryWallEntity) {
+      viewer.entities.remove(window._demBoundaryWallEntity);
+      window._demBoundaryWallEntity = null;
+    }
+
+    let west, south, east, north;
+    if (Array.isArray(bounds) && bounds.length === 4) {
+      [west, south, east, north] = bounds;
+    } else if (bounds && typeof bounds === 'object') {
+      west = bounds.west;
+      south = bounds.south;
+      east = bounds.east;
+      north = bounds.north;
+    }
+    const hasValidCoords = (typeof west === 'number' && typeof south === 'number' && typeof east === 'number' && typeof north === 'number');
+
+    if (demVisible && hasValidCoords) {
+      // Calculate deltas for tight boundary wall alignment (expansion ~1m outside, sampling ~5m inside)
+      const extLatDelta = 0.00001;
+      const insideLatDelta = 0.00005;
+      const cosLat = Math.cos(Cesium.Math.toRadians((south + north) / 2));
+      const extLonDelta = extLatDelta / Math.max(0.1, cosLat);
+      const insideLonDelta = insideLatDelta / Math.max(0.1, cosLat);
+      
+      const westExpanded = west - extLonDelta;
+      const eastExpanded = east + extLonDelta;
+      const southExpanded = south - extLatDelta;
+      const northExpanded = north + extLatDelta;
+      
+      const westInside = west + insideLonDelta;
+      const eastInside = east - insideLonDelta;
+      const southInside = south + insideLatDelta;
+      const northInside = north - insideLatDelta;
+      
+      const numSegments = 50;
+      const samplePositions = [];
+      const expandedPositions = [];
+      
+      // South boundary (west to east)
+      for (let i = 0; i <= numSegments; i++) {
+        const t = i / numSegments;
+        samplePositions.push(Cesium.Cartographic.fromDegrees(westInside + (eastInside - westInside) * t, southInside));
+        expandedPositions.push(Cesium.Cartographic.fromDegrees(westExpanded + (eastExpanded - westExpanded) * t, southExpanded));
+      }
+      // East boundary (south to north)
+      for (let i = 1; i <= numSegments; i++) {
+        const t = i / numSegments;
+        samplePositions.push(Cesium.Cartographic.fromDegrees(eastInside, southInside + (northInside - southInside) * t));
+        expandedPositions.push(Cesium.Cartographic.fromDegrees(eastExpanded, southExpanded + (northExpanded - southExpanded) * t));
+      }
+      // North boundary (east to west)
+      for (let i = 1; i <= numSegments; i++) {
+        const t = i / numSegments;
+        samplePositions.push(Cesium.Cartographic.fromDegrees(eastInside - (eastInside - westInside) * t, northInside));
+        expandedPositions.push(Cesium.Cartographic.fromDegrees(eastExpanded - (eastExpanded - westExpanded) * t, northExpanded));
+      }
+      // West boundary (north to south)
+      for (let i = 1; i < numSegments; i++) {
+        const t = i / numSegments;
+        samplePositions.push(Cesium.Cartographic.fromDegrees(westInside, northInside - (northInside - southInside) * t));
+        expandedPositions.push(Cesium.Cartographic.fromDegrees(westExpanded, northExpanded - (northExpanded - southExpanded) * t));
+      }
+      samplePositions.push(Cesium.Cartographic.fromDegrees(westInside, southInside));
+      expandedPositions.push(Cesium.Cartographic.fromDegrees(westExpanded, southExpanded));
+      
+      // Sample terrain heights shifted inside the DEM and build/refine the boundary wall asynchronously
+      let samplingPromise;
+      try {
+        if (viewer.terrainProvider && viewer.terrainProvider.availability) {
+          samplingPromise = Cesium.sampleTerrainMostDetailed(viewer.terrainProvider, samplePositions);
+        } else {
+          samplingPromise = Promise.reject(new Error("Active terrain provider has no availability property"));
+        }
+      } catch (err) {
+        samplingPromise = Promise.reject(err);
+      }
+
+      Promise.resolve(samplingPromise).then((updatedPositions) => {
+        if (!activeDemContext || activeDemContext.visible === false || viewer.terrainProvider !== activeDemTerrainProvider) {
+          return;
+        }
+        
+        const refinedMaxHeights = [];
+        const refinedMinHeights = [];
+        let hasElevations = false;
+        
+        for (let i = 0; i < updatedPositions.length; i++) {
+          const sampledPos = updatedPositions[i];
+          const height = (sampledPos && typeof sampledPos.height === 'number') ? Math.max(0.0, sampledPos.height) : 0.0;
+          if (height > 5.0) {
+            refinedMaxHeights.push(height);
+            hasElevations = true;
+          } else {
+            refinedMaxHeights.push(-100.0);
+          }
+          refinedMinHeights.push(-100.0);
+        }
+        
+        // Clean up previous wall entity to avoid duplicate overlays
+        if (window._demBoundaryWallEntity) {
+          viewer.entities.remove(window._demBoundaryWallEntity);
+          window._demBoundaryWallEntity = null;
+        }
+        
+        // Only draw the boundary wall if there are actual mountain/elevation rises at the boundary
+        if (hasElevations) {
+          const wallCartesians = expandedPositions.map(pos => 
+            Cesium.Cartesian3.fromRadians(pos.longitude, pos.latitude)
+          );
+          
+          window._demBoundaryWallEntity = viewer.entities.add({
+            name: "DEM Boundary Wall",
+            wall: {
+              positions: wallCartesians,
+              maximumHeights: refinedMaxHeights,
+              minimumHeights: refinedMinHeights,
+              material: Cesium.Color.fromCssColorString("#2b2b2b").withAlpha(1.0),
+              outline: false,
+            }
+          });
+        }
+        viewer.scene.requestRender();
+      }).catch(err => {
+        log("warn", "Failed to sample terrain heights for DEM wall: " + err.message);
+      });
+    }
     
     requestSceneRender();
   }
@@ -392,6 +541,106 @@
     });
   }
 
+  class TerrainDecodeWorkerPool {
+    constructor() {
+      this.workers = [];
+      this.activeWorkerIdx = 0;
+      this.pendingRequests = new Map();
+      this.nextRequestId = 1;
+      this.supported = (typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined');
+      
+      if (this.supported) {
+        const workerCode = `
+          self.onmessage = async function(e) {
+            const { id, blob, rMin, span, W, H } = e.data;
+            try {
+              const img = await createImageBitmap(blob);
+              const imgW = img.width || 256;
+              const imgH = img.height || 256;
+              const canvas = new OffscreenCanvas(imgW, imgH);
+              const ctx = canvas.getContext('2d');
+              ctx.drawImage(img, 0, 0, imgW, imgH);
+              const imgData = ctx.getImageData(0, 0, imgW, imgH);
+              const data = imgData.data;
+              
+              const output = new Float32Array(W * H);
+              for (let r = 0; r < H; r++) {
+                const srcY = Math.min(imgH - 1, Math.round(r * (imgH - 1) / (H - 1)));
+                for (let c = 0; c < W; c++) {
+                  const srcX = Math.min(imgW - 1, Math.round(c * (imgW - 1) / (W - 1)));
+                  const srcIdx = srcY * imgW + srcX;
+                  const alpha = data[srcIdx * 4 + 3];
+                  if (alpha >= 255) {
+                    output[r * W + c] = rMin + (data[srcIdx * 4] / 255.0) * span;
+                  } else {
+                    output[r * W + c] = 0.0;
+                  }
+                }
+              }
+              
+              self.postMessage({ id, success: true, buffer: output }, [output.buffer]);
+            } catch (err) {
+              self.postMessage({ id, success: false, error: err.message });
+            }
+          };
+        `;
+        
+        try {
+          const blobUrl = URL.createObjectURL(new Blob([workerCode], { type: "application/javascript" }));
+          const numWorkers = Math.max(2, Math.min(4, navigator.hardwareConcurrency || 2));
+          for (let i = 0; i < numWorkers; i++) {
+            const worker = new Worker(blobUrl);
+            worker.onmessage = (e) => {
+              const { id, success, buffer, error } = e.data;
+              const promiseHandlers = this.pendingRequests.get(id);
+              if (promiseHandlers) {
+                this.pendingRequests.delete(id);
+                if (success) {
+                  promiseHandlers.resolve(buffer);
+                } else {
+                  promiseHandlers.reject(new Error(error));
+                }
+              }
+            };
+            worker.onerror = (err) => {
+              console.error("Terrain worker error", err);
+            };
+            this.workers.push(worker);
+          }
+          log("info", "TerrainDecodeWorkerPool: Initialized with " + numWorkers + " workers");
+        } catch (e) {
+          log("warn", "TerrainDecodeWorkerPool: Worker creation failed, falling back to main-thread: " + e.message);
+          this.supported = false;
+        }
+      }
+    }
+    
+    decode(blob, rMin, span, W, H) {
+      if (!this.supported || this.workers.length === 0) {
+        return Promise.reject(new Error("Worker pool not supported or initialized"));
+      }
+      
+      return new Promise((resolve, reject) => {
+        const id = this.nextRequestId++;
+        this.pendingRequests.set(id, { resolve, reject });
+        
+        const worker = this.workers[this.activeWorkerIdx];
+        this.activeWorkerIdx = (this.activeWorkerIdx + 1) % this.workers.length;
+        
+        worker.postMessage({
+          id,
+          blob,
+          rMin,
+          span,
+          W,
+          H
+        });
+      });
+    }
+  }
+  
+  const terrainDecodeWorkerPool = new TerrainDecodeWorkerPool();
+
   function OfflineCustomTerrainProvider(options) {
     this.tilingScheme = new Cesium.WebMercatorTilingScheme();
     this.hasWaterMask = false;
@@ -405,6 +654,14 @@
     this._max = options.maxLevel || DEM_MAX_TERRAIN_LEVEL;
     this._rangeMin = 0;
     this._rangeMax = 0;
+
+    // Mock availability to satisfy Cesium's internal requirements (e.g. sampleTerrainMostDetailed)
+    const self = this;
+    this.availability = {
+      computeMaximumLevelAtPosition: function(position) {
+        return self._max;
+      }
+    };
     
     if (options.options && options.options.query && options.options.query.rescale) {
       const parts = String(options.options.query.rescale).split(",");
@@ -413,6 +670,23 @@
         this._rangeMax = parseFloat(parts[1]);
       }
     }
+    
+    this._bounds = (options.options && options.options.bounds) ? normalizeBounds(options.options.bounds) : null;
+    if (this._bounds) {
+      try {
+        this._boundsRadian = Cesium.Rectangle.fromDegrees(
+          this._bounds.west,
+          this._bounds.south,
+          this._bounds.east,
+          this._bounds.north
+        );
+      } catch (e) {
+        log("warn", "Failed to parse bounds to radians: " + e.message);
+        this._boundsRadian = null;
+      }
+    } else {
+      this._boundsRadian = null;
+    }
   }
 
   OfflineCustomTerrainProvider.prototype.requestTileGeometry = function (x, y, level) {
@@ -420,77 +694,148 @@
       return Cesium.when.reject(new Error("Exceeded max level"));
     }
     
-    const tileUrl = this._url.replace("%7Bz%7D", level).replace("%7Bx%7D", x).replace("%7By%7D", y).replace("{z}", level).replace("{x}", x).replace("{y}", y);
+    const W = TERRAIN_SAMPLE_SIZE;
+    const H = TERRAIN_SAMPLE_SIZE;
     
-    return Cesium.when(enqueueTerrainDecode(() => {
-      return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.crossOrigin = "anonymous";
-        
-        // CRITICAL: Timeout for terabyte-scale data (prevent infinite hangs)
-        const timeoutId = setTimeout(() => {
-          img.onload = null;
-          img.onerror = null;
-          // Return flat tile on timeout (prevents black screens)
-          const output = new Float32Array(TERRAIN_SAMPLE_SIZE * TERRAIN_SAMPLE_SIZE);
-          resolve(new Cesium.HeightmapTerrainData({
-            buffer: output,
-            width: TERRAIN_SAMPLE_SIZE,
-            height: TERRAIN_SAMPLE_SIZE,
-            // Use unit scale; exaggeration is applied via globe.terrainExaggeration for live updates.
-            structure: { heightScale: 1.0, heightOffset: 0.0, elementsPerHeight: 1, stride: 1 }
-          }));
-        }, 5000);  // 5 second timeout for ultra-high resolution tiles
-        
-        img.onload = () => {
-          clearTimeout(timeoutId);
-          terrainDecodeCtx.clearRect(0, 0, TERRAIN_SAMPLE_SIZE, TERRAIN_SAMPLE_SIZE);
-          terrainDecodeCtx.drawImage(img, 0, 0, TERRAIN_SAMPLE_SIZE, TERRAIN_SAMPLE_SIZE);
-          const imgData = terrainDecodeCtx.getImageData(0, 0, TERRAIN_SAMPLE_SIZE, TERRAIN_SAMPLE_SIZE);
-          const data = imgData.data;
-          const output = new Float32Array(TERRAIN_SAMPLE_SIZE * TERRAIN_SAMPLE_SIZE);
-          
-          const rMin = this._rangeMin;
-          const span = this._rangeMax - rMin;
-          
-          for (let i = 0; i < output.length; i++) {
-            const val = data[i * 4]; 
-            if (data[i * 4 + 3] === 0) {
-              output[i] = 0; 
-            } else {
-              output[i] = rMin + (val / 255.0) * span;
-            }
+    // Check if tile is completely outside the dataset bounds
+    if (this._boundsRadian) {
+      const tileRect = this.tilingScheme.tileXYToRectangle(x, y, level);
+      const intersection = Cesium.Rectangle.intersection(tileRect, this._boundsRadian);
+      if (!intersection) {
+        // Tile is completely outside the bounds. Return flat terrain.
+        const output = new Float32Array(W * H);
+        return Cesium.when(new Cesium.HeightmapTerrainData({
+          buffer: output,
+          width: W,
+          height: H,
+          structure: { heightScale: 1.0, heightOffset: 0.0, elementsPerHeight: 1, stride: 1 }
+        }));
+      }
+    }
+    
+    const tileUrl = this._url.replace("%7Bz%7D", level).replace("%7Bx%7D", x).replace("%7By%7D", y).replace("{z}", level).replace("{x}", x).replace("{y}", y);
+    const rMin = this._rangeMin;
+    const span = this._rangeMax - rMin;
+    
+    return Cesium.when(new Promise((resolve, reject) => {
+      fetch(tileUrl)
+        .then(response => {
+          if (!response.ok) {
+            throw new Error("HTTP error " + response.status);
           }
-          
-          img.onload = null;
-          img.onerror = null;
-          
+          return response.blob();
+        })
+        .then(blob => {
+          // Decode using worker pool
+          terrainDecodeWorkerPool.decode(blob, rMin, span, W, H)
+            .then(output => {
+              resolve(new Cesium.HeightmapTerrainData({
+                buffer: output,
+                width: W,
+                height: H,
+                structure: { heightScale: 1.0, heightOffset: 0.0, elementsPerHeight: 1, stride: 1 }
+              }));
+            })
+            .catch(workerErr => {
+              // Fallback to main thread image decoding using the already fetched blob!
+              log("debug", "Worker decode failed, falling back to main-thread: " + workerErr.message);
+              const img = new Image();
+              img.crossOrigin = "anonymous";
+              const blobUrl = URL.createObjectURL(blob);
+              
+              const timeoutId = setTimeout(() => {
+                img.onload = null;
+                img.onerror = null;
+                URL.revokeObjectURL(blobUrl);
+                // Resolve to flat 0.0 terrain on timeout to prevent black holes
+                const output = new Float32Array(W * H);
+                resolve(new Cesium.HeightmapTerrainData({
+                  buffer: output,
+                  width: W,
+                  height: H,
+                  structure: { heightScale: 1.0, heightOffset: 0.0, elementsPerHeight: 1, stride: 1 }
+                }));
+              }, 5000);
+              
+              img.onload = () => {
+                clearTimeout(timeoutId);
+                URL.revokeObjectURL(blobUrl);
+                try {
+                  const imgW = img.width || 256;
+                  const imgH = img.height || 256;
+                  const canvas = terrainDecodeCanvas;
+                  canvas.width = imgW;
+                  canvas.height = imgH;
+                  const ctx = terrainDecodeCtx;
+                  ctx.drawImage(img, 0, 0, imgW, imgH);
+                  const imgData = ctx.getImageData(0, 0, imgW, imgH);
+                  const data = imgData.data;
+                  const output = new Float32Array(W * H);
+                  
+                  for (let r = 0; r < H; r++) {
+                    const srcY = Math.min(imgH - 1, Math.round(r * (imgH - 1) / (H - 1)));
+                    for (let c = 0; c < W; c++) {
+                      const srcX = Math.min(imgW - 1, Math.round(c * (imgW - 1) / (W - 1)));
+                      const srcIdx = srcY * imgW + srcX;
+                      const alpha = data[srcIdx * 4 + 3];
+                      if (alpha >= 255) {
+                        output[r * W + c] = rMin + (data[srcIdx * 4] / 255.0) * span;
+                      } else {
+                        output[r * W + c] = 0.0;
+                      }
+                    }
+                  }
+                  
+                  img.onload = null;
+                  img.onerror = null;
+                  resolve(new Cesium.HeightmapTerrainData({
+                    buffer: output,
+                    width: W,
+                    height: H,
+                    structure: { heightScale: 1.0, heightOffset: 0.0, elementsPerHeight: 1, stride: 1 }
+                  }));
+                } catch (decodeErr) {
+                  // Resolve to flat 0.0 terrain on error to prevent black holes
+                  const output = new Float32Array(W * H);
+                  resolve(new Cesium.HeightmapTerrainData({
+                    buffer: output,
+                    width: W,
+                    height: H,
+                    structure: { heightScale: 1.0, heightOffset: 0.0, elementsPerHeight: 1, stride: 1 }
+                  }));
+                }
+              };
+              
+              img.onerror = (err) => {
+                clearTimeout(timeoutId);
+                URL.revokeObjectURL(blobUrl);
+                img.onload = null;
+                img.onerror = null;
+                // Resolve to flat 0.0 terrain on error to prevent black holes
+                const output = new Float32Array(W * H);
+                resolve(new Cesium.HeightmapTerrainData({
+                  buffer: output,
+                  width: W,
+                  height: H,
+                  structure: { heightScale: 1.0, heightOffset: 0.0, elementsPerHeight: 1, stride: 1 }
+                }));
+              };
+              
+              img.src = blobUrl;
+            });
+        })
+        .catch(err => {
+          // Fetch failed or other error. Resolve with flat 0.0 terrain instead of rejecting.
+          // This avoids rendering black holes/missing tiles on the ground outside the bounds.
+          log("warn", "Failed to fetch or process terrain tile: " + err.message);
+          const output = new Float32Array(W * H);
           resolve(new Cesium.HeightmapTerrainData({
             buffer: output,
-            width: TERRAIN_SAMPLE_SIZE,
-            height: TERRAIN_SAMPLE_SIZE,
-            // Use unit scale; exaggeration is applied via globe.terrainExaggeration for live updates.
+            width: W,
+            height: H,
             structure: { heightScale: 1.0, heightOffset: 0.0, elementsPerHeight: 1, stride: 1 }
           }));
-        };
-        
-        img.onerror = () => {
-          clearTimeout(timeoutId);
-          img.onload = null;
-          img.onerror = null;
-          // Return flat tile on error (prevents black screens)
-          const output = new Float32Array(TERRAIN_SAMPLE_SIZE * TERRAIN_SAMPLE_SIZE);
-          resolve(new Cesium.HeightmapTerrainData({
-            buffer: output,
-            width: TERRAIN_SAMPLE_SIZE,
-            height: TERRAIN_SAMPLE_SIZE,
-            // Use unit scale; exaggeration is applied via globe.terrainExaggeration for live updates.
-            structure: { heightScale: 1.0, heightOffset: 0.0, elementsPerHeight: 1, stride: 1 }
-          }));
-        };
-        
-        img.src = tileUrl;
-      });
+        });
     }));
   };
 
@@ -578,7 +923,7 @@
           log("warn", "DRAPE_DEBUG: attachTileErrorHandler failed: " + e.message);
         }
         activeDemDrapeLayer = viewer.imageryLayers.addImageryProvider(drapeProvider);
-        activeDemDrapeLayer.preloadAncestorTiles = false;
+        activeDemDrapeLayer.preloadAncestorTiles = true;
         if (window.Cesium && window.Cesium.TextureMinificationFilter && window.Cesium.TextureMagnificationFilter) {
           activeDemDrapeLayer.minificationFilter = window.Cesium.TextureMinificationFilter.NEAREST;
           activeDemDrapeLayer.magnificationFilter = window.Cesium.TextureMagnificationFilter.NEAREST;
@@ -732,8 +1077,8 @@
     let interacting = false;
     let idleTimer = null;
     const IDLE_DELAY_MS = 150;
-    const baseSse = Number(scene.globe.maximumScreenSpaceError) || 2.0;
-    const movingSse = Math.max(4.0, baseSse + 2.0);
+    let baseSse = Number(scene.globe.maximumScreenSpaceError) || 2.0;
+    
     function setIdleRenderMode(isIdle) {
       if (!scene) {
         return;
@@ -752,8 +1097,8 @@
       if (!scene.globe) {
         return;
       }
-      // Disable preloading of blurry parent tiles during interaction
-      scene.globe.preloadAncestors = false;
+      // Keep preloading active at all times for smooth shape transitions and consistency
+      scene.globe.preloadAncestors = true;
       scene.globe.preloadSiblings = true;
     }
 
@@ -766,6 +1111,7 @@
         interacting = true;
         isInteracting = true;
         setIdleRenderMode(false);
+        applyInteractionTilePolicy(true);
       }
       scene.requestRender();
     }
@@ -812,16 +1158,11 @@
     // Fix: Disable Cesium's built-in wheel zoom entirely and replace it with a custom handler
     // that computes a SYMMETRIC zoom amount = currentAltitude × STEP_FRACTION for BOTH in and out.
     // We move along the camera direction to avoid pick-distance jitter while tiles refine.
-    const zoomController = viewer && viewer.scene ? viewer.scene.screenSpaceCameraController : null;
-
     const WHEEL_ZOOM_STEP = 0.15;  // 15% of current altitude per tick — snappier
     let wheelZoomImpulse = 0;
     let wheelZoomRaf = null;
 
     canvas.addEventListener("wheel", function (event) {
-      if (zoomController && zoomController.enableZoom) {
-        return; // Let Cesium's native zoom handle the wheel.
-      }
       event.preventDefault();
       if (!targetViewer || !targetViewer.scene || !targetViewer.camera) {
         return;
@@ -849,30 +1190,77 @@
 
         const altitude = Math.max(posCart.height, 50.0);
         const stepCount = Math.max(-10, Math.min(10, wheelZoomImpulse));
-        const zoomAmount = altitude * WHEEL_ZOOM_STEP * Math.abs(stepCount || 1);
         const zoomingIn = stepCount > 0;
         wheelZoomImpulse = 0;
 
         if (scene.mode === Cesium.SceneMode.SCENE2D) {
+          const zoomAmount = altitude * WHEEL_ZOOM_STEP * Math.abs(stepCount || 1);
           if (zoomingIn) {
             camera.zoomIn(zoomAmount);
           } else {
             camera.zoomOut(zoomAmount);
           }
         } else {
-          const direction = camera.direction ? camera.direction.clone() : null;
-          if (!direction) {
-            scheduleIdle();
-            return;
-          }
-          if (!zoomingIn) {
-            Cesium.Cartesian3.negate(direction, direction);
+          // Ray-cast to find the terrain/ellipsoid intersection under the mouse pointer
+          const rect = canvas.getBoundingClientRect();
+          const mouseX = event.clientX - rect.left;
+          const mouseY = event.clientY - rect.top;
+          const mousePosition = new Cesium.Cartesian2(mouseX, mouseY);
+          
+          let targetCartesian = null;
+          const ray = camera.getPickRay(mousePosition);
+          if (ray) {
+            targetCartesian = scene.globe.pick(ray, scene);
+            if (!targetCartesian) {
+              const intersection = Cesium.IntersectionTests.rayEllipsoid(ray, scene.globe.ellipsoid);
+              if (intersection) {
+                targetCartesian = Cesium.Ray.getPoint(ray, intersection.start);
+              }
+            }
           }
 
-          const move = Cesium.Cartesian3.multiplyByScalar(direction, zoomAmount, new Cesium.Cartesian3());
-          const nextPos = Cesium.Cartesian3.add(camera.position, move, new Cesium.Cartesian3());
+          let nextPos;
+          if (targetCartesian) {
+            const distance = Cesium.Cartesian3.distance(camera.position, targetCartesian);
+            // Limit maximum step distance relative to current altitude to prevent violent jumps
+            const maxStepDist = Math.min(distance, altitude * 2.0);
+            const zoomAmount = maxStepDist * WHEEL_ZOOM_STEP * Math.abs(stepCount || 1);
+            
+            const direction = Cesium.Cartesian3.subtract(targetCartesian, camera.position, new Cesium.Cartesian3());
+            Cesium.Cartesian3.normalize(direction, direction);
+            
+            const move = Cesium.Cartesian3.multiplyByScalar(direction, zoomingIn ? zoomAmount : -zoomAmount, new Cesium.Cartesian3());
+            nextPos = Cesium.Cartesian3.add(camera.position, move, new Cesium.Cartesian3());
+          } else {
+            // Fallback: zoom along camera direction vector
+            const direction = camera.direction ? camera.direction.clone() : null;
+            if (!direction) {
+              scheduleIdle();
+              return;
+            }
+            if (!zoomingIn) {
+              Cesium.Cartesian3.negate(direction, direction);
+            }
+            const zoomAmount = altitude * WHEEL_ZOOM_STEP * Math.abs(stepCount || 1);
+            const move = Cesium.Cartesian3.multiplyByScalar(direction, zoomAmount, new Cesium.Cartesian3());
+            nextPos = Cesium.Cartesian3.add(camera.position, move, new Cesium.Cartesian3());
+          }
+
           const nextCarto = Cesium.Cartographic.fromCartesian(nextPos);
-          if (nextCarto && Number.isFinite(nextCarto.height) && nextCarto.height >= 10.0) {
+          if (nextCarto && Number.isFinite(nextCarto.height)) {
+            // Retrieve actual terrain height under the next position to enforce collision bounds
+            const terrainHeight = scene.globe.getHeight(nextCarto);
+            const h = (typeof terrainHeight === "number" && Number.isFinite(terrainHeight)) ? terrainHeight : 0.0;
+            const minHeight = h + 10.0; // Enforce safe minimum of 10m above ground
+            
+            if (nextCarto.height < minHeight) {
+              nextCarto.height = minHeight;
+              const adjustedPos = Cesium.Cartographic.toCartesian(nextCarto, scene.globe.ellipsoid);
+              if (adjustedPos) {
+                nextPos = adjustedPos;
+              }
+            }
+
             camera.setView({
               destination: nextPos,
               orientation: {
@@ -924,6 +1312,26 @@
       setStatus("Cesium.js not found. Add local Cesium assets under web_assets/cesium.");
       log("error", "Cesium runtime not found");
       return;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // CRITICAL PATCH: Fix WebGL NPOT minificationFilter warnings
+    // ─────────────────────────────────────────────────────────────────────────
+    if (Cesium.ImageryLayers && Cesium.ImageryLayers.prototype && Cesium.ImageryLayers.prototype.add) {
+      const originalAdd = Cesium.ImageryLayers.prototype.add;
+      Cesium.ImageryLayers.prototype.add = function(layer, index) {
+        if (layer) {
+          if (layer.minificationFilter === undefined || 
+              layer.minificationFilter === Cesium.TextureMinificationFilter.LINEAR_MIPMAP_LINEAR) {
+            layer.minificationFilter = Cesium.TextureMinificationFilter.LINEAR;
+          }
+          if (layer.magnificationFilter === undefined) {
+            layer.magnificationFilter = Cesium.TextureMagnificationFilter.LINEAR;
+          }
+        }
+        return originalAdd.call(this, layer, index);
+      };
+      log("info", "Cesium.ImageryLayers.prototype.add patched for WebGL NPOT filter safety.");
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1010,7 +1418,7 @@
     // GPU-accelerated rendering optimizations
     viewer.resolutionScale = 1.0;  // Full resolution for sharp rendering (don't divide by devicePixelRatio)
     viewer.scene.postProcessStages.fxaa.enabled = true;  // Enable FXAA for high quality
-    viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#2a3a4a");
+    viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#1a2535");
     viewer.scene.backgroundColor = Cesium.Color.fromCssColorString("#0a0a0a");
     viewer.canvas.style.backgroundColor = "#0a0a0a";
     
@@ -1018,8 +1426,8 @@
     viewer.useDefaultRenderLoop = true;
     viewer.scene.requestRenderMode = false; // Always live for maximum smoothness
     viewer.scene.maximumRenderTimeChange = 0;
-    viewer.scene.globe.maximumScreenSpaceError = 1.0; // High quality terrain
-    viewer.scene.globe.tileCacheSize = 4000;  // Larger cache for ultra-smooth panning (optimized for Windows/NVIDIA)
+    viewer.scene.globe.maximumScreenSpaceError = 2.0; // Balanced high-quality terrain
+    viewer.scene.globe.tileCacheSize = 800;  // Optimized cache to reduce memory footprint and GC stutters
     viewer.scene.fog.enabled = false;  // Disable fog for performance
     viewer.scene.skyAtmosphere.show = false;  // Disable atmosphere for performance
     viewer.scene.sun.show = false;  // Disable sun for performance
@@ -1030,11 +1438,10 @@
     viewer.scene.globe.depthTestAgainstTerrain = true;  // Required for proper DEM layer sorting and occlusion
     
     // Optimize tile loading for smoother experience
-    viewer.scene.globe.maximumScreenSpaceError = 1.0;  // High quality rendering
     viewer.scene.globe.preloadAncestors = true;  // Preload for smoother zooming
     viewer.scene.globe.preloadSiblings = true;  // Preload for smoother panning
     viewer.scene.globe.loadingQueueThreshold = 100;
-    viewer.scene.globe.loadingDescendantLimit = 24;
+    viewer.scene.globe.loadingDescendantLimit = 8;
     
     // Additional performance optimizations
     viewer.scene.fxaa = false;  // Disable FXAA post-processing
@@ -1064,9 +1471,10 @@
           if (renderer) {
             window._gpuRenderer = renderer;
             const r = renderer.toLowerCase();
-            // Detect dedicated GPUs (NVIDIA, AMD Radeon RX/Pro)
+            // Detect dedicated or high-performance GPUs (NVIDIA, AMD Radeon, Apple Silicon, Metal)
             if (r.indexOf("nvidia") !== -1 || r.indexOf("rtx") !== -1 || r.indexOf("gtx") !== -1 || 
-                r.indexOf("quadro") !== -1 || (r.indexOf("amd") !== -1 && r.indexOf("radeon rx") !== -1)) {
+                r.indexOf("quadro") !== -1 || (r.indexOf("amd") !== -1 && r.indexOf("radeon rx") !== -1) ||
+                r.indexOf("apple") !== -1 || r.indexOf("metal") !== -1) {
               window._isHighEndGpu = true;
             }
           }
@@ -1077,7 +1485,7 @@
     }
     
     log("info", "GPU Detected: " + window._gpuRenderer + " (High-End: " + window._isHighEndGpu + ")");
-
+ 
     // ═══════════════════════════════════════════════════════════════════════════
     // CRITICAL: GPU-adaptive viewer initialization
     // Two profiles: MAX (NVIDIA/dedicated) vs SAFE (Intel/integrated)
@@ -1098,11 +1506,11 @@
       viewer.resolutionScale = 1.0;          // Full native resolution
       viewer.scene.logarithmicDepthBuffer = true;
       viewer.scene.globe.depthTestAgainstTerrain = true;
-      viewer.scene.globe.tileCacheSize = 4000; // Large cache for high-fidelity assets
-      viewer.scene.globe.maximumScreenSpaceError = 0.8; // Ultra fidelity for workstation
+      viewer.scene.globe.tileCacheSize = 800; // Large cache for high-fidelity assets without GC stutters
+      viewer.scene.globe.maximumScreenSpaceError = 1.0; // Static high-fidelity error threshold
       viewer.scene.globe.preloadAncestors = true;
       viewer.scene.globe.preloadSiblings = true;
-      viewer.scene.globe.loadingDescendantLimit = 24;
+      viewer.scene.globe.loadingDescendantLimit = 8;
       viewer.scene.globe.loadingQueueThreshold = 100;
       
       // NVIDIA GL hint
@@ -1118,14 +1526,14 @@
       viewer.resolutionScale = 1.0;          // Full native resolution to maintain imagery quality
       viewer.scene.logarithmicDepthBuffer = true;
       viewer.scene.globe.depthTestAgainstTerrain = true; // Essential for true 3D fidelity
-      viewer.scene.globe.tileCacheSize = 3000;  // Optimized cache for smoother panning on Windows
-      viewer.scene.globe.maximumScreenSpaceError = 1.5;  // High fidelity for Mac / Intel UHD
+      viewer.scene.globe.tileCacheSize = 400;  // Optimized cache for smoother panning on Windows
+      viewer.scene.globe.maximumScreenSpaceError = 1.5;  // Static balanced error threshold
       viewer.scene.globe.preloadAncestors = true; // Enabled for smoother zoom transitions
       viewer.scene.globe.preloadSiblings = true;
-      viewer.scene.globe.loadingDescendantLimit = 16;  // Faster tile loading
+      viewer.scene.globe.loadingDescendantLimit = 4;  // Faster tile loading
       viewer.scene.globe.loadingQueueThreshold = 100;
       
-      log("info", "[INIT SAFE INTEL CONFIG] Integrated GPU optimized for smooth performance (res=1.0 sse=3.5 cache=400)");
+      log("info", "[INIT SAFE INTEL CONFIG] Integrated GPU optimized for smooth performance (res=1.0 sse=3.0 cache=400)");
     }
 
     scenePerfDefaults = {
@@ -1249,9 +1657,26 @@
       defaultEarthLayer.show = true;  // Always visible as base layer
       log("info", "Default Earth imagery layer added (NaturalEarthII)");
     } catch (e) {
-      // Fallback: Use a solid color if NaturalEarthII is not available
-      log("warn", "Failed to add default Earth layer: " + e.message);
-      viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#2a3a4a");
+      log("warn", "Failed to add NaturalEarthII default Earth layer: " + e.message);
+      // Fallback: Create a minimal 1x1 solid dark-blue base canvas layer as globe background
+      try {
+        const solidBg = document.createElement('canvas');
+        solidBg.width = 1; solidBg.height = 1;
+        const ctx = solidBg.getContext('2d');
+        ctx.fillStyle = '#0d1b2e';
+        ctx.fillRect(0, 0, 1, 1);
+        const bgProvider = new Cesium.SingleTileImageryProvider({
+          url: solidBg.toDataURL(),
+          rectangle: Cesium.Rectangle.fromDegrees(-180, -90, 180, 90)
+        });
+        defaultEarthLayer = viewer.imageryLayers.addImageryProvider(bgProvider);
+        defaultEarthLayer.alpha = 1.0;
+        defaultEarthLayer.show = true;
+        log("info", "Default Earth fallback (solid dark-blue canvas) added successfully");
+      } catch (err) {
+        log("error", "Failed to add default Earth fallback layer: " + err.message);
+        viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#1a2535");
+      }
     }
     
     // ── OSM basemap tiles (lazy-loaded, initially hidden) ────────────────

@@ -114,17 +114,28 @@
   const ensureRubberBandLine = bridgeUtils.ensureRubberBandLine || function () { return null; };
   const clearRubberBandLine = bridgeUtils.clearRubberBandLine || function () {};
   const normalizeBounds = bridgeUtils.normalizeBounds || function (bounds) {
-    if (!bounds || typeof bounds !== "object") {
+    if (!bounds) {
       return null;
     }
-    const west = Number(bounds.west);
-    const south = Number(bounds.south);
-    const east = Number(bounds.east);
-    const north = Number(bounds.north);
-    if (!Number.isFinite(west) || !Number.isFinite(south) || !Number.isFinite(east) || !Number.isFinite(north)) {
-      return null;
+    if (Array.isArray(bounds) && bounds.length === 4) {
+      const west = Number(bounds[0]);
+      const south = Number(bounds[1]);
+      const east = Number(bounds[2]);
+      const north = Number(bounds[3]);
+      if (Number.isFinite(west) && Number.isFinite(south) && Number.isFinite(east) && Number.isFinite(north)) {
+        return { west: west, south: south, east: east, north: north };
+      }
     }
-    return { west: west, south: south, east: east, north: north };
+    if (typeof bounds === "object") {
+      const west = Number(bounds.west);
+      const south = Number(bounds.south);
+      const east = Number(bounds.east);
+      const north = Number(bounds.north);
+      if (Number.isFinite(west) && Number.isFinite(south) && Number.isFinite(east) && Number.isFinite(north)) {
+        return { west: west, south: south, east: east, north: north };
+      }
+    }
+    return null;
   };
   const cursorControls = window.OfflineGISCursorControls || {};
   const setSearchCursorEnabled = cursorControls.setSearchCursorEnabled || function () {};
@@ -320,12 +331,49 @@
     }
 
     const easedProgress = Cesium.EasingFunction.QUADRATIC_IN_OUT(state.localProgress);
-    const destination = Cesium.Cartesian3.lerp(
+    let destination = Cesium.Cartesian3.lerp(
       state.startPos,
       state.endPos,
       easedProgress,
       new Cesium.Cartesian3()
     );
+
+    // Dynamic terrain height tracking & collision avoidance
+    const destinationCarto = Cesium.Cartographic.fromCartesian(destination);
+    if (destinationCarto) {
+      const terrainHeight = viewer.scene.globe.getHeight(destinationCarto);
+      const heightOffset = Math.max(1.0, Math.min(2000.0, Number(flyThroughPlaybackHeightMeters) || 900.0));
+      
+      let finalHeight = destinationCarto.height;
+      
+      if (Number.isFinite(terrainHeight)) {
+        const targetHeight = terrainHeight + heightOffset;
+        const safetyHeight = terrainHeight + 20.0; // Clear at least 20m above terrain
+        
+        if (window._flyThroughLastAdjustedHeight === undefined || window._flyThroughLastAdjustedHeight === null) {
+          window._flyThroughLastAdjustedHeight = targetHeight;
+        } else {
+          // Dynamic low-pass filter: ascend quickly to prevent terrain collisions, descend slowly for flight stability
+          const isAscending = targetHeight > window._flyThroughLastAdjustedHeight;
+          const alpha = isAscending ? 0.12 : 0.03;
+          
+          window._flyThroughLastAdjustedHeight = window._flyThroughLastAdjustedHeight * (1.0 - alpha) + targetHeight * alpha;
+        }
+        
+        // Enforce safety clearance
+        window._flyThroughLastAdjustedHeight = Math.max(window._flyThroughLastAdjustedHeight, safetyHeight);
+        finalHeight = window._flyThroughLastAdjustedHeight;
+      } else {
+        // Fallback to interpolated height, resetting cached height for new frames
+        window._flyThroughLastAdjustedHeight = null;
+      }
+      
+      destination = Cesium.Cartesian3.fromRadians(
+        destinationCarto.longitude,
+        destinationCarto.latitude,
+        finalHeight
+      );
+    }
 
     viewer.camera.setView({
       destination: destination,
@@ -444,6 +492,7 @@
     flyThroughPlaybackPaused = false;
     flyThroughPlaybackProgress = 0.0;
     flyThroughPlaybackLastTimestamp = 0;
+    window._flyThroughLastAdjustedHeight = null;
 
     if (!flyThroughOriginalView) {
       flyThroughOriginalView = {
@@ -479,6 +528,7 @@
     flyThroughPlaybackPaused = true;
     flyThroughIsPlaying = false;
     cancelFlyThroughPlaybackFrame();
+    window._flyThroughLastAdjustedHeight = null;
     notifyFlyThroughPlaybackState("paused");
     setStatus("Fly through paused.");
   }
@@ -511,6 +561,7 @@
     flyThroughPlaybackProgress = 0.0;
     flyThroughPlaybackLastTimestamp = 0;
     flyThroughStopRequested = false;
+    window._flyThroughLastAdjustedHeight = null;
 
     const restoreView = function () {
       if (viewer && viewer.scene && viewer.scene.screenSpaceCameraController) {
@@ -791,7 +842,7 @@
     return "pane" + normalized;
   }
   const demVisual = {
-    exaggeration: 1.0,
+    exaggeration: 0.6,
     hillshadeAlpha: 0.0,
     colorMode: "terrain",
   };

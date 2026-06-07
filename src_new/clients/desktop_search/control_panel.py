@@ -55,6 +55,7 @@ class ControlPanel(
     """Desktop control panel widgets for ingest, search, display, and measurement tools."""
 
     search_result_visibility_toggled = Signal(str, bool)
+    search_results_visibility_batch_toggled = Signal(list, bool)
     aoi_visibility_changed = Signal(bool)
     search_draw_mode_changed = Signal(str)
     search_layers_reordered = Signal(list)  # Signal for drag-and-drop layer reordering
@@ -435,7 +436,7 @@ class ControlPanel(
         point_container = QFrame()
         point_container.setObjectName("pointSearchContainer")
         point_container.setStyleSheet("""
-            # pointSearchContainer {
+            #pointSearchContainer {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #fcfdfe, stop:1 #f1f5f9);
                 border: 1px solid #cbd5e0;
                 border-radius: 8px;
@@ -504,12 +505,12 @@ class ControlPanel(
         geom_container = QFrame()
         geom_container.setObjectName("geomSearchContainer")
         geom_container.setStyleSheet("""
-            # geomSearchContainer {
+            #geomSearchContainer {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #fcfdfe, stop:1 #f1f5f9);
                 border: 1px solid #cbd5e0;
                 border-radius: 8px;
             }
-            # searchPolygonModeBtn {
+            #searchPolygonModeBtn {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #edf2f7);
                 border: 1px solid #cbd5e0;
                 border-right: none;
@@ -520,18 +521,18 @@ class ControlPanel(
                 color: #4a5568;
                 font-weight: 600;
             }
-            # searchPolygonModeBtn:hover {
+            #searchPolygonModeBtn:hover {
                 background: #ffffff;
                 color: #2b6cb0;
             }
-            # searchPolygonModeBtn:checked {
+            #searchPolygonModeBtn:checked {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ebf8ff, stop:1 #bee3f8);
                 border: 1px solid #4299e1;
                 border-right: none;
                 color: #2b6cb0;
                 font-weight: bold;
             }
-            # searchBoxModeBtn {
+            #searchBoxModeBtn {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #edf2f7);
                 border: 1px solid #cbd5e0;
                 border-top-left-radius: 0px;
@@ -541,11 +542,11 @@ class ControlPanel(
                 color: #4a5568;
                 font-weight: 600;
             }
-            # searchBoxModeBtn:hover {
+            #searchBoxModeBtn:hover {
                 background: #ffffff;
                 color: #2b6cb0;
             }
-            # searchBoxModeBtn:checked {
+            #searchBoxModeBtn:checked {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ebf8ff, stop:1 #bee3f8);
                 border: 1px solid #4299e1;
                 color: #2b6cb0;
@@ -600,6 +601,7 @@ class ControlPanel(
             0, 7
         )  # Added one more column for drag handle and delete
         self._ensure_search_results_header()
+        self._setup_show_all_button()
 
         # Configure drag and drop for layer reordering with smooth animations
         self.search_results_table.setDragDropMode(QAbstractItemView.InternalMove)

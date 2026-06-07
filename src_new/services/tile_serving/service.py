@@ -185,6 +185,7 @@ def run() -> None:
         access_log=True,
         timeout_keep_alive=5,
         backlog=max(128, (os.cpu_count() or 2) * 64),
+        workers=4,
     )
 
 

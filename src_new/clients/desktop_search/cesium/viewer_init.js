@@ -140,8 +140,8 @@ export function initializeViewer(containerId, options = {}) {
   viewer.useDefaultRenderLoop = true;
   viewer.scene.requestRenderMode = false; // Always live for maximum smoothness
   viewer.scene.maximumRenderTimeChange = 0;
-  viewer.scene.globe.maximumScreenSpaceError = 1.0; // High quality terrain
-  viewer.scene.globe.tileCacheSize = 800;  // Larger cache for ultra-smooth panning
+  viewer.scene.globe.maximumScreenSpaceError = 2.0; // Balanced high-quality terrain
+  viewer.scene.globe.tileCacheSize = 800;  // Optimized cache for ultra-smooth panning
   viewer.scene.fog.enabled = false;  // Disable fog for performance
   viewer.scene.skyAtmosphere.show = false;  // Disable atmosphere for performance (air-gap compliance)
   viewer.scene.sun.show = false;  // Disable sun for performance
@@ -152,7 +152,6 @@ export function initializeViewer(containerId, options = {}) {
   viewer.scene.globe.depthTestAgainstTerrain = true;  // Required for proper DEM layer sorting
   
   // Optimize tile loading for smoother experience
-  viewer.scene.globe.maximumScreenSpaceError = 3;  // Optimized for faster loading
   viewer.scene.globe.preloadAncestors = true;  // Preload for smoother zooming
   viewer.scene.globe.preloadSiblings = true;  // Preload for smoother panning
   
@@ -275,25 +274,25 @@ function applyGPUAdaptiveSettings(viewer, gpuInfo, log) {
     viewer.resolutionScale = 1.0;
     viewer.scene.logarithmicDepthBuffer = true;
     viewer.scene.globe.depthTestAgainstTerrain = true;
-    viewer.scene.globe.tileCacheSize = 650;
-    viewer.scene.globe.maximumScreenSpaceError = 1.6;
+    viewer.scene.globe.tileCacheSize = 600;
+    viewer.scene.globe.maximumScreenSpaceError = 0.8; // High resolution base map for AOI stage
     viewer.scene.globe.preloadAncestors = true;
     viewer.scene.globe.preloadSiblings = true;
-    viewer.scene.globe.loadingDescendantLimit = 8;
+    viewer.scene.globe.loadingDescendantLimit = 6;
 
     if (log) {
-      log("info", "[INIT BALANCED GPU CONFIG] Entry Quadro detected — balanced fidelity for smooth GPU performance");
+      log("info", "[INIT BALANCED GPU CONFIG] Entry Quadro detected — balanced fidelity with high resolution base map");
     }
   } else if (gpuInfo.isHighEnd) {
     // ── MAX CONFIG (NVIDIA / Quadro RTX / AMD RX) ────────────────────────
     viewer.resolutionScale = 1.0;          // Full native resolution
     viewer.scene.logarithmicDepthBuffer = true;
     viewer.scene.globe.depthTestAgainstTerrain = true;
-    viewer.scene.globe.tileCacheSize = 900; // Large cache for high-fidelity assets
-    viewer.scene.globe.maximumScreenSpaceError = 1.1; // High fidelity for workstation
+    viewer.scene.globe.tileCacheSize = 800; // Large cache for high-fidelity assets
+    viewer.scene.globe.maximumScreenSpaceError = 0.8; // High resolution base map for AOI stage
     viewer.scene.globe.preloadAncestors = true;
     viewer.scene.globe.preloadSiblings = true;
-    viewer.scene.globe.loadingDescendantLimit = 12;
+    viewer.scene.globe.loadingDescendantLimit = 8;
     
     // NVIDIA GL hint
     if (viewer.scene.context && viewer.scene.context._gl) {
@@ -302,7 +301,7 @@ function applyGPUAdaptiveSettings(viewer, gpuInfo, log) {
     }
     
     if (log) {
-      log("info", "[INIT MAX GPU CONFIG] NVIDIA/Quadro workstation GPU detected — Extreme fidelity enabled");
+      log("info", "[INIT MAX GPU CONFIG] NVIDIA/Quadro workstation GPU detected — Extreme fidelity and high resolution base map enabled");
     }
   } else {
     // ── SAFE CONFIG (Intel integrated / unknown) ──────────────────────────
@@ -310,13 +309,13 @@ function applyGPUAdaptiveSettings(viewer, gpuInfo, log) {
     viewer.scene.logarithmicDepthBuffer = true;
     viewer.scene.globe.depthTestAgainstTerrain = true; // Essential for true 3D fidelity
     viewer.scene.globe.tileCacheSize = 400;  // Optimized cache for smoother panning on Windows
-    viewer.scene.globe.maximumScreenSpaceError = 3.5;  // Balanced performance/quality for Intel UHD
+    viewer.scene.globe.maximumScreenSpaceError = 0.8;  // High resolution base map for AOI stage
     viewer.scene.globe.preloadAncestors = true; // Enabled for smoother zoom transitions
     viewer.scene.globe.preloadSiblings = true;
-    viewer.scene.globe.loadingDescendantLimit = 2;  // Faster tile loading
+    viewer.scene.globe.loadingDescendantLimit = 4;  // Faster tile loading
     
     if (log) {
-      log("info", "[INIT SAFE INTEL CONFIG] Integrated GPU optimized for smooth performance (res=1.0 sse=3.5 cache=400)");
+      log("info", "[INIT SAFE INTEL CONFIG] Integrated GPU optimized for smooth performance (res=1.0 sse=3.0 cache=400)");
     }
   }
 }

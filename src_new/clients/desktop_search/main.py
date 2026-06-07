@@ -64,6 +64,35 @@ def main() -> int:
     sys.excepthook = global_excepthook
 
     try:
+        import os
+        import platform
+        
+        # Force discrete GPU on dual-GPU Windows systems
+        os.environ["SHIM_MCCOMPAT"] = "1"
+        
+        flags = [
+            "--ignore-gpu-blocklist",
+            "--enable-gpu-rasterization",
+            "--enable-oop-rasterization",
+            "--force-high-performance-gpu",
+            "--enable-webgl",
+            "--enable-webgl2-compute-context",
+            "--enable-accelerated-2d-canvas",
+        ]
+        
+        if platform.system() == "Windows":
+            # Direct Chromium to use the high-performance desktop GL driver on Windows (NVIDIA/Quadro nvoglv64.dll)
+            flags.append("--use-gl=desktop")
+            
+        # Set environment variable for QtWebEngine
+        existing_flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
+        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = f"{existing_flags} {' '.join(flags)}".strip()
+        
+        # Also append to sys.argv so QApplication is initialized with these flags
+        for f in flags:
+            if f not in sys.argv:
+                sys.argv.append(f)
+
         # Set Qt attribute BEFORE creating QApplication
         QApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
         

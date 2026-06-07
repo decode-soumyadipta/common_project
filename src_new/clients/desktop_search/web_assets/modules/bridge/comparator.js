@@ -190,15 +190,21 @@
       });
       v.resolutionScale = 1.0;
       v.useBrowserRecommendedResolution = false;
-      v.scene.globe.baseColor = Cesium.Color.BLACK;
+      v.scene.globe.baseColor = Cesium.Color.fromCssColorString("#1a2535");
       v.scene.backgroundColor = Cesium.Color.BLACK;
-      v.scene.globe.maximumScreenSpaceError = 1.0;
-      v.scene.globe.tileCacheSize = 3000;
+      if (window._isHighEndGpu) {
+        v.scene.globe.maximumScreenSpaceError = 1.0; // Static high-fidelity error threshold
+        v.scene.globe.tileCacheSize = 800;
+        v.scene.globe.loadingDescendantLimit = 8;
+      } else {
+        v.scene.globe.maximumScreenSpaceError = 1.5; // Static balanced error threshold
+        v.scene.globe.tileCacheSize = 400;
+        v.scene.globe.loadingDescendantLimit = 4;
+      }
       v.scene.globe.preloadAncestors = true;
       v.scene.globe.preloadSiblings = true;
-      v.scene.globe.loadingDescendantLimit = 16;
       v.scene.globe.loadingQueueThreshold = 100;
-      v.scene.fxaa = true;
+      v.scene.fxaa = false;
       if (v.scene.mode !== Cesium.SceneMode.SCENE3D) {
         v.scene.morphTo3D(0.0);
       }

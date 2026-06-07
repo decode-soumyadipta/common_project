@@ -44,17 +44,13 @@ class SyncFocusCoordinator:
                     c._apply_display_control_mode()
                     continue
 
-                if (
-                    is_dem_asset
-                    and c._active_dem_search_layer_key
-                    and c._active_dem_search_layer_key != file_path
-                ):
-                    c._search_layer_visibility[file_path] = False
-                    c._run_js_call("setLayerVisibility", file_path, False)
-                    continue
-
-                if is_dem_asset and c._active_dem_search_layer_key == file_path:
-                    continue
+                if is_dem_asset and should_show:
+                    if c._active_dem_search_layer_key and c._active_dem_search_layer_key != file_path:
+                        old_dem = c._active_dem_search_layer_key
+                        if old_dem in c._loaded_search_layer_keys:
+                            c._run_js_call("setLayerVisibility", old_dem, False)
+                        c._search_layer_visibility[old_dem] = False
+                        c._active_dem_search_layer_key = None
 
                 if (not is_dem_asset) and file_path in c._loaded_search_layer_keys:
                     c._run_js_call("setLayerVisibility", file_path, True)
@@ -191,21 +187,15 @@ class SyncFocusCoordinator:
                     _logger.debug("  DEM activated")
                     continue
 
-                if (
-                    is_dem_asset
-                    and c._active_dem_search_layer_key
-                    and c._active_dem_search_layer_key != file_path
-                ):
-                    _logger.debug("  ACTION: Hiding DEM (another DEM is active)")
-                    c._search_layer_visibility[file_path] = False
-                    if is_loaded:
-                        c._run_js_call("setLayerVisibility", file_path, False)
-                        c._last_synced_visibility[file_path] = False
-                    continue
-
-                if is_dem_asset and c._active_dem_search_layer_key == file_path:
-                    _logger.debug("  SKIP: DEM already active")
-                    continue
+                if is_dem_asset and should_show:
+                    if c._active_dem_search_layer_key and c._active_dem_search_layer_key != file_path:
+                        _logger.debug(f"  ACTION: Deactivating old DEM {c._active_dem_search_layer_key} in favor of new DEM {file_path}")
+                        old_dem = c._active_dem_search_layer_key
+                        if old_dem in c._loaded_search_layer_keys:
+                            c._run_js_call("setLayerVisibility", old_dem, False)
+                        c._search_layer_visibility[old_dem] = False
+                        c._last_synced_visibility[old_dem] = False
+                        c._active_dem_search_layer_key = None
 
                 if (not is_dem_asset) and is_loaded:
                     _logger.debug("  ACTION: Showing imagery layer")

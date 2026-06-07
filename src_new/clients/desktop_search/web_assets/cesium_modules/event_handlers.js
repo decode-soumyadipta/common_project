@@ -350,13 +350,22 @@ function getCartesianFromViewer(viewer, screenPosition) {
   }
   
   const scene = viewer.scene;
-  const ray = viewer.camera.getPickRay(screenPosition);
   let cartesian = null;
   
-  if (ray) {
-    cartesian = scene.globe.pick(ray, scene);
+  // 1. Try scene.pickPosition first (most accurate for rendered 3D DEM surface)
+  if (scene.pickPositionSupported) {
+    cartesian = scene.pickPosition(screenPosition);
   }
   
+  // 2. Fallback: pick globe using raycast
+  if (!cartesian) {
+    const ray = viewer.camera.getPickRay(screenPosition);
+    if (ray) {
+      cartesian = scene.globe.pick(ray, scene);
+    }
+  }
+  
+  // 3. Fallback: pick ellipsoid
   if (!cartesian) {
     cartesian = viewer.camera.pickEllipsoid(screenPosition, scene.globe.ellipsoid);
   }
@@ -549,7 +558,8 @@ function placeAnnotation(viewer, cartesian, lat, lon, log, text = null, color = 
       color: window.Cesium.Color.fromCssColorString(color),
       outlineColor: window.Cesium.Color.WHITE,
       outlineWidth: 2,
-      heightReference: window.Cesium.HeightReference.CLAMP_TO_GROUND
+      heightReference: window.Cesium.HeightReference.CLAMP_TO_GROUND,
+      disableDepthTestDistance: Number.POSITIVE_INFINITY
     }
   });
   anchorEntity._annotationId = annotationId;
@@ -567,7 +577,8 @@ function placeAnnotation(viewer, cartesian, lat, lon, log, text = null, color = 
       showBackground: true,
       backgroundColor: window.Cesium.Color.fromCssColorString(color).withAlpha(0.8),
       pixelOffset: new window.Cesium.Cartesian2(0, -30),
-      heightReference: window.Cesium.HeightReference.CLAMP_TO_GROUND
+      heightReference: window.Cesium.HeightReference.CLAMP_TO_GROUND,
+      disableDepthTestDistance: Number.POSITIVE_INFINITY
     }
   });
   labelEntity._annotationId = annotationId;
@@ -582,7 +593,8 @@ function placeAnnotation(viewer, cartesian, lat, lon, log, text = null, color = 
       height: 20,
       pixelOffset: new window.Cesium.Cartesian2(25, -30),
       color: window.Cesium.Color.WHITE.withAlpha(0.42),
-      heightReference: window.Cesium.HeightReference.CLAMP_TO_GROUND
+      heightReference: window.Cesium.HeightReference.CLAMP_TO_GROUND,
+      disableDepthTestDistance: Number.POSITIVE_INFINITY
     }
   });
   editEntity._annotationId = annotationId;
@@ -598,7 +610,8 @@ function placeAnnotation(viewer, cartesian, lat, lon, log, text = null, color = 
       height: 20,
       pixelOffset: new window.Cesium.Cartesian2(50, -30),
       color: window.Cesium.Color.WHITE.withAlpha(0.62),
-      heightReference: window.Cesium.HeightReference.CLAMP_TO_GROUND
+      heightReference: window.Cesium.HeightReference.CLAMP_TO_GROUND,
+      disableDepthTestDistance: Number.POSITIVE_INFINITY
     }
   });
   deleteEntity._annotationId = annotationId;

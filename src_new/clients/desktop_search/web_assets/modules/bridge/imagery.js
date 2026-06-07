@@ -145,6 +145,10 @@
       
       activeDemHillshadeLayer = null;
     }
+    if (window._demBoundaryWallEntity) {
+      viewer.entities.remove(window._demBoundaryWallEntity);
+      window._demBoundaryWallEntity = null;
+    }
     activeDemContext = null;
     activeDemTerrainSignature = null;
     activeDemDrapeUrl = null;
@@ -154,6 +158,20 @@
       layerVisibilityState.delete(previousDemLayerKey);
     }
     viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+    if (defaultEarthLayer) {
+      defaultEarthLayer.show = !window._currentBasemapVisibility;
+    }
+    if (viewer && viewer.scene && viewer.scene.globe) {
+      viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#1a2535");
+      // Restore highest quality base map screen space error on ellipsoid
+      viewer.scene.globe.maximumScreenSpaceError = 0.8;
+    }
+    if (typeof comparatorViewers !== "undefined" && Array.isArray(comparatorViewers)) {
+      comparatorViewers.forEach(v => {
+        if (v && v.__defaultEarthLayer) v.__defaultEarthLayer.show = !window._currentBasemapVisibility;
+        if (v && v.scene && v.scene.globe) v.scene.globe.baseColor = Cesium.Color.fromCssColorString("#1a2535");
+      });
+    }
     applyDefaultSceneSettings();
     hideDemColorbar();
     setSceneModeControlEnabled(true);
@@ -305,56 +323,71 @@
     layerVisibilityState.set(layerKey, Boolean(visible));
     console.log(`DEBUG: Updated layerVisibilityState for ${layerKey} = ${Boolean(visible)}`);
 
-    // CRITICAL FIX: Check if this is a DEM layer FIRST before treating it as regular imagery
-    // DEM layers need special handling for terrain provider swapping
-    if (activeDemContext && activeDemContext.layerKey === layerKey) {
+    const definition = layerDefinitions.get(layerKey);
+    const isDem = (definition && definition.type === "dem") || (activeDemContext && activeDemContext.layerKey === layerKey);
+
+    if (isDem) {
       const shouldShow = Boolean(visible);
       console.log(`DEBUG: Found DEM layer for ${layerKey}, setting visible=${shouldShow}`);
-      activeDemContext.visible = shouldShow;
-      if (activeDemDrapeLayer) {
-        activeDemDrapeLayer.show = shouldShow;
-        console.log(`DEBUG: DEM drape layer show=${shouldShow}`);
-      }
-      if (activeDemHillshadeLayer) {
-        activeDemHillshadeLayer.show = shouldShow && activeDemHillshadeLayer.alpha > 0.01;
-        console.log(`DEBUG: DEM hillshade layer show=${shouldShow && activeDemHillshadeLayer.alpha > 0.01}`);
-      }
+      
       if (shouldShow) {
-        updateDemColorbar(
-          parseDemHeightRange(activeDemContext.options).min,
-          parseDemHeightRange(activeDemContext.options).max,
-          activeDemContext.options
-        );
-        setSceneModeControlEnabled(true);
-        setStatus("DEM layer shown.");
-        log("info", "DEM layer shown key=" + layerKey);
-        if (activeDemTerrainProvider && viewer.terrainProvider !== activeDemTerrainProvider) {
-          _swapTerrainProviderLocked(activeDemTerrainProvider);
+        // If there's an active DEM and it's different, hide it first
+        if (activeDemContext && activeDemContext.layerKey !== layerKey) {
+          console.log(`DEBUG: Deactivating previous active DEM ${activeDemContext.layerKey}`);
+          const prevKey = activeDemContext.layerKey;
+          layerVisibilityState.set(prevKey, false);
+          activeDemContext.visible = false;
         }
-        // Re-apply exaggeration — terrainExaggeration resets when terrain provider changes
-        if (viewer && viewer.scene && viewer.scene.globe) {
-          viewer.scene.globe.terrainExaggeration = Math.max(0.1, demVisual.exaggeration);
-          if (typeof viewer.scene.verticalExaggeration !== "undefined") {
-            viewer.scene.verticalExaggeration = Math.max(0.1, demVisual.exaggeration);
+        
+        // Make the requested DEM the activeDemContext
+        if (!activeDemContext || activeDemContext.layerKey !== layerKey) {
+          if (definition) {
+            activeDemContext = {
+              layerKey: layerKey,
+              name: definition.label,
+              xyzUrl: definition.xyzUrl,
+              options: {
+                bounds: definition.bounds,
+                query: definition.query,
+                minzoom: definition.minLevel,
+                maxzoom: definition.maxLevel,
+              },
+              visible: true,
+            };
+          } else {
+            activeDemContext.visible = true;
           }
-          log("debug", "DEM show: re-applied terrainExaggeration=" + demVisual.exaggeration.toFixed(2));
+        } else {
+          activeDemContext.visible = true;
         }
-        if (currentSceneMode !== "3d") {
-          setSceneModeInternal("3d");
-        }
+        
+        applyDemLayer();
+        
       } else {
-        hideDemColorbar();
-        setSceneModeControlEnabled(true);
-        setStatus("DEM layer hidden.");
-        log("info", "DEM layer hidden key=" + layerKey);
-        viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
-        if (viewer && viewer.scene && viewer.scene.globe) {
-          viewer.scene.globe.terrainExaggeration = 1.0;
-          if (typeof viewer.scene.verticalExaggeration !== "undefined") {
-            viewer.scene.verticalExaggeration = 1.0;
+        if (activeDemContext && activeDemContext.layerKey === layerKey) {
+          activeDemContext.visible = false;
+          hideDemColorbar();
+          setSceneModeControlEnabled(true);
+          setStatus("DEM layer hidden.");
+          log("info", "DEM layer hidden key=" + layerKey);
+          viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+          if (viewer && viewer.scene && viewer.scene.globe) {
+            viewer.scene.globe.terrainExaggeration = 1.0;
+            if (typeof viewer.scene.verticalExaggeration !== "undefined") {
+              viewer.scene.verticalExaggeration = 1.0;
+            }
+            // Restore highest quality base map screen space error on ellipsoid
+            viewer.scene.globe.maximumScreenSpaceError = 0.8;
+          }
+          if (activeDemDrapeLayer) {
+            activeDemDrapeLayer.show = false;
+          }
+          if (activeDemHillshadeLayer) {
+            activeDemHillshadeLayer.show = false;
           }
         }
       }
+      
       const anyVisible = Array.from(layerVisibilityState.values()).some(Boolean);
       if (!anyVisible) {
         if (activeDemDrapeLayer) {

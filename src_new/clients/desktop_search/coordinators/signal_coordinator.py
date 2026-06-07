@@ -102,6 +102,9 @@ class SignalCoordinator:
         c.panel.search_result_visibility_toggled.connect(
             c.toggle_search_result_visibility
         )
+        c.panel.search_results_visibility_batch_toggled.connect(
+            c.toggle_search_results_visibility_batch
+        )
         c.panel.search_layers_reordered.connect(c.reorder_search_result_layers)
         c.panel.asset_focus_requested.connect(c._toolbar_zoom_to_asset)
         c.panel.vector_layer_visibility_toggled.connect(

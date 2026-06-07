@@ -69,28 +69,27 @@
       viewer.resolutionScale = 1.0;                       // Crisp native resolution
       viewer.scene.globe.depthTestAgainstTerrain = true;  // Proper layer sorting
       viewer.scene.logarithmicDepthBuffer = true;         // Smooth camera dragging
-      viewer.scene.globe.maximumScreenSpaceError = 1.0;   // Original high quality fidelity (per user request)
-      viewer.scene.globe.tileCacheSize = 4000;             // Larger cache for smoother pans
+      viewer.scene.globe.maximumScreenSpaceError = 1.0;   // Static high quality fidelity
+      viewer.scene.globe.tileCacheSize = 800;             // Large cache without GC stutters
       viewer.scene.globe.preloadAncestors = true;         // Smooth transitions
       viewer.scene.globe.preloadSiblings = true;
-      viewer.scene.globe.loadingDescendantLimit = 24;
+      viewer.scene.globe.loadingDescendantLimit = 8;
       viewer.scene.globe.loadingQueueThreshold = 100;
       
       log("info", "DEM settings applied [MAX GPU CONFIG]: res=1.0 depthTest=true logDepth=true sse=1.0");
     } else {
       // SAFE FALLBACK CONFIGURATION (Intel Integrated GPU / Mac)
-      // Modified to prioritize visual fidelity (true 3D elevations) over pure performance
       viewer.resolutionScale = 1.0;                       // Crisp native resolution
       viewer.scene.globe.depthTestAgainstTerrain = true;  // Proper layer sorting
       viewer.scene.logarithmicDepthBuffer = true;         // Smooth camera dragging
-      viewer.scene.globe.maximumScreenSpaceError = 1.5;   // High quality geometry
-      viewer.scene.globe.tileCacheSize = 3000;             // Moderate cache for smoother pans
+      viewer.scene.globe.maximumScreenSpaceError = 1.5;   // Static balanced geometry for integrated GPU
+      viewer.scene.globe.tileCacheSize = 400;             // Moderate cache for smoother pans
       viewer.scene.globe.preloadAncestors = true;         // Reduce tile churn during drag
       viewer.scene.globe.preloadSiblings = true;
-      viewer.scene.globe.loadingDescendantLimit = 16;      // Allow more in-flight tiles
+      viewer.scene.globe.loadingDescendantLimit = 4;      // Allow fewer in-flight tiles to prevent lag
       viewer.scene.globe.loadingQueueThreshold = 100;
       
-      log("info", "DEM settings applied [SAFE INTEL CONFIG modified for High Fidelity]: res=1.0 depthTest=true logDepth=true sse=2.0");
+      log("info", "DEM settings applied [SAFE INTEL CONFIG modified for High Fidelity]: res=1.0 depthTest=true logDepth=true sse=1.5");
     }
     
     // Improve tile loading priority for better visual stability
@@ -117,10 +116,38 @@
     controller.minimumZoomDistance = 10.0;  // 10 meters minimum height
     controller.maximumZoomDistance = 100000000.0;  // 100,000 km maximum
     
-    // NOTE: zoomFactor is NOT set here — configureCameraControllerForMode() below sets it
-    // to 5.0 (Cesium default). The previous 0.4 here caused aggressive zoom-in and is removed.
-
-
+    // Bulletproof camera collision avoidance loop
+    viewer.scene.preRender.addEventListener(function () {
+      if (!viewer || !viewer.camera || !viewer.scene.globe) return;
+      
+      // Enforce terrain exaggeration consistency on every frame to prevent mountains from flat-lining/popping
+      if (typeof activeDemContext !== "undefined" && activeDemContext && activeDemContext.visible !== false) {
+        const target = Math.max(0.1, demVisual.exaggeration);
+        if (Math.abs(viewer.scene.globe.terrainExaggeration - target) > 0.001) {
+          viewer.scene.globe.terrainExaggeration = target;
+        }
+        if (typeof viewer.scene.verticalExaggeration !== "undefined" && Math.abs(viewer.scene.verticalExaggeration - target) > 0.001) {
+          viewer.scene.verticalExaggeration = target;
+        }
+      }
+      
+      const camera = viewer.camera;
+      const positionCartographic = camera.positionCartographic;
+      if (!positionCartographic) return;
+      
+      const terrainHeight = viewer.scene.globe.getHeight(positionCartographic);
+      const h = (typeof terrainHeight === "number" && Number.isFinite(terrainHeight)) ? terrainHeight : 0.0;
+      const minHeight = h + 10.0; // Keep camera at least 10 meters above terrain/ellipsoid
+      
+      if (positionCartographic.height < minHeight) {
+        const cartographic = Cesium.Cartographic.clone(positionCartographic);
+        cartographic.height = minHeight;
+        const newCartesian = Cesium.Cartographic.toCartesian(cartographic, viewer.scene.globe.ellipsoid);
+        if (newCartesian) {
+          camera.position = newCartesian;
+        }
+      }
+    });
 
     configureCameraControllerForMode(currentSceneMode);
 
@@ -137,10 +164,14 @@
     const is2d = String(mode || "3d").toLowerCase() === "2d";
     const isPan = panModeActive;
     
-    // Use Cesium default input mapping
+    // Use Cesium default input mapping but exclude WHEEL zoom to allow our custom smooth zoom
     controller.enableInputs = true;
     controller.enableTranslate = true;
     controller.enableZoom = true;
+    controller.zoomEventTypes = [
+      Cesium.CameraEventType.RIGHT_DRAG,
+      Cesium.CameraEventType.PINCH
+    ];
     // In pan mode keep rotate ON (required for 3D surface dragging) but disable tilt/look
     controller.enableRotate = !is2d;
     controller.enableTilt = !(is2d || isPan);

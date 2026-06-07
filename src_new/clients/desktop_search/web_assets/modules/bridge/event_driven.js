@@ -9,10 +9,10 @@
         // Event-driven optimization: Pre-configure for terabyte-scale performance
         if (options && options.server_optimized) {
           // Apply ultra-high performance settings for large datasets
-          viewer.scene.globe.maximumScreenSpaceError = 0.5; // Original high detail fidelity
-          viewer.scene.globe.tileCacheSize = 4000; // Aggressive tile caching
+          viewer.scene.globe.maximumScreenSpaceError = window._isHighEndGpu ? 1.0 : 1.5; // Static high-fidelity error threshold
+          viewer.scene.globe.tileCacheSize = 800; // Optimized tile caching
           viewer.scene.globe.loadingQueueThreshold = 100;
-          viewer.scene.globe.loadingDescendantLimit = 24;
+          viewer.scene.globe.loadingDescendantLimit = 8;
           // FIX: requestRenderMode disabled to prevent auto-blurring and shaking
           viewer.scene.requestRenderMode = false;
           
@@ -52,14 +52,14 @@
         // Event-driven DEM optimization for terabyte-scale terrain data
         if (options && options.server_optimized) {
           // Ultra-high performance DEM settings
-          viewer.scene.globe.terrainExaggeration = Math.min(2.0, options.exaggeration || 1.5);
+          viewer.scene.globe.terrainExaggeration = Math.min(2.0, options.exaggeration !== undefined ? options.exaggeration : 1.0);
           viewer.scene.globe.enableLighting = false; // Disable lighting for performance
           viewer.scene.fog.enabled = false; // Disable fog for clarity
           viewer.scene.skyAtmosphere.show = false; // Reduce atmospheric rendering
           
           // Optimize terrain provider for large datasets
           if (viewer.terrainProvider && viewer.terrainProvider.requestTileGeometry) {
-            viewer.scene.globe.maximumScreenSpaceError = 0.5; // Max fidelity terrain
+            viewer.scene.globe.maximumScreenSpaceError = window._isHighEndGpu ? 1.0 : 1.5; // Static high-fidelity error threshold
           }
           
           log("info", "EVENT_DRIVEN: Applied DEM terabyte-scale optimizations");
@@ -94,10 +94,10 @@
         // FIX: requestRenderMode disabled to prevent auto-blurring
         viewer.scene.requestRenderMode = false;
         viewer.scene.maximumRenderTimeChange = 0.0;
-        viewer.scene.globe.maximumScreenSpaceError = opts.screenSpaceError || 0.5;
-        viewer.scene.globe.tileCacheSize = opts.tileCacheSize || 4000;
+        viewer.scene.globe.maximumScreenSpaceError = opts.screenSpaceError || (window._isHighEndGpu ? 1.0 : 1.5);
+        viewer.scene.globe.tileCacheSize = opts.tileCacheSize || 800;
         viewer.scene.globe.loadingQueueThreshold = 100;
-        viewer.scene.globe.loadingDescendantLimit = 24;
+        viewer.scene.globe.loadingDescendantLimit = 8;
         
         // Disable expensive visual effects for performance
         viewer.scene.fog.enabled = false;
@@ -148,7 +148,7 @@
         } else {
           // Restore default rendering mode
           viewer.scene.requestRenderMode = false;
-          viewer.scene.globe.maximumScreenSpaceError = 0.5;
+          viewer.scene.globe.maximumScreenSpaceError = window._isHighEndGpu ? 1.0 : 1.5;
           
           log("info", "EVENT_DRIVEN: Restored default rendering mode");
         }

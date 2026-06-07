@@ -57,16 +57,97 @@
     }
   }
 
+  let tileLoadListenerRegistered = false;
+  function registerTileLoadListener() {
+    if (tileLoadListenerRegistered || !viewer || !viewer.scene || !viewer.scene.globe) return;
+    viewer.scene.globe.tileLoadProgressEvent.addEventListener(function (queueLength) {
+      if (queueLength === 0) {
+        if (window.offlineGIS && typeof window.offlineGIS.realignMarkersToTerrain === "function") {
+          window.offlineGIS.realignMarkersToTerrain();
+        }
+      }
+    });
+    tileLoadListenerRegistered = true;
+  }
+
+  function createMarkerCanvas(labelText, displayed) {
+    const font = "600 11px 'Segoe UI', 'Helvetica Neue', sans-serif";
+    const textWidth = measureTextWidth(labelText, font);
+    
+    const pinWidth = 26;
+    const pinHeight = 26;
+    const paddingX = 6;
+    const paddingY = 4;
+    const fontSize = 11;
+    const textBoxHeight = fontSize + paddingY * 2; // 19
+    const textBoxWidth = textWidth + paddingX * 2;
+    const spacing = 4;
+    
+    const canvasWidth = Math.max(textBoxWidth, pinWidth) + 4;
+    const canvasHeight = textBoxHeight + spacing + pinHeight + 4;
+    
+    const canvas = document.createElement("canvas");
+    canvas.width = canvasWidth;
+    canvas.height = canvasHeight;
+    const ctx = canvas.getContext("2d");
+    
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    
+    const centerX = canvasWidth / 2;
+    
+    // 1. Draw Text Box Background
+    const boxWidth = textBoxWidth;
+    const boxHeight = textBoxHeight;
+    const boxX = centerX - boxWidth / 2;
+    const boxY = 2;
+    const radius = 4;
+    
+    ctx.fillStyle = "rgba(0, 0, 0, 0.72)";
+    ctx.beginPath();
+    ctx.moveTo(boxX + radius, boxY);
+    ctx.lineTo(boxX + boxWidth - radius, boxY);
+    ctx.quadraticCurveTo(boxX + boxWidth, boxY, boxX + boxWidth, boxY + radius);
+    ctx.lineTo(boxX + boxWidth, boxY + boxHeight - radius);
+    ctx.quadraticCurveTo(boxX + boxWidth, boxY + boxHeight, boxX + boxWidth - radius, boxY + boxHeight);
+    ctx.lineTo(boxX + radius, boxY + boxHeight);
+    ctx.quadraticCurveTo(boxX, boxY + boxHeight, boxX, boxY + boxHeight - radius);
+    ctx.lineTo(boxX, boxY + radius);
+    ctx.quadraticCurveTo(boxX, boxY, boxX + radius, boxY);
+    ctx.closePath();
+    ctx.fill();
+    
+    // 2. Draw Text
+    ctx.font = font;
+    ctx.fillStyle = "#ffffff";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(labelText, centerX, boxY + boxHeight / 2);
+    
+    // 3. Draw Pin
+    const pinX = centerX - pinWidth / 2;
+    const pinY = boxY + boxHeight + spacing;
+    
+    ctx.save();
+    ctx.translate(pinX, pinY);
+    ctx.scale(pinWidth / 24, pinHeight / 24);
+    
+    const path = new Path2D("M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z");
+    ctx.fillStyle = displayed ? "#f1c40f" : "#e74c3c";
+    ctx.fill(path);
+    ctx.restore();
+    
+    return canvas;
+  }
+
   Object.assign(window.offlineGIS, {
       setSearchResultMarkers: function (markers) {
         if (!viewer) return;
         clearSearchResultMarkerEntities();
+        registerTileLoadListener();
         const items = Array.isArray(markers) ? markers : [];
-        let validCount = 0;
+        const visible = getSearchOverlayVisible();
         
-        const cartographics = [];
-        const entityPairs = [];
-
         for (let index = 0; index < items.length; index += 1) {
           const marker = items[index] || {};
           const lon = Number(marker.lon);
@@ -75,47 +156,25 @@
             continue;
           }
           const labelText = String(marker.text || marker.file_name || "Tile").trim() || "Tile";
-          const position = Cesium.Cartesian3.fromDegrees(lon, lat, 0.0);
+          
+          const cartographic = Cesium.Cartographic.fromDegrees(lon, lat);
+          const sampledHeight = viewer.scene && viewer.scene.globe ? viewer.scene.globe.getHeight(cartographic) : null;
+          const h = Number.isFinite(sampledHeight) ? Number(sampledHeight) : 0.0;
+          const position = Cesium.Cartesian3.fromDegrees(lon, lat, h + 5.0);
           const displayed = Boolean(marker.displayed);
-          validCount += 1;
+          
+          const markerCanvas = createMarkerCanvas(labelText, displayed);
           
           const billboardEntity = viewer.entities.add({
             position: position,
-            show: false, // Keep hidden during elevation sampling to prevent misplacement
+            show: visible,
             billboard: {
-              show: false, // Keep hidden during elevation sampling
-              image: displayed ? SEARCH_RESULT_MARKER_YELLOW : SEARCH_RESULT_MARKER_RED,
-              width: 26,
-              height: 26,
+              show: true,
+              image: markerCanvas,
               verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
               horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
-              heightReference: Cesium.HeightReference.NONE, // No native clamping to prevent drifting
+              heightReference: Cesium.HeightReference.NONE,
               disableDepthTestDistance: Number.POSITIVE_INFINITY,
-              scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.55),
-            },
-          });
-
-          const labelEntity = viewer.entities.add({
-            position: position,
-            show: false, // Keep hidden during elevation sampling
-            label: {
-              show: false, // Keep hidden during elevation sampling
-              text: labelText,
-              font: "600 11px 'Segoe UI', 'Helvetica Neue', sans-serif",
-              fillColor: Cesium.Color.WHITE,
-              outlineColor: Cesium.Color.BLACK,
-              outlineWidth: 2,
-              style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-              showBackground: true,
-              backgroundColor: Cesium.Color.BLACK.withAlpha(0.72),
-              backgroundPadding: new Cesium.Cartesian2(5, 3),
-              pixelOffset: new Cesium.Cartesian2(0, -32),
-              horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
-              verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-              heightReference: Cesium.HeightReference.NONE, // No native clamping to prevent drifting
-              disableDepthTestDistance: Number.POSITIVE_INFINITY,
-              scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.6),
-              translucencyByDistance: new Cesium.NearFarScalar(3000.0, 1.0, 2400000.0, 0.75),
             },
           });
 
@@ -125,148 +184,32 @@
           billboardEntity._assetDisplayed = displayed;
           billboardEntity._originalScale = 1.0;
           searchResultMarkerEntities.push(billboardEntity);
-
-          labelEntity._searchResultMarker = true;
-          labelEntity._searchResultMarkerIndex = index;
-          labelEntity._assetFilePath = String(marker.file_path || "");
-          labelEntity._assetDisplayed = displayed;
-          searchResultMarkerEntities.push(labelEntity);
-
-          cartographics.push(Cesium.Cartographic.fromDegrees(lon, lat));
-          entityPairs.push({
-            billboard: billboardEntity,
-            label: labelEntity,
-            lon: lon,
-            lat: lat
-          });
         }
-
-        // Asynchronously query the active terrain's true geodetic elevations
-        if (cartographics.length > 0) {
-          const terrainProvider = viewer.terrainProvider || new Cesium.EllipsoidTerrainProvider();
-          Promise.resolve(Cesium.sampleTerrainMostDetailed(terrainProvider, cartographics))
-            .then(function (updatedCartographics) {
-              const visible = getSearchOverlayVisible();
-              for (let i = 0; i < updatedCartographics.length; i++) {
-                const cart = updatedCartographics[i];
-                const height = Number.isFinite(cart.height) ? cart.height : 0.0;
-                const pair = entityPairs[i];
-                const newPos = Cesium.Cartesian3.fromDegrees(pair.lon, pair.lat, height);
-                
-                if (pair.billboard) {
-                  pair.billboard.position = newPos;
-                  pair.billboard.show = visible;
-                  pair.billboard.billboard.show = new Cesium.CallbackProperty(function () {
-                    return getSearchOverlayVisible();
-                  }, false);
-                }
-                if (pair.label) {
-                  pair.label.position = newPos;
-                  pair.label.show = visible;
-                  pair.label.label.show = new Cesium.CallbackProperty(function () {
-                    return getSearchOverlayVisible();
-                  }, false);
-                }
-              }
-              requestSceneRender();
-            })
-            .catch(function () {
-              // Fallback to ellipsoid level on error
-              const visible = getSearchOverlayVisible();
-              for (let i = 0; i < entityPairs.length; i++) {
-                const pair = entityPairs[i];
-                if (pair.billboard) {
-                  pair.billboard.show = visible;
-                  pair.billboard.billboard.show = new Cesium.CallbackProperty(function () {
-                    return getSearchOverlayVisible();
-                  }, false);
-                }
-                if (pair.label) {
-                  pair.label.show = visible;
-                  pair.label.label.show = new Cesium.CallbackProperty(function () {
-                    return getSearchOverlayVisible();
-                  }, false);
-                }
-              }
-              requestSceneRender();
-            });
-        }
+        requestSceneRender();
       },
       realignMarkersToTerrain: function () {
-        if (!viewer || searchResultMarkerEntities.length === 0) return;
-        
-        log("info", "DEM_RENDER: Realigning " + searchResultMarkerEntities.length + " markers to new terrain provider...");
-        
-        const cartographics = [];
-        const entityPairs = [];
-        const groups = {};
-
-        for (let i = 0; i < searchResultMarkerEntities.length; i++) {
-          const entity = searchResultMarkerEntities[i];
-          if (!entity) continue;
-          
-          // Hide immediately during transition to hide any visual drifting
-          entity.show = false;
-          
-          const idx = entity._searchResultMarkerIndex;
-          if (idx === undefined) continue;
-          if (!groups[idx]) groups[idx] = {};
-          
-          if (entity.billboard) {
-            groups[idx].billboard = entity;
-          } else if (entity.label) {
-            groups[idx].label = entity;
-          }
-        }
-        
-        Object.keys(groups).forEach(function (idx) {
-          const g = groups[idx];
-          if (g.billboard && g.billboard.position) {
-            const cartographic = Cesium.Cartographic.fromCartesian(g.billboard.position.getValue(Cesium.JulianDate.now()));
-            if (cartographic) {
-              cartographics.push(cartographic);
-              entityPairs.push({
-                billboard: g.billboard,
-                label: g.label,
-                lon: Cesium.Math.toDegrees(cartographic.longitude),
-                lat: Cesium.Math.toDegrees(cartographic.latitude)
-              });
+        if (viewer && viewer.scene && viewer.scene.globe) {
+          for (let index = 0; index < searchResultMarkerEntities.length; index += 1) {
+            const entity = searchResultMarkerEntities[index];
+            if (entity && entity.position) {
+              const positionVal = entity.position.getValue(Cesium.JulianDate.now());
+              if (positionVal) {
+                const cartographic = Cesium.Cartographic.fromCartesian(positionVal);
+                if (cartographic) {
+                  const sampledHeight = viewer.scene.globe.getHeight(cartographic);
+                  const h = Number.isFinite(sampledHeight) ? Number(sampledHeight) : 0.0;
+                  entity.position = Cesium.Cartesian3.fromDegrees(
+                    Cesium.Math.toDegrees(cartographic.longitude),
+                    Cesium.Math.toDegrees(cartographic.latitude),
+                    h + 5.0
+                  );
+                }
+              }
             }
           }
-        });
-        
-        if (cartographics.length > 0) {
-          const terrainProvider = viewer.terrainProvider || new Cesium.EllipsoidTerrainProvider();
-          Promise.resolve(Cesium.sampleTerrainMostDetailed(terrainProvider, cartographics))
-            .then(function (updatedCartographics) {
-              const visible = getSearchOverlayVisible();
-              for (let i = 0; i < updatedCartographics.length; i++) {
-                const cart = updatedCartographics[i];
-                const height = Number.isFinite(cart.height) ? cart.height : 0.0;
-                const pair = entityPairs[i];
-                const newPos = Cesium.Cartesian3.fromDegrees(pair.lon, pair.lat, height);
-                
-                if (pair.billboard) {
-                  pair.billboard.position = newPos;
-                  pair.billboard.show = visible;
-                }
-                if (pair.label) {
-                  pair.label.position = newPos;
-                  pair.label.show = visible;
-                }
-              }
-              requestSceneRender();
-            })
-            .catch(function () {
-              const visible = getSearchOverlayVisible();
-              for (let i = 0; i < entityPairs.length; i++) {
-                const pair = entityPairs[i];
-                if (pair.billboard) pair.billboard.show = visible;
-                if (pair.label) pair.label.show = visible;
-              }
-              requestSceneRender();
-            });
         }
+        syncSearchResultMarkerVisibility();
+        requestSceneRender();
       },
       clearSearchResultMarkers: function () {
         clearSearchResultMarkerEntities();
@@ -319,7 +262,7 @@
             pixelOffset: new Cesium.Cartesian2(0, 0),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
-            heightReference: Cesium.HeightReference.NONE,
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.5),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
@@ -352,7 +295,7 @@
             }, false),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
-            heightReference: Cesium.HeightReference.NONE,
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.5),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
@@ -386,7 +329,7 @@
             }, false),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
-            heightReference: Cesium.HeightReference.NONE,
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.5),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
@@ -767,7 +710,6 @@
             color: yellow,
             outlineColor: Cesium.Color.fromCssColorString("#3a2800"),
             outlineWidth: 1.5,
-            disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
         });
         window._profileCursorFrac = 0.5;
@@ -808,7 +750,7 @@
         const cyan = Cesium.Color.fromCssColorString("#00e5ff");
         window._profileStartEntity = viewer.entities.add({
           position: Cesium.Cartesian3.fromDegrees(Number(lon), Number(lat)),
-          point: { pixelSize: 9, color: cyan, outlineColor: Cesium.Color.BLACK, outlineWidth: 1.5, heightReference: Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: Number.POSITIVE_INFINITY },
+          point: { pixelSize: 9, color: cyan, outlineColor: Cesium.Color.BLACK, outlineWidth: 1.5, heightReference: Cesium.HeightReference.CLAMP_TO_GROUND },
           label: {
             text: "A",
             font: "bold 11px sans-serif",
@@ -818,7 +760,6 @@
             outlineWidth: 2,
             pixelOffset: new Cesium.Cartesian2(10, -10),
             heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-            disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
         });
         // Store start coords — preview line is recreated on every mouse move

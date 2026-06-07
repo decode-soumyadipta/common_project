@@ -323,7 +323,7 @@
             arcType: Cesium.ArcType.GEODESIC,
             material: Cesium.Color.fromCssColorString("#00e5ff"),
             depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff"),
-            clampToGround: false,
+            clampToGround: true, // Clamp to terrain surface
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
         });
@@ -367,7 +367,7 @@
             arcType: Cesium.ArcType.GEODESIC,
             material: Cesium.Color.fromCssColorString("#00e5ff"),
             depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff"),
-            clampToGround: false,
+            clampToGround: true, // Clamp to terrain surface
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
             show: new Cesium.CallbackProperty(function () {
               return Boolean(lineDrawModeEnabled && lineDrawPreviewStart && lineDrawPreviewEnd);
@@ -491,7 +491,7 @@
           arcType: Cesium.ArcType.GEODESIC,
           material: Cesium.Color.fromCssColorString("#00e5ff"), // Standard Cyan
           depthFailMaterial: Cesium.Color.fromCssColorString("#00e5ff"),
-          clampToGround: false,
+          clampToGround: true, // Clamp to terrain surface
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
@@ -511,7 +511,7 @@
           horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
           verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
           pixelOffset: new Cesium.Cartesian2(0, -14),
-          heightReference: Cesium.HeightReference.NONE,
+          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND, // Clamp to terrain surface
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
           scale: 1.0,
         },
@@ -524,7 +524,7 @@
               color: Cesium.Color.fromCssColorString("#00e5ff"),
               outlineColor: Cesium.Color.TRANSPARENT,
             outlineWidth: 0,
-              heightReference: Cesium.HeightReference.NONE,
+              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND, // Clamp to terrain surface
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           }
       });
@@ -535,7 +535,7 @@
               color: Cesium.Color.fromCssColorString("#00e5ff"),
               outlineColor: Cesium.Color.TRANSPARENT,
             outlineWidth: 0,
-              heightReference: Cesium.HeightReference.NONE,
+              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND, // Clamp to terrain surface
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           }
       });

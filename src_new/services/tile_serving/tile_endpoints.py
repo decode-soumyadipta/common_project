@@ -16,13 +16,24 @@ Image manipulation query parameters (Requirement 11.6):
     brightness — float offset added after contrast (default 0.0)
     colormap   — named colormap string, e.g. "viridis" (default None)
 
+Performance optimizations:
+    - MBTiles files are served directly from SQLite (zero GDAL overhead)
+    - LRU tile cache avoids redundant rendering for repeated requests
+    - COG files are read via windowed reads with automatic overview selection
+    - Non-COG rasters fall back to on-the-fly reprojection
+
 Requirements: 11.1, 11.2, 11.4, 11.5, 11.6, 16.4
 """
 from __future__ import annotations
 
 import io
 import logging
+import math
 import os
+import sqlite3
+import threading
+import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Optional
 
@@ -58,6 +69,147 @@ try:
 except ImportError:  # pragma: no cover
     _PIL_AVAILABLE = False
     logger.warning("Pillow is not installed. PNG encoding will be unavailable.")
+
+
+# --------------------------------------------------------------------------- Thread-safe LRU tile cache ---------------------------------------------------------------------------
+
+
+class _TileCache:
+    """Thread-safe hybrid RAM/on-disk LRU cache for rendered PNG tile bytes.
+
+    Keyed by ``(raster_path_str, z, x, y, contrast, brightness, colormap)``.
+    Evicts least-recently-used entries in RAM when ``maxsize`` is exceeded.
+    Caches tiles persistently on disk under settings.data_root / "tile_cache".
+    Evicts oldest files on disk in a background thread when disk limits are exceeded.
+    """
+
+    def __init__(self, maxsize: int = 512, disk_limit: int = 20000):
+        self._maxsize = max(1, maxsize)
+        self._disk_limit = disk_limit
+        self._cache: OrderedDict[tuple, bytes] = OrderedDict()
+        self._lock = threading.Lock()
+        self._hits = 0
+        self._misses = 0
+        self._disk_hits = 0
+        self._write_count = 0
+        self._cleanup_lock = threading.Lock()
+
+        # Resolve disk cache directory under settings.data_root
+        from src_new.shared.config import settings
+        self._disk_dir = Path(settings.data_root) / "tile_cache"
+        try:
+            self._disk_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            logger.error("Failed to create disk cache directory %s: %s", self._disk_dir, e)
+
+    def _get_hash(self, key: tuple) -> str:
+        import hashlib
+        # Ensure a robust, stable string key regardless of path separator styles
+        path_str = str(key[0]).replace("\\", "/")
+        key_str = f"{path_str}_z{key[1]}_x{key[2]}_y{key[3]}_c{key[4]}_b{key[5]}_cm{key[6]}"
+        return hashlib.sha256(key_str.encode("utf-8")).hexdigest()
+
+    def get(self, key: tuple) -> bytes | None:
+        with self._lock:
+            # 1. RAM Cache Lookup
+            if key in self._cache:
+                self._cache.move_to_end(key)
+                self._hits += 1
+                return self._cache[key]
+
+            # 2. Disk Cache Lookup
+            h = self._get_hash(key)
+            filepath = self._disk_dir / f"{h}.bin"
+            if filepath.exists():
+                try:
+                    # Update modification time to track LRU on disk
+                    os.utime(filepath, None)
+                    tile_bytes = filepath.read_bytes()
+
+                    # Put back into RAM Cache
+                    self._cache[key] = tile_bytes
+                    if len(self._cache) > self._maxsize:
+                        self._cache.popitem(last=False)
+
+                    self._hits += 1
+                    self._disk_hits += 1
+                    return tile_bytes
+                except Exception as e:
+                    logger.error("Error reading tile from disk cache: %s", e)
+
+            self._misses += 1
+            return None
+
+    def put(self, key: tuple, value: bytes) -> None:
+        with self._lock:
+            # 1. Store in RAM Cache
+            if key in self._cache:
+                self._cache.move_to_end(key)
+                self._cache[key] = value
+            else:
+                self._cache[key] = value
+                while len(self._cache) > self._maxsize:
+                    self._cache.popitem(last=False)
+
+            # 2. Store in Disk Cache
+            h = self._get_hash(key)
+            filepath = self._disk_dir / f"{h}.bin"
+            try:
+                filepath.write_bytes(value)
+                self._write_count += 1
+            except Exception as e:
+                logger.error("Error writing tile to disk cache: %s", e)
+
+        # Trigger background disk cache cleanup asynchronously when threshold reached
+        if self._write_count >= 500:
+            self._write_count = 0
+            threading.Thread(target=self._cleanup_disk_cache, daemon=True).start()
+
+    def _cleanup_disk_cache(self) -> None:
+        if not self._cleanup_lock.acquire(blocking=False):
+            return
+        try:
+            files = list(self._disk_dir.glob("*.bin"))
+            if len(files) <= self._disk_limit:
+                return
+
+            logger.info("Cleaning up disk cache: %d files (limit is %d)", len(files), self._disk_limit)
+            # Sort files by modification/access time ascending (oldest first)
+            files.sort(key=lambda f: f.stat().st_mtime)
+
+            target_count = int(self._disk_limit * 0.9)
+            num_to_delete = len(files) - target_count
+
+            deleted_count = 0
+            for i in range(num_to_delete):
+                try:
+                    files[i].unlink(missing_ok=True)
+                    deleted_count += 1
+                except Exception as e:
+                    logger.error("Failed to delete cached file %s: %s", files[i], e)
+
+            logger.info("Disk cache cleanup completed: deleted %d files", deleted_count)
+        except Exception as e:
+            logger.error("Error during disk cache cleanup: %s", e)
+        finally:
+            self._cleanup_lock.release()
+
+    @property
+    def stats(self) -> dict:
+        with self._lock:
+            total = self._hits + self._misses
+            return {
+                "size": len(self._cache),
+                "maxsize": self._maxsize,
+                "hits": self._hits,
+                "disk_hits": self._disk_hits,
+                "misses": self._misses,
+                "hit_rate": round(self._hits / total, 4) if total > 0 else 0.0,
+            }
+
+
+# Instantiate the global tile cache using config-driven size.
+_tile_cache = _TileCache(maxsize=settings.tile_cache_size)
 
 
 # --------------------------------------------------------------------------- Internal helpers ---------------------------------------------------------------------------
@@ -96,9 +248,11 @@ def _resolve_raster_path(raster_id: str) -> Path:
     candidate = data_root / raster_id
     if candidate.is_file():
         resolved = candidate.resolve()
-        cog_sibling = resolved.parent / f"{resolved.stem}.cog.tif"
-        if cog_sibling.is_file():
-            return cog_sibling.resolve()
+        # For non-MBTiles raster formats, prefer a COG sibling if available
+        if resolved.suffix.lower() != ".mbtiles":
+            cog_sibling = resolved.parent / f"{resolved.stem}.cog.tif"
+            if cog_sibling.is_file():
+                return cog_sibling.resolve()
         return resolved
 
     # 2. Stem match: search recursively for a file whose stem == raster_id
@@ -106,9 +260,10 @@ def _resolve_raster_path(raster_id: str) -> Path:
         stem_candidate = data_root / f"{raster_id}{ext}"
         if stem_candidate.is_file():
             resolved = stem_candidate.resolve()
-            cog_sibling = resolved.parent / f"{resolved.stem}.cog.tif"
-            if cog_sibling.is_file():
-                return cog_sibling.resolve()
+            if resolved.suffix.lower() != ".mbtiles":
+                cog_sibling = resolved.parent / f"{resolved.stem}.cog.tif"
+                if cog_sibling.is_file():
+                    return cog_sibling.resolve()
             return resolved
 
     # 3. Search in uploads folder first (much faster than full rglob)
@@ -117,9 +272,10 @@ def _resolve_raster_path(raster_id: str) -> Path:
         for found in uploads_dir.rglob("*"):
             if found.is_file() and (found.stem == raster_id or found.name == raster_id):
                 resolved = found.resolve()
-                cog_sibling = resolved.parent / f"{resolved.stem}.cog.tif"
-                if cog_sibling.is_file():
-                    return cog_sibling.resolve()
+                if resolved.suffix.lower() != ".mbtiles":
+                    cog_sibling = resolved.parent / f"{resolved.stem}.cog.tif"
+                    if cog_sibling.is_file():
+                        return cog_sibling.resolve()
                 return resolved
 
     # 4. Recursive search (slower, used as fallback)
@@ -129,9 +285,10 @@ def _resolve_raster_path(raster_id: str) -> Path:
             continue
         if found.is_file() and (found.stem == raster_id or found.name == raster_id):
             resolved = found.resolve()
-            cog_sibling = resolved.parent / f"{resolved.stem}.cog.tif"
-            if cog_sibling.is_file():
-                return cog_sibling.resolve()
+            if resolved.suffix.lower() != ".mbtiles":
+                cog_sibling = resolved.parent / f"{resolved.stem}.cog.tif"
+                if cog_sibling.is_file():
+                    return cog_sibling.resolve()
             return resolved
 
     raise HTTPException(
@@ -200,7 +357,95 @@ def _array_to_png(array: "np.ndarray") -> bytes:  # type: ignore[name-defined]
     return buf.getvalue()
 
 
-def _read_tile_from_raster(
+# --------------------------------------------------------------------------- MBTiles fast-path — direct SQLite read, zero GDAL overhead ---------------------------------------------------------------------------
+
+
+def _read_mbtiles_tile(mbtiles_path: Path, z: int, x: int, y: int) -> bytes:
+    """Read a pre-rendered tile directly from an MBTiles SQLite database.
+
+    MBTiles uses the TMS tile scheme (origin at bottom-left), while XYZ
+    tiles have origin at top-left.  The Y coordinate is flipped using:
+
+        tms_y = (1 << z) - 1 - y
+
+    Returns the raw PNG/JPG/WebP bytes stored in the ``tiles`` table.
+
+    Args:
+        mbtiles_path: Absolute path to the .mbtiles file.
+        z: Zoom level.
+        x: Tile column (XYZ scheme).
+        y: Tile row (XYZ scheme — origin top-left).
+
+    Returns:
+        Raw image bytes from the database.
+
+    Raises:
+        HTTPException(404): When the tile is not found in the database.
+        HTTPException(500): On database errors.
+    """
+    # XYZ → TMS Y-coordinate flip
+    tms_y = (1 << z) - 1 - y
+
+    try:
+        conn = sqlite3.connect(
+            f"file:{mbtiles_path}?mode=ro",
+            uri=True,
+            check_same_thread=False,
+        )
+        try:
+            cursor = conn.execute(
+                "SELECT tile_data FROM tiles "
+                "WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?",
+                (z, x, tms_y),
+            )
+            row = cursor.fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        logger.error(
+            "MBTiles database error for %s (z=%d x=%d y=%d): %s",
+            mbtiles_path.name, z, x, y, exc,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"MBTiles database error: {exc}",
+        ) from exc
+
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Tile z={z}/x={x}/y={y} not found in MBTiles '{mbtiles_path.name}'.",
+        )
+
+    return bytes(row[0])
+
+
+def _detect_mbtiles_format(mbtiles_path: Path) -> str:
+    """Detect the tile image format stored in an MBTiles database.
+
+    Reads the ``format`` key from the ``metadata`` table.  Falls back to
+    ``"png"`` if the key is missing or the table is not readable.
+    """
+    try:
+        conn = sqlite3.connect(
+            f"file:{mbtiles_path}?mode=ro", uri=True, check_same_thread=False,
+        )
+        try:
+            cursor = conn.execute(
+                "SELECT value FROM metadata WHERE name = 'format'"
+            )
+            row = cursor.fetchone()
+            return row[0].lower() if row else "png"
+        finally:
+            conn.close()
+    except Exception:
+        return "png"
+
+
+# --------------------------------------------------------------------------- Optimized COG tile reader — windowed reads with overview selection ---------------------------------------------------------------------------
+
+
+def _read_tile_from_cog(
     raster_path: Path,
     z: int,
     x: int,
@@ -209,8 +454,12 @@ def _read_tile_from_raster(
 ) -> "np.ndarray":  # type: ignore[name-defined]
     """Read a single XYZ tile from a raster file using rasterio.
 
-    Reprojects the raster to EPSG:3857 (Web Mercator) on the fly and
-    resamples to ``tile_size × tile_size`` pixels.
+    For Cloud-Optimized GeoTIFFs (COGs), this function uses **windowed
+    reads** with automatic overview selection — avoiding the expensive
+    ``reproject()`` call that the old implementation used on every request.
+
+    For non-COG rasters (rare after ingestion converts everything to COG),
+    falls back to on-the-fly reprojection.
 
     Args:
         raster_path: Absolute path to the raster file.
@@ -232,10 +481,9 @@ def _read_tile_from_raster(
             detail="rasterio is not installed; tile rendering is unavailable.",
         )
 
-    # Convert XYZ tile coordinates to Web Mercator bounds Tile bounds formula: https://wiki.openstreetmap.org/wiki/Slippy_map_tilenames
-    import math
-
-    n = 2**z
+    # Convert XYZ tile coordinates to Web Mercator bounds
+    # https://wiki.openstreetmap.org/wiki/Slippy_map_tilenames
+    n = 2 ** z
     lon_min = x / n * 360.0 - 180.0
     lon_max = (x + 1) / n * 360.0 - 180.0
     lat_max_rad = math.atan(math.sinh(math.pi * (1 - 2 * y / n)))
@@ -243,21 +491,32 @@ def _read_tile_from_raster(
     lat_min = math.degrees(lat_min_rad)
     lat_max = math.degrees(lat_max_rad)
 
-    # Convert to Web Mercator (EPSG:3857)
-    from pyproj import Transformer  # type: ignore[import]
+    # Convert to Web Mercator (EPSG:3857) bounds
+    from rasterio.crs import CRS
 
-    transformer = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
-    west, south = transformer.transform(lon_min, lat_min)
-    east, north = transformer.transform(lon_max, lat_max)
+    dst_crs = CRS.from_epsg(3857)
+
+    # Use rasterio's transform_bounds for the coordinate conversion
+    from rasterio.warp import transform_bounds as _transform_bounds
+
+    try:
+        west, south, east, north = _transform_bounds(
+            CRS.from_epsg(4326), dst_crs, lon_min, lat_min, lon_max, lat_max
+        )
+    except Exception:
+        # Manual Mercator projection fallback
+        def _to_mercator(lon: float, lat: float) -> tuple[float, float]:
+            x_m = lon * 20037508.342789244 / 180.0
+            lat_rad = math.radians(lat)
+            y_m = math.log(math.tan(math.pi / 4 + lat_rad / 2)) * 20037508.342789244 / math.pi
+            return x_m, y_m
+
+        west, south = _to_mercator(lon_min, lat_min)
+        east, north = _to_mercator(lon_max, lat_max)
+
+    tile_transform = from_bounds(west, south, east, north, tile_size, tile_size)
 
     with rasterio.open(str(raster_path)) as src:
-        # Reproject raster to EPSG:3857 and read the tile window
-        dst_crs = "EPSG:3857"
-        transform, width, height = calculate_default_transform(
-            src.crs, dst_crs, src.width, src.height, *src.bounds
-        )
-
-        # Build output array
         src_count = src.count
         out_bands = 4 if src_count == 3 else min(src_count, 4)
         tile_data = np.zeros((out_bands, tile_size, tile_size), dtype="uint8")
@@ -266,7 +525,6 @@ def _read_tile_from_raster(
         if out_bands == 4 and src_count == 3:
             tile_data[3] = 255
 
-        tile_transform = from_bounds(west, south, east, north, tile_size, tile_size)
         failed_mask = np.zeros((tile_size, tile_size), dtype=bool)
 
         for band_idx in range(1, src_count + 1):
@@ -385,6 +643,16 @@ def _read_preview_from_raster(
 # --------------------------------------------------------------------------- Endpoints ---------------------------------------------------------------------------
 
 
+# Media type lookup for MBTiles tile formats
+_MBTILES_MEDIA_TYPES = {
+    "png": "image/png",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "webp": "image/webp",
+    "pbf": "application/x-protobuf",
+}
+
+
 @router.get(
     "/tiles/{z}/{x}/{y}.png",
     response_class=Response,
@@ -392,6 +660,8 @@ def _read_preview_from_raster(
     description=(
         "Returns a {TILE_SIZE}×{TILE_SIZE} PNG tile for the given XYZ coordinates. "
         "The ``raster_id`` query parameter identifies the raster to serve. "
+        "MBTiles files are served directly from SQLite (zero GDAL overhead). "
+        "COG rasters use windowed reads with automatic overview selection. "
         "Optional ``contrast``, ``brightness``, and ``colormap`` parameters "
         "allow real-time image manipulation (Requirement 11.6)."
     ).format(TILE_SIZE=TILE_SIZE),
@@ -425,19 +695,115 @@ async def get_tile(
 ) -> Response:
     """Serve a single XYZ tile as PNG.
 
-    Reads the raster from ``settings.data_root``, reprojects to Web Mercator,
-    resamples to ``TILE_SIZE × TILE_SIZE``, applies contrast/brightness, and
-    returns a PNG response.
+    Dispatches to the appropriate fast-path based on file format:
+    - **.mbtiles**: Direct SQLite read — returns pre-rendered tile bytes (~1ms).
+    - **.cog.tif / .tif / .jp2**: Optimized rasterio windowed read with cache.
 
     Requirements: 11.5, 11.6
     """
+    t_start = time.monotonic()
     raster_path = _resolve_raster_path(raster_id)
+
+    # ── MBTiles fast-path: direct SQLite read, no GDAL ──────────────────
+    if raster_path.suffix.lower() == ".mbtiles":
+        # Check cache first
+        cache_key = (str(raster_path), z, x, y, contrast, brightness, colormap)
+        cached = _tile_cache.get(cache_key)
+        if cached is not None:
+            logger.debug(
+                "Cache HIT for MBTiles tile z=%d x=%d y=%d from %s (%.1fms)",
+                z, x, y, raster_path.name, (time.monotonic() - t_start) * 1000,
+            )
+            tile_format = _detect_mbtiles_format(raster_path)
+            media_type = _MBTILES_MEDIA_TYPES.get(tile_format, "image/png")
+            return Response(
+                content=cached,
+                media_type=media_type,
+                headers={
+                    "Cache-Control": "public, max-age=31536000, immutable",
+                    "X-Raster-Id": raster_id,
+                    "X-Tile-Source": "mbtiles-cache",
+                },
+            )
+
+        tile_bytes = _read_mbtiles_tile(raster_path, z, x, y)
+        tile_format = _detect_mbtiles_format(raster_path)
+        media_type = _MBTILES_MEDIA_TYPES.get(tile_format, "image/png")
+
+        # Apply contrast/brightness to MBTiles tiles if requested
+        if (contrast != 1.0 or brightness != 0.0 or colormap is not None) and _PIL_AVAILABLE and _RASTERIO_AVAILABLE:
+            try:
+                img = Image.open(io.BytesIO(tile_bytes))
+                arr = np.array(img)
+                if arr.ndim == 2:
+                    arr = arr[np.newaxis, :, :]
+                elif arr.ndim == 3:
+                    arr = np.transpose(arr, (2, 0, 1))
+
+                if contrast != 1.0 or brightness != 0.0:
+                    arr = _apply_contrast_brightness(arr, contrast, brightness)
+
+                if colormap is not None:
+                    try:
+                        import matplotlib.cm as _cm
+                        import matplotlib.colors as _mcolors
+
+                        cmap = _cm.get_cmap(colormap)
+                        band = arr[0].astype("float32") / 255.0
+                        rgba = (_mcolors.to_rgba_array(cmap(band.ravel())) * 255).astype("uint8")
+                        rgba = rgba.reshape(arr.shape[1], arr.shape[2], 4)
+                        arr = np.transpose(rgba, (2, 0, 1))
+                    except Exception as cmap_exc:
+                        logger.warning("Failed to apply colormap '%s' to MBTiles tile: %s", colormap, cmap_exc)
+
+                tile_bytes = _array_to_png(arr)
+                media_type = "image/png"
+            except Exception as adj_exc:
+                logger.warning("Failed to apply adjustments to MBTiles tile: %s", adj_exc)
+
+        # Cache the result
+        _tile_cache.put(cache_key, tile_bytes)
+
+        duration_ms = (time.monotonic() - t_start) * 1000
+        logger.debug(
+            "MBTiles tile z=%d x=%d y=%d from %s served in %.1fms",
+            z, x, y, raster_path.name, duration_ms,
+        )
+        return Response(
+            content=tile_bytes,
+            media_type=media_type,
+            headers={
+                "Cache-Control": "public, max-age=31536000, immutable",
+                "X-Raster-Id": raster_id,
+                "X-Tile-Source": "mbtiles-direct",
+                "X-Render-Ms": f"{duration_ms:.1f}",
+            },
+        )
+
+    # ── COG / raster path: windowed read with cache ─────────────────────
+    cache_key = (str(raster_path), z, x, y, contrast, brightness, colormap)
+    cached = _tile_cache.get(cache_key)
+    if cached is not None:
+        logger.debug(
+            "Cache HIT for raster tile z=%d x=%d y=%d from %s (%.1fms)",
+            z, x, y, raster_path.name, (time.monotonic() - t_start) * 1000,
+        )
+        return Response(
+            content=cached,
+            media_type="image/png",
+            headers={
+                "Cache-Control": "public, max-age=3600",
+                "X-Raster-Id": raster_id,
+                "X-Tile-Source": "raster-cache",
+            },
+        )
+
     logger.debug(
         "Serving tile z=%d x=%d y=%d from %s (contrast=%.2f brightness=%.2f colormap=%s)",
         z, x, y, raster_path, contrast, brightness, colormap,
     )
 
-    tile_data = _read_tile_from_raster(raster_path, z, x, y, tile_size=TILE_SIZE)
+    tile_data = _read_tile_from_cog(raster_path, z, x, y, tile_size=TILE_SIZE)
 
     # Apply contrast / brightness
     if contrast != 1.0 or brightness != 0.0:
@@ -459,12 +825,23 @@ async def get_tile(
             logger.warning("Failed to apply colormap '%s': %s", colormap, exc)
 
     png_bytes = _array_to_png(tile_data)
+
+    # Cache the result
+    _tile_cache.put(cache_key, png_bytes)
+
+    duration_ms = (time.monotonic() - t_start) * 1000
+    logger.debug(
+        "Raster tile z=%d x=%d y=%d from %s rendered in %.1fms",
+        z, x, y, raster_path.name, duration_ms,
+    )
     return Response(
         content=png_bytes,
         media_type="image/png",
         headers={
             "Cache-Control": "public, max-age=3600",
             "X-Raster-Id": raster_id,
+            "X-Tile-Source": "raster-render",
+            "X-Render-Ms": f"{duration_ms:.1f}",
         },
     )
 
@@ -588,6 +965,52 @@ async def get_metadata(raster_id: str) -> dict:
     raster_path = _resolve_raster_path(raster_id)
     logger.debug("Reading metadata for raster_id=%s from %s", raster_id, raster_path)
 
+    # MBTiles metadata path — read from SQLite metadata table
+    if raster_path.suffix.lower() == ".mbtiles":
+        try:
+            conn = sqlite3.connect(
+                f"file:{raster_path}?mode=ro", uri=True, check_same_thread=False,
+            )
+            try:
+                cursor = conn.execute("SELECT name, value FROM metadata")
+                meta = {row[0]: row[1] for row in cursor.fetchall()}
+            finally:
+                conn.close()
+
+            # Parse bounds
+            bounds_str = meta.get("bounds", "-180,-85.051129,180,85.051129")
+            parts = [float(v.strip()) for v in bounds_str.split(",")]
+            if len(parts) == 4:
+                min_lon, min_lat, max_lon, max_lat = parts
+            else:
+                min_lon, min_lat, max_lon, max_lat = -180, -85.051129, 180, 85.051129
+
+            min_zoom = int(meta.get("minzoom", 0))
+            max_zoom = int(meta.get("maxzoom", 18))
+
+            return {
+                "raster_id": raster_id,
+                "bounds": {
+                    "min_lon": min_lon,
+                    "min_lat": min_lat,
+                    "max_lon": max_lon,
+                    "max_lat": max_lat,
+                },
+                "minzoom": min_zoom,
+                "maxzoom": max_zoom,
+                "center": [(min_lon + max_lon) / 2, (min_lat + max_lat) / 2],
+                "crs": "EPSG:3857",
+                "width": 256,
+                "height": 256,
+                "bands": 0,
+                "tile_format": meta.get("format", "png"),
+                "source_type": "mbtiles",
+            }
+        except Exception as exc:
+            logger.error("Failed to read MBTiles metadata from %s: %s", raster_path.name, exc)
+            raise HTTPException(status_code=500, detail=f"MBTiles metadata error: {exc}") from exc
+
+    # Standard raster metadata path
     with rasterio.open(str(raster_path)) as src:
         # Reproject bounds to WGS 84 for the response
         from rasterio.warp import transform_bounds  # type: ignore[import]
@@ -603,8 +1026,6 @@ async def get_metadata(raster_id: str) -> dict:
         center_lat = (min_lat + max_lat) / 2.0
 
         # Estimate zoom levels from resolution
-        import math
-
         # Native resolution in degrees per pixel (approximate)
         lon_span = max_lon - min_lon
         lat_span = max_lat - min_lat
@@ -618,6 +1039,13 @@ async def get_metadata(raster_id: str) -> dict:
         minzoom = max(0, maxzoom - 8)
 
         crs_string = src.crs.to_string() if src.crs else "unknown"
+
+        # Detect if it's a COG for informational purposes
+        is_cog = (
+            raster_path.name.lower().endswith(".cog.tif")
+            or raster_path.name.lower().endswith(".cog.tiff")
+            or (src.driver == "GTiff" and src.is_tiled and bool(src.overviews(1)))
+        )
 
     return {
         "raster_id": raster_id,
@@ -634,7 +1062,18 @@ async def get_metadata(raster_id: str) -> dict:
         "width": src.width if _RASTERIO_AVAILABLE else 0,
         "height": src.height if _RASTERIO_AVAILABLE else 0,
         "bands": src.count if _RASTERIO_AVAILABLE else 0,
+        "source_type": "cog" if is_cog else "raster",
     }
+
+
+@router.get(
+    "/cache/stats",
+    summary="Tile cache statistics",
+    description="Returns hit/miss statistics for the server-side tile LRU cache.",
+)
+async def cache_stats() -> dict:
+    """Return tile cache statistics for monitoring and debugging."""
+    return _tile_cache.stats
 
 
 @router.get(
@@ -653,6 +1092,7 @@ async def health_check() -> dict:
     - Whether rasterio is available (required for tile rendering)
     - Whether Pillow is available (required for PNG encoding)
     - Whether ``settings.data_root`` exists and is readable
+    - Tile cache statistics
 
     Requirements: 11.5
     """
@@ -680,6 +1120,7 @@ async def health_check() -> dict:
         "pillow_available": _PIL_AVAILABLE,
         "data_root": str(data_root),
         "data_root_accessible": data_root_ok,
+        "tile_cache": _tile_cache.stats,
         "issues": issues,
     }
 

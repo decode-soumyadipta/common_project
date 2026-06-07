@@ -382,6 +382,19 @@ def upload_raster(
                     sidecar_path = saved_path.with_suffix(suffix)
                     sidecar_path.write_text(val)
                     logger.info("Saved sidecar file during upload: %s", sidecar_path)
+
+                    if suffix.lower() == ".prj" and saved_path.suffix.lower() in {".j2k", ".jp2"}:
+                        try:
+                            prj_text = val.strip()
+                            if "|||" in prj_text:
+                                prj_text = prj_text.split("|||")[0].strip()
+                            if prj_text:
+                                aux_path = saved_path.with_name(saved_path.name + ".aux.xml")
+                                xml_content = f'<PAMDataset>\n  <SRS dataAxisToSRSAxisMapping="1,2">{prj_text}</SRS>\n</PAMDataset>\n'
+                                aux_path.write_text(xml_content, encoding="utf-8")
+                                logger.info("Generated aux.xml sidecar during upload: %s", aux_path)
+                        except Exception as aux_exc:
+                            logger.warning("Failed to generate aux.xml sidecar during upload: %s", aux_exc)
         except Exception as exc:
             logger.warning("Failed to parse sidecar_json Form parameter: %s", exc)
 
@@ -425,18 +438,6 @@ def upload_raster(
 
     _ingestion_status[raster_id]["progress"] = 0.3
 
-    # --- 3.5. Schedule COG conversion as a background task --- Fires AFTER the HTTP response is returned so it never blocks or causes 500s. COG files will be available for fast tiling on next request.
-    if ext in {".tif", ".tiff", ".jp2", ".j2k"}:
-        _cog_path = saved_path  # capture snapshot before any mutation
-        def _bg_cog(p: Path = _cog_path) -> None:
-            try:
-                from src_new.services.ingestion.gdal_pipelines.cog_converter import CogConverter
-                res = CogConverter().convert(p)
-                logger.info("BG COG: %s converted=%s", p.name, res.converted)
-            except Exception as _exc:
-                logger.warning("BG COG failed for %s: %s", p.name, _exc)
-        background_tasks.add_task(_bg_cog)
-
     # --- 4. GDAL metadata extraction ---
     extract_metadata = get_metadata_extractor()
     try:
@@ -471,6 +472,62 @@ def upload_raster(
             status_code=500,
             detail=f"Metadata extraction failed: {error_msg}",
         ) from exc
+
+    _ingestion_status[raster_id]["progress"] = 0.5
+
+    # --- 4.5. Synchronous COG conversion ---
+    # Runs BEFORE database cataloging so that the COG file is guaranteed to
+    # exist when the tile service first attempts to render it.  The stored
+    # file_path is updated to the .cog.tif output so the tile service always
+    # resolves to the optimized file (avoiding expensive on-the-fly reproject).
+    if ext in {".tif", ".tiff", ".jp2", ".j2k"}:
+        _ingestion_status[raster_id]["status"] = "converting_cog"
+        try:
+            from src_new.services.ingestion.gdal_pipelines.cog_converter import CogConverter
+
+            cog_result = CogConverter().convert(saved_path)
+            if cog_result.converted:
+                logger.info(
+                    "POST /upload — COG conversion succeeded: %s → %s",
+                    saved_path.name, cog_result.working_path.name,
+                )
+                # Update metadata to point at the optimized COG file
+                metadata = metadata.model_copy(
+                    update={"file_path": str(cog_result.working_path.resolve())}
+                )
+            else:
+                if cog_result.working_path != saved_path:
+                    # Reusing existing COG
+                    logger.info("POST /upload — Reusing existing COG for: %s", saved_path.name)
+                    metadata = metadata.model_copy(
+                        update={"file_path": str(cog_result.working_path.resolve())}
+                    )
+                else:
+                    from src_new.shared.config import settings
+                    if settings.ingest_enable_cog_conversion and not CogConverter._looks_like_cog(saved_path):
+                        error_msg = f"COG conversion failed or was skipped for non-COG file: {saved_path.name}"
+                        _ingestion_status[raster_id].update(
+                            {"status": "failed", "progress": 0.5, "error": error_msg}
+                        )
+                        logger.error("POST /upload — %s", error_msg)
+                        raise HTTPException(status_code=422, detail=error_msg)
+
+                    logger.info(
+                        "POST /upload — COG conversion skipped (already COG or disabled): %s",
+                        saved_path.name,
+                    )
+        except HTTPException:
+            raise
+        except Exception as cog_exc:
+            error_msg = f"COG conversion failed: {cog_exc}"
+            _ingestion_status[raster_id].update(
+                {"status": "failed", "progress": 0.5, "error": error_msg}
+            )
+            logger.error("POST /upload — COG conversion failed for '%s': %s", filename, cog_exc)
+            raise HTTPException(
+                status_code=422,
+                detail=error_msg,
+            ) from cog_exc
 
     _ingestion_status[raster_id]["progress"] = 0.7
 
@@ -639,6 +696,9 @@ def delete_assets(
                 sidecar = path_to_delete.with_suffix(suffix)
                 if sidecar.exists():
                     sidecar.unlink(missing_ok=True)
+            aux_xml = path_to_delete.with_name(path_to_delete.name + ".aux.xml")
+            if aux_xml.exists():
+                aux_xml.unlink(missing_ok=True)
 
             # Delete parent directory if it's a unique upload folder (e.g. uploads/<uuid>)
             parent_dir = path_to_delete.parent

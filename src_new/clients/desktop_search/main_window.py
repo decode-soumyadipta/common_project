@@ -30,8 +30,10 @@ from qtpy.QtWidgets import (
     QComboBox,
     QDialog,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMenu,
@@ -1490,6 +1492,73 @@ class MainWindow(QMainWindow):
         _spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(_spacer)
 
+        # Light blue shaded box (goto container)
+        _goto_container = QFrame()
+        _goto_container.setObjectName("gotoContainer")
+        _goto_container.setStyleSheet("""
+            #gotoContainer {
+                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #eef6ff, stop:1 #d9eaff);
+                border: 1px solid #b3d1ff;
+                border-radius: 6px;
+                padding: 1px 4px;
+            }
+            QLineEdit {
+                background-color: #ffffff;
+                border: 1px solid #b3d1ff;
+                border-radius: 4px;
+                padding: 1px 4px;
+                color: #2b2b2b;
+                font-size: 11px;
+                font-weight: 500;
+            }
+            QLineEdit:focus {
+                border: 1px solid #3399ff;
+            }
+            QPushButton {
+                background-color: #3399ff;
+                color: white;
+                border: none;
+                border-radius: 10px;
+                font-size: 10px;
+                font-weight: bold;
+                min-width: 20px;
+                max-width: 20px;
+                min-height: 20px;
+                max-height: 20px;
+            }
+            QPushButton:hover {
+                background-color: #1a8cff;
+            }
+            QPushButton:pressed {
+                background-color: #0073e6;
+            }
+        """)
+
+        _goto_layout = QHBoxLayout(_goto_container)
+        _goto_layout.setContentsMargins(2, 1, 2, 1)
+        _goto_layout.setSpacing(4)
+
+        self.goto_lat_input = QLineEdit()
+        self.goto_lat_input.setPlaceholderText("Lat")
+        self.goto_lat_input.setFixedWidth(65)
+        self.goto_lat_input.setToolTip("Latitude (e.g. 28.6139)")
+
+        self.goto_lon_input = QLineEdit()
+        self.goto_lon_input.setPlaceholderText("Long")
+        self.goto_lon_input.setFixedWidth(65)
+        self.goto_lon_input.setToolTip("Longitude (e.g. 77.2090)")
+
+        _goto_btn = QPushButton("Go")
+        _goto_btn.setToolTip("Go to Coordinates")
+        _goto_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        _goto_btn.clicked.connect(self._on_goto_coordinates_clicked)
+
+        _goto_layout.addWidget(self.goto_lat_input)
+        _goto_layout.addWidget(self.goto_lon_input)
+        _goto_layout.addWidget(_goto_btn)
+
+        toolbar.addWidget(_goto_container)
+
         _logo_path = _pathlib.Path(__file__).resolve().parent.parent.parent / "assets" / "resGIS_logo.png"
         if _logo_path.exists():
             from qtpy.QtGui import QPixmap
@@ -1520,6 +1589,49 @@ class MainWindow(QMainWindow):
             measurement_actions,
             action_group_by_label,
         )
+
+    def _on_goto_coordinates_clicked(self) -> None:
+        """Handle the go-to coordinates navigation."""
+        lat_text = self.goto_lat_input.text().strip()
+        lon_text = self.goto_lon_input.text().strip()
+
+        if not lat_text or not lon_text:
+            QMessageBox.warning(
+                self,
+                "Invalid Coordinates",
+                "Please enter both Latitude and Longitude values."
+            )
+            return
+
+        try:
+            lat = float(lat_text)
+            lon = float(lon_text)
+        except ValueError:
+            QMessageBox.warning(
+                self,
+                "Invalid Coordinates",
+                "Latitude and Longitude must be valid numerical values."
+            )
+            return
+
+        if not (-90.0 <= lat <= 90.0):
+            QMessageBox.warning(
+                self,
+                "Invalid Coordinates",
+                "Latitude must be between -90.0 and 90.0 degrees."
+            )
+            return
+
+        if not (-180.0 <= lon <= 180.0):
+            QMessageBox.warning(
+                self,
+                "Invalid Coordinates",
+                "Longitude must be between -180.0 and 180.0 degrees."
+            )
+            return
+
+        # Trigger the smooth flight and animated drop marker in JS
+        self.controller._run_js_call("dropGoToMarker", lon, lat)
 
     @staticmethod
     def _window_title_for_mode(app_mode: DesktopAppMode) -> str:
@@ -1661,13 +1773,7 @@ class MainWindow(QMainWindow):
                 pixmap = self.web_view.grab()
                 image = pixmap.toImage()
 
-                # Scale image according to settings
-                if scale_factor < 1.0:
-                    new_w = int(image.width() * scale_factor)
-                    new_h = int(image.height() * scale_factor)
-                    image = image.scaled(new_w, new_h, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
-
-                # Draw overlays
+                # Draw overlays on the full-resolution grab first
                 painter = QPainter(image)
                 painter.setRenderHint(QPainter.RenderHint.Antialiasing)
                 painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
@@ -1707,26 +1813,33 @@ class MainWindow(QMainWindow):
                     painter.setPen(QPen(QColor(255, 255, 255, 60), 1))
                     painter.drawRoundedRect(box_x, box_y, box_width, box_height, 6, 6)
 
-                    font = QFont("Monospace", 9, QFont.Weight.Bold)
+                    font = QFont("Consolas", 10, QFont.Weight.Bold)
                     font.setStyleHint(QFont.StyleHint.Monospace)
                     painter.setFont(font)
                     painter.setPen(QColor(230, 240, 255, 230))
 
                     info_text = f"LAT: {lat:10.6f}\u00b0  LON: {lon:10.6f}\u00b0  ALT: {height:4.0f}m"
-                    painter.drawText(QRect(box_x, box_y, box_width, box_height), Qt.AlignmentFlag.AlignCenter, info_text)
+                    painter.drawText(QRect(box_x, box_y, box_width, box_height), Qt.AlignmentFlag.AlignCenter | Qt.TextSingleLine, info_text)
                     painter.restore()
 
                 painter.end()
 
-                image = image.convertToFormat(QImage.Format.Format_RGB888)
+                # Scale the complete image (including overlays) according to settings
+                if scale_factor < 1.0:
+                    new_w = int(image.width() * scale_factor)
+                    new_h = int(image.height() * scale_factor)
+                    image = image.scaled(new_w, new_h, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+
+                # Convert to RGBA8888 (no row/scanline padding issues) and map to BGR for OpenCV
+                image = image.convertToFormat(QImage.Format.Format_RGBA8888)
                 width = image.width()
                 height = image.height()
 
                 ptr = image.bits()
-                ptr.setsize(height * width * 3)
-                arr = np.frombuffer(ptr, np.uint8).reshape((height, width, 3))
+                ptr.setsize(height * width * 4)
+                arr = np.frombuffer(ptr, np.uint8).reshape((height, width, 4))
 
-                bgr_arr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+                bgr_arr = cv2.cvtColor(arr, cv2.COLOR_RGBA2BGR)
 
                 if writer is None:
                     writer = cv2.VideoWriter(file_path, fourcc, fps, (width, height))

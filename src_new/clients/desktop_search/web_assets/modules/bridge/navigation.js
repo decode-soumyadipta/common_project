@@ -55,7 +55,13 @@
           const paddedSouth = Math.max( -90, south - padLat);
           const paddedNorth = Math.min(  90, north + padLat);
           const rect = Cesium.Rectangle.fromDegrees(paddedWest, paddedSouth, paddedEast, paddedNorth);
-          const sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, 0.0);
+          const centerLon = (paddedWest + paddedEast) * 0.5;
+          const centerLat = (paddedSouth + paddedNorth) * 0.5;
+          const centerCarto = new Cesium.Cartographic(Cesium.Math.toRadians(centerLon), Cesium.Math.toRadians(centerLat));
+          const terrainHeight = (viewer.scene.globe && typeof viewer.scene.globe.getHeight === "function")
+              ? (viewer.scene.globe.getHeight(centerCarto) || 0.0)
+              : 0.0;
+          const sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, terrainHeight);
           const range = Math.max(compute3DFocusRange({ west: paddedWest, south: paddedSouth, east: paddedEast, north: paddedNorth }), sphere.radius * 1.5, 300.0);
           
           viewer.camera.cancelFlight();
@@ -198,7 +204,13 @@
         setActiveTileBounds({ west: west, south: south, east: east, north: north });
         // SEARCH FIX: Use 3D oblique view (-40° pitch) so search results appear on the globe
         const rect = Cesium.Rectangle.fromDegrees(paddedWest, paddedSouth, paddedEast, paddedNorth);
-        const sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, 0.0);
+        const centerLon = (paddedWest + paddedEast) * 0.5;
+        const centerLat = (paddedSouth + paddedNorth) * 0.5;
+        const centerCarto = new Cesium.Cartographic(Cesium.Math.toRadians(centerLon), Cesium.Math.toRadians(centerLat));
+        const terrainHeight = (viewer.scene.globe && typeof viewer.scene.globe.getHeight === "function")
+            ? (viewer.scene.globe.getHeight(centerCarto) || 0.0)
+            : 0.0;
+        const sphere = Cesium.BoundingSphere.fromRectangle3D(rect, Cesium.Ellipsoid.WGS84, terrainHeight);
         const range = Math.max(compute3DFocusRange({ west: paddedWest, south: paddedSouth, east: paddedEast, north: paddedNorth }), sphere.radius * 1.5, 300.0);
         const wasRequestRenderMode = viewer.scene.requestRenderMode;
         viewer.scene.requestRenderMode = false;
@@ -406,10 +418,12 @@
         }
         
         activeImageryLayer = viewer.imageryLayers.addImageryProvider(provider, insertionIndex);
-        activeImageryLayer.preloadAncestorTiles = false;
+        activeImageryLayer.preloadAncestorTiles = true;  // Keep ancestor tiles visible on zoom-out
         if (window.Cesium && window.Cesium.TextureMinificationFilter && window.Cesium.TextureMagnificationFilter) {
-          activeImageryLayer.minificationFilter = window.Cesium.TextureMinificationFilter.NEAREST;
-          activeImageryLayer.magnificationFilter = window.Cesium.TextureMagnificationFilter.NEAREST;
+          // LINEAR minification: avoids mipmapping constraints in WebGL (fixes NPOT non-renderable warnings)
+          // LINEAR magnification: smooth upscaling when zoomed past native tile resolution
+          activeImageryLayer.minificationFilter  = window.Cesium.TextureMinificationFilter.LINEAR;
+          activeImageryLayer.magnificationFilter = window.Cesium.TextureMagnificationFilter.LINEAR;
         }
         managedImageryLayers.set(layerKey, activeImageryLayer);
         
@@ -801,7 +815,7 @@
               if (targetViewer.__osmBasemapLayer) targetViewer.__osmBasemapLayer.show = false;
               if (isMain && defaultEarthLayer) defaultEarthLayer.show = true;
               if (targetViewer.__defaultEarthLayer) {
-                targetViewer.__defaultEarthLayer.show = isMain;
+                targetViewer.__defaultEarthLayer.show = true;
               }
             }
         };

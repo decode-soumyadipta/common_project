@@ -64,7 +64,7 @@ class AssetLoadingCoordinator:
         # Auto-convert to COG if the source is a plain GeoTIFF. Non-COG files fail to tile on Windows and are slower everywhere. The COG is written next to the source (e.g. dem.cog.tif) and reused.
         if c.app_mode != DesktopAppMode.CLIENT and not skip_cog:
             try:
-                from src_new.shared.ingestion.services.cog_service import (
+                from src_new.services.ingestion.gdal_pipelines.cog_converter import (
                     CogPreparationService,
                 )
 
@@ -82,7 +82,7 @@ class AssetLoadingCoordinator:
                         c._set_layer_loading(
                             True, f"Converting {src_path.name} to COG…"
                         )
-                cog_result = CogPreparationService().prepare(src_path)
+                cog_result = CogPreparationService().convert(src_path)
                 self._logger.info(
                     "COG result: working_path=%s converted=%s",
                     cog_result.working_path,

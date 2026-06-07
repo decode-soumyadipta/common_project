@@ -97,17 +97,28 @@
   }
 
   function normalizeBounds(bounds) {
-    if (!bounds || typeof bounds !== "object") {
+    if (!bounds) {
       return null;
     }
-    const west = Number(bounds.west);
-    const south = Number(bounds.south);
-    const east = Number(bounds.east);
-    const north = Number(bounds.north);
-    if (!Number.isFinite(west) || !Number.isFinite(south) || !Number.isFinite(east) || !Number.isFinite(north)) {
-      return null;
+    if (Array.isArray(bounds) && bounds.length === 4) {
+      const west = Number(bounds[0]);
+      const south = Number(bounds[1]);
+      const east = Number(bounds[2]);
+      const north = Number(bounds[3]);
+      if (Number.isFinite(west) && Number.isFinite(south) && Number.isFinite(east) && Number.isFinite(north)) {
+        return { west: west, south: south, east: east, north: north };
+      }
     }
-    return { west: west, south: south, east: east, north: north };
+    if (typeof bounds === "object") {
+      const west = Number(bounds.west);
+      const south = Number(bounds.south);
+      const east = Number(bounds.east);
+      const north = Number(bounds.north);
+      if (Number.isFinite(west) && Number.isFinite(south) && Number.isFinite(east) && Number.isFinite(north)) {
+        return { west: west, south: south, east: east, north: north };
+      }
+    }
+    return null;
   }
 
   function createRectangle(bounds) {
@@ -288,7 +299,8 @@
       return null;
     }
 
-    log("debug", "createIntelligentOsmProvider called with url: " + options.url);
+    const templateUrl = options.url;
+    log("debug", "createIntelligentOsmProvider called with url: " + templateUrl);
 
     // Force min and max zoom level for intelligent upscaling and downscaling
     options.minimumLevel = 0;
@@ -305,7 +317,7 @@
     }
 
     function loadImage(childX, childY, targetZ) {
-      const tileUrl = options.url
+      const tileUrl = templateUrl
         .replace('{z}', targetZ)
         .replace('{x}', childX)
         .replace('{y}', childY);
@@ -366,7 +378,7 @@
         log("debug", "Using compositing route for z=" + level + " -> targetZ=" + targetZ);
         const d = targetZ - level;
         const numTilesPerDim = 1 << d;
-        const maxTilesOnSide = 8;
+        const maxTilesOnSide = 16;
         const step = Math.max(1, Math.ceil(numTilesPerDim / maxTilesOnSide));
 
         const loadPromises = [];

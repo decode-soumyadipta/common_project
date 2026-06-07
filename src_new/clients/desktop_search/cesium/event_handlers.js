@@ -350,13 +350,22 @@ function getCartesianFromViewer(viewer, screenPosition) {
   }
   
   const scene = viewer.scene;
-  const ray = viewer.camera.getPickRay(screenPosition);
   let cartesian = null;
   
-  if (ray) {
-    cartesian = scene.globe.pick(ray, scene);
+  // 1. Try scene.pickPosition first (most accurate for rendered 3D DEM surface)
+  if (scene.pickPositionSupported) {
+    cartesian = scene.pickPosition(screenPosition);
   }
   
+  // 2. Fallback: pick globe using raycast
+  if (!cartesian) {
+    const ray = viewer.camera.getPickRay(screenPosition);
+    if (ray) {
+      cartesian = scene.globe.pick(ray, scene);
+    }
+  }
+  
+  // 3. Fallback: pick ellipsoid
   if (!cartesian) {
     cartesian = viewer.camera.pickEllipsoid(screenPosition, scene.globe.ellipsoid);
   }
@@ -374,6 +383,7 @@ function handleMeasurementClick(viewer, cartesian, onMeasurementUpdate, log) {
     measurementPreviewStart = cartesian;
     
     // Create anchor dot
+    // Create anchor dot
     measurementAnchorDotEntity = viewer.entities.add({
       position: cartesian,
       point: {
@@ -381,7 +391,8 @@ function handleMeasurementClick(viewer, cartesian, onMeasurementUpdate, log) {
         color: window.Cesium.Color.YELLOW,
         outlineColor: window.Cesium.Color.BLACK,
         outlineWidth: 2,
-        heightReference: window.Cesium.HeightReference.CLAMP_TO_GROUND
+        heightReference: window.Cesium.HeightReference.CLAMP_TO_GROUND,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY
       }
     });
     
@@ -402,6 +413,7 @@ function handleMeasurementClick(viewer, cartesian, onMeasurementUpdate, log) {
         positions: [distanceMeasureAnchor, cartesian],
         width: 3,
         material: window.Cesium.Color.YELLOW,
+        depthFailMaterial: window.Cesium.Color.YELLOW.withAlpha(0.5),
         clampToGround: true
       }
     });
@@ -427,7 +439,8 @@ function handleMeasurementClick(viewer, cartesian, onMeasurementUpdate, log) {
         showBackground: true,
         backgroundColor: window.Cesium.Color.BLACK.withAlpha(0.7),
         pixelOffset: new window.Cesium.Cartesian2(0, -20),
-        heightReference: window.Cesium.HeightReference.CLAMP_TO_GROUND
+        heightReference: window.Cesium.HeightReference.CLAMP_TO_GROUND,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY
       }
     });
     
@@ -482,6 +495,7 @@ function updateMeasurementPreview(viewer, screenPosition, onMeasurementUpdate) {
         }, false),
         width: 2,
         material: window.Cesium.Color.YELLOW.withAlpha(0.6),
+        depthFailMaterial: window.Cesium.Color.YELLOW.withAlpha(0.3),
         clampToGround: true
       }
     });
@@ -523,7 +537,8 @@ function updateMeasurementPreview(viewer, screenPosition, onMeasurementUpdate) {
         outlineColor: window.Cesium.Color.BLACK,
         outlineWidth: 2,
         pixelOffset: new window.Cesium.Cartesian2(0, -20),
-        heightReference: window.Cesium.HeightReference.CLAMP_TO_GROUND
+        heightReference: window.Cesium.HeightReference.CLAMP_TO_GROUND,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY
       }
     });
   }
@@ -545,7 +560,8 @@ function placeAnnotation(viewer, cartesian, lat, lon, log, text = null, color = 
       color: window.Cesium.Color.fromCssColorString(color),
       outlineColor: window.Cesium.Color.WHITE,
       outlineWidth: 2,
-      heightReference: window.Cesium.HeightReference.CLAMP_TO_GROUND
+      heightReference: window.Cesium.HeightReference.CLAMP_TO_GROUND,
+      disableDepthTestDistance: Number.POSITIVE_INFINITY
     }
   });
   anchorEntity._annotationId = annotationId;
@@ -563,7 +579,8 @@ function placeAnnotation(viewer, cartesian, lat, lon, log, text = null, color = 
       showBackground: true,
       backgroundColor: window.Cesium.Color.fromCssColorString(color).withAlpha(0.8),
       pixelOffset: new window.Cesium.Cartesian2(0, -30),
-      heightReference: window.Cesium.HeightReference.CLAMP_TO_GROUND
+      heightReference: window.Cesium.HeightReference.CLAMP_TO_GROUND,
+      disableDepthTestDistance: Number.POSITIVE_INFINITY
     }
   });
   labelEntity._annotationId = annotationId;
@@ -578,7 +595,8 @@ function placeAnnotation(viewer, cartesian, lat, lon, log, text = null, color = 
       height: 20,
       pixelOffset: new window.Cesium.Cartesian2(25, -30),
       color: window.Cesium.Color.WHITE.withAlpha(0.42),
-      heightReference: window.Cesium.HeightReference.CLAMP_TO_GROUND
+      heightReference: window.Cesium.HeightReference.CLAMP_TO_GROUND,
+      disableDepthTestDistance: Number.POSITIVE_INFINITY
     }
   });
   editEntity._annotationId = annotationId;
@@ -594,7 +612,8 @@ function placeAnnotation(viewer, cartesian, lat, lon, log, text = null, color = 
       height: 20,
       pixelOffset: new window.Cesium.Cartesian2(50, -30),
       color: window.Cesium.Color.WHITE.withAlpha(0.62),
-      heightReference: window.Cesium.HeightReference.CLAMP_TO_GROUND
+      heightReference: window.Cesium.HeightReference.CLAMP_TO_GROUND,
+      disableDepthTestDistance: Number.POSITIVE_INFINITY
     }
   });
   deleteEntity._annotationId = annotationId;

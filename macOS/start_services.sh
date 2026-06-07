@@ -20,21 +20,21 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     
     # Ingestion Service
     osascript -e "tell application \"Terminal\"
-        do script \"cd $PROJECT_DIR && $CONDA_ACTIVATE && echo 'Starting Ingestion Service on port 8001...' && uvicorn src_new.services.ingestion.service:app --host 127.0.0.1 --port 8001 --reload\"
+        do script \"cd $PROJECT_DIR && $CONDA_ACTIVATE && echo 'Starting Ingestion Service on port 8001...' && uvicorn src_new.services.ingestion.service:app --host 127.0.0.1 --port 8001\"
     end tell"
     
     sleep 1
     
     # Tile Service
     osascript -e "tell application \"Terminal\"
-        do script \"cd $PROJECT_DIR && $CONDA_ACTIVATE && echo 'Starting Tile Service on port 8002...' && uvicorn src_new.services.tile_serving.service:app --host 127.0.0.1 --port 8002 --reload\"
+        do script \"cd $PROJECT_DIR && $CONDA_ACTIVATE && echo 'Starting Tile Service on port 8002...' && uvicorn src_new.services.tile_serving.service:app --host 127.0.0.1 --port 8002 --workers 4\"
     end tell"
     
     sleep 1
     
     # Query Service
     osascript -e "tell application \"Terminal\"
-        do script \"cd $PROJECT_DIR && $CONDA_ACTIVATE && echo 'Starting Query Service on port 8003...' && uvicorn src_new.services.query.service:app --host 127.0.0.1 --port 8003 --reload\"
+        do script \"cd $PROJECT_DIR && $CONDA_ACTIVATE && echo 'Starting Query Service on port 8003...' && uvicorn src_new.services.query.service:app --host 127.0.0.1 --port 8003\"
     end tell"
     
     echo ""
@@ -56,7 +56,7 @@ else
     echo "Terminal 2:"
     echo "  cd $PROJECT_DIR"
     echo "  source \$(conda info --base)/etc/profile.d/conda.sh && conda activate offline-3d-gis"
-    echo "  uvicorn src_new.services.tile_serving.service:app --host 127.0.0.1 --port 8002 --reload"
+    echo "  uvicorn src_new.services.tile_serving.service:app --host 127.0.0.1 --port 8002 --workers 4"
     echo ""
     echo "Terminal 3:"
     echo "  cd $PROJECT_DIR"

@@ -70,10 +70,14 @@ if _TITILER_AVAILABLE:
         async def dispatch(  # type: ignore[override]
             self, request: _Request, call_next  # type: ignore[type-arg]
         ) -> _Response:
+            import urllib.parse
+            from pathlib import Path
+
+            raw: str = request.scope.get("query_string", b"").decode(
+                "utf-8", errors="replace"
+            )
+            fixed = raw
             if platform.system() == "Windows" and "url" in request.query_params:
-                raw: str = request.scope.get("query_string", b"").decode(
-                    "utf-8", errors="replace"
-                )
                 # Remove leading slash before drive letter (e.g. %2FC: → C:)
                 fixed = re.sub(
                     r"(?<=[?&])url=%2F([A-Za-z](?:%3A|:))",
@@ -92,8 +96,58 @@ if _TITILER_AVAILABLE:
                     lambda m: "url=" + m.group(1).replace("%3A", ":"),
                     fixed,
                 )
-                request.scope["query_string"] = fixed.encode("utf-8")
-            return await call_next(request)
+            
+            # Extract target_file and check for COG redirection
+            params = dict(urllib.parse.parse_qsl(fixed, keep_blank_values=True))
+            url_val = params.get("url")
+            target_file = None
+            if url_val:
+                path_str = urllib.parse.unquote(url_val)
+                clean_path = path_str
+                prefix = ""
+                if clean_path.startswith("file:///"):
+                    prefix = "file:///"
+                    # On Unix, absolute path needs the leading slash (file:///Users/... -> /Users/...)
+                    # On Windows, drive letters should not have a leading slash (file:///C:/... -> C:/...)
+                    if platform.system() != "Windows":
+                        clean_path = clean_path[7:]
+                    else:
+                        clean_path = clean_path[8:]
+                elif clean_path.startswith("file://"):
+                    prefix = "file://"
+                    clean_path = clean_path[7:]
+                
+                clean_path = clean_path.replace("\\", "/")
+                target_file = clean_path
+                
+                try:
+                    p = Path(clean_path)
+                    if p.suffix.lower() in {".j2k", ".jp2"}:
+                        cog_sibling = p.with_name(f"{p.stem}.cog.tif")
+                        if cog_sibling.exists():
+                            params["url"] = f"{prefix}{cog_sibling.as_posix()}"
+                            target_file = cog_sibling.as_posix()
+                            fixed = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
+                except Exception:
+                    pass
+            
+            # Pre-emptive check: If file is missing, return 404 instead of letting GDAL crash with 500
+            if target_file and not os.path.exists(target_file):
+                from starlette.responses import JSONResponse
+                return JSONResponse({'detail': f'File not found: {target_file}'}, status_code=404)
+
+            request.scope["query_string"] = fixed.encode("utf-8")
+            
+            try:
+                response = await call_next(request)
+                if request.method == "GET" and any(x in request.url.path for x in ("/tiles", "/preview", "/info", "/statistics")):
+                    response.headers["Cache-Control"] = "public, max-age=31536000, must-revalidate"
+                return response
+            except Exception as e:
+                import logging
+                logging.getLogger("titiler.middleware").error(f"TiTiler request failed: {e}")
+                from starlette.responses import JSONResponse
+                return JSONResponse({"detail": str(e)}, status_code=500)
 
 else:  # pragma: no cover
     # Stub class when TiTiler is unavailable

@@ -51,7 +51,7 @@ def test_tile_endpoint_reproject_error_fallback(monkeypatch):
     monkeypatch.setattr(tile_endpoints, "reproject", fake_reproject)
     
     # Call the private helper
-    tile_data = tile_endpoints._read_tile_from_raster(
+    tile_data = tile_endpoints._read_tile_from_cog(
         raster_path=Path("dummy.tif"),
         z=1,
         x=1,
