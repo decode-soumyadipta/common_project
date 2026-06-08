@@ -214,7 +214,7 @@ def _catalog_raster_in_db(metadata: RasterMetadata, db: Session) -> None:
         metadata: Populated ``RasterMetadata`` instance.
         db:       Active SQLAlchemy session.
     """
-    db_url = str(db.bind.url) if db.bind else ""
+    db_url = str(db.bind.url) if db.bind else ""  # type: ignore
     is_postgres = "postgresql" in db_url or "postgis" in db_url
 
     if is_postgres:
@@ -315,6 +315,9 @@ def _catalog_raster_in_db(metadata: RasterMetadata, db: Session) -> None:
 # --------------------------------------------------------------------------- Endpoints ---------------------------------------------------------------------------
 
 
+from typing import Annotated
+
+
 @router.post(
     "/upload",
     response_model=UploadResponse,
@@ -327,14 +330,14 @@ def _catalog_raster_in_db(metadata: RasterMetadata, db: Session) -> None:
     status_code=200,
 )
 def upload_raster(
-    file: UploadFile = File(..., description="Geospatial raster file to ingest."),
-    sidecar_json: str | None = Form(None, alias="metadata", description="JSON with optional sidecar file contents."),
-    tags: str | None = Form(None, description="Comma-separated metadata tags."),
-    description: str | None = Form(None, description="Free-text description."),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
-    db: Session = Depends(get_db),
-    cfg: Settings = Depends(get_settings),
-    data_root: Path = Depends(get_data_root),
+    background_tasks: BackgroundTasks,
+    file: Annotated[UploadFile, File(description="Geospatial raster file to ingest.")],
+    db: Annotated[Session, Depends(get_db)],
+    cfg: Annotated[Settings, Depends(get_settings)],
+    data_root: Annotated[Path, Depends(get_data_root)],
+    sidecar_json: Annotated[str | None, Form(alias="metadata", description="JSON with optional sidecar file contents.")] = None,
+    tags: Annotated[str | None, Form(description="Comma-separated metadata tags.")] = None,
+    description: Annotated[str | None, Form(description="Free-text description.")] = None,
 ) -> UploadResponse:
     """Upload and ingest a geospatial raster file.
 
@@ -419,7 +422,7 @@ def upload_raster(
     handler = get_format_handler(ext)
     if handler is not None:
         try:
-            is_valid = handler.validate(saved_path)
+            is_valid = handler.validate(saved_path)  # type: ignore
             if not is_valid:
                 _ingestion_status[raster_id].update(
                     {
@@ -626,7 +629,7 @@ def get_ingestion_status(raster_id: str) -> IngestionStatus:
     summary="List cataloged assets",
     description="Return cataloged assets ordered by upload date (newest first).",
 )
-def list_assets(db: Session = Depends(get_db)) -> list[UploadedAsset]:
+def list_assets(db: Annotated[Session, Depends(get_db)]) -> list[UploadedAsset]:
     """Return cataloged assets ordered by upload date (newest first)."""
     query = sa_text(
         """
@@ -659,8 +662,8 @@ def list_assets(db: Session = Depends(get_db)) -> list[UploadedAsset]:
 )
 def delete_assets(
     payload: DeleteAssetsRequest,
-    db: Session = Depends(get_db),
-    data_root: Path = Depends(get_data_root),
+    db: Annotated[Session, Depends(get_db)],
+    data_root: Annotated[Path, Depends(get_data_root)],
 ) -> DeleteAssetsResponse:
     """Delete cataloged assets and remove stored files."""
     raster_ids = [rid for rid in payload.raster_ids if rid]
@@ -731,8 +734,8 @@ def delete_assets(
     ),
 )
 def health_check(
-    db: Session = Depends(get_db),
-    cfg: Settings = Depends(get_settings),
+    db: Annotated[Session, Depends(get_db)],
+    cfg: Annotated[Settings, Depends(get_settings)],
 ) -> dict:
     """Return Ingestion Service health information.
 

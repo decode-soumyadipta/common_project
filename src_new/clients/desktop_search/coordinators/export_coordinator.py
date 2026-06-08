@@ -5,7 +5,7 @@ import logging
 import os
 from pathlib import Path
 
-from qtpy.QtCore import QMarginsF, QRect, Qt, QThread, Signal
+from qtpy.QtCore import QMarginsF, QRect, Qt, QThread, Signal  # type: ignore
 from qtpy.QtGui import QImage, QPageLayout, QPageSize, QPainter, QPdfWriter
 from qtpy.QtWidgets import (
     QDialog,
@@ -20,6 +20,9 @@ from qtpy.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+
+EXPORT_ERROR_LITERAL = "Export Error"
 
 
 class ExportCoordinator:
@@ -91,7 +94,7 @@ class ExportCoordinator:
         except Exception as e:
             self._logger.exception("GeoPackage export failed")
             c.panel.log(f"GeoPackage export failed: {e!s}")
-            QMessageBox.critical(c.panel, "Export Error", f"Failed to export GeoPackage:\n{e!s}")
+            QMessageBox.critical(c.panel, EXPORT_ERROR_LITERAL, f"Failed to export GeoPackage:\n{e!s}")
 
     def export_geotiff(self) -> None:
         """Export individual searched assets as GeoTIFF using a minimalist dialog."""
@@ -159,7 +162,7 @@ class ExportCoordinator:
             painter = QPainter()
             if not painter.begin(writer):
                 c.panel.log("Failed to initialize QPainter on QPdfWriter.")
-                QMessageBox.critical(c.panel, "Export Error", "Failed to start PDF painter.")
+                QMessageBox.critical(c.panel, EXPORT_ERROR_LITERAL, "Failed to start PDF painter.")
                 return
 
             try:
@@ -335,8 +338,8 @@ class ExportCoordinator:
         """Custom GPKG vector export using Fiona."""
         c = self._controller
         try:
-            import fiona
-            from fiona.crs import CRS
+            import fiona  # type: ignore
+            from fiona.crs import CRS  # type: ignore
         except ImportError:
             c.panel.log("Fiona not available. Vector layers skipped in GPKG.")
             return
@@ -808,7 +811,9 @@ class ExportGeoTiffDialog(QDialog):
 
                 # Download button
                 download_btn = QPushButton()
-                download_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowDown))
+                style = self.style()
+                if style:
+                    download_btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ArrowDown))
                 download_btn.setText("Download")
                 
                 # Connect download action
@@ -855,7 +860,7 @@ class ExportGeoTiffDialog(QDialog):
         if not Path(export_src).exists():
             QMessageBox.critical(
                 self,
-                "Export Error",
+                EXPORT_ERROR_LITERAL,
                 f"Source file not found:\n{export_src}",
             )
             return
@@ -887,7 +892,7 @@ class ExportGeoTiffDialog(QDialog):
             else:
                 status_label.setStyleSheet("color: #ff3b30; font-weight: bold;")
                 status_label.setText("Failed")
-                QMessageBox.critical(self, "Export Error", f"Failed to export asset as GeoTIFF:\n{err_msg}")
+                QMessageBox.critical(self, EXPORT_ERROR_LITERAL, f"Failed to export asset as GeoTIFF:\n{err_msg}")
                 button.setEnabled(True)
             # Move reference to finished_threads to prevent premature GC/crash
             thread_obj = self.threads.pop(thread_key, None)

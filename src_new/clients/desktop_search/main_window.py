@@ -64,6 +64,12 @@ from src_new.clients.desktop_search.ui.overlays import (
 )
 from src_new.clients.desktop_search.web_page import LoggingWebEnginePage
 
+LAYER_COMPOSITOR_LITERAL = "Layer Compositor"
+ASSET1_PICK_LITERAL = "Asset 1: (Click on map to pick)"
+ASSET2_PICK_LITERAL = "Asset 2: (Click on map to pick)"
+LABEL_SUBTEXT_STYLE = "color: #64748b; font-size: 11px; font-weight: normal;"
+
+
 
 class VideoExportSettingsDialog(QDialog):
     def __init__(self, parent=None, duration_ms=0):
@@ -271,7 +277,7 @@ class MainWindow(QMainWindow):
         "Elevation Profile",
     }
     TOGGLE_ACTIONS: set[str] = {
-        "Layer Compositor",
+        LAYER_COMPOSITOR_LITERAL,
         "Comparator",
         "Distance / Azimuth",
         "Elevation Profile",
@@ -285,7 +291,7 @@ class MainWindow(QMainWindow):
         (
             "visualization",
             (
-                ("Layer Compositor", "layer_compositor"),
+                (LAYER_COMPOSITOR_LITERAL, "layer_compositor"),
                 ("Comparator", "comparator"),
                 ("Fly Through", "fly_through"),
             ),
@@ -699,37 +705,60 @@ class MainWindow(QMainWindow):
         if action is None:
             return
 
-        # --- Dropdown / Selection Phase ---
-        if action_label == "Comparator" and checked:
-            self._show_comparator_dropdown()
-            return
-        if action_label == "Layer Compositor" and checked:
-            self._show_layer_compositor_overlay()
-        elif action_label == "Export":
-            self._show_export_dropdown()
-            return
-        elif action_label == "Add Raster Layer":
-            self.controller.add_raster_layers()
-            return
-        elif action_label == "Add Vector":
-            self.controller.add_vector_layers()
+        if self._handle_toolbar_special_actions(action_label, checked):
             return
 
+        # Delegate all other actions to the controller
+        final_state = self.controller.handle_toolbar_action(action_label, checked=checked)
+        # Sync the action's checked state if the controller returned a definitive boolean
+        if action.isCheckable() and isinstance(final_state, bool):
+            action.blockSignals(True)
+            action.setChecked(final_state)
+            action.blockSignals(False)
+
+        self._handle_toolbar_exclusivity(action_label, action)
+
+        # --- Overlay Management ---
+        if hasattr(self, "map_overlay_controls"):
+            # Update AOI polygon visibility context
+            is_special = any(
+                self.toolbar_actions.get(label).isChecked() 
+                for label in ["Comparator", LAYER_COMPOSITOR_LITERAL] 
+                if self.toolbar_actions.get(label)
+            )
+            self.map_overlay_controls.set_special_mode(is_special)
+
+        # --- Final UI Refresh --- This will handle mutual exclusivity (grey-out) and contextual visibility
+        self._refresh_toolbar_action_state()
+
+    def _handle_toolbar_special_actions(self, action_label: str, checked: bool) -> bool:
+        """Handle special actions like dropdowns or state sync that terminate early."""
+        if action_label == "Comparator" and checked:
+            self._show_comparator_dropdown()
+            return True
+        if action_label == LAYER_COMPOSITOR_LITERAL and checked:
+            self._show_layer_compositor_overlay()
+            return True
+        elif action_label == "Export":
+            self._show_export_dropdown()
+            return True
+        elif action_label == "Add Raster Layer":
+            self.controller.add_raster_layers()
+            return True
+        elif action_label == "Add Vector":
+            self.controller.add_vector_layers()
+            return True
+
         # --- State Sync Phase --- Special case: Layer Compositor toggled OFF
-        if action_label == "Layer Compositor" and not checked:
+        if action_label == LAYER_COMPOSITOR_LITERAL and not checked:
             self.controller.disable_layer_compositor()
             if hasattr(self, "compositor_overlay"):
                 self.compositor_overlay.hide()
-        else:
-            # Delegate all other actions to the controller
-            final_state = self.controller.handle_toolbar_action(action_label, checked=checked)
-            # Sync the action's checked state if the controller returned a definitive boolean
-            if action.isCheckable() and isinstance(final_state, bool):
-                action.blockSignals(True)
-                action.setChecked(final_state)
-                action.blockSignals(False)
+            return True
+        return False
 
-        # --- Interaction Exclusivity --- If an interaction tool was just ENABLED, uncheck all OTHER interaction tools.
+    def _handle_toolbar_exclusivity(self, action_label: str, action: QAction) -> None:
+        """If an interaction tool was just ENABLED, uncheck all OTHER interaction tools."""
         interaction_toggles = {
             "Distance / Azimuth",
             "Elevation Profile",
@@ -750,22 +779,9 @@ class MainWindow(QMainWindow):
                     # Tell controller the other tool is now OFF
                     self.controller.handle_toolbar_action(other_label, False)
 
-        # --- Overlay Management ---
-        if hasattr(self, "map_overlay_controls"):
-            # Update AOI polygon visibility context
-            is_special = any(
-                self.toolbar_actions.get(label).isChecked() 
-                for label in ["Comparator", "Layer Compositor"] 
-                if self.toolbar_actions.get(label)
-            )
-            self.map_overlay_controls.set_special_mode(is_special)
-
-        # --- Final UI Refresh --- This will handle mutual exclusivity (grey-out) and contextual visibility
-        self._refresh_toolbar_action_state()
-
     def _show_layer_compositor_overlay(self) -> None:
         """Show the layer compositor overlay for adjusting layer opacities."""
-        action = self.toolbar_actions.get("Layer Compositor")
+        action = self.toolbar_actions.get(LAYER_COMPOSITOR_LITERAL)
         if action is None:
             return
 
@@ -1124,10 +1140,10 @@ class MainWindow(QMainWindow):
         picker_layout.addWidget(pick_btn)
 
         # Display picked asset names
-        self._comparator_popup.label_asset1 = QLabel("Asset 1: (Click on map to pick)")
-        self._comparator_popup.label_asset1.setStyleSheet("color: #64748b; font-size: 11px; font-weight: normal;")
-        self._comparator_popup.label_asset2 = QLabel("Asset 2: (Click on map to pick)")
-        self._comparator_popup.label_asset2.setStyleSheet("color: #64748b; font-size: 11px; font-weight: normal;")
+        self._comparator_popup.label_asset1 = QLabel(ASSET1_PICK_LITERAL)
+        self._comparator_popup.label_asset1.setStyleSheet(LABEL_SUBTEXT_STYLE)
+        self._comparator_popup.label_asset2 = QLabel(ASSET2_PICK_LITERAL)
+        self._comparator_popup.label_asset2.setStyleSheet(LABEL_SUBTEXT_STYLE)
         picker_layout.addWidget(self._comparator_popup.label_asset1)
         picker_layout.addWidget(self._comparator_popup.label_asset2)
 
@@ -1179,108 +1195,122 @@ class MainWindow(QMainWindow):
                 initial_checked.append(str(item.data(Qt.ItemDataRole.UserRole) or ""))
         self._comparator_popup.picked_assets = initial_checked
 
-        def close_popup() -> None:
-            self._comparator_popup.close()
+        close_btn.clicked.connect(self._comparator_popup.close)
 
-        close_btn.clicked.connect(close_popup)
+        pick_btn.toggled.connect(
+            lambda checked: self._on_comparator_picker_toggled(checked, layer_list, info_label, apply_button)
+        )
 
-        def toggle_picker(checked: bool) -> None:
-            self.controller._comparator_picker_active = checked
-            self.controller._set_measurement_cursor_enabled(checked)
-            if checked:
-                # Clear existing picks to start fresh on map pick action
-                self._comparator_popup.picked_assets = []
-                self._comparator_popup.label_asset1.setText("Asset 1: (Click on map to pick)")
-                self._comparator_popup.label_asset1.setStyleSheet("color: #64748b; font-size: 11px; font-weight: normal;")
-                self._comparator_popup.label_asset2.setText("Asset 2: (Click on map to pick)")
-                self._comparator_popup.label_asset2.setStyleSheet("color: #64748b; font-size: 11px; font-weight: normal;")
-                
-                # Uncheck all items in the list widget as we're starting a new map pick sequence
-                layer_list.blockSignals(True)
-                for i in range(layer_list.count()):
-                    layer_list.item(i).setCheckState(Qt.CheckState.Unchecked)
-                layer_list.blockSignals(False)
-                
-                _sync_layout_by_selection()
-                self.panel.log("Comparator Picker: Click on any 2 assets on the map.")
-
-        pick_btn.toggled.connect(toggle_picker)
-
-        def _selected_count() -> int:
-            return len(self._comparator_popup.picked_assets)
-
-        def _sync_layout_by_selection() -> None:
-            selected_count = _selected_count()
-            if selected_count == 2:
-                info_label.setText("Exactly 2 layers selected.")
-                apply_button.setEnabled(True)
-            else:
-                info_label.setText(f"Select exactly 2 layers (selected: {selected_count}).")
-                apply_button.setEnabled(False)
-
-        def enforce_max_selection(changed_item: QListWidgetItem) -> None:
-            checked_items = []
-            for i in range(layer_list.count()):
-                item = layer_list.item(i)
-                if item.checkState() == Qt.CheckState.Checked:
-                    checked_items.append(str(item.data(Qt.ItemDataRole.UserRole) or ""))
-            
-            if len(checked_items) > 2:
-                layer_list.blockSignals(True)
-                changed_item.setCheckState(Qt.CheckState.Unchecked)
-                layer_list.blockSignals(False)
-                info_label.setText("Maximum 2 layers are allowed.")
-                return
-
-            self._comparator_popup.picked_assets = checked_items
-            
-            # Real-time populate the names in the section below the pick button
-            names = []
-            for path in checked_items:
-                asset = self.controller._search_result_assets_by_path.get(path)
-                name = str(asset.get("file_name") or Path(path).name if asset else Path(path).name)
-                names.append(name)
-                
-            if len(names) >= 1:
-                self._comparator_popup.label_asset1.setText(f"Asset 1: {names[0]}")
-                self._comparator_popup.label_asset1.setStyleSheet("color: #1f6fd2; font-size: 11px; font-weight: bold;")
-            else:
-                self._comparator_popup.label_asset1.setText("Asset 1: (Click on map to pick)")
-                self._comparator_popup.label_asset1.setStyleSheet("color: #64748b; font-size: 11px; font-weight: normal;")
-                
-            if len(names) >= 2:
-                self._comparator_popup.label_asset2.setText(f"Asset 2: {names[1]}")
-                self._comparator_popup.label_asset2.setStyleSheet("color: #1f6fd2; font-size: 11px; font-weight: bold;")
-            else:
-                self._comparator_popup.label_asset2.setText("Asset 2: (Click on map to pick)")
-                self._comparator_popup.label_asset2.setStyleSheet("color: #64748b; font-size: 11px; font-weight: normal;")
-                
-            _sync_layout_by_selection()
-
-        layer_list.itemChanged.connect(enforce_max_selection)
+        layer_list.itemChanged.connect(
+            lambda changed_item: self._enforce_comparator_max_selection(changed_item, layer_list, info_label, apply_button)
+        )
         
         # Populate initial check names
-        enforce_max_selection(None)
-        _sync_layout_by_selection()
+        self._enforce_comparator_max_selection(None, layer_list, info_label, apply_button)
+        self._sync_comparator_layout(info_label, apply_button)
 
-        def apply_selection() -> None:
-            selected_paths = list(self._comparator_popup.picked_assets)
-            if len(selected_paths) != 2:
-                self.panel.log("Select exactly 2 layers for comparator.")
-                action.setChecked(False)
-                self._comparator_popup.close()
-                return
+        apply_button.clicked.connect(
+            lambda: self._apply_comparator_selection(action, applied, anchor)
+        )
 
-            success = self.controller.apply_comparator_selection(selected_paths)
-            if success:
-                action.setChecked(True)
-                applied["done"] = True
-            else:
+        def on_finished(result: int) -> None:
+            if not applied["done"]:
                 action.setChecked(False)
+            self.controller._comparator_picker_active = False
+            self.controller._set_measurement_cursor_enabled(False)
             self._refresh_toolbar_action_state()
-            self._comparator_popup.close()
 
-        apply_button.clicked.connect(apply_selection)
+        self._comparator_popup.finished.connect(on_finished)
+
+        self._comparator_popup.adjustSize()
+        global_pos = anchor.mapToGlobal(anchor.rect().bottomLeft())
+        self._comparator_popup.move(global_pos)
+        self._comparator_popup.show()
+
+    def _sync_comparator_layout(self, info_label: QLabel, apply_button: QPushButton) -> None:
+        selected_count = len(self._comparator_popup.picked_assets)
+        if selected_count == 2:
+            info_label.setText("Exactly 2 layers selected.")
+            apply_button.setEnabled(True)
+        else:
+            info_label.setText(f"Select exactly 2 layers (selected: {selected_count}).")
+            apply_button.setEnabled(False)
+
+    def _on_comparator_picker_toggled(self, checked: bool, layer_list: QListWidget, info_label: QLabel, apply_button: QPushButton) -> None:
+        self.controller._comparator_picker_active = checked
+        self.controller._set_measurement_cursor_enabled(checked)
+        if checked:
+            # Clear existing picks to start fresh on map pick action
+            self._comparator_popup.picked_assets = []
+            self._comparator_popup.label_asset1.setText(ASSET1_PICK_LITERAL)
+            self._comparator_popup.label_asset1.setStyleSheet(LABEL_SUBTEXT_STYLE)
+            self._comparator_popup.label_asset2.setText(ASSET2_PICK_LITERAL)
+            self._comparator_popup.label_asset2.setStyleSheet(LABEL_SUBTEXT_STYLE)
+            
+            # Uncheck all items in the list widget as we're starting a new map pick sequence
+            layer_list.blockSignals(True)
+            for i in range(layer_list.count()):
+                layer_list.item(i).setCheckState(Qt.CheckState.Unchecked)
+            layer_list.blockSignals(False)
+            
+            self._sync_comparator_layout(info_label, apply_button)
+            self.panel.log("Comparator Picker: Click on any 2 assets on the map.")
+
+    def _enforce_comparator_max_selection(self, changed_item: QListWidgetItem | None, layer_list: QListWidget, info_label: QLabel, apply_button: QPushButton) -> None:
+        checked_items = []
+        for i in range(layer_list.count()):
+            item = layer_list.item(i)
+            if item.checkState() == Qt.CheckState.Checked:
+                checked_items.append(str(item.data(Qt.ItemDataRole.UserRole) or ""))
+        
+        if len(checked_items) > 2 and changed_item is not None:
+            layer_list.blockSignals(True)
+            changed_item.setCheckState(Qt.CheckState.Unchecked)
+            layer_list.blockSignals(False)
+            info_label.setText("Maximum 2 layers are allowed.")
+            return
+
+        self._comparator_popup.picked_assets = checked_items
+        
+        # Real-time populate the names in the section below the pick button
+        names = []
+        for path in checked_items:
+            asset = self.controller._search_result_assets_by_path.get(path)
+            name = str(asset.get("file_name") or Path(path).name if asset else Path(path).name)
+            names.append(name)
+            
+        if len(names) >= 1:
+            self._comparator_popup.label_asset1.setText(f"Asset 1: {names[0]}")
+            self._comparator_popup.label_asset1.setStyleSheet("color: #1f6fd2; font-size: 11px; font-weight: bold;")
+        else:
+            self._comparator_popup.label_asset1.setText(ASSET1_PICK_LITERAL)
+            self._comparator_popup.label_asset1.setStyleSheet(LABEL_SUBTEXT_STYLE)
+            
+        if len(names) >= 2:
+            self._comparator_popup.label_asset2.setText(f"Asset 2: {names[1]}")
+            self._comparator_popup.label_asset2.setStyleSheet("color: #1f6fd2; font-size: 11px; font-weight: bold;")
+        else:
+            self._comparator_popup.label_asset2.setText(ASSET2_PICK_LITERAL)
+            self._comparator_popup.label_asset2.setStyleSheet(LABEL_SUBTEXT_STYLE)
+            
+        self._sync_comparator_layout(info_label, apply_button)
+
+    def _apply_comparator_selection(self, action: QAction, applied: dict, anchor) -> None:
+        selected_paths = list(self._comparator_popup.picked_assets)
+        if len(selected_paths) != 2:
+            self.panel.log("Select exactly 2 layers for comparator.")
+            action.setChecked(False)
+            self._comparator_popup.close()
+            return
+
+        success = self.controller.apply_comparator_selection(selected_paths)
+        if success:
+            action.setChecked(True)
+            applied["done"] = True
+        else:
+            action.setChecked(False)
+        self._refresh_toolbar_action_state()
+        self._comparator_popup.close()
 
         def on_finished(result: int) -> None:
             if not applied["done"]:

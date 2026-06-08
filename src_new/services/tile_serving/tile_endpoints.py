@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import io
 import logging
+from typing import Annotated
 import math
 import os
 import sqlite3
@@ -674,23 +675,29 @@ async def get_tile(
     z: int,
     x: int,
     y: int,
-    raster_id: str = Query(..., description="Raster identifier (UUID or filename stem)"),
-    contrast: float = Query(
-        default=1.0,
-        ge=0.0,
-        le=10.0,
-        description="Contrast multiplier applied to pixel values (1.0 = no change).",
-    ),
-    brightness: float = Query(
-        default=0.0,
-        ge=-255.0,
-        le=255.0,
-        description="Brightness offset added after contrast (0.0 = no change).",
-    ),
-    colormap: str | None = Query(
-        default=None,
-        description="Named colormap to apply, e.g. 'viridis', 'gray', 'terrain'.",
-    ),
+    raster_id: Annotated[str, Query(description="Raster identifier (UUID or filename stem)")],
+    contrast: Annotated[
+        float,
+        Query(
+            ge=0.0,
+            le=10.0,
+            description="Contrast multiplier applied to pixel values (1.0 = no change).",
+        ),
+    ] = 1.0,
+    brightness: Annotated[
+        float,
+        Query(
+            ge=-255.0,
+            le=255.0,
+            description="Brightness offset added after contrast (0.0 = no change).",
+        ),
+    ] = 0.0,
+    colormap: Annotated[
+        str | None,
+        Query(
+            description="Named colormap to apply, e.g. 'viridis', 'gray', 'terrain'.",
+        ),
+    ] = None,
 ) -> Response:
     """Serve a single XYZ tile as PNG.
 
@@ -753,7 +760,8 @@ async def get_tile(
                         rgba = rgba.reshape(arr.shape[1], arr.shape[2], 4)
                         arr = np.transpose(rgba, (2, 0, 1))
                     except Exception as cmap_exc:
-                        logger.warning("Failed to apply colormap '%s' to MBTiles tile: %s", colormap, cmap_exc)
+                        safe_cmap = colormap.replace("\n", "").replace("\r", "") if colormap else ""
+                        logger.warning("Failed to apply colormap '%s' to MBTiles tile: %s", safe_cmap, cmap_exc)
 
                 tile_bytes = _array_to_png(arr)
                 media_type = "image/png"
@@ -821,7 +829,8 @@ async def get_tile(
             rgba = rgba.reshape(tile_data.shape[1], tile_data.shape[2], 4)
             tile_data = np.transpose(rgba, (2, 0, 1))
         except Exception as exc:
-            logger.warning("Failed to apply colormap '%s': %s", colormap, exc)
+            safe_cmap = colormap.replace("\n", "").replace("\r", "") if colormap else ""
+            logger.warning("Failed to apply colormap '%s': %s", safe_cmap, exc)
 
     png_bytes = _array_to_png(tile_data)
 
@@ -862,22 +871,28 @@ async def get_tile(
 )
 async def get_preview(
     raster_id: str,
-    contrast: float = Query(
-        default=1.0,
-        ge=0.0,
-        le=10.0,
-        description="Contrast multiplier (1.0 = no change).",
-    ),
-    brightness: float = Query(
-        default=0.0,
-        ge=-255.0,
-        le=255.0,
-        description="Brightness offset (0.0 = no change).",
-    ),
-    colormap: str | None = Query(
-        default=None,
-        description="Named colormap to apply, e.g. 'viridis'.",
-    ),
+    contrast: Annotated[
+        float,
+        Query(
+            ge=0.0,
+            le=10.0,
+            description="Contrast multiplier (1.0 = no change).",
+        ),
+    ] = 1.0,
+    brightness: Annotated[
+        float,
+        Query(
+            ge=-255.0,
+            le=255.0,
+            description="Brightness offset (0.0 = no change).",
+        ),
+    ] = 0.0,
+    colormap: Annotated[
+        str | None,
+        Query(
+            description="Named colormap to apply, e.g. 'viridis'.",
+        ),
+    ] = None,
 ) -> Response:
     """Return a downsampled preview image for a cataloged raster.
 
@@ -907,7 +922,8 @@ async def get_preview(
             rgba = rgba.reshape(preview_data.shape[1], preview_data.shape[2], 4)
             preview_data = np.transpose(rgba, (2, 0, 1))
         except Exception as exc:
-            logger.warning("Failed to apply colormap '%s': %s", colormap, exc)
+            safe_cmap = colormap.replace("\n", "").replace("\r", "") if colormap else ""
+            logger.warning("Failed to apply colormap '%s': %s", safe_cmap, exc)
 
     png_bytes = _array_to_png(preview_data)
     return Response(

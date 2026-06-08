@@ -205,6 +205,37 @@ class ComparatorCoordinator:
     def apply_swipe_comparator_selection(self, selected_paths: list[str]) -> bool:
         return self.apply_comparator_selection(selected_paths)
 
+    def _restore_pre_comparator_visibility(self) -> None:
+        c = self._controller
+        if c._comparator_visibility_snapshot is not None:
+            snapshot = c._comparator_visibility_snapshot
+            c._comparator_visibility_snapshot = None
+            for path in c._search_result_assets_by_path:
+                if path in snapshot:
+                    c._search_layer_visibility[path] = bool(snapshot[path])
+            if c._event_driven_enabled:
+                c._sync_search_visibility_layers_event_driven()
+            else:
+                c._sync_search_visibility_layers()
+            c.panel.update_search_results(
+                list(c._search_result_assets_by_path.values()),
+                c._search_layer_visibility,
+            )
+            c._refresh_search_result_markers()
+
+    def _enable_comparator_flow(self, candidate_count: int) -> bool:
+        c = self._controller
+        if c._comparator_visibility_snapshot is None:
+            c._comparator_visibility_snapshot = dict(c._search_layer_visibility)
+        c._run_js_call("setComparatorPosition", 0.5)
+        c._run_js_call("requestComparatorPaneState")
+        c.panel.log(
+            "Comparator enabled. Drag divider on map to compare georeferenced layers."
+        )
+        c._logger.info("Comparator enabled candidate_layers=%s", candidate_count)
+        c._apply_display_control_mode()
+        return True
+
     def _toolbar_toggle_comparator(self, enabled: bool | None = None) -> bool:
         c = self._controller
         candidate_count = self.comparator_candidate_count()
@@ -222,27 +253,13 @@ class ComparatorCoordinator:
         if next_state and candidate_count < 2:
             c.panel.log("Comparator needs at least two visible raster layers.")
             c._swipe_comparator_enabled = False
-            if c._comparator_visibility_snapshot is not None:
-                snapshot = c._comparator_visibility_snapshot
-                c._comparator_visibility_snapshot = None
-                for path in c._search_result_assets_by_path:
-                    if path in snapshot:
-                        c._search_layer_visibility[path] = bool(snapshot[path])
-                if c._event_driven_enabled:
-                    c._sync_search_visibility_layers_event_driven()
-                else:
-                    c._sync_search_visibility_layers()
-                c.panel.update_search_results(
-                    list(c._search_result_assets_by_path.values()),
-                    c._search_layer_visibility,
-                )
-                c._refresh_search_result_markers()
+            self._restore_pre_comparator_visibility()
             return False
 
         c._swipe_comparator_enabled = next_state
         c._run_js_call("setComparator", c._swipe_comparator_enabled)
 
-        # Keep AOI/search marker visibility aligned with the checkbox state. Comparator mode transitions can trigger re-renders that otherwise surface stale marker visibility.
+        # Keep AOI/search marker visibility aligned with the checkbox state
         desired_aoi_visible = (
             bool(c.panel.search_aoi_visible_check.isChecked())
             if hasattr(c.panel, "search_aoi_visible_check")
@@ -251,35 +268,9 @@ class ComparatorCoordinator:
         c._set_search_aoi_visible(desired_aoi_visible)
 
         if c._swipe_comparator_enabled:
-            if c._comparator_visibility_snapshot is None:
-                c._comparator_visibility_snapshot = dict(c._search_layer_visibility)
-            c._run_js_call("setComparatorPosition", 0.5)
-            c._run_js_call("requestComparatorPaneState")
-            c.panel.log(
-                "Comparator enabled. Drag divider on map to compare georeferenced layers."
-            )
-            c._logger.info("Comparator enabled candidate_layers=%s", candidate_count)
-            c._apply_display_control_mode()
-            return True
+            return self._enable_comparator_flow(candidate_count)
 
-        if c._comparator_visibility_snapshot is not None:
-            snapshot = c._comparator_visibility_snapshot
-            c._comparator_visibility_snapshot = None
-            for path in c._search_result_assets_by_path:
-                if path in snapshot:
-                    c._search_layer_visibility[path] = bool(snapshot[path])
-
-            if c._event_driven_enabled:
-                c._sync_search_visibility_layers_event_driven()
-            else:
-                c._sync_search_visibility_layers()
-            c.panel.update_search_results(
-                list(c._search_result_assets_by_path.values()),
-                c._search_layer_visibility,
-            )
-            c._refresh_search_result_markers()
-            c._logger.info("Comparator disabled: restored pre-comparator layer visibility snapshot")
-
+        self._restore_pre_comparator_visibility()
         c._comparator_selected_pane = None
         c._comparator_selected_layer_type = None
         # Clear explicit key list so next comparator open starts fresh

@@ -101,39 +101,29 @@ class ControlPanelSearchMixin:
     def _calculate_all_visible_state(self, assets: list[dict], visibility_map: dict[str, bool]) -> bool:
         if not assets:
             return False
-        has_imagery = False
-        all_imagery_visible = True
-        has_dem = False
-        any_dem_visible = False
+        dem_vis = []
+        img_vis = []
         for asset in assets:
             path = str(asset.get("file_path") or "").replace("\\", "/")
             kind = str(asset.get("kind") or "").lower()
             is_visible = visibility_map.get(path, False)
             if kind == "dem":
-                has_dem = True
-                if is_visible:
-                    any_dem_visible = True
+                dem_vis.append(is_visible)
             else:
-                has_imagery = True
-                if not is_visible:
-                    all_imagery_visible = False
-        if has_imagery and not all_imagery_visible:
+                img_vis.append(is_visible)
+        if img_vis and not all(img_vis):
             return False
-        return not (has_dem and not any_dem_visible)
+        if dem_vis and not any(dem_vis):
+            return False
+        return True
 
-    def update_search_results(
-        self, assets: list[dict], visibility_by_path: dict[str, bool] | None = None
-    ) -> None:
-        """Update search results table with proper ordering: Imagery first (top), then DEM (bottom)."""
-        visibility_map = visibility_by_path or {}
-
-        # Sort assets: Imagery first (top of list), DEM last (bottom of list) This matches the visual stacking on the globe where imagery is on top
+    def _sort_and_order_assets(self, assets: list[dict]) -> list[dict]:
+        # Sort assets: Imagery first (top of list), DEM last (bottom of list)
         def sort_key(asset):
             kind = str(asset.get("kind") or "").lower()
             created_at = self._search_created_at_sort_key(asset.get("created_at"))
-            # Imagery (kind != "dem") gets priority 0, DEM gets priority 1 Within each group, sort by date (newest first)
             is_dem = 1 if kind == "dem" else 0
-            return (is_dem, -created_at)  # Negative for reverse date order
+            return (is_dem, -created_at)
 
         default_sorted_assets = sorted(assets, key=sort_key)
         assets_by_path = {
@@ -155,10 +145,9 @@ class ControlPanelSearchMixin:
             for asset in default_sorted_assets
             if str(asset.get("file_path") or "").replace("\\", "/") not in ordered_paths
         ]
-        sorted_assets = [
-            assets_by_path[path] for path in ordered_paths
-        ] + remaining_assets
+        return [assets_by_path[path] for path in ordered_paths] + remaining_assets
 
+    def _update_search_summary(self, sorted_assets: list[dict], visibility_map: dict[str, bool]) -> None:
         total_matches = len(sorted_assets)
         dem_count = sum(
             1
@@ -187,49 +176,144 @@ class ControlPanelSearchMixin:
             if sorted_assets
             else "-"
         )
-
-        # Always update summary text immediately so it is always synchronized
         self.search_results_summary.setText(
             f"Matches: {total_matches} | DEM: {dem_count} | Imagery: {imagery_count} | Visible: {visible_count} | CRS: {crs_summary} | Latest: {latest_date}"
         )
 
-        # Check if we can perform an in-place update of visibility to avoid table flicker
-        can_update_in_place = False
-        if self.search_results_table.rowCount() == len(sorted_assets):
-            can_update_in_place = True
-            for r, asset in enumerate(sorted_assets):
-                path = str(asset.get("file_path") or "").replace("\\", "/")
-                item = self.search_results_table.item(r, 1)
-                if not item or item.data(Qt.ItemDataRole.UserRole) != path:
-                    can_update_in_place = False
-                    break
+    def _try_update_in_place(self, sorted_assets: list[dict], visibility_map: dict[str, bool]) -> bool:
+        if self.search_results_table.rowCount() != len(sorted_assets):
+            return False
+        for r, asset in enumerate(sorted_assets):
+            path = str(asset.get("file_path") or "").replace("\\", "/")
+            item = self.search_results_table.item(r, 1)
+            if not item or item.data(Qt.ItemDataRole.UserRole) != path:
+                return False
 
-        if can_update_in_place:
-            # Update buttons in-place
-            for r, asset in enumerate(sorted_assets):
-                path = str(asset.get("file_path") or "").replace("\\", "/")
-                is_visible = visibility_map.get(path, False)
-                container = self.search_results_table.cellWidget(r, 4)
-                if container:
-                    btn = container.findChild(QPushButton)
-                    if btn:
-                        btn.blockSignals(True)
-                        btn.setIcon(self._create_eye_icon(is_visible))
-                        btn.setIconSize(QSize(16, 16))
-                        btn.setToolTip("Hide from map" if is_visible else "Show on map")
-                        btn.setProperty("is_visible", is_visible)
-                        btn.blockSignals(False)
-            # Synchronize registry visibility state
-            for path in self._layer_order_registry:
-                if path in visibility_map:
-                    self._layer_order_registry[path]["is_visible"] = visibility_map[path]
+        # Update buttons in-place
+        for r, asset in enumerate(sorted_assets):
+            path = str(asset.get("file_path") or "").replace("\\", "/")
+            is_visible = visibility_map.get(path, False)
+            container = self.search_results_table.cellWidget(r, 4)
+            if container:
+                btn = container.findChild(QPushButton)
+                if btn:
+                    btn.blockSignals(True)
+                    btn.setIcon(self._create_eye_icon(is_visible))
+                    btn.setIconSize(QSize(16, 16))
+                    btn.setToolTip("Hide from map" if is_visible else "Show on map")
+                    btn.setProperty("is_visible", is_visible)
+                    btn.blockSignals(False)
+        # Synchronize registry visibility state
+        for path in self._layer_order_registry:
+            if path in visibility_map:
+                self._layer_order_registry[path]["is_visible"] = visibility_map[path]
 
-            # Update header show_all_btn state
-            all_visible = self._calculate_all_visible_state(sorted_assets, visibility_map)
-            self._show_all_visible_state = all_visible
-            self.show_all_btn.setIcon(self._create_eye_icon(all_visible))
-            self.show_all_btn.setIconSize(QSize(14, 14))
-            self.show_all_btn.setToolTip("Hide all results from map" if all_visible else "Show all results on map")
+        # Update header show_all_btn state
+        all_visible = self._calculate_all_visible_state(sorted_assets, visibility_map)
+        self._show_all_visible_state = all_visible
+        self.show_all_btn.setIcon(self._create_eye_icon(all_visible))
+        self.show_all_btn.setIconSize(QSize(14, 14))
+        self.show_all_btn.setToolTip("Hide all results from map" if all_visible else "Show all results on map")
+        return True
+
+    def _create_search_toggle_button(self, is_visible: bool, file_path: str, normalized_path: str, visibility_map: dict[str, bool]) -> QPushButton:
+        toggle_button = QPushButton()
+        toggle_button.setIcon(self._create_eye_icon(is_visible))
+        toggle_button.setIconSize(QSize(16, 16))
+        toggle_button.setObjectName("searchVisibilityToggle")
+        toggle_button.setToolTip("Hide from map" if is_visible else "Show on map")
+        toggle_button.setFixedSize(32, 24)
+        toggle_button.setStyleSheet(
+            """
+            QPushButton {
+                background: transparent;
+                border: 1px solid #d0d0d0;
+                border-radius: 3px;
+                padding: 0px;
+            }
+            QPushButton:hover {
+                background: #f0f0f0;
+                border: 1px solid #0066cc;
+            }
+            QPushButton:pressed {
+                background: #e0e0e0;
+            }
+            QPushButton:disabled {
+                color: #cccccc;
+                border: 1px solid #e0e0e0;
+            }
+        """
+        )
+
+        if not file_path:
+            toggle_button.setEnabled(False)
+            _logger.debug("  Button disabled (no file path)")
+        else:
+            toggle_button.setProperty("is_visible", is_visible)
+            toggle_button.setProperty("file_path", normalized_path)
+
+            _logger.debug(
+                f"  Button created: is_visible={is_visible}, path={normalized_path}"
+            )
+
+            def make_toggle_handler(btn, path):
+                def handler():
+                    current_visible = btn.property("is_visible")
+                    new_visible = not current_visible
+                    _logger.debug("\nDEBUG: Toggle button clicked!")
+                    _logger.debug(f"  path: {path}")
+                    _logger.debug(f"  current_visible: {current_visible}")
+                    _logger.debug(f"  new_visible: {new_visible}")
+                    # Update button immediately for responsive feel
+                    btn.setIcon(self._create_eye_icon(new_visible))
+                    btn.setToolTip(
+                        "Hide from map" if new_visible else "Show on map"
+                    )
+                    btn.setProperty("is_visible", new_visible)
+                    # Emit signal to update map
+                    _logger.debug(
+                        f"  Emitting signal: search_result_visibility_toggled({path}, {new_visible})"
+                    )
+                    self.search_result_visibility_toggled.emit(path, new_visible)
+
+                    # Update header show_all_btn state immediately
+                    temp_vis_map = {}
+                    table = self.search_results_table
+                    temp_assets = []
+                    for r in range(table.rowCount()):
+                        row_container = table.cellWidget(r, 4)
+                        if row_container:
+                            row_btn = row_container.findChild(QPushButton)
+                            if row_btn:
+                                row_path = row_btn.property("file_path")
+                                row_is_visible = new_visible if row_path == path else bool(row_btn.property("is_visible"))
+                                temp_vis_map[row_path] = row_is_visible
+                                kind_item = table.item(r, 2)
+                                row_kind = kind_item.text().lower() if kind_item is not None else ""
+                                temp_assets.append({"file_path": row_path, "kind": row_kind})
+                                
+                    all_visible = self._calculate_all_visible_state(temp_assets, temp_vis_map)
+                    self._show_all_visible_state = all_visible
+                    self.show_all_btn.setIcon(self._create_eye_icon(all_visible))
+                    self.show_all_btn.setIconSize(QSize(14, 14))
+                    self.show_all_btn.setToolTip("Hide all results from map" if all_visible else "Show all results on map")
+
+                return handler
+
+            toggle_button.clicked.connect(
+                make_toggle_handler(toggle_button, normalized_path)
+            )
+        return toggle_button
+
+    def update_search_results(
+        self, assets: list[dict], visibility_by_path: dict[str, bool] | None = None
+    ) -> None:
+        """Update search results table with proper ordering: Imagery first (top), then DEM (bottom)."""
+        visibility_map = visibility_by_path or {}
+        sorted_assets = self._sort_and_order_assets(assets)
+        self._update_search_summary(sorted_assets, visibility_map)
+
+        if self._try_update_in_place(sorted_assets, visibility_map):
             return
 
         self.search_results_table.setRowCount(0)
@@ -244,14 +328,12 @@ class ControlPanelSearchMixin:
                 continue
 
             if path in self._layer_order_registry:
-                # Existing entry: preserve its metadata and specific visibility unless overridden
                 entry = self._layer_order_registry[path].copy()
                 entry["order"] = idx
                 if path in visibility_map:
                     entry["is_visible"] = visibility_map[path]
                 new_registry[path] = entry
             else:
-                # New entry: use provided visibility or default to False
                 new_registry[path] = {
                     "file_name": str(asset.get("file_name") or "-"),
                     "kind": str(asset.get("kind") or "-"),
@@ -277,105 +359,12 @@ class ControlPanelSearchMixin:
             crs = str(asset.get("crs") or "-")
             file_path = str(asset.get("file_path") or "")
 
-            # Normalize path for lookup (match controller's normalization)
             normalized_path = file_path.replace("\\", "/")
             is_visible = visibility_map.get(normalized_path, False)
 
             _logger.debug(f"DEBUG: Creating row {row} for {kind} - {file_name}")
 
-            # Create visibility toggle button with eye icons
-            toggle_button = QPushButton()
-            toggle_button.setIcon(self._create_eye_icon(is_visible))
-            toggle_button.setIconSize(QSize(16, 16))
-            toggle_button.setObjectName("searchVisibilityToggle")
-            toggle_button.setToolTip("Hide from map" if is_visible else "Show on map")
-            toggle_button.setFixedSize(32, 24)
-            toggle_button.setStyleSheet(
-                """
-                QPushButton {
-                    background: transparent;
-                    border: 1px solid #d0d0d0;
-                    border-radius: 3px;
-                    padding: 0px;
-                }
-                QPushButton:hover {
-                    background: #f0f0f0;
-                    border: 1px solid #0066cc;
-                }
-                QPushButton:pressed {
-                    background: #e0e0e0;
-                }
-                QPushButton:disabled {
-                    color: #cccccc;
-                    border: 1px solid #e0e0e0;
-                }
-            """
-            )
-
-            if not file_path:
-                toggle_button.setEnabled(False)
-                _logger.debug("  Button disabled (no file path)")
-            else:
-                # Normalize path to match controller's format
-                normalized_path = file_path.replace("\\", "/")
-
-                # Store current visibility state in button property
-                toggle_button.setProperty("is_visible", is_visible)
-                toggle_button.setProperty(
-                    "file_path", normalized_path
-                )  # Store normalized path
-
-                _logger.debug(
-                    f"  Button created: is_visible={is_visible}, path={normalized_path}"
-                )
-
-                def make_toggle_handler(btn, path):
-                    def handler():
-                        current_visible = btn.property("is_visible")
-                        new_visible = not current_visible
-                        _logger.debug("\nDEBUG: Toggle button clicked!")
-                        _logger.debug(f"  path: {path}")
-                        _logger.debug(f"  current_visible: {current_visible}")
-                        _logger.debug(f"  new_visible: {new_visible}")
-                        # Update button immediately for responsive feel
-                        btn.setIcon(self._create_eye_icon(new_visible))
-                        btn.setToolTip(
-                            "Hide from map" if new_visible else "Show on map"
-                        )
-                        btn.setProperty("is_visible", new_visible)
-                        # Emit signal to update map
-                        _logger.debug(
-                            f"  Emitting signal: search_result_visibility_toggled({path}, {new_visible})"
-                        )
-                        self.search_result_visibility_toggled.emit(path, new_visible)
-
-                        # Update header show_all_btn state immediately
-                        temp_vis_map = {}
-                        table = self.search_results_table
-                        temp_assets = []
-                        for r in range(table.rowCount()):
-                            row_container = table.cellWidget(r, 4)
-                            if row_container:
-                                row_btn = row_container.findChild(QPushButton)
-                                if row_btn:
-                                    row_path = row_btn.property("file_path")
-                                    row_is_visible = new_visible if row_path == path else bool(row_btn.property("is_visible"))
-                                    temp_vis_map[row_path] = row_is_visible
-                                    kind_item = table.item(r, 2)
-                                    row_kind = kind_item.text().lower() if kind_item is not None else ""
-                                    temp_assets.append({"file_path": row_path, "kind": row_kind})
-                                    
-                        all_visible = self._calculate_all_visible_state(temp_assets, temp_vis_map)
-                        self._show_all_visible_state = all_visible
-                        self.show_all_btn.setIcon(self._create_eye_icon(all_visible))
-                        self.show_all_btn.setIconSize(QSize(14, 14))
-                        self.show_all_btn.setToolTip("Hide all results from map" if all_visible else "Show all results on map")
-
-                    return handler
-
-                toggle_button.clicked.connect(
-                    make_toggle_handler(toggle_button, normalized_path)
-                )
+            toggle_button = self._create_search_toggle_button(is_visible, file_path, normalized_path, visibility_map)
 
             # Add drag handle in first column
             drag_handle_item = QTableWidgetItem("⋮⋮")
@@ -392,14 +381,13 @@ class ControlPanelSearchMixin:
             )
             drag_handle_item.setForeground(
                 QBrush(QColor(102, 102, 102))
-            )  # Dark gray for visibility
+            )
 
-            # Create table items with explicit text color for visibility CRITICAL: Store file_path in UserRole for drag-and-drop reordering
             file_item = QTableWidgetItem(file_name)
             file_item.setData(
                 Qt.ItemDataRole.UserRole, normalized_path
-            )  # Store file_path for reordering
-            file_item.setForeground(QBrush(QColor(0, 0, 0)))  # Black text
+            )
+            file_item.setForeground(QBrush(QColor(0, 0, 0)))
             file_item.setFlags(
                 cast(
                     Any,
@@ -411,7 +399,7 @@ class ControlPanelSearchMixin:
             )
 
             kind_item = QTableWidgetItem(kind)
-            kind_item.setForeground(QBrush(QColor(0, 0, 0)))  # Black text
+            kind_item.setForeground(QBrush(QColor(0, 0, 0)))
             kind_item.setFlags(
                 cast(
                     Any,
@@ -423,7 +411,7 @@ class ControlPanelSearchMixin:
             )
 
             crs_item = QTableWidgetItem(crs)
-            crs_item.setForeground(QBrush(QColor(0, 0, 0)))  # Black text
+            crs_item.setForeground(QBrush(QColor(0, 0, 0)))
             crs_item.setFlags(
                 cast(
                     Any,
@@ -446,7 +434,7 @@ class ControlPanelSearchMixin:
             self.search_results_table.setCellWidget(row, 4, toggle_container)
 
             # Red delete button (QGIS style)
-            delete_btn = QPushButton("\u2715")  # Multiplication X / Close cross
+            delete_btn = QPushButton("\u2715")
             delete_btn.setToolTip(f"Remove layer: {file_name}")
             delete_btn.setFixedSize(18, 18)
             delete_btn.setStyleSheet(
@@ -479,7 +467,6 @@ class ControlPanelSearchMixin:
             delete_layout.addWidget(delete_btn)
             self.search_results_table.setCellWidget(row, 5, delete_container)
 
-            # Force text color update after setting items (workaround for Qt palette issues)
             for _col_idx, item in [
                 (1, file_item),
                 (2, kind_item),
@@ -494,9 +481,6 @@ class ControlPanelSearchMixin:
                 f"DEBUG: Created table items for row {row}: file={file_name}, kind={kind}, crs={crs}, path={normalized_path}"
             )
 
-        # Don't enable sorting - it conflicts with drag-and-drop self.search_results_table.setSortingEnabled(True)
-
-        # Update header show_all_btn state
         all_visible = self._calculate_all_visible_state(sorted_assets, visibility_map)
         self._show_all_visible_state = all_visible
         self.show_all_btn.setIcon(self._create_eye_icon(all_visible))
@@ -1360,6 +1344,82 @@ class ControlPanelSearchMixin:
         delete_layout.addWidget(delete_btn)
         table.setCellWidget(row_index, 5, delete_container)
 
+    def _create_row_visibility_button(self, row_index: int, row_data: dict, table: QTableWidget) -> QPushButton:
+        is_visible = row_data.get("is_visible", True)
+        toggle_button = QPushButton()
+        toggle_button.setIcon(self._create_eye_icon(is_visible))
+        toggle_button.setIconSize(QSize(16, 16))
+        toggle_button.setObjectName("searchVisibilityToggle")
+        toggle_button.setToolTip("Hide from map" if is_visible else "Show on map")
+        toggle_button.setFixedSize(32, 24)
+        toggle_button.setStyleSheet(
+            """
+            QPushButton {
+                background: transparent;
+                border: 1px solid #d0d0d0;
+                border-radius: 3px;
+                padding: 0px;
+            }
+            QPushButton:hover {
+                background: #f0f0f0;
+                border: 1px solid #0066cc;
+            }
+            QPushButton:pressed {
+                background: #e0e0e0;
+            }
+            QPushButton:disabled {
+                color: #cccccc;
+                border: 1px solid #e0e0e0;
+            }
+        """
+        )
+        toggle_button.setProperty("is_visible", is_visible)
+        toggle_button.setProperty("file_path", row_data["file_path"])
+
+        def make_toggle_handler(btn, path):
+            def handler():
+                current_visible = btn.property("is_visible")
+                new_visible = not current_visible
+                btn.setIcon(self._create_eye_icon(new_visible))
+                btn.setToolTip("Hide from map" if new_visible else "Show on map")
+                btn.setProperty("is_visible", new_visible)
+                self.search_result_visibility_toggled.emit(path, new_visible)
+            return handler
+
+        toggle_button.clicked.connect(
+            make_toggle_handler(toggle_button, row_data["file_path"])
+        )
+        return toggle_button
+
+    def _create_row_delete_button(self, row_data: dict) -> QPushButton:
+        delete_btn = QPushButton("\u2715")
+        delete_btn.setToolTip(f"Remove layer: {row_data['file_name']}")
+        delete_btn.setFixedSize(18, 18)
+        delete_btn.setStyleSheet(
+            """
+            QPushButton {
+                background: transparent;
+                border: none;
+                color: #cc0000;
+                font-weight: bold;
+                font-size: 13px;
+                margin: 0px;
+                padding: 0px;
+            }
+            QPushButton:hover {
+                color: #ff3333;
+            }
+            QPushButton:pressed {
+                color: #990000;
+            }
+        """
+        )
+        path = str(row_data["file_path"]).replace("\\", "/")
+        delete_btn.clicked.connect(
+            lambda checked, p=path: self.search_layer_delete_requested.emit(p)
+        )
+        return delete_btn
+
     def _update_table_row(
         self, table: QTableWidget, row_index: int, row_data: dict
     ) -> None:
@@ -1368,7 +1428,6 @@ class ControlPanelSearchMixin:
         file_item = table.item(row_index, 1)
         kind_item = table.item(row_index, 2)
         crs_item = table.item(row_index, 3)
-        # NOTE: column 4 is a cellWidget (visibility toggle), not a QTableWidgetItem
 
         # Ensure all items have correct data and colors
         if file_item:
@@ -1390,52 +1449,7 @@ class ControlPanelSearchMixin:
         # Update or recreate visibility button (column 4)
         visibility_widget = table.cellWidget(row_index, 4)
         if not visibility_widget:
-            # Recreate if missing (Qt drag-drop often clears cell widgets)
-            is_visible = row_data.get("is_visible", True)
-            toggle_button = QPushButton()
-            toggle_button.setIcon(self._create_eye_icon(is_visible))
-            toggle_button.setIconSize(QSize(16, 16))
-            toggle_button.setObjectName("searchVisibilityToggle")
-            toggle_button.setToolTip("Hide from map" if is_visible else "Show on map")
-            toggle_button.setFixedSize(32, 24)
-            toggle_button.setStyleSheet(
-                """
-                QPushButton {
-                    background: transparent;
-                    border: 1px solid #d0d0d0;
-                    border-radius: 3px;
-                    padding: 0px;
-                }
-                QPushButton:hover {
-                    background: #f0f0f0;
-                    border: 1px solid #0066cc;
-                }
-                QPushButton:pressed {
-                    background: #e0e0e0;
-                }
-                QPushButton:disabled {
-                    color: #cccccc;
-                    border: 1px solid #e0e0e0;
-                }
-            """
-            )
-            toggle_button.setProperty("is_visible", is_visible)
-            toggle_button.setProperty("file_path", row_data["file_path"])
-
-            def make_toggle_handler(btn, path):
-                def handler():
-                    current_visible = btn.property("is_visible")
-                    new_visible = not current_visible
-                    btn.setIcon(self._create_eye_icon(new_visible))
-                    btn.setToolTip("Hide from map" if new_visible else "Show on map")
-                    btn.setProperty("is_visible", new_visible)
-                    self.search_result_visibility_toggled.emit(path, new_visible)
-                return handler
-
-            toggle_button.clicked.connect(
-                make_toggle_handler(toggle_button, row_data["file_path"])
-            )
-
+            toggle_button = self._create_row_visibility_button(row_index, row_data, table)
             toggle_container = QWidget()
             toggle_layout = QHBoxLayout(toggle_container)
             toggle_layout.setContentsMargins(0, 0, 0, 0)
@@ -1456,35 +1470,7 @@ class ControlPanelSearchMixin:
         # Update or recreate delete button (column 5)
         delete_container = table.cellWidget(row_index, 5)
         if not delete_container:
-            # Recreate if missing (Qt drag-drop often clears cell widgets)
-            delete_btn = QPushButton("\u2715")
-            delete_btn.setToolTip(f"Remove layer: {row_data['file_name']}")
-            delete_btn.setFixedSize(18, 18)
-            delete_btn.setStyleSheet(
-                """
-                QPushButton {
-                    background: transparent;
-                    border: none;
-                    color: #cc0000;
-                    font-weight: bold;
-                    font-size: 13px;
-                    margin: 0px;
-                    padding: 0px;
-                }
-                QPushButton:hover {
-                    color: #ff3333;
-                }
-                QPushButton:pressed {
-                    color: #990000;
-                }
-            """
-            )
-            
-            path = str(row_data["file_path"]).replace("\\", "/")
-            delete_btn.clicked.connect(
-                lambda checked, p=path: self.search_layer_delete_requested.emit(p)
-            )
-            
+            delete_btn = self._create_row_delete_button(row_data)
             delete_container = QWidget()
             delete_layout = QHBoxLayout(delete_container)
             delete_layout.setContentsMargins(0, 0, 0, 0)
