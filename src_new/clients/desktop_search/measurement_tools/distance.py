@@ -8,12 +8,11 @@ when a DEM is provided.
 from __future__ import annotations
 
 import math
-from typing import Optional
 
 from pyproj import Geod
 
-from src_new.clients.desktop_search.measurement_tools.models import DistanceMeasurement
 from src_new.clients.desktop_search.measurement_tools.dem_utils import sample_dem_height
+from src_new.clients.desktop_search.measurement_tools.models import DistanceMeasurement
 
 
 def vincenty_distance(
@@ -43,7 +42,7 @@ def measure_distance(
     lat1: float,
     lon2: float,
     lat2: float,
-    dem_path: Optional[str] = None,
+    dem_path: str | None = None,
 ) -> DistanceMeasurement:
     """Measure the 2D ellipsoidal distance and optionally the 3D distance.
 

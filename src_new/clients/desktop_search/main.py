@@ -15,10 +15,9 @@ from pathlib import Path
 
 # CRITICAL: Import QtWebEngineWidgets FIRST before QApplication This is required for proper OpenGL context sharing
 from qtpy import QtWebEngineWidgets  # noqa: F401
-
-from qtpy.QtWidgets import QApplication
 from qtpy.QtCore import Qt
 from qtpy.QtGui import QIcon
+from qtpy.QtWidgets import QApplication
 
 # Configure logging
 logging.basicConfig(
@@ -124,8 +123,8 @@ def main() -> int:
         logger.info("Starting Desktop Search Client...")
         
         # Import after QApplication is created
-        from src_new.clients.desktop_search.main_window import MainWindow
         from src_new.clients.desktop_search.app_mode import DesktopAppMode
+        from src_new.clients.desktop_search.main_window import MainWindow
         
         # Create main window in CLIENT mode (Search, Viz, Analysis)
         window = MainWindow(app_mode=DesktopAppMode.CLIENT)

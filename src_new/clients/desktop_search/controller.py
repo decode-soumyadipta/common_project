@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import json
 import logging
 import math
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import httpx
 from qtpy.QtCore import QObject, QThreadPool, QTimer, Signal
@@ -15,37 +16,37 @@ from src_new.clients.desktop_search.api_client import DesktopApiClient
 from src_new.clients.desktop_search.api_server_manager import ApiServerManager
 from src_new.clients.desktop_search.app_mode import DesktopAppMode
 from src_new.clients.desktop_search.bridge import WebBridge
-from src_new.clients.desktop_search.titiler_manager import TiTilerManager
+from src_new.clients.desktop_search.control_panel import ControlPanel
 from src_new.clients.desktop_search.coordinators import (
+    AnnotationCoordinator,
+    AssetCoordinator,
+    AssetLoadingCoordinator,
+    CameraCoordinator,
     ComparatorCoordinator,
+    DisplaySettingsCoordinator,
+    EventCoordinator,
+    ExportCoordinator,
+    IngestCoordinator,
+    LayerCoordinator,
     MeasurementCoordinator,
     ProjectIoCoordinator,
-    ToolbarActionCoordinator,
-    SearchCoordinator,
-    VisualizationCoordinator,
-    ExportCoordinator,
-    LayerCoordinator,
-    AssetCoordinator,
-    AnnotationCoordinator,
-    CameraCoordinator,
-    SearchResultsCoordinator,
-    SyncFocusCoordinator,
-    IngestCoordinator,
-    AssetLoadingCoordinator,
     RenderingCoordinator,
-    DisplaySettingsCoordinator,
-    UtilityCoordinator,
+    SearchCoordinator,
+    SearchResultsCoordinator,
     SignalCoordinator,
-    EventCoordinator,
+    SyncFocusCoordinator,
+    ToolbarActionCoordinator,
+    UtilityCoordinator,
+    VisualizationCoordinator,
 )
 from src_new.clients.desktop_search.coordinators.elevation_profile_coordinator import (
     ElevationProfileCoordinator,
 )
-from src_new.clients.desktop_search.control_panel import ControlPanel
 from src_new.clients.desktop_search.performance_service import (
     DesktopPerformanceService,
 )
 from src_new.clients.desktop_search.state import DesktopState
+from src_new.clients.desktop_search.titiler_manager import TiTilerManager
 
 
 def _fmt_vol(m3: float) -> str:
@@ -218,14 +219,10 @@ class DesktopController(QObject):
             self.panel.log(message)
             win = self.panel.window()
             if hasattr(win, "gis_status_bar") and win.gis_status_bar:
-                try:
+                with contextlib.suppress(Exception):
                     win.gis_status_bar.on_loading_progress(100, message)
-                except Exception:
-                    pass
-                try:
+                with contextlib.suppress(Exception):
                     win.statusBar().showMessage(message, 5000)
-                except Exception:
-                    pass
 
     def _bootstrap_startup_tasks(self) -> None:
 
@@ -281,7 +278,7 @@ class DesktopController(QObject):
                     {
                         "value": value,
                         "context": context,
-                        "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
+                        "timestamp": dt.datetime.now(dt.UTC).isoformat(),
                     }
                 )
 
@@ -429,7 +426,7 @@ class DesktopController(QObject):
                 if detail is not None:
                     return str(detail)
             return str(payload)
-        except Exception:  # noqa: BLE001
+        except Exception:
             body = (exc.response.text or "").strip()
             return body[:300]
 
@@ -965,8 +962,9 @@ class DesktopController(QObject):
         self._event.on_map_click(lon, lat)
 
     def _handle_comparator_map_click(self, lon: float, lat: float) -> bool:
-        from qtpy.QtCore import Qt
         from pathlib import Path
+
+        from qtpy.QtCore import Qt
         window = self.panel.window()
         if not hasattr(window, "_comparator_popup") or not window._comparator_popup:
             return False
@@ -1049,8 +1047,8 @@ class DesktopController(QObject):
         """Receive continuous real-time annotations synchronization from JavaScript."""
         if getattr(self, "_loading_project", False):
             return
-        import json
         import datetime as dt
+        import json
         try:
             data = json.loads(payload_json)
             if not isinstance(data, dict):
@@ -1065,7 +1063,7 @@ class DesktopController(QObject):
                     "lat": float(pt.get("lat") or 0.0),
                     "height": float(pt.get("height") or 0.0),
                     "text": str(pt.get("text") or "Point"),
-                    "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                    "created_at": dt.datetime.now(dt.UTC).isoformat(),
                 })
                 
             # 2. Update line annotations coords now arrive as [lon, lat, height] triples from JS
@@ -1081,7 +1079,7 @@ class DesktopController(QObject):
                     "length_m": length_m,
                     "width_m": 0.0,
                     "condition": "intact",
-                    "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                    "created_at": dt.datetime.now(dt.UTC).isoformat(),
                 })
                 
             # 3. Update icon annotations
@@ -1093,7 +1091,7 @@ class DesktopController(QObject):
                     "height": float(ic.get("height") or 0.0),
                     "icon": str(ic.get("icon") or "marker"),
                     "text": str(ic.get("text") or "Icon"),
-                    "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                    "created_at": dt.datetime.now(dt.UTC).isoformat(),
                 })
                 
             # 4. Update text label annotations
@@ -1104,7 +1102,7 @@ class DesktopController(QObject):
                     "lat": float(tx.get("lat") or 0.0),
                     "height": float(tx.get("height") or 0.0),
                     "text": str(tx.get("text") or "Label"),
-                    "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                    "created_at": dt.datetime.now(dt.UTC).isoformat(),
                 })
                 
             # 5. Update polygon annotations
@@ -1115,7 +1113,7 @@ class DesktopController(QObject):
                 self._annotation_polygon_records.append({
                     "coords": coords,
                     "label": label,
-                    "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                    "created_at": dt.datetime.now(dt.UTC).isoformat(),
                 })
                 
             self._set_project_modified(True)
@@ -1163,7 +1161,7 @@ class DesktopController(QObject):
                 "lon": lon,
                 "lat": lat,
                 "text": text,
-                "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                "created_at": dt.datetime.now(dt.UTC).isoformat(),
             }
         )
         self.panel.log(f"Annotation added at {lon:.5f}, {lat:.5f}")
@@ -1181,7 +1179,7 @@ class DesktopController(QObject):
                 "lat": lat,
                 "icon": icon_name,
                 "text": text,
-                "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                "created_at": dt.datetime.now(dt.UTC).isoformat(),
             }
         )
         self.panel.log(f"Icon annotation '{icon_name}' added at {lon:.5f}, {lat:.5f}")
@@ -1197,7 +1195,7 @@ class DesktopController(QObject):
                 "lon": lon,
                 "lat": lat,
                 "text": text,
-                "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                "created_at": dt.datetime.now(dt.UTC).isoformat(),
             }
         )
         self.panel.log(f"Text label added at {lon:.5f}, {lat:.5f}")
@@ -1219,7 +1217,7 @@ class DesktopController(QObject):
                 "length_m": length_m,
                 "width_m": 0.0,
                 "condition": "intact",
-                "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                "created_at": dt.datetime.now(dt.UTC).isoformat(),
             }
         )
         self.panel.log(f"Line annotation added ({length_m:.1f} m)")
@@ -1227,7 +1225,9 @@ class DesktopController(QObject):
 
     @staticmethod
     def _line_length_m(coords: list[list[float]]) -> float:
-        from src_new.clients.desktop_search.coordinators.utility_coordinator import UtilityCoordinator
+        from src_new.clients.desktop_search.coordinators.utility_coordinator import (
+            UtilityCoordinator,
+        )
         return UtilityCoordinator.line_length_m(coords)
 
     def apply_raster_stretch(self, layer_key: str, stretch_type: str, method: str, **params) -> None:
@@ -1249,8 +1249,7 @@ class DesktopController(QObject):
             self._elevation_profile.deactivate()
             self.panel.log("Elevation Profile stopped.")
             return False
-        activated = self._elevation_profile.activate()
-        return activated
+        return self._elevation_profile.activate()
 
     def extract_dem_profile(self) -> None:
         # Legacy method - functionality moved to ElevationProfileCoordinator
@@ -1759,7 +1758,7 @@ class DesktopController(QObject):
 
         except Exception as e:
             self._logger.error("JavaScript call failed: %s - %s", method, e)
-            self.panel.log(f"JavaScript error: {method} failed - {str(e)}")
+            self.panel.log(f"JavaScript error: {method} failed - {e!s}")
 
     def _test_js_bridge_connectivity(self) -> bool:
         """Test if the JavaScript bridge is working properly."""
@@ -1840,7 +1839,7 @@ class DesktopController(QObject):
             return None
         file_name = str(asset.get("file_name") or asset.get("file_path") or "Tile")
         file_path = str(asset.get("file_path") or "").replace("\\", "/")
-        payload = {
+        return {
             "lon": float(lon),
             "lat": float(lat),
             "text": file_name,
@@ -1848,7 +1847,6 @@ class DesktopController(QObject):
             "file_path": file_path,
             "displayed": bool(self._search_layer_visibility.get(file_path, False)),
         }
-        return payload
 
 
     def _fly_to_asset(self, asset: dict) -> bool:

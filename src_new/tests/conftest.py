@@ -7,11 +7,13 @@ This module provides shared fixtures for:
 - Sample geospatial test data paths
 """
 
-import pytest
 import tempfile
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
 
 # Database fixtures
 @pytest.fixture(scope="session")

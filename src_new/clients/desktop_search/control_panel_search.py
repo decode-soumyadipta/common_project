@@ -3,8 +3,8 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
-from qtpy.QtCore import Qt, QPointF, QSize
-from qtpy.QtGui import QColor, QBrush, QIcon, QPainter, QPainterPath, QPixmap, QPen
+from qtpy.QtCore import QPointF, QSize, Qt
+from qtpy.QtGui import QBrush, QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from qtpy.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -15,10 +15,31 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
+from typing import TYPE_CHECKING, Any, cast
+if TYPE_CHECKING:
+    from qtpy.QtCore import QTimer
+    from qtpy.QtWidgets import QLabel
+
 _logger = logging.getLogger(__name__)
 
 
 class ControlPanelSearchMixin:
+    # Type hints for Pyright static analysis
+    search_results_table: QTableWidget
+    search_results_summary: QLabel
+    show_all_btn: QToolButton
+    vector_layers_table: QTableWidget
+    _reorder_debounce_timer: QTimer
+    _pending_reorder_data: list | None
+    
+    # Signals (declared on the main class mixing this in)
+    asset_focus_requested: Any
+    search_result_visibility_toggled: Any
+    search_results_visibility_batch_toggled: Any
+    search_layer_delete_requested: Any
+    vector_layer_visibility_toggled: Any
+    vector_layer_delete_requested: Any
+    search_layers_reordered: Any
     def _create_eye_icon(self, is_visible: bool, size: int = 16, color_hex: str = "#444444") -> QIcon:
         """Create a professional vector-drawn eye icon (and slashed eye for hidden state)."""
         pixmap = QPixmap(size, size)
@@ -71,9 +92,11 @@ class ControlPanelSearchMixin:
         row = item.row()
         # Focus on click for any data column (0-3), ignoring action buttons (4, 5)
         if item.column() < 4:
-            file_path = self.search_results_table.item(row, 1).data(Qt.ItemDataRole.UserRole)
-            if file_path:
-                self.asset_focus_requested.emit(file_path)
+            file_item = self.search_results_table.item(row, 1)
+            if file_item is not None:
+                file_path = file_item.data(Qt.ItemDataRole.UserRole)
+                if file_path:
+                    self.asset_focus_requested.emit(file_path)
 
     def _calculate_all_visible_state(self, assets: list[dict], visibility_map: dict[str, bool]) -> bool:
         if not assets:
@@ -96,9 +119,7 @@ class ControlPanelSearchMixin:
                     all_imagery_visible = False
         if has_imagery and not all_imagery_visible:
             return False
-        if has_dem and not any_dem_visible:
-            return False
-        return True
+        return not (has_dem and not any_dem_visible)
 
     def update_search_results(
         self, assets: list[dict], visibility_by_path: dict[str, bool] | None = None
@@ -340,7 +361,8 @@ class ControlPanelSearchMixin:
                                     row_path = row_btn.property("file_path")
                                     row_is_visible = new_visible if row_path == path else bool(row_btn.property("is_visible"))
                                     temp_vis_map[row_path] = row_is_visible
-                                    row_kind = table.item(r, 2).text().lower()
+                                    kind_item = table.item(r, 2)
+                                    row_kind = kind_item.text().lower() if kind_item is not None else ""
                                     temp_assets.append({"file_path": row_path, "kind": row_kind})
                                     
                         all_visible = self._calculate_all_visible_state(temp_assets, temp_vis_map)
@@ -360,10 +382,13 @@ class ControlPanelSearchMixin:
             drag_handle_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             drag_handle_item.setToolTip(f"Drag to reorder (Layer {row + 1})")
             drag_handle_item.setFlags(
-                Qt.ItemFlag.ItemIsEnabled
-                | Qt.ItemFlag.ItemIsSelectable
-                | Qt.ItemFlag.ItemIsDragEnabled
-                | Qt.ItemFlag.ItemIsDropEnabled
+                cast(
+                    Any,
+                    Qt.ItemFlag.ItemIsEnabled
+                    | Qt.ItemFlag.ItemIsSelectable
+                    | Qt.ItemFlag.ItemIsDragEnabled
+                    | Qt.ItemFlag.ItemIsDropEnabled,
+                )
             )
             drag_handle_item.setForeground(
                 QBrush(QColor(102, 102, 102))
@@ -376,28 +401,37 @@ class ControlPanelSearchMixin:
             )  # Store file_path for reordering
             file_item.setForeground(QBrush(QColor(0, 0, 0)))  # Black text
             file_item.setFlags(
-                Qt.ItemFlag.ItemIsEnabled
-                | Qt.ItemFlag.ItemIsSelectable
-                | Qt.ItemFlag.ItemIsDragEnabled
-                | Qt.ItemFlag.ItemIsDropEnabled
+                cast(
+                    Any,
+                    Qt.ItemFlag.ItemIsEnabled
+                    | Qt.ItemFlag.ItemIsSelectable
+                    | Qt.ItemFlag.ItemIsDragEnabled
+                    | Qt.ItemFlag.ItemIsDropEnabled,
+                )
             )
 
             kind_item = QTableWidgetItem(kind)
             kind_item.setForeground(QBrush(QColor(0, 0, 0)))  # Black text
             kind_item.setFlags(
-                Qt.ItemFlag.ItemIsEnabled
-                | Qt.ItemFlag.ItemIsSelectable
-                | Qt.ItemFlag.ItemIsDragEnabled
-                | Qt.ItemFlag.ItemIsDropEnabled
+                cast(
+                    Any,
+                    Qt.ItemFlag.ItemIsEnabled
+                    | Qt.ItemFlag.ItemIsSelectable
+                    | Qt.ItemFlag.ItemIsDragEnabled
+                    | Qt.ItemFlag.ItemIsDropEnabled,
+                )
             )
 
             crs_item = QTableWidgetItem(crs)
             crs_item.setForeground(QBrush(QColor(0, 0, 0)))  # Black text
             crs_item.setFlags(
-                Qt.ItemFlag.ItemIsEnabled
-                | Qt.ItemFlag.ItemIsSelectable
-                | Qt.ItemFlag.ItemIsDragEnabled
-                | Qt.ItemFlag.ItemIsDropEnabled
+                cast(
+                    Any,
+                    Qt.ItemFlag.ItemIsEnabled
+                    | Qt.ItemFlag.ItemIsSelectable
+                    | Qt.ItemFlag.ItemIsDragEnabled
+                    | Qt.ItemFlag.ItemIsDropEnabled,
+                )
             )
 
             self.search_results_table.setItem(row, 0, drag_handle_item)
@@ -407,7 +441,7 @@ class ControlPanelSearchMixin:
             toggle_container = QWidget()
             toggle_layout = QHBoxLayout(toggle_container)
             toggle_layout.setContentsMargins(0, 0, 0, 0)
-            toggle_layout.setAlignment(Qt.AlignCenter)
+            toggle_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
             toggle_layout.addWidget(toggle_button)
             self.search_results_table.setCellWidget(row, 4, toggle_container)
 
@@ -441,12 +475,12 @@ class ControlPanelSearchMixin:
             delete_container = QWidget()
             delete_layout = QHBoxLayout(delete_container)
             delete_layout.setContentsMargins(0, 0, 0, 0)
-            delete_layout.setAlignment(Qt.AlignCenter)
+            delete_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
             delete_layout.addWidget(delete_btn)
             self.search_results_table.setCellWidget(row, 5, delete_container)
 
             # Force text color update after setting items (workaround for Qt palette issues)
-            for col_idx, item in [
+            for _col_idx, item in [
                 (1, file_item),
                 (2, kind_item),
                 (3, crs_item),
@@ -551,7 +585,7 @@ class ControlPanelSearchMixin:
             toggle_container = QWidget()
             toggle_layout = QHBoxLayout(toggle_container)
             toggle_layout.setContentsMargins(0, 0, 0, 0)
-            toggle_layout.setAlignment(Qt.AlignCenter)
+            toggle_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
             toggle_layout.addWidget(visibility_button)
             self.vector_layers_table.setCellWidget(row, 2, toggle_container)
 
@@ -588,7 +622,7 @@ class ControlPanelSearchMixin:
             delete_container = QWidget()
             delete_layout = QHBoxLayout(delete_container)
             delete_layout.setContentsMargins(0, 0, 0, 0)
-            delete_layout.setAlignment(Qt.AlignCenter)
+            delete_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
             delete_layout.addWidget(delete_button)
             self.vector_layers_table.setCellWidget(row, 3, delete_container)
 
@@ -732,14 +766,13 @@ class ControlPanelSearchMixin:
 
     @staticmethod
     def _format_asset_created_at(value: object) -> str:
-        formatted = ControlPanelSearchMixin._format_search_created_at(value)
-        return formatted
+        return ControlPanelSearchMixin._format_search_created_at(value)
 
     @staticmethod
     def _format_asset_cell_size(resolution_x: object, resolution_y: object) -> str:
         try:
-            x_value = float(resolution_x)
-            y_value = float(resolution_y)
+            x_value = float(str(resolution_x))
+            y_value = float(str(resolution_y))
         except (TypeError, ValueError):
             return "-"
         return f"{x_value:.4f} × {y_value:.4f}"
@@ -747,8 +780,8 @@ class ControlPanelSearchMixin:
     @staticmethod
     def _format_asset_dimensions(width: object, height: object) -> str:
         try:
-            width_value = int(width)
-            height_value = int(height)
+            width_value = int(float(str(width)))
+            height_value = int(float(str(height)))
         except (TypeError, ValueError):
             return "-"
         return f"{width_value:,} × {height_value:,}"
@@ -1174,10 +1207,13 @@ class ControlPanelSearchMixin:
         handle_item.setToolTip(f"Layer order: {row_index + 1}")
         handle_item.setForeground(QBrush(QColor(102, 102, 102)))
         handle_item.setFlags(
-            Qt.ItemFlag.ItemIsEnabled
-            | Qt.ItemFlag.ItemIsSelectable
-            | Qt.ItemFlag.ItemIsDragEnabled
-            | Qt.ItemFlag.ItemIsDropEnabled
+            cast(
+                Any,
+                Qt.ItemFlag.ItemIsEnabled
+                | Qt.ItemFlag.ItemIsSelectable
+                | Qt.ItemFlag.ItemIsDragEnabled
+                | Qt.ItemFlag.ItemIsDropEnabled,
+            )
         )
         table.setItem(row_index, 0, handle_item)
 
@@ -1190,10 +1226,13 @@ class ControlPanelSearchMixin:
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         )
         file_item.setFlags(
-            Qt.ItemFlag.ItemIsEnabled
-            | Qt.ItemFlag.ItemIsSelectable
-            | Qt.ItemFlag.ItemIsDragEnabled
-            | Qt.ItemFlag.ItemIsDropEnabled
+            cast(
+                Any,
+                Qt.ItemFlag.ItemIsEnabled
+                | Qt.ItemFlag.ItemIsSelectable
+                | Qt.ItemFlag.ItemIsDragEnabled
+                | Qt.ItemFlag.ItemIsDropEnabled,
+            )
         )
         table.setItem(row_index, 1, file_item)
 
@@ -1205,10 +1244,13 @@ class ControlPanelSearchMixin:
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         )
         kind_item.setFlags(
-            Qt.ItemFlag.ItemIsEnabled
-            | Qt.ItemFlag.ItemIsSelectable
-            | Qt.ItemFlag.ItemIsDragEnabled
-            | Qt.ItemFlag.ItemIsDropEnabled
+            cast(
+                Any,
+                Qt.ItemFlag.ItemIsEnabled
+                | Qt.ItemFlag.ItemIsSelectable
+                | Qt.ItemFlag.ItemIsDragEnabled
+                | Qt.ItemFlag.ItemIsDropEnabled,
+            )
         )
         table.setItem(row_index, 2, kind_item)
 
@@ -1220,10 +1262,13 @@ class ControlPanelSearchMixin:
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         )
         crs_item.setFlags(
-            Qt.ItemFlag.ItemIsEnabled
-            | Qt.ItemFlag.ItemIsSelectable
-            | Qt.ItemFlag.ItemIsDragEnabled
-            | Qt.ItemFlag.ItemIsDropEnabled
+            cast(
+                Any,
+                Qt.ItemFlag.ItemIsEnabled
+                | Qt.ItemFlag.ItemIsSelectable
+                | Qt.ItemFlag.ItemIsDragEnabled
+                | Qt.ItemFlag.ItemIsDropEnabled,
+            )
         )
         table.setItem(row_index, 3, crs_item)
 
@@ -1275,7 +1320,7 @@ class ControlPanelSearchMixin:
         toggle_container = QWidget()
         toggle_layout = QHBoxLayout(toggle_container)
         toggle_layout.setContentsMargins(0, 0, 0, 0)
-        toggle_layout.setAlignment(Qt.AlignCenter)
+        toggle_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         toggle_layout.addWidget(visibility_button)
         table.setCellWidget(row_index, 4, toggle_container)
 
@@ -1311,7 +1356,7 @@ class ControlPanelSearchMixin:
         delete_container = QWidget()
         delete_layout = QHBoxLayout(delete_container)
         delete_layout.setContentsMargins(0, 0, 0, 0)
-        delete_layout.setAlignment(Qt.AlignCenter)
+        delete_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         delete_layout.addWidget(delete_btn)
         table.setCellWidget(row_index, 5, delete_container)
 
@@ -1394,18 +1439,19 @@ class ControlPanelSearchMixin:
             toggle_container = QWidget()
             toggle_layout = QHBoxLayout(toggle_container)
             toggle_layout.setContentsMargins(0, 0, 0, 0)
-            toggle_layout.setAlignment(Qt.AlignCenter)
+            toggle_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
             toggle_layout.addWidget(toggle_button)
             table.setCellWidget(row_index, 4, toggle_container)
         else:
             visibility_button = visibility_widget.findChild(QPushButton)
-            if not visibility_button:
+            if not visibility_button and isinstance(visibility_widget, QPushButton):
                 visibility_button = visibility_widget
-            is_visible = row_data.get("is_visible", True)
-            visibility_button.setIcon(self._create_eye_icon(is_visible))
-            visibility_button.setIconSize(QSize(16, 16))
-            visibility_button.setProperty("is_visible", is_visible)
-            visibility_button.setProperty("file_path", row_data["file_path"])
+            if isinstance(visibility_button, QPushButton):
+                is_visible = row_data.get("is_visible", True)
+                visibility_button.setIcon(self._create_eye_icon(is_visible))
+                visibility_button.setIconSize(QSize(16, 16))
+                visibility_button.setProperty("is_visible", is_visible)
+                visibility_button.setProperty("file_path", row_data["file_path"])
 
         # Update or recreate delete button (column 5)
         delete_container = table.cellWidget(row_index, 5)
@@ -1442,7 +1488,7 @@ class ControlPanelSearchMixin:
             delete_container = QWidget()
             delete_layout = QHBoxLayout(delete_container)
             delete_layout.setContentsMargins(0, 0, 0, 0)
-            delete_layout.setAlignment(Qt.AlignCenter)
+            delete_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
             delete_layout.addWidget(delete_btn)
             table.setCellWidget(row_index, 5, delete_container)
 

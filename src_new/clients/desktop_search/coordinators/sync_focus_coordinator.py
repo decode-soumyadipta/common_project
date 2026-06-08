@@ -76,7 +76,7 @@ class SyncFocusCoordinator:
             ordered_keys = sorted(
                 [
                     p.replace("\\", "/")
-                    for p in c._search_result_assets_by_path.keys()
+                    for p in c._search_result_assets_by_path
                     if c._search_layer_visibility.get(p, False)
                 ],
                 key=lambda p: order_registry.get(p, {}).get("order", 9999),
@@ -232,7 +232,7 @@ class SyncFocusCoordinator:
             ordered_keys = sorted(
                 [
                     p.replace("\\", "/")
-                    for p in c._search_result_assets_by_path.keys()
+                    for p in c._search_result_assets_by_path
                     if c._search_layer_visibility.get(p, False)
                 ],
                 key=lambda p: order_registry.get(p, {}).get("order", 9999),

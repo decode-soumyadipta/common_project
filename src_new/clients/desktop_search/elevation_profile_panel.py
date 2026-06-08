@@ -16,7 +16,7 @@ Falls back to QWidget transparently if OpenGL is unavailable.
 from __future__ import annotations
 
 import math
-from typing import Sequence
+from collections.abc import Sequence
 
 from qtpy.QtCore import QPointF, Qt, QTimer, Signal
 from qtpy.QtGui import (
@@ -141,7 +141,7 @@ class _Profile2DWidget(_ChartBase):
         self.update()
         QTimer.singleShot(16, self._advance_cursor_animation)
 
-    def paintEvent(self, _event) -> None:  # noqa: N802
+    def paintEvent(self, _event) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
@@ -366,7 +366,7 @@ class _Profile3DWidget(_ChartBase):
 
     # Mouse interaction
 
-    def mousePressEvent(self, event) -> None:  # noqa: N802
+    def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             self._drag_mode = "rotate"
             self._drag_start = (
@@ -390,11 +390,11 @@ class _Profile3DWidget(_ChartBase):
             )
             self.setCursor(Qt.CursorShape.SizeAllCursor)
 
-    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+    def mouseReleaseEvent(self, event) -> None:
         self._drag_start = None
         self.setCursor(Qt.CursorShape.OpenHandCursor)
 
-    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+    def mouseDoubleClickEvent(self, event) -> None:
         """Double-click resets view to default."""
         self._azimuth = 25.0
         self._tilt = 28.0
@@ -403,7 +403,7 @@ class _Profile3DWidget(_ChartBase):
         self._pan_y = 0.0
         self.update()
 
-    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+    def mouseMoveEvent(self, event) -> None:
         if self._drag_start is None:
             return
         x0, y0, az0, tilt0, px0, py0 = self._drag_start
@@ -418,7 +418,7 @@ class _Profile3DWidget(_ChartBase):
             self._pan_y = py0 - dy * scale
         self.update()
 
-    def wheelEvent(self, event) -> None:  # noqa: N802
+    def wheelEvent(self, event) -> None:
         delta = event.angleDelta().y()
         self._zoom *= 1.15 if delta > 0 else 0.87
         self._zoom = max(0.2, min(6.0, self._zoom))
@@ -426,7 +426,7 @@ class _Profile3DWidget(_ChartBase):
 
     # Rendering
 
-    def paintEvent(self, _event) -> None:  # noqa: N802
+    def paintEvent(self, _event) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing)

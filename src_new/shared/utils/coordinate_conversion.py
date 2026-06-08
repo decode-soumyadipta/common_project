@@ -9,7 +9,6 @@ across all services and clients.
 from __future__ import annotations
 
 import logging
-from typing import Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +39,7 @@ def reproject_point(
     y: float,
     src_crs: str,
     dst_crs: str,
-) -> Tuple[float, float]:
+) -> tuple[float, float]:
     """Reproject a single point from *src_crs* to *dst_crs*.
 
     Uses PyProj for the transformation. Both CRS strings are normalized
@@ -83,7 +82,7 @@ def reproject_bbox(
     max_y: float,
     src_crs: str,
     dst_crs: str,
-) -> Tuple[float, float, float, float]:
+) -> tuple[float, float, float, float]:
     """Reproject a bounding box from *src_crs* to *dst_crs*.
 
     Reprojects all four corners and returns the axis-aligned envelope.
@@ -103,4 +102,4 @@ def reproject_bbox(
     return min(xs), min(ys), max(xs), max(ys)
 
 
-__all__ = ["normalize_crs", "reproject_point", "reproject_bbox"]
+__all__ = ["normalize_crs", "reproject_bbox", "reproject_point"]

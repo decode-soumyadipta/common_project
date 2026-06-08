@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 import httpx
 from pydantic import BaseModel, Field
@@ -50,7 +50,7 @@ class UploadResponse(BaseModel):
         description="Current ingestion status."
     )
     message: str = Field(description="Human-readable status message.")
-    bbox: Optional[BoundingBox] = Field(
+    bbox: BoundingBox | None = Field(
         default=None,
         description="Geographic bounding box of the raster in WGS 84 (EPSG:4326).",
     )
@@ -70,7 +70,7 @@ class IngestionStatus(BaseModel):
         le=1.0,
         description="Ingestion progress from 0.0 (queued) to 1.0 (complete).",
     )
-    error: Optional[str] = Field(
+    error: str | None = Field(
         default=None,
         description="Error message if ingestion failed, otherwise None.",
     )
@@ -79,10 +79,10 @@ class IngestionStatus(BaseModel):
 class TileMetadata(BaseModel):
     """Response body for ``GET /metadata/{raster_id}`` on the Tile Service."""
 
-    bounds: Optional[BoundingBox] = None
-    minzoom: Optional[int] = None
-    maxzoom: Optional[int] = None
-    center: Optional[tuple[float, float]] = None
+    bounds: BoundingBox | None = None
+    minzoom: int | None = None
+    maxzoom: int | None = None
+    center: tuple[float, float] | None = None
 
 
 # --------------------------------------------------------------------------- API client ---------------------------------------------------------------------------
@@ -410,7 +410,7 @@ def _mime_type_for(path: Path) -> str:
 
 __all__ = [
     "IngestionApiClient",
-    "UploadResponse",
     "IngestionStatus",
     "TileMetadata",
+    "UploadResponse",
 ]

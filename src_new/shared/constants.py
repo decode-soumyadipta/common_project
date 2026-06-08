@@ -120,49 +120,49 @@ LOCALHOST_ADDRESSES: frozenset[str] = frozenset({"127.0.0.1", "::1", "localhost"
 """IP addresses always considered local/trusted."""
 
 __all__ = [
-    # Formats
-    "SUPPORTED_FORMATS",
-    "SUPPORTED_EXTENSIONS",
-    "FORMAT_MIME_TYPES",
-    # EPSG codes
-    "EPSG_WGS84",
-    "EPSG_WEB_MERCATOR",
-    "EPSG_UTM_ZONE_44N",
-    "EPSG_UTM_ZONE_45N",
-    "DEFAULT_CRS",
-    "TILE_CRS",
-    # Tile dimensions
-    "TILE_SIZE",
-    "TILE_SIZE_PREVIEW",
-    "TILE_MIN_ZOOM",
-    "TILE_MAX_ZOOM",
-    "MBTILES_TILE_SIZE",
-    "TILE_CACHE_DEFAULT_SIZE",
-    # Upload limits
-    "MAX_UPLOAD_SIZE_DEFAULT",
-    "MAX_UPLOAD_SIZE_SMALL",
-    # Database
-    "POSTGIS_SRID",
-    "SPATIAL_INDEX_TYPE",
+    "API_PREFIX",
+    "API_VERSION",
     # Ingestion
     "COG_BLOCKSIZE",
     "COG_COMPRESSION",
     "COG_OVERVIEW_RESAMPLING",
-    "INGEST_STATUS_QUEUED",
-    "INGEST_STATUS_PROCESSING",
-    "INGEST_STATUS_CATALOGED",
-    "INGEST_STATUS_FAILED",
-    "INGEST_STATUSES",
     # API
     "DEFAULT_API_HOST",
+    "DEFAULT_CRS",
     "DEFAULT_INGESTION_SERVICE_PORT",
-    "DEFAULT_TILE_SERVICE_PORT",
-    "DEFAULT_QUERY_SERVICE_PORT",
-    "API_VERSION",
-    "API_PREFIX",
+    "DEFAULT_LOG_FORMAT",
     # Logging
     "DEFAULT_LOG_LEVEL",
-    "DEFAULT_LOG_FORMAT",
+    "DEFAULT_QUERY_SERVICE_PORT",
+    "DEFAULT_TILE_SERVICE_PORT",
+    "EPSG_UTM_ZONE_44N",
+    "EPSG_UTM_ZONE_45N",
+    "EPSG_WEB_MERCATOR",
+    # EPSG codes
+    "EPSG_WGS84",
+    "FORMAT_MIME_TYPES",
+    "INGEST_STATUSES",
+    "INGEST_STATUS_CATALOGED",
+    "INGEST_STATUS_FAILED",
+    "INGEST_STATUS_PROCESSING",
+    "INGEST_STATUS_QUEUED",
     # Security
     "LOCALHOST_ADDRESSES",
+    # Upload limits
+    "MAX_UPLOAD_SIZE_DEFAULT",
+    "MAX_UPLOAD_SIZE_SMALL",
+    "MBTILES_TILE_SIZE",
+    # Database
+    "POSTGIS_SRID",
+    "SPATIAL_INDEX_TYPE",
+    "SUPPORTED_EXTENSIONS",
+    # Formats
+    "SUPPORTED_FORMATS",
+    "TILE_CACHE_DEFAULT_SIZE",
+    "TILE_CRS",
+    "TILE_MAX_ZOOM",
+    "TILE_MIN_ZOOM",
+    # Tile dimensions
+    "TILE_SIZE",
+    "TILE_SIZE_PREVIEW",
 ]

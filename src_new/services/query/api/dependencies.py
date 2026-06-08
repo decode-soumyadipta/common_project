@@ -28,7 +28,8 @@ from fastapi import Depends
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
-from src_new.shared.config import Settings, settings as _default_settings
+from src_new.shared.config import Settings
+from src_new.shared.config import settings as _default_settings
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +140,7 @@ def get_settings() -> Settings:
 
 def get_raster_repository(
     db: Annotated[Session, Depends(get_db)],
-) -> "RasterRepository":  # noqa: F821 — forward ref resolved at runtime
+) -> RasterRepository:  # noqa: F821 — forward ref resolved at runtime
     """Provide a ``RasterRepository`` bound to the current request's DB session.
 
     Args:
@@ -159,9 +160,9 @@ DbSession = Annotated[Session, Depends(get_db)]
 AppSettings = Annotated[Settings, Depends(get_settings)]
 
 __all__ = [
-    "get_db",
-    "get_settings",
-    "get_raster_repository",
-    "DbSession",
     "AppSettings",
+    "DbSession",
+    "get_db",
+    "get_raster_repository",
+    "get_settings",
 ]

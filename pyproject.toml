@@ -56,7 +56,81 @@ dev = [
   "pytest>=8.3,<9.0",
   "pytest-asyncio>=0.23,<1.0",
   "ruff>=0.5,<1.0",
+  "vulture>=2.11,<3.0",
+  "pyright>=1.1.350,<2.0",
+  "coverage[toml]>=7.4,<8.0",
+  "deptry>=0.12,<1.0",
 ]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+exclude = [
+    ".git",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "A", "C4", "RET", "SIM", "ARG", "RUF"]
+ignore = [
+    "E501", "SIM108", "RUF001", "RUF002", "RUF003", "B008", "N806", 
+    "ARG001", "ARG002", "ARG005", "N802", "N803", "SIM102", "RUF012", 
+    "N811", "N814", "B007", "N815"
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src_new/tests/**/*.py" = ["ARG001", "ARG002", "ARG005", "RUF059", "S101", "N806"]
+"tests/**/*.py" = ["ARG001", "ARG002", "ARG005", "RUF059", "S101", "N806"]
+
+[tool.vulture]
+exclude = [".git", ".venv", "__pycache__", "build", "dist", "*vendor*"]
+ignore_decorators = ["@*handler", "@*connect", "@*slot"]
+ignore_names = ["*_btn", "layout_*", "*_widget", "*_layout"]
+min_confidence = 80
+paths = ["src_new"]
+
+[tool.pyright]
+include = ["src_new"]
+exclude = [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/vendor"
+]
+venvPath = "/opt/homebrew/Caskroom/miniconda/base/envs"
+venv = "offline-3d-gis"
+pythonPath = "/opt/homebrew/Caskroom/miniconda/base/envs/offline-3d-gis/bin/python"
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
+reportMissingImports = true
+reportMissingTypeStubs = false
+
+[tool.coverage.run]
+branch = true
+source = ["src_new"]
+omit = [
+    "tests/*",
+    "setup.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "pass",
+]
+
+[tool.deptry]
+ignore_unused = ["PyQt5", "PyQtWebEngine", "gdal", "rasterio"]
+exclude = ["tests", ".venv"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

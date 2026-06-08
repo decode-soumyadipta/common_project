@@ -8,11 +8,10 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 import httpx
-
 
 LOGGER = logging.getLogger("desktop.titiler_manager")
 
@@ -216,7 +215,7 @@ class TiTilerManager:
 
         existing_path = env.get("PATH", "")
         if existing_path:
-            env["PATH"] = os.pathsep.join(_new_paths + [existing_path])
+            env["PATH"] = os.pathsep.join([*_new_paths, existing_path])
         else:
             env["PATH"] = os.pathsep.join(_new_paths)
 
@@ -266,7 +265,7 @@ class TiTilerManager:
         command: Sequence[str] = (sys.executable, "-c", bootstrap_code)
 
         # ── Windows-specific subprocess flags ─────────────────────────────────
-        kwargs: dict = dict(env=env, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+        kwargs: dict = {"env": env, "stderr": subprocess.PIPE, "stdout": subprocess.PIPE}
         if platform.system() == "Windows":
             # CREATE_NO_WINDOW (0x08000000): suppress console flash CREATE_NEW_PROCESS_GROUP (0x00000200): isolate signal handling
             kwargs["creationflags"] = 0x08000000 | 0x00000200

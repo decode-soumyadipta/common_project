@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import urlretrieve
 
@@ -104,7 +103,7 @@ class IconRegistry:
         cls,
         tool_name: str,
         size: int = DEFAULT_ICON_SIZE,
-        color: Optional[str] = None,
+        color: str | None = None,
     ) -> QIcon:
         cache_key = f"{tool_name}_{size}_{color or ''}"
         if cache_key in cls._cache:
@@ -136,7 +135,7 @@ class IconRegistry:
         cls._cache.clear()
 
     @staticmethod
-    def _render_svg(path: Path, size: int, color: Optional[str]) -> QIcon:
+    def _render_svg(path: Path, size: int, color: str | None) -> QIcon:
         if QSvgRenderer is None:
             base = QIcon(str(path))
             if not color:
@@ -182,7 +181,7 @@ class IconRegistry:
         return QIcon(pixmap)
 
     @staticmethod
-    def _make_fly_through_icon(size: int, color: Optional[str]) -> QIcon:
+    def _make_fly_through_icon(size: int, color: str | None) -> QIcon:
         pixmap = QPixmap(QSize(size, size))
         pixmap.fill(Qt.GlobalColor.transparent)
 

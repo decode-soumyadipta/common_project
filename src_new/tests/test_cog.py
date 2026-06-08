@@ -1,15 +1,14 @@
 import sys
-import os
 from pathlib import Path
 
 # Add project root to path
 sys.path.insert(0, '/Users/soumyadiptadey/Developer/common_project')
 
-from src_new.services.ingestion.gdal_pipelines.cog_converter import CogConverter
-from src_new.shared.config import settings
-
 # Configure logger to print to stdout
 import logging
+
+from src_new.services.ingestion.gdal_pipelines.cog_converter import CogConverter
+
 logging.basicConfig(level=logging.DEBUG)
 
 def main():

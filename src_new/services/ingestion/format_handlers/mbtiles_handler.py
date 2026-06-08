@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from src_new.shared.config import settings
 from src_new.shared.utils.file_validation import is_mbtiles
@@ -81,7 +81,7 @@ def validate(path: Path) -> bool:
         return False
 
 
-def extract_metadata(path: Path) -> Dict[str, Any]:
+def extract_metadata(path: Path) -> dict[str, Any]:
     """Extract metadata from an MBTiles file.
 
     Reads the ``metadata`` table for bounds, zoom levels, and tile format.
@@ -118,7 +118,7 @@ def extract_metadata(path: Path) -> Dict[str, Any]:
 
         # Read all key-value pairs from the metadata table
         cursor = conn.execute("SELECT name, value FROM metadata")
-        meta: Dict[str, str] = {row["name"]: row["value"] for row in cursor.fetchall()}
+        meta: dict[str, str] = {row["name"]: row["value"] for row in cursor.fetchall()}
 
         # --- Bounds ---
         bounds_4326 = _parse_bounds(meta.get("bounds", ""))
@@ -173,7 +173,7 @@ def extract_metadata(path: Path) -> Dict[str, Any]:
 # --------------------------------------------------------------------------- Internal helpers ---------------------------------------------------------------------------
 
 
-def _parse_bounds(bounds_str: str) -> Dict[str, float]:
+def _parse_bounds(bounds_str: str) -> dict[str, float]:
     """Parse an MBTiles bounds string "min_lon,min_lat,max_lon,max_lat".
 
     Falls back to world bounds if the string is missing or malformed.
@@ -213,4 +213,4 @@ def _zoom_to_resolution(zoom: int) -> float:
     return 40_075_016.686 / (256 * (2 ** zoom))
 
 
-__all__ = ["MBTilesValidationError", "validate", "extract_metadata"]
+__all__ = ["MBTilesValidationError", "extract_metadata", "validate"]

@@ -4,6 +4,6 @@ from src_new.clients.desktop_search.measurement_tools.area import measure_polygo
 from src_new.clients.desktop_search.measurement_tools.distance import measure_distance
 
 __all__ = [
-    "measure_polygon_area",
     "measure_distance",
+    "measure_polygon_area",
 ]

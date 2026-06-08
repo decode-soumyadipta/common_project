@@ -8,34 +8,33 @@ when a DEM is provided.
 from __future__ import annotations
 
 import math
-from typing import Optional
 
 import numpy as np
 from pyproj import Geod
 
 try:
-    from shapely.geometry import Polygon
-    from pyproj import Transformer
     import rasterio
+    from pyproj import Transformer
     from rasterio.features import rasterize
+    from shapely.geometry import Polygon
 except ImportError:
     rasterio = None
     rasterize = None
     Transformer = None
     Polygon = None
 
-from src_new.clients.desktop_search.measurement_tools.models import (
-    PolygonAreaMeasurement,
-)
 from src_new.clients.desktop_search.measurement_tools.dem_utils import (
     horn_gradient,
     read_dem_window,
+)
+from src_new.clients.desktop_search.measurement_tools.models import (
+    PolygonAreaMeasurement,
 )
 
 
 def measure_polygon_area(
     lon_lat_points: list[tuple[float, float]],
-    dem_path: Optional[str] = None,
+    dem_path: str | None = None,
 ) -> PolygonAreaMeasurement:
     """Compute exact ellipsoidal area and perimeter of a polygon.
 
@@ -59,7 +58,7 @@ def measure_polygon_area(
 
     # Ensure polygon is closed for exact area
     if lon_lat_points[0] != lon_lat_points[-1]:
-        lon_lat_points = lon_lat_points + [lon_lat_points[0]]
+        lon_lat_points = [*lon_lat_points, lon_lat_points[0]]
 
     # Exact ellipsoidal area via GeographicLib (matches QGIS geod_polygon_compute)
     lons = [p[0] for p in lon_lat_points]

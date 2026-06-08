@@ -1,5 +1,8 @@
 from unittest.mock import MagicMock
-from src_new.clients.desktop_search.coordinators.search_results_coordinator import SearchResultsCoordinator
+
+from src_new.clients.desktop_search.coordinators.search_results_coordinator import (
+    SearchResultsCoordinator,
+)
 
 
 def test_search_results_coordinator_populates_tile_url():
@@ -70,7 +73,9 @@ def test_search_results_coordinator_initializes_hidden_by_default():
 
 
 def test_sync_focus_coordinator_fallback_focus_all_assets_when_none_visible():
-    from src_new.clients.desktop_search.coordinators.sync_focus_coordinator import SyncFocusCoordinator
+    from src_new.clients.desktop_search.coordinators.sync_focus_coordinator import (
+        SyncFocusCoordinator,
+    )
     mock_controller = MagicMock()
     mock_controller._search_result_assets_by_path = {
         "/path/1": {"file_name": "asset1.tif", "file_path": "/path/1"},
@@ -106,7 +111,9 @@ def test_sync_focus_coordinator_fallback_focus_all_assets_when_none_visible():
 
 
 def test_sync_search_visibility_layers_event_driven_does_not_call_js_for_unloaded_hidden_layers():
-    from src_new.clients.desktop_search.coordinators.sync_focus_coordinator import SyncFocusCoordinator
+    from src_new.clients.desktop_search.coordinators.sync_focus_coordinator import (
+        SyncFocusCoordinator,
+    )
     mock_controller = MagicMock()
     mock_controller._search_result_assets_by_path = {
         "/path/1": {"file_name": "asset1.tif", "file_path": "/path/1"},
@@ -126,7 +133,9 @@ def test_sync_search_visibility_layers_event_driven_does_not_call_js_for_unloade
 
 
 def test_project_io_coordinator_roundtrip():
-    from src_new.clients.desktop_search.coordinators.project_io_coordinator import ProjectIoCoordinator
+    from src_new.clients.desktop_search.coordinators.project_io_coordinator import (
+        ProjectIoCoordinator,
+    )
     
     mock_controller = MagicMock()
     mock_controller.panel = MagicMock()
@@ -216,10 +225,13 @@ def test_project_io_coordinator_roundtrip():
 
 
 def test_layer_coordinator_vector_layers():
-    from unittest.mock import patch
     import json
+    from unittest.mock import patch
+
     from src_new.clients.desktop_search.controller import DesktopController
-    from src_new.clients.desktop_search.coordinators.layer_coordinator import LayerCoordinator
+    from src_new.clients.desktop_search.coordinators.layer_coordinator import (
+        LayerCoordinator,
+    )
 
     # Arrange
     mock_controller = MagicMock()
@@ -267,6 +279,7 @@ def test_layer_coordinator_vector_layers():
 
 def test_desktop_controller_undo_redo_stack():
     from unittest.mock import patch
+
     from src_new.clients.desktop_search.controller import DesktopController
 
     # Create a subclass or instance with mocked dependencies
@@ -347,7 +360,9 @@ def test_desktop_controller_undo_redo_stack():
 
 
 def test_export_dialog_thread_retention(monkeypatch):
-    from src_new.clients.desktop_search.coordinators.export_coordinator import ExportGeoTiffDialog
+    from src_new.clients.desktop_search.coordinators.export_coordinator import (
+        ExportGeoTiffDialog,
+    )
     
     # Mock QDialog methods
     monkeypatch.setattr("qtpy.QtWidgets.QDialog.__init__", lambda self, parent=None: None)
@@ -396,7 +411,9 @@ def test_export_dialog_thread_retention(monkeypatch):
 
 
 def test_layer_coordinator_toggle_search_results_visibility_batch():
-    from src_new.clients.desktop_search.coordinators.layer_coordinator import LayerCoordinator
+    from src_new.clients.desktop_search.coordinators.layer_coordinator import (
+        LayerCoordinator,
+    )
 
     mock_controller = MagicMock()
     mock_controller._search_result_assets_by_path = {
@@ -425,7 +442,9 @@ def test_layer_coordinator_toggle_search_results_visibility_batch():
 
 
 def test_control_panel_search_calculate_all_visible_state():
-    from src_new.clients.desktop_search.control_panel_search import ControlPanelSearchMixin
+    from src_new.clients.desktop_search.control_panel_search import (
+        ControlPanelSearchMixin,
+    )
     
     class DummySearchPanel(ControlPanelSearchMixin):
         def __init__(self):

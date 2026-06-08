@@ -35,7 +35,6 @@ import threading
 import time
 from collections import OrderedDict
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
@@ -53,7 +52,7 @@ try:
     import rasterio
     from rasterio.enums import Resampling
     from rasterio.transform import from_bounds
-    from rasterio.warp import calculate_default_transform, reproject
+    from rasterio.warp import reproject, calculate_default_transform
 
     _RASTERIO_AVAILABLE = True
 except ImportError:  # pragma: no cover
@@ -298,10 +297,10 @@ def _resolve_raster_path(raster_id: str) -> Path:
 
 
 def _apply_contrast_brightness(
-    array: "np.ndarray",  # type: ignore[name-defined]
+    array: np.ndarray,  # type: ignore[name-defined]
     contrast: float,
     brightness: float,
-) -> "np.ndarray":  # type: ignore[name-defined]
+) -> np.ndarray:  # type: ignore[name-defined]
     """Apply contrast and brightness adjustments to a numpy array.
 
     Formula: ``output = clip(array * contrast + brightness, 0, 255)``
@@ -318,7 +317,7 @@ def _apply_contrast_brightness(
     return np.clip(adjusted, 0, 255).astype("uint8")
 
 
-def _array_to_png(array: "np.ndarray") -> bytes:  # type: ignore[name-defined]
+def _array_to_png(array: np.ndarray) -> bytes:  # type: ignore[name-defined]
     """Encode a (bands, H, W) or (H, W) numpy array as PNG bytes.
 
     Args:
@@ -451,7 +450,7 @@ def _read_tile_from_cog(
     x: int,
     y: int,
     tile_size: int = TILE_SIZE,
-) -> "np.ndarray":  # type: ignore[name-defined]
+) -> np.ndarray:  # type: ignore[name-defined]
     """Read a single XYZ tile from a raster file using rasterio.
 
     For Cloud-Optimized GeoTIFFs (COGs), this function uses **windowed
@@ -573,7 +572,7 @@ def _read_tile_from_cog(
 def _read_preview_from_raster(
     raster_path: Path,
     preview_size: int = TILE_SIZE_PREVIEW,
-) -> "np.ndarray":  # type: ignore[name-defined]
+) -> np.ndarray:  # type: ignore[name-defined]
     """Read a downsampled preview image from a raster file.
 
     Args:
@@ -658,13 +657,13 @@ _MBTILES_MEDIA_TYPES = {
     response_class=Response,
     summary="Serve an XYZ map tile as PNG",
     description=(
-        "Returns a {TILE_SIZE}×{TILE_SIZE} PNG tile for the given XYZ coordinates. "
+        f"Returns a {TILE_SIZE}×{TILE_SIZE} PNG tile for the given XYZ coordinates. "
         "The ``raster_id`` query parameter identifies the raster to serve. "
         "MBTiles files are served directly from SQLite (zero GDAL overhead). "
         "COG rasters use windowed reads with automatic overview selection. "
         "Optional ``contrast``, ``brightness``, and ``colormap`` parameters "
         "allow real-time image manipulation (Requirement 11.6)."
-    ).format(TILE_SIZE=TILE_SIZE),
+    ),
     responses={
         200: {"content": {"image/png": {}}, "description": "PNG tile"},
         404: {"description": "Raster not found or tile outside extent"},
@@ -688,7 +687,7 @@ async def get_tile(
         le=255.0,
         description="Brightness offset added after contrast (0.0 = no change).",
     ),
-    colormap: Optional[str] = Query(
+    colormap: str | None = Query(
         default=None,
         description="Named colormap to apply, e.g. 'viridis', 'gray', 'terrain'.",
     ),
@@ -745,8 +744,8 @@ async def get_tile(
 
                 if colormap is not None:
                     try:
-                        import matplotlib.cm as _cm
-                        import matplotlib.colors as _mcolors
+                        import matplotlib.cm as _cm  # type: ignore
+                        import matplotlib.colors as _mcolors  # type: ignore
 
                         cmap = _cm.get_cmap(colormap)
                         band = arr[0].astype("float32") / 255.0
@@ -875,7 +874,7 @@ async def get_preview(
         le=255.0,
         description="Brightness offset (0.0 = no change).",
     ),
-    colormap: Optional[str] = Query(
+    colormap: str | None = Query(
         default=None,
         description="Named colormap to apply, e.g. 'viridis'.",
     ),

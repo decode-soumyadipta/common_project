@@ -12,18 +12,20 @@ Requirements: 14.2, 19.3
 """
 from __future__ import annotations
 
-import pytest
-from fastapi.testclient import TestClient
 from unittest.mock import MagicMock, patch
 
-from src_new.shared.models.raster_metadata import RasterMetadata, RasterKind
+import pytest
+from fastapi.testclient import TestClient
+
 from src_new.shared.models.bounding_box import BoundingBox
+from src_new.shared.models.raster_metadata import RasterKind, RasterMetadata
 
 
 @pytest.fixture
 def test_app():
     """Create a test FastAPI app without LAN security middleware."""
     from fastapi import FastAPI
+
     from src_new.services.query.api.routes import router
     from src_new.shared.utils.error_handlers import register_exception_handlers
     

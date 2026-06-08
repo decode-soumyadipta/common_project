@@ -5,11 +5,20 @@ import logging
 import os
 from pathlib import Path
 
-from qtpy.QtCore import QRect, Qt, QMarginsF, QThread, Signal
-from qtpy.QtGui import QImage, QPainter, QPageLayout, QPageSize, QPdfWriter
+from qtpy.QtCore import QMarginsF, QRect, Qt, QThread, Signal
+from qtpy.QtGui import QImage, QPageLayout, QPageSize, QPainter, QPdfWriter
 from qtpy.QtWidgets import (
-    QFileDialog, QMessageBox, QDialog, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QProgressBar, QScrollArea, QWidget, QStyle
+    QDialog,
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QScrollArea,
+    QStyle,
+    QVBoxLayout,
+    QWidget,
 )
 
 
@@ -73,7 +82,7 @@ class ExportCoordinator:
                         gdal.Translate(str(output_path), ds, **translate_options)
                     except Exception as ge:
                         self._logger.warning(f"GDAL translate failed for {layer_name}: {ge}")
-                        c.panel.log(f"    Warning: Could not add {layer_name} to GPKG: {str(ge)}")
+                        c.panel.log(f"    Warning: Could not add {layer_name} to GPKG: {ge!s}")
                     ds = None
 
             c.panel.log(f"GeoPackage export successful: {output_path.name}")
@@ -81,8 +90,8 @@ class ExportCoordinator:
 
         except Exception as e:
             self._logger.exception("GeoPackage export failed")
-            c.panel.log(f"GeoPackage export failed: {str(e)}")
-            QMessageBox.critical(c.panel, "Export Error", f"Failed to export GeoPackage:\n{str(e)}")
+            c.panel.log(f"GeoPackage export failed: {e!s}")
+            QMessageBox.critical(c.panel, "Export Error", f"Failed to export GeoPackage:\n{e!s}")
 
     def export_geotiff(self) -> None:
         """Export individual searched assets as GeoTIFF using a minimalist dialog."""
@@ -135,7 +144,7 @@ class ExportCoordinator:
         try:
             # Parse data URL (base64)
             if "," in data_url:
-                header, encoded = data_url.split(",", 1)
+                _header, encoded = data_url.split(",", 1)
             else:
                 encoded = data_url
             img_data = base64.b64decode(encoded)
@@ -180,7 +189,7 @@ class ExportCoordinator:
                     painter.drawImage(img_rect, image)
                     
                     # Draw premium cartographic double border
-                    from qtpy.QtGui import QPen, QColor
+                    from qtpy.QtGui import QColor, QPen
                     painter.setPen(QPen(QColor("#2d3748"), 6))  # Outer thicker border
                     painter.drawRect(img_rect.adjusted(-20, -20, 20, 20))
                     painter.setPen(QPen(QColor("#718096"), 2))  # Inner thin border
@@ -194,7 +203,7 @@ class ExportCoordinator:
                     y = y_start
                     
                     # Draw divider line
-                    from qtpy.QtGui import QPen, QColor
+                    from qtpy.QtGui import QColor, QPen
                     painter.setPen(QPen(QColor("#e2e8f0"), 3))
                     painter.drawLine(margin, y, page_rect.width() - margin, y)
                     y += 200
@@ -297,8 +306,8 @@ class ExportCoordinator:
             import logging
             logger = logging.getLogger("desktop.export")
             logger.exception("PDF export failed")
-            c.panel.log(f"PDF export failed: {str(e)}")
-            QMessageBox.critical(c.panel, "Export Error", f"Failed to export PDF:\n{str(e)}")
+            c.panel.log(f"PDF export failed: {e!s}")
+            QMessageBox.critical(c.panel, "Export Error", f"Failed to export PDF:\n{e!s}")
 
 
     def _get_visible_search_assets(self) -> list[dict]:
@@ -491,7 +500,7 @@ class ExportCoordinator:
                     for item in c._annotation_polygon_records:
                         ring = item.get("coords", [])
                         if ring and ring[0] != ring[-1]:
-                            ring = list(ring) + [ring[0]]
+                            ring = [*list(ring), ring[0]]
                         ds.write({
                             "geometry": {"type": "Polygon", "coordinates": [ring]},
                             "properties": {
@@ -612,8 +621,9 @@ class GeoTiffExportThread(QThread):
 
     def run(self):
         try:
-            from osgeo import gdal
             import shutil
+
+            from osgeo import gdal
 
             export_src = self.src_path
             
@@ -757,7 +767,7 @@ class ExportGeoTiffDialog(QDialog):
             no_assets_label.setStyleSheet("color: #8e8e93; font-style: italic; qproperty-alignment: AlignCenter;")
             scroll_layout.addWidget(no_assets_label)
         else:
-            for idx, asset in enumerate(self.assets):
+            for _idx, asset in enumerate(self.assets):
                 row_widget = QWidget()
                 row_widget.setStyleSheet("""
                     QWidget {

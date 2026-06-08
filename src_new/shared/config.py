@@ -11,6 +11,7 @@ Usage:
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 from pathlib import Path
@@ -37,7 +38,7 @@ class Settings(BaseSettings):
     """
 
     # ------------------------------------------------------------------------- 1. Data storage -------------------------------------------------------------------------
-    data_root: Path = Path(".").resolve()
+    data_root: Path = Path().resolve()
     """Root directory for all geospatial data files (COGs, MBTiles, etc.)."""
 
     # ------------------------------------------------------------------------- 2. Database -------------------------------------------------------------------------
@@ -155,8 +156,8 @@ class Settings(BaseSettings):
         Call this before any GDAL/Rasterio operation to ensure consistent
         performance tuning across all services.
         """
-        import sys
         import platform
+        import sys
 
         prefix = sys.prefix
         is_windows = platform.system() == "Windows"
@@ -177,10 +178,8 @@ class Settings(BaseSettings):
             if gdal_bin not in os.environ.get("PATH", ""):
                 os.environ["PATH"] = gdal_bin + os.pathsep + os.environ.get("PATH", "")
             if hasattr(os, "add_dll_directory"):
-                try:
+                with contextlib.suppress(Exception):
                     os.add_dll_directory(gdal_bin)
-                except Exception:
-                    pass
 
         # 2. Set GDAL driver path if plugins exist
         if gdal_plugins and os.path.exists(gdal_plugins):

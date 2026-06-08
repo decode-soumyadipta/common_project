@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-
 from src_new.clients.desktop_search.api_client import DesktopApiClient
 
 
@@ -45,7 +44,7 @@ def test_desktop_api_client_calls_resolve_on_titiler_endpoints(mock_get: Mock, t
     client.get_tilejson(str(j2k_path))
     
     # Check that mock_get was called with the cog.tif path in query parameter, not .j2k!
-    args, kwargs = mock_get.call_args
+    args, _kwargs = mock_get.call_args
     url_called = args[0]
     expected_path = str(cog_path.resolve()).replace("\\", "/")
     assert expected_path in url_called

@@ -129,10 +129,7 @@ class UtilityCoordinator:
             pass
 
         # Allow .local mDNS hostnames
-        if host.endswith(".local"):
-            return True
-
-        return False
+        return bool(host.endswith(".local"))
 
     def set_layer_loading(self, active: bool, message: str) -> None:
         """Set layer loading state and update UI."""
@@ -251,8 +248,7 @@ class UtilityCoordinator:
         zone = int((lon + 180) / 6) + 1
         if lat >= 0:
             return 32600 + zone
-        else:
-            return 32700 + zone
+        return 32700 + zone
 
     @staticmethod
     def line_length_m(coords: list[list[float]]) -> float:
@@ -361,7 +357,7 @@ class UtilityCoordinator:
         """Return a bounding-box polygon for the active DEM asset, or None."""
         c = self._controller
         # Try to get bounds from the asset cache
-        for path, asset in c._asset_cache.items():
+        for _path, asset in c._asset_cache.items():
             if str(asset.get("file_path") or "") == dem_path and self.is_dem_asset(
                 asset
             ):
@@ -374,7 +370,7 @@ class UtilityCoordinator:
                         bounds["north"],
                     )
                     return [(w, s), (e, s), (e, n), (w, n), (w, s)]
-        for path, asset in c._search_result_assets_by_path.items():
+        for _path, asset in c._search_result_assets_by_path.items():
             if str(asset.get("file_path") or "") == dem_path and self.is_dem_asset(
                 asset
             ):

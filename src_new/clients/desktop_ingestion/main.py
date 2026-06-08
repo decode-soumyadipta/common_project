@@ -18,8 +18,8 @@ import logging
 import sys
 from pathlib import Path
 
-from qtpy.QtWidgets import QApplication
 from qtpy.QtGui import QIcon
+from qtpy.QtWidgets import QApplication
 
 from src_new.clients.desktop_ingestion.ui.main_window import MainWindow
 from src_new.shared.config import settings

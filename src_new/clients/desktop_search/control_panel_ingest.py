@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC
 from pathlib import Path
 
 from qtpy.QtCore import Qt
@@ -488,7 +489,7 @@ class ControlPanelIngestMixin:
                 header.setMinimumSectionSize(60)
 
                 # Show error message in the Type column
-                error_item = QTableWidgetItem(f"Error: {str(e)}")
+                error_item = QTableWidgetItem(f"Error: {e!s}")
                 error_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 error_item.setForeground(QColor("#cc0000"))  # Red text for errors
                 error_item.setToolTip(
@@ -524,7 +525,7 @@ class ControlPanelIngestMixin:
         if not timestamp:
             return False
         try:
-            from datetime import datetime, timezone, timedelta
+            from datetime import datetime, timedelta
 
             # Parse ISO timestamp
             if timestamp.endswith("Z"):
@@ -534,9 +535,9 @@ class ControlPanelIngestMixin:
 
             # Make timezone-aware if needed
             if asset_time.tzinfo is None:
-                asset_time = asset_time.replace(tzinfo=timezone.utc)
+                asset_time = asset_time.replace(tzinfo=UTC)
 
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             return (now - asset_time) < timedelta(hours=1)
         except Exception:
             return False

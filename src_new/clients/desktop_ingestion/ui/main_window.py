@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from qtpy.QtCore import Qt, QTimer, QSize, QThread, Signal
+from qtpy.QtCore import QSize, Qt, QThread, QTimer, Signal
 from qtpy.QtGui import QIcon, QPixmap
 from qtpy.QtWidgets import (
     QAction,

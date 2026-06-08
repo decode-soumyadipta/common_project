@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-import logging
 
 from qtpy.QtCore import QSignalBlocker, Qt
 from qtpy.QtWidgets import (

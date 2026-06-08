@@ -4,10 +4,10 @@ import datetime as dt
 
 from qtpy.QtCore import Qt
 
-from src_new.clients.desktop_search.measurement_worker import MeasurementWorker
 from src_new.clients.desktop_search.measurement_tools import (
     measure_distance,
 )
+from src_new.clients.desktop_search.measurement_worker import MeasurementWorker
 
 
 class MeasurementCoordinator:
@@ -45,7 +45,7 @@ class MeasurementCoordinator:
                 "length_m": float(result.distance_m),
                 "width_m": 0.0,
                 "condition": "intact",
-                "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                "created_at": dt.datetime.now(dt.UTC).isoformat(),
             }
         )
         c._set_project_modified(True)

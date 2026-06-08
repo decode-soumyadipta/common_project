@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import TYPE_CHECKING
 
@@ -321,12 +322,10 @@ class DisplaySettingsCoordinator:
                 else:
                     c._toolbar_context_callback("none")
             except Exception as exc:  # pragma: no cover - defensive
-                try:
+                with contextlib.suppress(Exception):
                     self._logger.debug(
                         "Toolbar context callback deferred: %s", exc
                     )
-                except Exception:
-                    pass
 
         if c._swipe_comparator_enabled and not c.can_enable_comparator():
             c._swipe_comparator_enabled = False

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from qtpy.QtCore import Qt, Signal, QTimer
+from qtpy.QtCore import Qt, QTimer, Signal
 from qtpy.QtGui import QColor, QPalette
 from qtpy.QtWidgets import (
     QAbstractItemView,
@@ -17,9 +17,9 @@ from qtpy.QtWidgets import (
     QHeaderView,
     QLabel,
     QListWidget,
-    QPushButton,
     QProgressBar,
     QProgressDialog,
+    QPushButton,
     QSlider,
     QSpinBox,
     QTableWidget,
@@ -34,7 +34,9 @@ from src_new.clients.desktop_search.app_mode import DesktopAppMode
 from src_new.clients.desktop_search.control_panel_collapsible import (
     ClientCollapsibleSection,
 )
-from src_new.clients.desktop_search.control_panel_display import ControlPanelDisplayMixin
+from src_new.clients.desktop_search.control_panel_display import (
+    ControlPanelDisplayMixin,
+)
 from src_new.clients.desktop_search.control_panel_ingest import ControlPanelIngestMixin
 from src_new.clients.desktop_search.control_panel_log import ControlPanelLogMixin
 from src_new.clients.desktop_search.control_panel_search import ControlPanelSearchMixin
@@ -1149,7 +1151,7 @@ class ControlPanel(
 
             for collapsible, (_name, _section, expanded) in zip(
                 self._client_collapsible_sections,
-                self._client_section_specs,
+                self._client_section_specs, strict=False,
             ):
                 collapsible.set_expanded(expanded)
                 collapsible.setVisible(True)

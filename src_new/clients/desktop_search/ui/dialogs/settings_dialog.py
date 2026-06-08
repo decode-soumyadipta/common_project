@@ -242,7 +242,9 @@ class SettingsDialog(QDialog):
         # Default to "High" if we can't detect
         level = 2
         try:
-            from src_new.clients.desktop_search.controller import DesktopController  # noqa: F401
+            from src_new.clients.desktop_search.controller import (
+                DesktopController,  # noqa: F401
+            )
             # Try to read _userQualitySSE if it was set; fall back to GPU-detected
             stored = getattr(self._controller, "_quality_level", None)
             if stored is not None:
@@ -270,7 +272,6 @@ class SettingsDialog(QDialog):
         desc_lim   = _PRESETS[load_level][4]
 
         # ── Show "Applying…" state on the button ──────────────────────────
-        from qtpy.QtWidgets import QDialogButtonBox as _DBB
         apply_btn = self.sender()  # button that was clicked
         orig_text = None
         if apply_btn:

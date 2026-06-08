@@ -20,7 +20,7 @@ class ProjectIoCoordinator:
     def build_project_payload(self) -> dict:
         """Build project payload for saving."""
         c = self._controller
-        now = dt.datetime.now(dt.timezone.utc).isoformat()
+        now = dt.datetime.now(dt.UTC).isoformat()
         order_registry = getattr(c.panel, "_layer_order_registry", {}) or {}
 
         raster_layers: list[dict[str, object]] = []
@@ -300,7 +300,7 @@ class ProjectIoCoordinator:
         for item in controller._annotation_polygon_records:
             ring = item.get("coords", [])
             if ring and ring[0] != ring[-1]:
-                ring = list(ring) + [ring[0]]
+                ring = [*list(ring), ring[0]]
             features.append(
                 {
                     "type": "Feature",
@@ -483,7 +483,7 @@ class ProjectIoCoordinator:
             for item in controller._annotation_polygon_records:
                 ring = item.get("coords", [])
                 if ring and ring[0] != ring[-1]:
-                    ring = list(ring) + [ring[0]]
+                    ring = [*list(ring), ring[0]]
                 sink.write(
                     {
                         "geometry": {"type": "Polygon", "coordinates": [ring]},
@@ -521,7 +521,7 @@ class ProjectIoCoordinator:
         except Exception as e:
             from qtpy.QtWidgets import QMessageBox
             QMessageBox.critical(
-                controller.panel, "Save Failed", f"Failed to save project:\n{str(e)}"
+                controller.panel, "Save Failed", f"Failed to save project:\n{e!s}"
             )
 
     def save_project_as(self) -> None:
@@ -548,7 +548,7 @@ class ProjectIoCoordinator:
         except Exception as e:
             from qtpy.QtWidgets import QMessageBox
             QMessageBox.critical(
-                controller.panel, "Save Failed", f"Failed to save project:\n{str(e)}"
+                controller.panel, "Save Failed", f"Failed to save project:\n{e!s}"
             )
 
     def open_project(self) -> None:

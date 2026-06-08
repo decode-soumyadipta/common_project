@@ -3,7 +3,6 @@ from __future__ import annotations
 from qtpy.QtCore import QTimer
 
 
-
 class VisualizationCoordinator:
     """Encapsulate viewer mode and style operations for desktop controller."""
 

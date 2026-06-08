@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from qtpy.QtCore import Qt, QSize, QSignalBlocker
+from qtpy.QtCore import QSignalBlocker, QSize, Qt
 from qtpy.QtGui import QIcon
 from qtpy.QtWidgets import (
     QApplication,
@@ -291,8 +291,8 @@ class FlyThroughTimelineBar(QWidget):
     def set_progress(self, value: float) -> None:
         progress = max(0.0, min(1.0, float(value)))
         with QSignalBlocker(self.progress_slider):
-            self.progress_slider.setValue(int(round(progress * 1000)))
-        self.progress_label.setText(f"{int(round(progress * 100))}%")
+            self.progress_slider.setValue(round(progress * 1000))
+        self.progress_label.setText(f"{round(progress * 100)}%")
 
     def set_speed(self, value: float) -> None:
         speed = max(0.25, min(3.0, float(value)))
@@ -304,7 +304,7 @@ class FlyThroughTimelineBar(QWidget):
 
     def set_pitch(self, value: float) -> None:
         pitch = max(-80.0, min(-10.0, float(value)))
-        self._pitch_value = int(round(pitch))
+        self._pitch_value = round(pitch)
         with QSignalBlocker(self.pitch_slider):
             self.pitch_slider.setValue(self._pitch_value)
         self.pitch_value_label.setText(f"{self._pitch_value}°")
@@ -408,7 +408,7 @@ class FlyThroughTimelineBar(QWidget):
 
     def _on_progress_changed(self, value: int) -> None:
         progress = max(0.0, min(1.0, value / 1000.0))
-        self.progress_label.setText(f"{int(round(progress * 100))}%")
+        self.progress_label.setText(f"{round(progress * 100)}%")
         self.controller._seek_fly_through_progress(progress)
 
     def _on_speed_clicked(self, speed: float) -> None:

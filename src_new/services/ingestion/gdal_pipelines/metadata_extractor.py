@@ -716,6 +716,6 @@ def extract_metadata(path: Path) -> RasterMetadata:
 
 __all__ = [
     "MetadataExtractorError",
-    "extract_metadata",
     "ensure_overviews",
+    "extract_metadata",
 ]

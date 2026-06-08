@@ -7,8 +7,6 @@ Requirement 12.1: Shared Pydantic data models.
 """
 from __future__ import annotations
 
-from typing import List
-
 from pydantic import BaseModel, Field, model_validator
 
 from src_new.shared.models.raster_metadata import RasterMetadata
@@ -31,7 +29,7 @@ class QueryResult(BaseModel):
         )
     """
 
-    rasters: List[RasterMetadata] = Field(
+    rasters: list[RasterMetadata] = Field(
         default_factory=list,
         description="List of raster metadata records matching the query.",
     )
@@ -41,7 +39,7 @@ class QueryResult(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _validate_count_matches_list(self) -> "QueryResult":
+    def _validate_count_matches_list(self) -> QueryResult:
         """Ensure count is consistent with the length of the rasters list."""
         if self.count != len(self.rasters):
             raise ValueError(
@@ -51,7 +49,7 @@ class QueryResult(BaseModel):
         return self
 
     @classmethod
-    def from_rasters(cls, rasters: List[RasterMetadata]) -> "QueryResult":
+    def from_rasters(cls, rasters: list[RasterMetadata]) -> QueryResult:
         """Convenience constructor that sets count automatically."""
         return cls(rasters=rasters, count=len(rasters))
 

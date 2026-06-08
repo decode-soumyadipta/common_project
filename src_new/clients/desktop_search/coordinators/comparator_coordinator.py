@@ -298,7 +298,7 @@ class ComparatorCoordinator:
     ) -> None:
         if not isinstance(raw_value, (int, float)):
             return
-        scaled = int(round(float(raw_value) * scale))
+        scaled = round(float(raw_value) * scale)
         slider.setValue(max(slider.minimum(), min(slider.maximum(), scaled)))
 
     def on_comparator_pane_state(self, payload_json: str) -> None:

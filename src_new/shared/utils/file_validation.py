@@ -13,9 +13,8 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
-from src_new.shared.constants import SUPPORTED_FORMATS, MAX_UPLOAD_SIZE_DEFAULT
+from src_new.shared.constants import MAX_UPLOAD_SIZE_DEFAULT, SUPPORTED_FORMATS
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +107,7 @@ def validate_file_exists(path: Path) -> None:
         raise FileValidationError(f"Path is not a regular file: {path}")
 
 
-def validate_file_size(path: Path, max_bytes: Optional[int] = None) -> None:
+def validate_file_size(path: Path, max_bytes: int | None = None) -> None:
     """Raise FileValidationError if the file exceeds *max_bytes*.
 
     Args:
@@ -180,7 +179,7 @@ def is_mbtiles(path: Path) -> bool:
         return False
 
 
-def detect_format(path: Path) -> Optional[str]:
+def detect_format(path: Path) -> str | None:
     """Detect the geospatial format of *path* by inspecting magic bytes.
 
     Returns:
@@ -197,7 +196,7 @@ def detect_format(path: Path) -> Optional[str]:
 
 def validate_geospatial_file(
     path: Path,
-    max_bytes: Optional[int] = None,
+    max_bytes: int | None = None,
 ) -> str:
     """Run all validation checks on a geospatial file.
 
@@ -230,14 +229,14 @@ def validate_geospatial_file(
 
 __all__ = [
     "Bounds",
-    "parse_bounds_wkt_polygon",
     "FileValidationError",
-    "validate_file_exists",
-    "validate_file_size",
-    "validate_file_extension",
+    "detect_format",
     "is_geotiff",
     "is_jpeg2000",
     "is_mbtiles",
-    "detect_format",
+    "parse_bounds_wkt_polygon",
+    "validate_file_exists",
+    "validate_file_extension",
+    "validate_file_size",
     "validate_geospatial_file",
 ]

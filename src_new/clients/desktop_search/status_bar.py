@@ -19,6 +19,7 @@ from __future__ import annotations
 import math
 import time
 
+from pyproj import Transformer
 from qtpy.QtCore import Qt, Slot
 from qtpy.QtWidgets import (
     QFrame,
@@ -29,7 +30,6 @@ from qtpy.QtWidgets import (
     QStatusBar,
     QWidget,
 )
-from pyproj import Transformer
 
 # --------------------------------------------------------------------------- Helpers ---------------------------------------------------------------------------
 

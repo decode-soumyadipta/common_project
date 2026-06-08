@@ -8,8 +8,6 @@ Requirement 11.6: Tile Service supports contrast, brightness, colormap query par
 """
 from __future__ import annotations
 
-from typing import Optional
-
 from pydantic import BaseModel, Field
 
 
@@ -69,7 +67,7 @@ class TileRequest(BaseModel):
             "1.0 = no change; >1.0 brightens; <1.0 darkens."
         ),
     )
-    colormap: Optional[str] = Field(
+    colormap: str | None = Field(
         default=None,
         description=(
             "Named colormap to apply (e.g. 'viridis', 'plasma', 'gray'). "

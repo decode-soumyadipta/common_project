@@ -13,7 +13,7 @@ class LoggingWebEnginePage(QWebEnginePage):
             super().__init__(parent)
         self._logger = logging.getLogger("desktop.web")
 
-    def javaScriptConsoleMessage(self, level, message, line_number, source_id):  # noqa: N802
+    def javaScriptConsoleMessage(self, level, message, line_number, source_id):
         if level == QWebEnginePage.JavaScriptConsoleMessageLevel.ErrorMessageLevel:
             self._logger.error(
                 "JS console [%s] %s (line %s, source %s)",

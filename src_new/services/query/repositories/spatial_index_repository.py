@@ -22,7 +22,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 
 from src_new.shared.models.bounding_box import BoundingBox
-from src_new.shared.models.raster_metadata import RasterMetadata, RasterKind
+from src_new.shared.models.raster_metadata import RasterKind, RasterMetadata
 
 logger = logging.getLogger(__name__)
 

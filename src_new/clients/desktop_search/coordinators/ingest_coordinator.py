@@ -24,7 +24,7 @@ class IngestCoordinator:
         c.state.active_ingest_job_id = str(job_id)
 
         # Record polling start time for timeout tracking
-        c._ingest_poll_start_time = dt.datetime.now(dt.timezone.utc)
+        c._ingest_poll_start_time = dt.datetime.now(dt.UTC)
 
         # Start the polling timer (polls every 500ms)
         c._ingest_poll_timer.start()
@@ -58,7 +58,7 @@ class IngestCoordinator:
 
         # Check for polling timeout (max 2 hours)
         if c._ingest_poll_start_time:
-            elapsed = dt.datetime.now(dt.timezone.utc) - c._ingest_poll_start_time
+            elapsed = dt.datetime.now(dt.UTC) - c._ingest_poll_start_time
             if elapsed.total_seconds() > 7200:  # 2 hours
                 self._logger.warning(
                     "Ingest polling timeout after 2 hours, stopping polling for job %s",
@@ -137,7 +137,7 @@ class IngestCoordinator:
                         )
 
                     return
-                elif status_code >= 500:
+                if status_code >= 500:
                     # Server error - log but continue polling
                     self._logger.warning(
                         "Ingest progress refresh failed with server error %s, continuing to poll",
@@ -273,7 +273,7 @@ class IngestCoordinator:
         if 0.0 < elapsed < 1.0:
             return "<1s"
 
-        total_seconds = max(0, int(round(elapsed)))
+        total_seconds = max(0, round(elapsed))
         hours, remainder = divmod(total_seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
         if hours > 0:

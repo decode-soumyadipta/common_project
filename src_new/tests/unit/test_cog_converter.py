@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-
 from src_new.services.ingestion.gdal_pipelines.cog_converter import CogConverter
 from src_new.shared.config import settings
 
@@ -24,9 +23,10 @@ def test_cog_converter_successful_conversion(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setattr(CogConverter, "_looks_like_cog", lambda self, p: False)
 
     # Mock rasterio functions directly
+    from contextlib import contextmanager
+
     import rasterio
     import rasterio.shutil
-    from contextlib import contextmanager
 
     mock_src = MagicMock()
     
@@ -65,9 +65,10 @@ def test_cog_converter_fallback_cleans_up_temp_on_failure(monkeypatch, tmp_path:
     monkeypatch.setattr(settings, "ingest_cog_overwrite", True)
     monkeypatch.setattr(CogConverter, "_looks_like_cog", lambda self, p: False)
 
+    from contextlib import contextmanager
+
     import rasterio
     import rasterio.shutil
-    from contextlib import contextmanager
 
     # Force all attempts to fail Attempt 1 (rio_copy) raises an error
     def failing_rio_copy(src, dst, **kwargs):

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from qtpy.QtCore import Qt, QSignalBlocker
+from qtpy.QtCore import QSignalBlocker, Qt
 from qtpy.QtWidgets import (
     QFrame,
     QLabel,
@@ -121,7 +121,7 @@ class FlyThroughHeightSlider(QWidget):
     def set_height(self, value: float) -> None:
         """Update height slider and labels programmatically."""
         height = max(1.0, min(2000.0, float(value)))
-        self._height_value = int(round(height))
+        self._height_value = round(height)
         with QSignalBlocker(self.height_slider):
             self.height_slider.setValue(self._height_value)
         self.height_value_label.setText(f"{self._height_value} m")

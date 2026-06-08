@@ -101,7 +101,7 @@ class LayerCoordinator:
                 "source": Path(file_path).suffix.lstrip(".").lower() or "file",
                 "geojson": geojson,
                 "is_visible": True,
-                "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                "created_at": dt.datetime.now(dt.UTC).isoformat(),
             }
             c._set_project_modified(True)
             added += 1
@@ -276,12 +276,11 @@ class LayerCoordinator:
                     continue
 
                 next_visible = bool(visible)
-                if next_visible:
-                    if c._is_dem_asset(asset):
-                        if dem_already_shown:
-                            next_visible = False
-                        else:
-                            dem_already_shown = True
+                if next_visible and c._is_dem_asset(asset):
+                    if dem_already_shown:
+                        next_visible = False
+                    else:
+                        dem_already_shown = True
 
                 c._search_layer_visibility[normalized_path] = next_visible
                 
@@ -401,7 +400,7 @@ class LayerCoordinator:
             )
 
         except Exception as e:
-            c.panel.log(f"Layer reordering failed: {str(e)}")
+            c.panel.log(f"Layer reordering failed: {e!s}")
             c._logger.error(
                 "Failed to reorder search result layers: %s", e, exc_info=True
             )

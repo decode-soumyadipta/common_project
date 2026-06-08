@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 from src_new.shared.config import settings
 from src_new.shared.utils.file_validation import is_geotiff
@@ -74,7 +74,7 @@ def validate(path: Path) -> bool:
         return False
 
 
-def extract_metadata(path: Path) -> Dict[str, Any]:
+def extract_metadata(path: Path) -> dict[str, Any]:
     """Extract raster metadata from a GeoTIFF file using GDAL.
 
     Args:
@@ -190,8 +190,8 @@ def _reproject_bounds_to_4326(
     min_y: float,
     max_x: float,
     max_y: float,
-    src_wkt: Optional[str],
-) -> Dict[str, float]:
+    src_wkt: str | None,
+) -> dict[str, float]:
     """Reproject bounding box corners from *src_wkt* CRS to EPSG:4326.
 
     Returns a dict with keys min_lon, min_lat, max_lon, max_lat.
@@ -241,4 +241,4 @@ def _reproject_bounds_to_4326(
         }
 
 
-__all__ = ["GeoTIFFValidationError", "validate", "extract_metadata"]
+__all__ = ["GeoTIFFValidationError", "extract_metadata", "validate"]

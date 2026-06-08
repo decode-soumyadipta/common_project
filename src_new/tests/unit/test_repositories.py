@@ -13,26 +13,25 @@ Requirements: 10.4, 19.2
 """
 from __future__ import annotations
 
-import pytest
+from collections.abc import Generator
 from datetime import datetime
-from typing import Generator
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-from sqlalchemy import create_engine, Column, String, Float, Integer, DateTime
-from sqlalchemy.orm import Session, sessionmaker, declarative_base
+import pytest
+from sqlalchemy import Column, DateTime, Float, Integer, String, create_engine
+from sqlalchemy.orm import Session, declarative_base, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from src_new.services.query.repositories.raster_repository import (
-    RasterRepository,
     AsyncRasterRepository,
+    RasterRepository,
 )
 from src_new.services.query.repositories.spatial_index_repository import (
     SpatialIndexRepository,
 )
-from src_new.shared.models.raster_metadata import RasterMetadata, RasterKind
 from src_new.shared.models.bounding_box import BoundingBox
-
+from src_new.shared.models.raster_metadata import RasterKind, RasterMetadata
 
 # --------------------------------------------------------------------------- Test ORM Model ---------------------------------------------------------------------------
 
@@ -425,7 +424,7 @@ class TestRasterRepository:
                 # Convert to float will fail, but should be caught gracefully
                 repo.find_by_point(lon=float(malicious_lon), lat=18.5)
                 # Should not reach here due to float conversion error
-                assert False, "Expected ValueError for invalid float"
+                raise AssertionError("Expected ValueError for invalid float")
             except ValueError:
                 # Expected - malicious string cannot be converted to float
                 pass

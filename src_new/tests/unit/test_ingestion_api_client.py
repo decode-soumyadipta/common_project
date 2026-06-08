@@ -7,14 +7,15 @@ Requirements: 7.1, 7.3, 7.5
 """
 from __future__ import annotations
 
-import pytest
-from unittest.mock import Mock, patch
 from pathlib import Path
+from unittest.mock import Mock, patch
+
+import pytest
 
 from src_new.clients.desktop_ingestion.api_client import (
     IngestionApiClient,
-    UploadResponse,
     IngestionStatus,
+    UploadResponse,
 )
 
 

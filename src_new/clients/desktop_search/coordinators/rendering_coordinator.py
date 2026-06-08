@@ -298,10 +298,9 @@ class RenderingCoordinator:
 
         if is_dem:
             return self.add_dem_layer_event_driven(asset, options, from_search_results)
-        else:
-            return self.add_imagery_layer_event_driven(
-                asset, options, from_search_results
-            )
+        return self.add_imagery_layer_event_driven(
+            asset, options, from_search_results
+        )
 
     def get_server_optimized_tile_url(self, asset: dict, tile_url: str) -> str:
         """Adjust the tile URL for server-side delivery if needed."""

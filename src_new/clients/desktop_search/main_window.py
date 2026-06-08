@@ -6,22 +6,22 @@ This module provides the main window UI components.
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 import time
+from pathlib import Path
+
 import cv2
 import numpy as np
-
-from qtpy.QtCore import QSize, Qt, QUrl, QEventLoop, QTimer, QRect
+from qtpy.QtCore import QEventLoop, QRect, QSize, Qt, QTimer, QUrl
 from qtpy.QtGui import (
     QAction,
+    QColor,
     QCursor,
+    QFont,
     QGuiApplication,
     QIcon,
-    QPainter,
-    QFont,
-    QColor,
-    QPen,
     QImage,
+    QPainter,
+    QPen,
 )
 from qtpy.QtWebChannel import QWebChannel
 from qtpy.QtWebEngineWidgets import QWebEngineSettings, QWebEngineView
@@ -36,8 +36,8 @@ from qtpy.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QMenu,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QProgressDialog,
     QPushButton,
@@ -57,8 +57,8 @@ from src_new.clients.desktop_search.status_bar import GISStatusBar
 from src_new.clients.desktop_search.titiler_manager import TiTilerManager
 from src_new.clients.desktop_search.ui.overlays import (
     BusyOverlay,
-    FlyThroughTimelineBar,
     FlyThroughHeightSlider,
+    FlyThroughTimelineBar,
     LayerCompositorOverlay,
     MapOverlayControls,
 )
@@ -88,7 +88,7 @@ class VideoExportSettingsDialog(QDialog):
         self.update_estimates()
         
     def _init_ui(self):
-        from qtpy.QtWidgets import QVBoxLayout, QLabel, QPushButton, QGroupBox
+        from qtpy.QtWidgets import QGroupBox, QLabel, QPushButton, QVBoxLayout
         layout = QVBoxLayout(self)
         layout.setSpacing(15)
         layout.setContentsMargins(20, 20, 20, 20)
@@ -226,11 +226,11 @@ class VideoExportSettingsDialog(QDialog):
         """)
         
     def update_estimates(self):
-        scale, bitrate = self.quality_combo.currentData()
+        _scale, bitrate = self.quality_combo.currentData()
         fps = self.fps_combo.currentData()
         
         # Calculate estimates
-        total_frames = int(round(self.duration_sec * fps))
+        total_frames = round(self.duration_sec * fps)
         est_size_mb = (self.duration_sec * bitrate) / (8.0 * 1024.0 * 1024.0)
         est_time_sec = total_frames * 0.08  # ~80ms per frame
         
@@ -703,7 +703,7 @@ class MainWindow(QMainWindow):
         if action_label == "Comparator" and checked:
             self._show_comparator_dropdown()
             return
-        elif action_label == "Layer Compositor" and checked:
+        if action_label == "Layer Compositor" and checked:
             self._show_layer_compositor_overlay()
         elif action_label == "Export":
             self._show_export_dropdown()
@@ -858,7 +858,9 @@ class MainWindow(QMainWindow):
 
     def _open_settings_dialog(self) -> None:
         """Open the Rendering Quality settings dialog."""
-        from src_new.clients.desktop_search.ui.dialogs.settings_dialog import SettingsDialog
+        from src_new.clients.desktop_search.ui.dialogs.settings_dialog import (
+            SettingsDialog,
+        )
         dlg = SettingsDialog(self, self.controller)
         dlg.exec()
 
@@ -1482,9 +1484,10 @@ class MainWindow(QMainWindow):
 
     def _on_measure_cursor_changed(self, enabled: bool) -> None:
         """Set or restore the crosshair cursor on the map web view only."""
-        from qtpy.QtWidgets import QApplication
         import logging
         import sys
+
+        from qtpy.QtWidgets import QApplication
         logger = logging.getLogger("desktop.main_window")
 
         enabled = bool(enabled)
@@ -1664,8 +1667,10 @@ class MainWindow(QMainWindow):
 
         # ── Right-aligned resGIS logo ─────────────────────────────────────────
         # Push everything that follows to the far right using an expanding spacer.
-        from qtpy.QtWidgets import QSizePolicy, QWidget as _QWidget
         import pathlib as _pathlib
+
+        from qtpy.QtWidgets import QSizePolicy
+        from qtpy.QtWidgets import QWidget as _QWidget
         _spacer = _QWidget()
         _spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(_spacer)
@@ -1893,7 +1898,7 @@ class MainWindow(QMainWindow):
             return
 
         duration_sec = float(duration_ms) / 1000.0
-        total_frames = int(round(duration_sec * fps))
+        total_frames = round(duration_sec * fps)
         if total_frames <= 0:
             total_frames = 1
 
@@ -2031,7 +2036,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(
                 self,
                 "Export Error",
-                f"An error occurred during video export: {str(ex)}",
+                f"An error occurred during video export: {ex!s}",
             )
         finally:
             if writer is not None:

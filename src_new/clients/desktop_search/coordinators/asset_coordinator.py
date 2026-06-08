@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 
 import httpx
-from qtpy.QtCore import QTimer, Qt
+from qtpy.QtCore import Qt, QTimer
 from qtpy.QtWidgets import QFileDialog
 
 from src_new.clients.desktop_search.app_mode import DesktopAppMode
@@ -325,7 +325,9 @@ class AssetCoordinator:
             return None
         if c.api.api_ready():
             try:
-                from src_new.clients.desktop_search.tile_url_builder import build_xyz_url
+                from src_new.clients.desktop_search.tile_url_builder import (
+                    build_xyz_url,
+                )
                 asset = c.api.register_raster(str(path))
                 if isinstance(asset, dict):
                     if "tile_url" not in asset:
@@ -335,10 +337,10 @@ class AssetCoordinator:
                 c.panel.log(f"Raster registration failed: {path.name}. {exc}")
                 c._logger.warning("Raster registration failed: %s", exc)
         try:
+            from src_new.clients.desktop_search.tile_url_builder import build_xyz_url
             from src_new.services.ingestion.gdal_pipelines.metadata_extractor import (
                 extract_metadata,
             )
-            from src_new.clients.desktop_search.tile_url_builder import build_xyz_url
             metadata = extract_metadata(path)
         except Exception as exc:
             c.panel.log(f"Metadata extraction failed: {path.name}. {exc}")
@@ -362,5 +364,5 @@ class AssetCoordinator:
             "width": metadata.width,
             "height": metadata.height,
             "tile_url": build_xyz_url(str(metadata.file_path)),
-            "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "created_at": dt.datetime.now(dt.UTC).isoformat(),
         }

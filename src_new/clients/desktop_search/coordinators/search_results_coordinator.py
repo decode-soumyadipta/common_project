@@ -54,7 +54,7 @@ class SearchResultsCoordinator:
             for path, is_visible in c._search_layer_visibility.items()
             if is_visible
         }
-        had_visible_assets = bool(previously_visible_paths)
+        bool(previously_visible_paths)
         c._search_result_assets_by_path = {}
         local_missing_count = 0
 
@@ -71,7 +71,9 @@ class SearchResultsCoordinator:
 
             # Ensure tile_url is populated for all search results
             if "tile_url" not in asset or not asset["tile_url"]:
-                from src_new.clients.desktop_search.tile_url_builder import build_xyz_url
+                from src_new.clients.desktop_search.tile_url_builder import (
+                    build_xyz_url,
+                )
                 try:
                     cand = c._find_best_file_version(file_path)
                     asset["tile_url"] = build_xyz_url(cand, tile_service_url=c.api.titiler_base_url)
@@ -146,7 +148,7 @@ class SearchResultsCoordinator:
         ordered_keys = sorted(
             [
                 p.replace("\\", "/")
-                for p in c._search_result_assets_by_path.keys()
+                for p in c._search_result_assets_by_path
                 if c._search_layer_visibility.get(p, True)
             ],
             key=lambda p: (
@@ -285,7 +287,9 @@ class SearchResultsCoordinator:
                                 asset["file_name"] = Path(cand).name
                                 if "tile_url" in asset:
                                     try:
-                                        from src_new.clients.desktop_search.tile_url_builder import build_xyz_url
+                                        from src_new.clients.desktop_search.tile_url_builder import (
+                                            build_xyz_url,
+                                        )
                                         asset["tile_url"] = build_xyz_url(cand)
                                     except Exception as e:
                                         c._logger.error("Failed to build tile_url for reverted asset: %s", e)

@@ -20,7 +20,7 @@ from src_new.shared.ui_components.login_dialog import LoginDialog
 from src_new.shared.ui_components.settings_dialog import SettingsDialog
 
 __all__ = [
+    "AboutDialog",
     "LoginDialog",
     "SettingsDialog",
-    "AboutDialog",
 ]

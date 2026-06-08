@@ -186,7 +186,7 @@ except ImportError:
             xs = [c[0] for c in coordinates]
             ys = [c[1] for c in coordinates]
             tx, ty = transformer.transform(xs, ys)
-            return list(zip(tx, ty))
+            return list(zip(tx, ty, strict=False))
 
         except ImportError:
             pass  # pyproj not available — use built-in approximation below
@@ -254,7 +254,7 @@ def _extract_all_coords(geometry: dict) -> list[tuple[float, float]]:
 # --------------------------------------------------------------------------- Public API ---------------------------------------------------------------------------
 
 __all__ = [
+    "_RUST_AVAILABLE",
     "rasterize_vectors",
     "transform_coordinates",
-    "_RUST_AVAILABLE",
 ]

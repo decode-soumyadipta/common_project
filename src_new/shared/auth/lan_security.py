@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import ipaddress
 import logging
-from typing import Callable
+from collections.abc import Callable
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -204,9 +204,9 @@ def get_bind_host() -> str:
 
 __all__ = [
     "LANSecurityMiddleware",
-    "get_bind_host",
+    "_extract_client_ip",
+    "_is_ip_allowed",
     # Exposed for testing / advanced use
     "_parse_allowed_hosts",
-    "_is_ip_allowed",
-    "_extract_client_ip",
+    "get_bind_host",
 ]

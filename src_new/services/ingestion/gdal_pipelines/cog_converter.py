@@ -16,11 +16,10 @@ Requirement 9.6: GDAL operation failures are logged with file path, operation
 from __future__ import annotations
 
 import logging
-import shutil
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Semaphore
+from typing import Any, cast
 
 from src_new.shared.config import settings
 from src_new.shared.constants import (
@@ -202,12 +201,12 @@ class CogConverter:
                             try:
                                 prj_content = prj_path.read_text().strip()
                                 if prj_content:
-                                    from rasterio.crs import CRS
+                                    from rasterio.crs import CRS  # type: ignore
                                     assigned_crs = CRS.from_user_input(prj_content)
                             except Exception:
                                 pass
                         if assigned_crs is None:
-                            from rasterio.crs import CRS
+                            from rasterio.crs import CRS  # type: ignore
                             assigned_crs = CRS.from_epsg(4326)
                         dst.crs = assigned_crs
                         LOGGER.info("Assigned fallback CRS to COG after Attempt 1 copy: %s", assigned_crs)
@@ -220,7 +219,7 @@ class CogConverter:
                 return CogConversionResult(
                     source_path=source, working_path=cog_path, converted=True
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 LOGGER.warning(
                     "COG driver failed for source=%s operation=cog_convert error=%s "
                     "— trying tiled GeoTIFF fallback",
@@ -255,19 +254,19 @@ class CogConverter:
                         try:
                             prj_content = prj_path.read_text().strip()
                             if prj_content:
-                                from rasterio.crs import CRS
+                                from rasterio.crs import CRS  # type: ignore
                                 profile["crs"] = CRS.from_user_input(prj_content)
                                 LOGGER.info("Applied sidecar CRS from %s during fallback conversion", prj_path.name)
                                 has_crs = True
                         except Exception as prj_exc:
                             LOGGER.warning("Failed to apply sidecar CRS from %s: %s", prj_path.name, prj_exc)
                     if not has_crs and profile.get("crs") is None:
-                        from rasterio.crs import CRS
+                        from rasterio.crs import CRS  # type: ignore
                         profile["crs"] = CRS.from_epsg(4326)
                         LOGGER.warning("No CRS or sidecar PRJ found for fallback conversion of %s. Defaulting to EPSG:4326.", source.name)
 
                     with rasterio.open(temp_cog_path, "w", **profile) as dst:
-                        for ji, window in src.block_windows(1):
+                        for _ji, window in src.block_windows(1):
                             for i in range(1, src.count + 1):
                                 try:
                                     data = src.read(i, window=window)
@@ -280,7 +279,7 @@ class CogConverter:
                                 dst.write(data, i, window=window)
 
                         dst.build_overviews(
-                            [2, 4, 8, 16], rasterio.enums.Resampling.nearest
+                            [2, 4, 8, 16], rasterio.enums.Resampling.nearest  # type: ignore
                         )
                         dst.update_tags(ns="rio_overview", resampling="nearest")
                 temp_cog_path.replace(cog_path)
@@ -293,7 +292,7 @@ class CogConverter:
                 return CogConversionResult(
                     source_path=source, working_path=cog_path, converted=True
                 )
-            except Exception as exc2:  # noqa: BLE001
+            except Exception as exc2:
                 LOGGER.warning(
                     "Tiled GeoTIFF fallback also failed source=%s "
                     "operation=cog_convert_fallback error=%s",
@@ -374,6 +373,7 @@ class CogConverter:
         if creation_options is None:
             creation_options = CogConverter._default_creation_options(source)
 
+        gdal = None
         try:
             from osgeo import gdal  # type: ignore
 
@@ -405,7 +405,7 @@ class CogConverter:
                 translate_kwargs["outputSRS"] = a_srs
 
             options = gdal.TranslateOptions(
-                *(extra_args or []),
+                *(cast(Any, extra_args) or []),
                 **translate_kwargs
             )
             result_ds = gdal.Translate(str(target), str(source), options=options)
@@ -424,10 +424,10 @@ class CogConverter:
                 "gdal.Translate succeeded source=%s target=%s operation=gdal_translate",
                 source,
                 target,
-            )
+                )
             return True
-        except Exception as exc:  # noqa: BLE001
-            err_msg = gdal.GetLastErrorMsg() if 'gdal' in locals() else ""
+        except Exception as exc:
+            err_msg = gdal.GetLastErrorMsg() if gdal is not None else ""
             LOGGER.error(
                 "gdal.Translate failed source=%s target=%s operation=gdal_translate "
                 "error=%s gdal_error=%s",
@@ -469,6 +469,7 @@ class CogConverter:
         if creation_options is None:
             creation_options = CogConverter._default_creation_options(source)
 
+        gdal = None
         try:
             from osgeo import gdal  # type: ignore
 
@@ -501,7 +502,7 @@ class CogConverter:
                 warp_kwargs["srcSRS"] = src_srs
 
             options = gdal.WarpOptions(
-                *(extra_args or []),
+                *(cast(Any, extra_args) or []),
                 **warp_kwargs
             )
             result_ds = gdal.Warp(str(target), str(source), options=options)
@@ -522,8 +523,8 @@ class CogConverter:
                 target,
             )
             return True
-        except Exception as exc:  # noqa: BLE001
-            err_msg = gdal.GetLastErrorMsg() if 'gdal' in locals() else ""
+        except Exception as exc:
+            err_msg = gdal.GetLastErrorMsg() if gdal is not None else ""
             LOGGER.error(
                 "gdal.Warp failed source=%s target=%s operation=gdal_warp error=%s gdal_error=%s",
                 source,
@@ -543,6 +544,7 @@ class CogConverter:
         system/Homebrew GDAL library dependencies.
         """
         settings.apply_gdal_env()
+        gdal = None
         try:
             from osgeo import gdal  # type: ignore
 
@@ -597,8 +599,8 @@ class CogConverter:
                 target,
             )
             return True
-        except Exception as exc:  # noqa: BLE001
-            err_msg = gdal.GetLastErrorMsg() if 'gdal' in locals() else ""
+        except Exception as exc:
+            err_msg = gdal.GetLastErrorMsg() if gdal is not None else ""
             LOGGER.error(
                 "Python gdal.Translate fallback failed source=%s target=%s error=%s gdal_error=%s",
                 source,
@@ -658,7 +660,7 @@ class CogConverter:
         return options
 
     @staticmethod
-    def _default_creation_options(source: Path) -> list[str]:
+    def _default_creation_options(_source: Path) -> list[str]:
         """Return default COG creation options using config-driven block size and compression.
 
         Used by :meth:`translate` and :meth:`warp` when no explicit options are provided.
@@ -718,10 +720,8 @@ class CogConverter:
                 block_shapes = dataset.block_shapes
                 if not block_shapes:
                     return False
-                rows, cols = block_shapes[0]
-                if cols >= dataset.width:
-                    return False
-                return True
+                _rows, cols = block_shapes[0]
+                return not cols >= dataset.width
         except Exception:
             return False
 

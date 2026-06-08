@@ -307,7 +307,7 @@ class SearchCoordinator:
             all_assets = c.api.list_assets()
             if all_assets:
                 def _centroid_distance(a):
-                    from math import radians, sin, cos, asin, sqrt
+                    from math import asin, cos, radians, sin, sqrt
                     # bbox may come as dict {min_lon, min_lat, max_lon, max_lat} or as a list/tuple [west, south, east, north]
                     b = a.get("bbox") or a.get("bounds") or None
                     if not b:

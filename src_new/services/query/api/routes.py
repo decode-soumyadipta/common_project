@@ -43,13 +43,13 @@ except ImportError:  # pragma: no cover - runtime dependency guard
     rasterio = None
     Transformer = None
 
+# Pydantic request schemas defined locally (no dependency on legacy src/)
+from pydantic import BaseModel, Field
+
 from src_new.services.query.api.dependencies import get_db, get_raster_repository
 from src_new.services.query.repositories.raster_repository import RasterRepository
 from src_new.shared.models.query_result import QueryResult
 from src_new.shared.models.raster_metadata import RasterMetadata
-
-# Pydantic request schemas defined locally (no dependency on legacy src/)
-from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -583,10 +583,7 @@ def health_check(
         logger.warning("Health check: disk usage check failed — %s", exc)
 
     # --- Overall status ---
-    if db_ok:
-        status = "healthy"
-    else:
-        status = "degraded"
+    status = "healthy" if db_ok else "degraded"
 
     logger.debug(
         "GET /health — status=%s database=%s disk_space_gb=%.2f",
@@ -603,8 +600,8 @@ def health_check(
 
 
 __all__ = [
-    "router",
-    "PointQueryRequest",
     "BBoxQueryRequest",
     "ElevationProfileRequest",
+    "PointQueryRequest",
+    "router",
 ]

@@ -43,7 +43,7 @@ class BoundingBox(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _validate_non_zero_area(self) -> "BoundingBox":
+    def _validate_non_zero_area(self) -> BoundingBox:
         """Ensure the bounding box spans a non-zero area."""
         if self.min_lon >= self.max_lon:
             raise ValueError(
@@ -61,7 +61,7 @@ class BoundingBox(BaseModel):
         """Return True if the given point falls within (or on the edge of) this box."""
         return self.min_lon <= lon <= self.max_lon and self.min_lat <= lat <= self.max_lat
 
-    def intersects(self, other: "BoundingBox") -> bool:
+    def intersects(self, other: BoundingBox) -> bool:
         """Return True if this box overlaps with *other* (touching edges count)."""
         return not (
             self.max_lon < other.min_lon
@@ -84,7 +84,7 @@ class BoundingBox(BaseModel):
     @classmethod
     def from_wsen(
         cls, west: float, south: float, east: float, north: float
-    ) -> "BoundingBox":
+    ) -> BoundingBox:
         """Construct from west/south/east/north ordering (common in GIS tools)."""
         return cls(min_lon=west, min_lat=south, max_lon=east, max_lat=north)
 

@@ -27,13 +27,22 @@ import logging
 import os
 import shutil
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+)
 from pydantic import BaseModel, Field
-from sqlalchemy import bindparam, text as sa_text
+from sqlalchemy import bindparam
+from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 
 from src_new.services.ingestion.api.dependencies import (
@@ -76,7 +85,7 @@ class UploadResponse(BaseModel):
         description="Current ingestion status."
     )
     message: str = Field(description="Human-readable status message.")
-    bbox: Optional[BoundingBox] = Field(
+    bbox: BoundingBox | None = Field(
         default=None,
         description="Geographic bounding box of the raster in WGS 84 (EPSG:4326).",
     )
@@ -96,7 +105,7 @@ class IngestionStatus(BaseModel):
         le=1.0,
         description="Ingestion progress from 0.0 (queued) to 1.0 (complete).",
     )
-    error: Optional[str] = Field(
+    error: str | None = Field(
         default=None,
         description="Error message if ingestion failed, otherwise None.",
     )
@@ -271,7 +280,7 @@ def _catalog_raster_in_db(metadata: RasterMetadata, db: Session) -> None:
     upload_date = (
         metadata.upload_date.isoformat()
         if metadata.upload_date
-        else datetime.now(timezone.utc).isoformat()
+        else datetime.now(UTC).isoformat()
     )
 
     db.execute(
@@ -319,9 +328,9 @@ def _catalog_raster_in_db(metadata: RasterMetadata, db: Session) -> None:
 )
 def upload_raster(
     file: UploadFile = File(..., description="Geospatial raster file to ingest."),
-    sidecar_json: Optional[str] = Form(None, alias="metadata", description="JSON with optional sidecar file contents."),
-    tags: Optional[str] = Form(None, description="Comma-separated metadata tags."),
-    description: Optional[str] = Form(None, description="Free-text description."),
+    sidecar_json: str | None = Form(None, alias="metadata", description="JSON with optional sidecar file contents."),
+    tags: str | None = Form(None, description="Comma-separated metadata tags."),
+    description: str | None = Form(None, description="Free-text description."),
     background_tasks: BackgroundTasks = BackgroundTasks(),
     db: Session = Depends(get_db),
     cfg: Settings = Depends(get_settings),
@@ -448,7 +457,7 @@ def upload_raster(
                 "raster_id": raster_id,
                 "tags": tags or "",
                 "description": description or "",
-                "upload_date": datetime.now(timezone.utc),
+                "upload_date": datetime.now(UTC),
             }
         )
     except FileNotFoundError as exc:
@@ -483,7 +492,9 @@ def upload_raster(
     if ext in {".tif", ".tiff", ".jp2", ".j2k"}:
         _ingestion_status[raster_id]["status"] = "converting_cog"
         try:
-            from src_new.services.ingestion.gdal_pipelines.cog_converter import CogConverter
+            from src_new.services.ingestion.gdal_pipelines.cog_converter import (
+                CogConverter,
+            )
 
             cog_result = CogConverter().convert(saved_path)
             if cog_result.converted:
@@ -781,8 +792,8 @@ def _get_ingestion_status_store() -> dict:
 
 
 __all__ = [
-    "router",
-    "UploadResponse",
     "IngestionStatus",
+    "UploadResponse",
     "_get_ingestion_status_store",
+    "router",
 ]

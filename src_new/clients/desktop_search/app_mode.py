@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class DesktopAppMode(str, Enum):
+class DesktopAppMode(StrEnum):
     UNIFIED = "unified"
     SERVER = "server"
     CLIENT = "client"
 
     @classmethod
-    def from_cli_target(cls, target: str) -> "DesktopAppMode":
+    def from_cli_target(cls, target: str) -> DesktopAppMode:
         mapping = {
             "desktop": cls.UNIFIED,
             "desktop-server": cls.SERVER,

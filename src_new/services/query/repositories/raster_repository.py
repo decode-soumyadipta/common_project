@@ -22,9 +22,10 @@ Requirements: 10.1, 10.2, 10.4, 10.5
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import select, text
@@ -83,7 +84,7 @@ def _row_to_raster_metadata(row: Any) -> RasterMetadata:
         kind_raw = str(row.get("raster_kind") or row.get("kind"))
         crs = str(row["crs"])
         # Handle both old schema (min_lon, etc.) and new schema (bounds_wkt)
-        if "bounds_wkt" in row.keys() and row.get("bounds_wkt") is not None:
+        if "bounds_wkt" in row and row.get("bounds_wkt") is not None:
             bounds_wkt = str(row["bounds_wkt"])
         else:
             # Construct WKT from bounding box coordinates
@@ -104,10 +105,10 @@ def _row_to_raster_metadata(row: Any) -> RasterMetadata:
         resolution_y = float(row["resolution_y"])
         width = int(row["width"])
         height = int(row["height"])
-        tags = str(row.get("tags") or "") if "tags" in row.keys() else ""
-        description = str(row.get("description") or "") if "description" in row.keys() else ""
-        upload_date: Optional[datetime] = row.get("created_at") or row.get("upload_date")
-        updated_at: Optional[datetime] = row.get("updated_at")
+        tags = str(row.get("tags") or "") if "tags" in row else ""
+        description = str(row.get("description") or "") if "description" in row else ""
+        upload_date: datetime | None = row.get("created_at") or row.get("upload_date")
+        updated_at: datetime | None = row.get("updated_at")
     else:
         # SQLAlchemy ORM RasterAsset
         raster_id = str(getattr(row, "raster_id", None) or getattr(row, "id", None))
@@ -116,7 +117,7 @@ def _row_to_raster_metadata(row: Any) -> RasterMetadata:
         kind_raw = str(getattr(row, "kind", None) or getattr(row, "raster_kind", None))
         crs = str(row.crs)
         # Reconstruct WKT bounds from database columns
-        if hasattr(row, "bounds_wkt") and getattr(row, "bounds_wkt") is not None:
+        if hasattr(row, "bounds_wkt") and row.bounds_wkt is not None:
             bounds_wkt = str(row.bounds_wkt)
         else:
             min_lon = float(row.min_lon)
@@ -196,7 +197,7 @@ class RasterRepository:
 
     # ------------------------------------------------------------------ Read operations ------------------------------------------------------------------
 
-    def find_by_id(self, raster_id: str) -> Optional[RasterMetadata]:
+    def find_by_id(self, raster_id: str) -> RasterMetadata | None:
         """Return the raster with the given UUID, or None if not found.
 
         Uses a parameterized equality filter — no string interpolation.
@@ -540,17 +541,15 @@ class RasterRepository:
             logger.info("insert_metadata: inserted raster %s (%s)", raster_id, metadata.file_name)
             return _row_to_raster_metadata(asset)
         except Exception as exc:
-            try:
+            with contextlib.suppress(Exception):
                 self._session.rollback()
-            except Exception:
-                pass
             raise RuntimeError(f"insert_metadata failed: {exc}") from exc
 
     def update_metadata(
         self,
         raster_id: str,
         metadata: RasterMetadata,
-    ) -> Optional[RasterMetadata]:
+    ) -> RasterMetadata | None:
         """Update an existing raster metadata record.
 
         Only the mutable fields are updated: ``crs``, ``bbox``, ``resolution_x``,
@@ -599,10 +598,8 @@ class RasterRepository:
             logger.info("update_metadata: updated raster %s", raster_id)
             return _row_to_raster_metadata(asset)
         except Exception as exc:
-            try:
+            with contextlib.suppress(Exception):
                 self._session.rollback()
-            except Exception:
-                pass
             raise RuntimeError(f"update_metadata failed: {exc}") from exc
 
     # ------------------------------------------------------------------ Private helpers ------------------------------------------------------------------
@@ -665,7 +662,7 @@ class AsyncRasterRepository:
 
     # ------------------------------------------------------------------ Read operations ------------------------------------------------------------------
 
-    async def find_by_id(self, raster_id: str) -> Optional[RasterMetadata]:
+    async def find_by_id(self, raster_id: str) -> RasterMetadata | None:
         """Return the raster with the given UUID, or None if not found.
 
         Args:
@@ -841,7 +838,7 @@ class AsyncRasterRepository:
         self,
         raster_id: str,
         metadata: RasterMetadata,
-    ) -> Optional[RasterMetadata]:
+    ) -> RasterMetadata | None:
         """Update an existing raster metadata record.
 
         Only mutable fields are updated: ``crs``, ``bbox``, ``resolution_x``,
@@ -896,4 +893,4 @@ class AsyncRasterRepository:
             raise RuntimeError(f"update_metadata failed: {exc}") from exc
 
 
-__all__ = ["RasterRepository", "AsyncRasterRepository"]
+__all__ = ["AsyncRasterRepository", "RasterRepository"]

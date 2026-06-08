@@ -1,13 +1,12 @@
 from __future__ import annotations
 
+import logging
 import platform
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
-from pathlib import Path
 
 import httpx
-
-import logging
 
 from src_new.shared.config import settings
 

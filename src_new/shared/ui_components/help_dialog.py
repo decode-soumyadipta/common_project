@@ -6,16 +6,18 @@ and a concise user guide, eliminating web browser redirects.
 from __future__ import annotations
 
 import logging
+
 from qtpy.QtCore import Qt
 from qtpy.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QLabel,
-    QVBoxLayout,
     QTabWidget,
-    QWidget,
     QTextBrowser,
+    QVBoxLayout,
+    QWidget,
 )
+
 from src_new.shared.config import settings
 
 logger = logging.getLogger(__name__)

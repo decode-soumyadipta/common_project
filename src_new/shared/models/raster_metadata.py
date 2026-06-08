@@ -13,15 +13,14 @@ Requirement 12.4: All services import shared models rather than duplicating logi
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
-from typing import Optional
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
 from src_new.shared.models.bounding_box import BoundingBox
 
 
-class RasterKind(str, Enum):
+class RasterKind(StrEnum):
     """Supported raster source categories.
 
     Mirrors ``platform_core.db.models.RasterKind`` so that shared models
@@ -98,19 +97,19 @@ class RasterMetadata(BaseModel):
         gt=0,
         description="Raster height in pixels.",
     )
-    tags: Optional[str] = Field(
+    tags: str | None = Field(
         default="",
         description="Comma-separated user-supplied metadata tags.",
     )
-    description: Optional[str] = Field(
+    description: str | None = Field(
         default="",
         description="Free-text description of the asset.",
     )
-    upload_date: Optional[datetime] = Field(
+    upload_date: datetime | None = Field(
         default=None,
         description="UTC timestamp when the raster was ingested. None if not yet set.",
     )
-    updated_at: Optional[datetime] = Field(
+    updated_at: datetime | None = Field(
         default=None,
         description="UTC timestamp of the last metadata update.",
     )

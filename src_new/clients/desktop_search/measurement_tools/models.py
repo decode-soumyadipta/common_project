@@ -8,7 +8,6 @@ This module defines dataclasses for various measurement types including:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -27,8 +26,8 @@ class DistanceMeasurement:
     distance_m: float
     azimuth_fwd_deg: float
     azimuth_back_deg: float
-    dz_m: Optional[float]
-    distance_3d_m: Optional[float]
+    dz_m: float | None
+    distance_3d_m: float | None
 
 
 @dataclass
@@ -47,5 +46,5 @@ class PolygonAreaMeasurement:
     planimetric_area_m2: float
     perimeter_m: float
     compactness_index: float
-    surface_area_m2: Optional[float]
-    void_fraction: Optional[float]
+    surface_area_m2: float | None
+    void_fraction: float | None

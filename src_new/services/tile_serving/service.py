@@ -29,11 +29,11 @@ import time
 
 from fastapi import FastAPI, Request
 
+from src_new.services.tile_serving.tile_endpoints import router as tile_router
+from src_new.services.tile_serving.titiler_config import create_titiler_app
 from src_new.shared.auth.lan_security import LANSecurityMiddleware, get_bind_host
 from src_new.shared.config import settings
 from src_new.shared.utils.logging_config import configure_logging
-from src_new.services.tile_serving.tile_endpoints import router as tile_router
-from src_new.services.tile_serving.titiler_config import create_titiler_app
 
 # --------------------------------------------------------------------------- Logging ---------------------------------------------------------------------------
 configure_logging()

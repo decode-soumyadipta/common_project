@@ -20,7 +20,6 @@ from src_new.shared.models.query_result import QueryResult
 from src_new.shared.models.raster_metadata import RasterKind, RasterMetadata
 from src_new.shared.models.tile_request import TileRequest
 
-
 # ============================================================================= BoundingBox Tests =============================================================================
 
 class TestBoundingBox:

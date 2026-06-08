@@ -25,13 +25,14 @@ from __future__ import annotations
 import logging
 from collections.abc import Generator
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 from fastapi import Depends
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
-from src_new.shared.config import Settings, settings as _default_settings
+from src_new.shared.config import Settings
+from src_new.shared.config import settings as _default_settings
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +167,7 @@ def get_metadata_extractor():
 # --------------------------------------------------------------------------- FastAPI dependency: format handler dispatch ---------------------------------------------------------------------------
 
 
-def get_format_handler(file_extension: str) -> Optional[object]:
+def get_format_handler(file_extension: str) -> object | None:
     """Return the appropriate format handler module for a given file extension.
 
     Dispatches to the correct handler based on the file extension:
@@ -222,11 +223,11 @@ DbSession = Annotated[Session, Depends(get_db)]
 AppSettings = Annotated[Settings, Depends(get_settings)]
 
 __all__ = [
-    "get_db",
-    "get_settings",
-    "get_metadata_extractor",
-    "get_format_handler",
-    "get_data_root",
-    "DbSession",
     "AppSettings",
+    "DbSession",
+    "get_data_root",
+    "get_db",
+    "get_format_handler",
+    "get_metadata_extractor",
+    "get_settings",
 ]

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": [
+    "src_new/clients/desktop_search/web_assets/modules/comparator/pane_sync.js",
+    "src_new/clients/desktop_search/web_assets/modules/map_cesium/scene_bootstrap.js",
+    "src_new/clients/desktop_search/web_assets/modules/bridge/core.js",
+    "src_new/clients/desktop_search/web_assets/bridge.js"
+  ],
+  "project": ["src_new/**/*.js!"],
+  "ignore": [
+    "**/vendor/**",
+    "node_modules/**"
+  ],
+  "ignoreDependencies": [
+    "cesium"
+  ],
+  "ignoreExportsUsedInFile": true
+}

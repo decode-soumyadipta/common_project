@@ -364,7 +364,7 @@ class AnnotationCoordinator:
 
         # Keep orientation logic for export
         if polygon_points[0] != polygon_points[-1]:
-            polygon_points = polygon_points + [polygon_points[0]]
+            polygon_points = [*polygon_points, polygon_points[0]]
         lon_c = sum(p[0] for p in polygon_points) / len(polygon_points)
         lat_c = sum(p[1] for p in polygon_points) / len(polygon_points)
         epsg = c._utm_epsg_for_lon_lat(lon_c, lat_c)

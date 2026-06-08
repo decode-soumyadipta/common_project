@@ -19,9 +19,7 @@ import logging
 import logging.handlers
 import os
 import sys
-from datetime import datetime, timezone
-from typing import Optional
-
+from datetime import UTC, datetime
 
 # --------------------------------------------------------------------------- JSON formatter for structured logging ---------------------------------------------------------------------------
 
@@ -35,7 +33,7 @@ class _JsonFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         payload: dict = {
-            "timestamp": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+            "timestamp": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
@@ -63,9 +61,9 @@ _DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
 def configure_logging(
-    level: Optional[str] = None,
-    log_format: Optional[str] = None,
-    output_path: Optional[str] = None,
+    level: str | None = None,
+    log_format: str | None = None,
+    output_path: str | None = None,
     max_bytes: int = 50 * 1024 * 1024,  # 50 MB per file
     backup_count: int = 5,
 ) -> None:
@@ -160,7 +158,7 @@ def get_service_logger(service_name: str) -> logging.Logger:
 
 
 __all__ = [
-    "configure_logging",
     "configure_desktop_logging",
+    "configure_logging",
     "get_service_logger",
 ]

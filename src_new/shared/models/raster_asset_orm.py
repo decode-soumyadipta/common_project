@@ -72,6 +72,7 @@ class RasterAsset(Base):
 def migrate_database_schema(engine) -> None:
     """Check if the database schema requires migration and add missing columns dynamically."""
     import logging
+
     from sqlalchemy import inspect, text
 
     logger = logging.getLogger(__name__)

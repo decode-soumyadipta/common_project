@@ -15,9 +15,8 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
 
 from qtpy.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, Signal
 from qtpy.QtWidgets import (
@@ -84,7 +83,7 @@ class SingleFileUploadTask(QRunnable):
     def run(self) -> None:
         """Execute the upload with one retry on failure."""
         max_attempts = 2
-        last_error: Optional[Exception] = None
+        last_error: Exception | None = None
 
         for attempt in range(1, max_attempts + 1):
             try:
@@ -758,7 +757,7 @@ class MonitoringPanel(QWidget):
             normalized = raw_value.replace("Z", "+00:00")
             parsed = datetime.fromisoformat(normalized)
             if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
+                parsed = parsed.replace(tzinfo=UTC)
             ist = parsed.astimezone(timezone(timedelta(hours=5, minutes=30)))
             return ist.strftime("%d/%m/%Y %H:%M")
         except Exception:

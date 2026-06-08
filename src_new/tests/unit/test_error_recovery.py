@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-import numpy as np
-from pathlib import Path
 from contextlib import contextmanager
+from pathlib import Path
+from unittest.mock import MagicMock
+
+import numpy as np
+
 
 def test_cog_converter_lock():
     from src_new.services.ingestion.gdal_pipelines.cog_converter import CogConverter
@@ -13,8 +15,9 @@ def test_cog_converter_lock():
     assert isinstance(CogConverter._lock, Semaphore)
 
 def test_tile_endpoint_reproject_error_fallback(monkeypatch):
-    import src_new.services.tile_serving.tile_endpoints as tile_endpoints
     import rasterio
+
+    import src_new.services.tile_serving.tile_endpoints as tile_endpoints
     
     # Mock dependencies
     monkeypatch.setattr(tile_endpoints, "_RASTERIO_AVAILABLE", True)
@@ -65,8 +68,9 @@ def test_tile_endpoint_reproject_error_fallback(monkeypatch):
     assert len(reproject_calls) == 3
 
 def test_preview_endpoint_read_error_fallback(monkeypatch):
-    import src_new.services.tile_serving.tile_endpoints as tile_endpoints
     import rasterio
+
+    import src_new.services.tile_serving.tile_endpoints as tile_endpoints
     
     monkeypatch.setattr(tile_endpoints, "_RASTERIO_AVAILABLE", True)
     
@@ -95,10 +99,12 @@ def test_preview_endpoint_read_error_fallback(monkeypatch):
     assert len(read_calls) == 3
 
 def test_elevation_profile_sample_error_fallback(monkeypatch):
+    import os
+
+    import rasterio
+
     import src_new.services.query.api.routes as query_routes
     from src_new.services.query.api.routes import ElevationProfilePoint
-    import rasterio
-    import os
     
     mock_src = MagicMock()
     mock_src.crs = "EPSG:32644"
@@ -133,6 +139,7 @@ def test_elevation_profile_sample_error_fallback(monkeypatch):
 
 def test_global_exception_shield(monkeypatch):
     import sys
+
     from src_new.clients.desktop_search.main import global_excepthook
     
     # Mock logger
@@ -164,7 +171,7 @@ def test_global_exception_shield(monkeypatch):
         
     # Verify logged critical message
     mock_logger.critical.assert_called_once()
-    args, kwargs = mock_logger.critical.call_args
+    args, _kwargs = mock_logger.critical.call_args
     assert "Oops, something went wrong!" in args[0]
     
     # Verify QMessageBox was NOT called because we are on a worker thread

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import platform
@@ -63,7 +64,7 @@ class ApiServerManager:
             return (not stale), stale
         except httpx.HTTPError:
             return False, False
-        except Exception:  # noqa: BLE001
+        except Exception:
             return False, False
 
     def ensure_running(self) -> bool:
@@ -124,7 +125,7 @@ class ApiServerManager:
                 text=True,
                 check=False,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             self._logger.warning("Failed to inspect port %s listeners: %s", port, exc)
             return
 
@@ -142,7 +143,7 @@ class ApiServerManager:
                 )
             except ProcessLookupError:
                 continue
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 self._logger.warning(
                     "Failed to terminate pid=%s on port=%s: %s", pid, port, exc
                 )
@@ -156,7 +157,7 @@ class ApiServerManager:
                 text=True,
                 check=False,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             self._logger.warning(
                 "Failed to inspect port %s listeners on Windows: %s", port, exc
             )
@@ -173,10 +174,8 @@ class ApiServerManager:
                 "LISTENING",
                 "ESTABLISHED",
             }:
-                try:
+                with contextlib.suppress(ValueError):
                     pids.add(int(parts[-1]))
-                except ValueError:
-                    pass
 
         for pid in pids:
             try:
@@ -188,7 +187,7 @@ class ApiServerManager:
                 self._logger.warning(
                     "Terminated stale API process pid=%s on port=%s", pid, port
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 self._logger.warning(
                     "Failed to terminate pid=%s on port=%s: %s", pid, port, exc
                 )

@@ -184,13 +184,13 @@ def register_exception_handlers(app: FastAPI) -> None:
 
 
 __all__ = [
+    "DatabaseError",
+    "FileFormatError",
     # Custom exceptions
     "GeospatialServiceError",
-    "RasterNotFoundError",
     "IngestJobNotFoundError",
-    "FileFormatError",
     "MetadataExtractionError",
-    "DatabaseError",
+    "RasterNotFoundError",
     "UnauthorizedAccessError",
     # Registration
     "register_exception_handlers",

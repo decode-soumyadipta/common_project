@@ -12,13 +12,14 @@ This test validates the complete data flow:
 Requirements: 14.1, 14.2, 14.3, 14.4, 14.5, 19.4
 """
 
-import pytest
-from pathlib import Path
-from httpx import AsyncClient
 import io
+import socket
+from pathlib import Path
+
+import pytest
+from httpx import AsyncClient
 from PIL import Image
 
-import socket
 
 def _are_services_running() -> bool:
     for port in (8001, 8002, 8003):
@@ -98,6 +99,7 @@ class TestFullWorkflow:
             actual_db = db_session
         else:
             from sqlalchemy import create_engine, text
+
             from src_new.shared.config import settings
             engine = create_engine(settings.database_url)
             actual_db = engine.connect()

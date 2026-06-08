@@ -7,8 +7,6 @@ Requirement 12.1: Shared Pydantic data models.
 """
 from __future__ import annotations
 
-from typing import Optional
-
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -34,7 +32,7 @@ class CoordinateReferenceSystem(BaseModel):
             "(e.g. 4326 for WGS 84, 3857 for Web Mercator)."
         ),
     )
-    wkt: Optional[str] = Field(
+    wkt: str | None = Field(
         default=None,
         description=(
             "Full Well-Known Text (WKT2) representation of the CRS. "
@@ -54,7 +52,7 @@ class CoordinateReferenceSystem(BaseModel):
 
     @field_validator("wkt")
     @classmethod
-    def _validate_wkt_not_empty(cls, v: Optional[str]) -> Optional[str]:
+    def _validate_wkt_not_empty(cls, v: str | None) -> str | None:
         """If provided, WKT must not be an empty or whitespace-only string."""
         if v is not None and not v.strip():
             raise ValueError("wkt must not be an empty string when provided.")
@@ -68,7 +66,7 @@ class CoordinateReferenceSystem(BaseModel):
         return f"EPSG:{self.epsg_code}"
 
     @classmethod
-    def from_authority_string(cls, authority: str) -> "CoordinateReferenceSystem":
+    def from_authority_string(cls, authority: str) -> CoordinateReferenceSystem:
         """Parse an 'EPSG:<code>' string into a CoordinateReferenceSystem.
 
         Args:
