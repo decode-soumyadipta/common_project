@@ -14,7 +14,7 @@
       tileErrorSeen.add(key);
       const currentCount = (layerErrorCounts.get(name) || 0) + 1;
       layerErrorCounts.set(name, currentCount);
-      const msg = error && error.message ? String(error.message) : "tile request failed";
+      const msg = error?.message ? String(error.message) : "tile request failed";
       
       
       function resolveTileTemplateUrl(template, providerRef, errorRef) {
@@ -25,7 +25,7 @@
         let yValue = errorRef.y;
         if (url.indexOf("{reverseY}") >= 0) {
           try {
-            if (providerRef && providerRef.tilingScheme && typeof providerRef.tilingScheme.getNumberOfYTilesAtLevel === "function") {
+            if (providerRef?.tilingScheme && typeof providerRef.tilingScheme.getNumberOfYTilesAtLevel === "function") {
               const total = providerRef.tilingScheme.getNumberOfYTilesAtLevel(errorRef.level);
               yValue = total - errorRef.y - 1;
             }
@@ -42,7 +42,7 @@
 
       let templateUrlForError = "";
       try {
-        templateUrlForError = String(provider && provider.url ? provider.url : "");
+        templateUrlForError = String(provider?.url ? provider.url : "");
       } catch (_err) {
         templateUrlForError = "";
       }
@@ -122,9 +122,10 @@
     }
   }
 
+// TODO: Refactor this function to reduce its Cognitive Complexity from 17 to the 15 allowed.
   function clearDemTerrainMode() {
     if (!viewer) return;
-    const previousDemLayerKey = activeDemContext && activeDemContext.layerKey ? activeDemContext.layerKey : null;
+    const previousDemLayerKey = activeDemContext?.layerKey ? activeDemContext.layerKey : null;
     if (activeDemDrapeLayer) {
       viewer.imageryLayers.remove(activeDemDrapeLayer, false);
       
@@ -165,15 +166,15 @@
     if (defaultEarthLayer) {
       defaultEarthLayer.show = true;
     }
-    if (viewer && viewer.scene && viewer.scene.globe) {
+    if (viewer?.scene && viewer.scene.globe) {
       viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#1a2535");
       // Restore highest quality base map screen space error on ellipsoid
       viewer.scene.globe.maximumScreenSpaceError = 0.8;
     }
     if (typeof comparatorViewers !== "undefined" && Array.isArray(comparatorViewers)) {
       comparatorViewers.forEach(v => {
-        if (v && v.__defaultEarthLayer) v.__defaultEarthLayer.show = true;
-        if (v && v.scene && v.scene.globe) v.scene.globe.baseColor = Cesium.Color.fromCssColorString("#1a2535");
+        if (v?.__defaultEarthLayer) v.__defaultEarthLayer.show = true;
+        if (v?.scene && v.scene.globe) v.scene.globe.baseColor = Cesium.Color.fromCssColorString("#1a2535");
       });
     }
     applyDefaultSceneSettings();
@@ -181,7 +182,30 @@
     setSceneModeControlEnabled(true);
   }
 
+  function clearManagedPointCloudLayers(exceptLayerKey) {
+    if (!viewer) {
+      managedPointCloudLayers.clear();
+      return;
+    }
+    for (const [layerKey, tileset] of Array.from(managedPointCloudLayers.entries())) {
+      if (exceptLayerKey && layerKey === exceptLayerKey) {
+        continue;
+      }
+      if (tileset) {
+        try {
+          viewer.scene.primitives.remove(tileset);
+        } catch (e) {
+          log("error", "Error removing point cloud primitive: " + e);
+        }
+      }
+      managedPointCloudLayers.delete(layerKey);
+      layerDefinitions.delete(layerKey);
+      layerVisibilityState.delete(layerKey);
+    }
+  }
+
   function clearManagedImageryLayers(exceptLayerKey) {
+    clearManagedPointCloudLayers(exceptLayerKey);
     if (!viewer) {
       managedImageryLayers.clear();
       layerDefinitions.clear();
@@ -196,7 +220,7 @@
       
       // CRITICAL FIX: Don't remove DEM layers when clearing imagery layers
       // DEM drape and hillshade layers should only be removed via clearDemTerrainMode
-      if (activeDemContext && activeDemContext.layerKey === layerKey) {
+      if (activeDemContext?.layerKey === layerKey) {
         log("debug", "clearManagedImageryLayers: Preserving DEM layer " + layerKey);
         continue;
       }
@@ -291,7 +315,7 @@
     if (!viewer || typeof setSceneModeInternal !== "function") {
       return;
     }
-    const demVisible = !!(activeDemContext && activeDemContext.visible !== false);
+    const demVisible = !!(activeDemContext?.visible !== false);
     if (demVisible) {
       if (currentSceneMode !== "3d") {
         setSceneModeInternal("3d");
@@ -316,6 +340,7 @@
     }
     requestSceneRender();
   }
+// TODO: Refactor this function to reduce its Cognitive Complexity from 78 to the 15 allowed.
 
   function setLayerVisibilityByKey(layerKey, visible) {
     console.log(`DEBUG: setLayerVisibilityByKey called: layerKey=${layerKey}, visible=${visible}`);
@@ -329,7 +354,19 @@
     console.log(`DEBUG: Updated layerVisibilityState for ${normalizedKey} = ${Boolean(visible)}`);
 
     const definition = layerDefinitions.get(normalizedKey);
-    const isDem = (definition && definition.type === "dem") || (activeDemContext && activeDemContext.layerKey === normalizedKey);
+    const isDem = (definition?.type === "dem") || (activeDemContext?.layerKey === normalizedKey);
+    const isPointCloud = (definition?.type === "point_cloud");
+
+    if (isPointCloud) {
+      const tileset = managedPointCloudLayers.get(normalizedKey);
+      if (tileset) {
+        const shouldShow = Boolean(visible);
+        tileset.show = shouldShow;
+        requestSceneRender();
+        console.log(`DEBUG: Point cloud layer visibility updated for ${normalizedKey} to ${shouldShow}`);
+        return true;
+      }
+    }
 
     if (isDem) {
       const shouldShow = Boolean(visible);
@@ -356,7 +393,7 @@
       
       if (shouldShow) {
         // If there's an active DEM and it's different, hide it first
-        if (activeDemContext && activeDemContext.layerKey !== normalizedKey) {
+        if (activeDemContext?.layerKey !== normalizedKey) {
           console.log(`DEBUG: Deactivating previous active DEM ${activeDemContext.layerKey}`);
           const prevKey = activeDemContext.layerKey;
           layerVisibilityState.set(prevKey, false);
@@ -388,7 +425,7 @@
         applyDemLayer();
         
       } else {
-        if (activeDemContext && activeDemContext.layerKey === normalizedKey) {
+        if (activeDemContext?.layerKey === normalizedKey) {
           activeDemContext.visible = false;
           hideDemColorbar();
           setSceneModeControlEnabled(true);

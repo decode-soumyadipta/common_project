@@ -58,6 +58,7 @@
           }
         });
       },
+// TODO: Refactor this function to reduce its Cognitive Complexity from 35 to the 15 allowed.
       addIconAnnotation: function (lon, lat, iconName, text, optHeight, animate) {
         if (!viewer) return;
         annotationCounter += 1;
@@ -122,9 +123,9 @@
                 animComplete = true;
                 setTimeout(() => {
                   iconEntity.position = anchorPosition;
-                  iconEntity.billboard.heightReference = (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND;
+                  iconEntity.billboard.heightReference = (viewer?.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND;
                   deleteEntity.position = anchorPosition;
-                  deleteEntity.billboard.heightReference = (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND;
+                  deleteEntity.billboard.heightReference = (viewer?.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND;
                   if (typeof window.syncAnnotationsToPython === "function") {
                     window.syncAnnotationsToPython();
                   }
@@ -191,7 +192,7 @@
               }, false),
               horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
               verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-              heightReference: (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
+              heightReference: (viewer?.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
               scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.5),
   
             },
@@ -225,7 +226,7 @@
               }, false),
               horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
               verticalOrigin: Cesium.VerticalOrigin.CENTER,
-              heightReference: (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
+              heightReference: (viewer?.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
               scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.5),
   
             },
@@ -329,7 +330,7 @@
     labelEntity.label.text = cleaned;
 
     const deleteEntity = labelEntity._deleteEntity;
-    if (deleteEntity && deleteEntity.billboard && editEntity.billboard) {
+    if (deleteEntity?.billboard && editEntity.billboard) {
       const font = labelEntity.label.font ? (typeof labelEntity.label.font.getValue === "function" ? labelEntity.label.font.getValue() : labelEntity.label.font) : null;
       const textWidth = measureTextWidth(cleaned, font);
       
@@ -363,13 +364,13 @@
       return;
     }
     const picked = viewer.scene.pick(screenPosition);
-    const nextHover = picked && picked.id && picked.id._annotationRole === "edit" ? picked.id : null;
+    const nextHover = picked?.id && picked.id._annotationRole === "edit" ? picked.id : null;
     if (hoveredAnnotationEditEntity !== nextHover) {
       if (hoveredAnnotationEditEntity) setAnnotationEditIconHoverState(hoveredAnnotationEditEntity, false);
       hoveredAnnotationEditEntity = nextHover;
       if (hoveredAnnotationEditEntity) setAnnotationEditIconHoverState(hoveredAnnotationEditEntity, true);
     }
-    const nextDelHover = picked && picked.id && picked.id._annotationRole === "delete" ? picked.id : null;
+    const nextDelHover = picked?.id && picked.id._annotationRole === "delete" ? picked.id : null;
     if (hoveredAnnotationDeleteEntity !== nextDelHover) {
       if (hoveredAnnotationDeleteEntity) setAnnotationDeleteIconHoverState(hoveredAnnotationDeleteEntity, false);
       hoveredAnnotationDeleteEntity = nextDelHover;

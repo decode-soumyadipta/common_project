@@ -427,8 +427,8 @@ class TestRasterMetadata:
             )
         assert "file_name" in str(exc_info.value)
 
-    def test_invalid_zero_resolution(self):
-        """Test that zero or negative resolution is rejected."""
+    def test_invalid_negative_resolution(self):
+        """Test that negative resolution is rejected."""
         bbox = BoundingBox(
             min_lon=72.0,
             min_lat=18.0,
@@ -443,7 +443,7 @@ class TestRasterMetadata:
                 kind=RasterKind.GEOTIFF,
                 crs="EPSG:4326",
                 bbox=bbox,
-                resolution_x=0.0,
+                resolution_x=-0.1,
                 resolution_y=0.5,
                 width=1000,
                 height=1000
@@ -482,7 +482,7 @@ class TestRasterMetadata:
             max_lat=19.0
         )
         
-        for kind in [RasterKind.GEOTIFF, RasterKind.JPEG2000, RasterKind.MBTILES, RasterKind.DEM, RasterKind.UNKNOWN]:
+        for kind in [RasterKind.GEOTIFF, RasterKind.JPEG2000, RasterKind.MBTILES, RasterKind.DEM, RasterKind.POINT_CLOUD, RasterKind.UNKNOWN]:
             meta = RasterMetadata(
                 raster_id="test-123",
                 file_path="/data/test.tif",

@@ -58,7 +58,7 @@
 
       const targetViewer = getComparatorPaneViewer(targetPane);
       const paneState = getComparatorPaneVisual(targetPane);
-      const layerKey = targetViewer && targetViewer.__comparatorLayerKey ? targetViewer.__comparatorLayerKey : null;
+      const layerKey = targetViewer?.__comparatorLayerKey ? targetViewer.__comparatorLayerKey : null;
       const definition = layerKey ? layerDefinitions.get(layerKey) : null;
       if (!targetViewer || !paneState || !definition || String(definition.type || "") !== "dem") {
         return;
@@ -211,8 +211,9 @@
       v.camera.percentageChanged = 0.001;
       
       // Dynamic 2D frustum width clamp for comparator viewers
+// TODO: Refactor this function to reduce its Cognitive Complexity from 35 to the 15 allowed.
       v.scene.preRender.addEventListener(function () {
-        if (v && v.scene && v.scene.mode === Cesium.SceneMode.SCENE2D) {
+        if (v?.scene && v.scene.mode === Cesium.SceneMode.SCENE2D) {
           const camera = v.camera;
           if (camera.frustum) {
             let currentWidth = undefined;
@@ -228,7 +229,8 @@
               const MIN_2D_LIMIT = 1.0;
               const MAX_2D_LIMIT = 15000000.0;
               if (currentWidth < MIN_2D_LIMIT || currentWidth > MAX_2D_LIMIT || !Number.isFinite(currentWidth)) {
-                let targetWidth = currentWidth;
+                // S1854: value always overwritten below, no initial assignment needed
+                let targetWidth;
                 if (currentWidth > MAX_2D_LIMIT) {
                   targetWidth = MAX_2D_LIMIT;
                 } else {
@@ -275,14 +277,14 @@
   function getSwipeCandidateLayers() {
     const visibleLayers = [];
     for (const layer of managedImageryLayers.values()) {
-      if (layer && layer.show) {
+      if (layer?.show) {
         visibleLayers.push(layer);
       }
     }
-    if (activeDemDrapeLayer && activeDemDrapeLayer.show) {
+    if (activeDemDrapeLayer?.show) {
       visibleLayers.push(activeDemDrapeLayer);
     }
-    if (activeDemHillshadeLayer && activeDemHillshadeLayer.show && activeDemHillshadeLayer.alpha > 0.01) {
+    if (activeDemHillshadeLayer?.show && activeDemHillshadeLayer.alpha > 0.01) {
       visibleLayers.push(activeDemHillshadeLayer);
     }
     return visibleLayers;

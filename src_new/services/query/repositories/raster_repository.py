@@ -70,6 +70,8 @@ def _bbox_from_wkt(wkt: str) -> BoundingBox:
     )
 
 
+# TODO: Refactor for cognitive complexity
+# TODO: Refactor for cognitive complexity
 def _row_to_raster_metadata(row: Any) -> RasterMetadata:
     """Convert a database row (dict-like or ORM object) to a RasterMetadata model.
 

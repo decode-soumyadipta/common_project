@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 import platform
 import re
@@ -220,8 +221,42 @@ class RenderingCoordinator:
         )
         return query
 
+    def _is_point_cloud_asset(self, asset: dict) -> bool:
+        """Return True when the asset is a LAS/LAZ point cloud."""
+        kind = str(asset.get("kind", "")).lower()
+        ext = Path(str(asset.get("file_path", "") or asset.get("file_name", ""))).suffix.lower()
+        return kind == "point_cloud" or ext in (".las", ".laz")
+
+    def build_pointcloud_tileset_url(self, asset: dict) -> str:
+        """Build the 3D Tiles tileset.json URL for a point-cloud asset.
+
+        Uses the /pointcloud/tileset/{b64}/tileset.json endpoint that the
+        tile service exposes.  The file path is base64-encoded so it is safe
+        to embed in a URL segment.
+        """
+        c = self._controller
+        file_path = str(asset.get("file_path", ""))
+        b64 = base64.urlsafe_b64encode(file_path.encode("utf-8")).rstrip(b"=").decode("ascii")
+        base = str(c.api.tile_service_base_url).rstrip("/")
+        url = f"{base}/pointcloud/tileset/{b64}/tileset.json"
+        self._logger.info("Built 3D Tiles URL for %s: %s", asset.get("file_name"), url)
+        return url
+
     def layer_options(self, asset: dict, bounds: dict[str, float] | None) -> dict:
         """Build layer options including bounds, zoom levels, and render query."""
+        # Point clouds bypass TiTiler entirely — return options with no tilejson query
+        if self._is_point_cloud_asset(asset):
+            options: dict = {"bounds": bounds, "is_dem": False, "is_point_cloud": True}
+            self._logger.info(
+                "Point cloud layer options for %s (skipping TiTiler tilejson)",
+                asset.get("file_name"),
+            )
+            return options
+
+        return self._layer_options_raster(asset, bounds)
+
+    def _layer_options_raster(self, asset: dict, bounds: dict[str, float] | None) -> dict:
+        """Build raster layer options (TiTiler path)."""
         c = self._controller
         options: dict = {"bounds": bounds, "is_dem": c._is_dem_asset(asset)}
         try:
@@ -271,6 +306,11 @@ class RenderingCoordinator:
     def add_layer(self, asset: dict, options: dict) -> bool:
         """Add layer with event-driven architecture and server-side optimization."""
         c = self._controller
+
+        # ---- Point-cloud fast path: skip TiTiler entirely ----
+        if self._is_point_cloud_asset(asset) or options.get("is_point_cloud"):
+            return self.add_point_cloud_layer(asset, options)
+
         tile_url = str(asset.get("tile_url") or "")
 
         # Event-driven optimization: Let server handle URL normalization
@@ -301,6 +341,43 @@ class RenderingCoordinator:
         return self.add_imagery_layer_event_driven(
             asset, options, from_search_results
         )
+
+    def add_point_cloud_layer(self, asset: dict, options: dict) -> bool:
+        """Render a LAS/LAZ point cloud on the Cesium globe as a 3D tileset layer."""
+        c = self._controller
+        file_path = asset.get("file_path")
+        if not file_path:
+            c.panel.log("Point cloud file path is missing.")
+            return False
+
+        file_name = asset.get("file_name", Path(file_path).name)
+        self._logger.info("Adding Cesium point cloud layer name=%s file_path=%s", file_name, file_path)
+
+        # Ensure we are on the Cesium map
+        window = c.panel.window()
+        if hasattr(window, "set_canvas_index"):
+            window.set_canvas_index(0)
+
+        # Build tileset URL using the b64 tile service endpoint
+        tileset_url = self.build_pointcloud_tileset_url(asset)
+
+        # Call Javascript to load the point cloud as a 3D Tileset in Cesium
+        js_options = {
+            "bounds": options.get("bounds"),
+            "layer_key": options.get("layer_key") or file_path.replace("\\", "/"),
+            "replace_existing": options.get("replace_existing") is not False
+        }
+        c._run_js_call("addPointCloudLayer", file_name, tileset_url, js_options)
+
+        c.panel.log(f"Added point cloud layer: {file_name}")
+        return True
+
+    def update_canvas_view_stack(self) -> None:
+        """Switch canvas stack index based on whether any point cloud layers are active/visible."""
+        # Point clouds are now rendered inside Cesium (Index 0) by default to preserve geographic context,
+        # scale bar, measurements, and annotations.
+        # This function is now a no-op to prevent auto-switching stack index.
+        pass
 
     def get_server_optimized_tile_url(self, asset: dict, tile_url: str) -> str:
         """Adjust the tile URL for server-side delivery if needed."""

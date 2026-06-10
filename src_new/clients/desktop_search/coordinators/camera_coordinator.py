@@ -40,6 +40,7 @@ class CameraCoordinator:
 
             # Determine rendering mode based on asset type
             is_dem = kind in ["DEM", "ELEVATION"]
+            is_pc = kind in ["POINT_CLOUD", "POINT-CLOUD"] or str(asset.get("kind", "")).lower() == "point_cloud" or str(asset.get("file_name", "")).lower().endswith((".las", ".laz"))
 
             # Smart camera positioning
             if is_dem:
@@ -47,6 +48,11 @@ class CameraCoordinator:
                 pitch_degrees = -45  # Look down at 45 degrees
                 heading_degrees = 0
                 c.panel.log(f"Flying to DEM (3D view): {asset.get('file_name')}")
+            elif is_pc:
+                # For point clouds: 3D view with tilt to visualize point densities
+                pitch_degrees = -45  # Look down at 45 degrees
+                heading_degrees = 0
+                c.panel.log(f"Flying to point cloud (3D view): {asset.get('file_name')}")
             else:
                 # For imagery: 2D top-down view
                 pitch_degrees = -90  # Straight down
@@ -120,4 +126,4 @@ class CameraCoordinator:
         c = self._controller
         # Convert slider value (0-90) to pitch degrees (-90 to 0)
         pitch_degrees = -float(value)
-        c._run_js_call("setCameraPitch", pitch_degrees)
+        c._run_js_call("setPitch", pitch_degrees)

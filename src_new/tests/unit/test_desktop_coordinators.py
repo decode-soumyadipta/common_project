@@ -361,7 +361,7 @@ def test_desktop_controller_undo_redo_stack():
 
 def test_export_dialog_thread_retention(monkeypatch):
     from src_new.clients.desktop_search.coordinators.export_coordinator import (
-        ExportGeoTiffDialog,
+        ExportAssetDialog,
     )
     
     # Mock QDialog methods
@@ -369,7 +369,7 @@ def test_export_dialog_thread_retention(monkeypatch):
     monkeypatch.setattr("qtpy.QtWidgets.QDialog.style", lambda self: MagicMock())
     
     # Instantiate without calling init_ui
-    dialog = ExportGeoTiffDialog.__new__(ExportGeoTiffDialog)
+    dialog = ExportAssetDialog.__new__(ExportAssetDialog)
     dialog.assets = []
     dialog._resolve_source_path = None
     dialog.threads = {}
@@ -383,10 +383,10 @@ def test_export_dialog_thread_retention(monkeypatch):
     # Mock QFileDialog
     monkeypatch.setattr("qtpy.QtWidgets.QFileDialog.getSaveFileName", lambda *args, **kwargs: ("/path/to/dest.tif", "Filter"))
     
-    # Mock GeoTiffExportThread
+    # Mock AssetExportThread
     mock_thread = MagicMock()
     mock_thread_class = MagicMock(return_value=mock_thread)
-    monkeypatch.setattr("src_new.clients.desktop_search.coordinators.export_coordinator.GeoTiffExportThread", mock_thread_class)
+    monkeypatch.setattr("src_new.clients.desktop_search.coordinators.export_coordinator.AssetExportThread", mock_thread_class)
     
     # Mock Path exists
     monkeypatch.setattr("pathlib.Path.exists", lambda self: True)
@@ -487,6 +487,40 @@ def test_control_panel_search_calculate_all_visible_state():
     # Case 7: Mixed imagery and DEMs, imagery not all visible
     vis_map = {"/path/1": True, "/path/2": False, "/path/dem1": True, "/path/dem2": False}
     assert panel._calculate_all_visible_state(mixed_assets, vis_map) is False
+
+
+def test_rendering_coordinator_add_point_cloud_layer():
+    from src_new.clients.desktop_search.coordinators.rendering_coordinator import (
+        RenderingCoordinator,
+    )
+    mock_controller = MagicMock()
+    mock_window = MagicMock()
+    mock_controller.panel.window.return_value = mock_window
+    
+    coordinator = RenderingCoordinator(mock_controller)
+    
+    asset = {
+        "file_name": "NEONDSSampleLiDARPointCloud.las",
+        "file_path": "/path/to/NEONDSSampleLiDARPointCloud.las",
+        "kind": "point_cloud",
+    }
+    options = {
+        "bounds": [-120.0, 37.0, -119.0, 38.0],
+        "replace_existing": True,
+    }
+    
+    success = coordinator.add_layer(asset, options)
+    
+    assert success is True
+    # Verify the canvas index is set to 0 (Cesium Map)
+    mock_window.set_canvas_index.assert_called_once_with(0)
+    # Verify javascript call was run to add point cloud layer to Cesium globe
+    mock_controller._run_js_call.assert_called_once()
+    call_args = mock_controller._run_js_call.call_args[0]
+    assert call_args[0] == "addPointCloudLayer"
+    assert call_args[1] == "NEONDSSampleLiDARPointCloud.las"
+    assert "tileset.json" in call_args[2]
+
 
 
 

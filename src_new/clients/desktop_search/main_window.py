@@ -59,7 +59,6 @@ from src_new.clients.desktop_search.ui.overlays import (
     BusyOverlay,
     FlyThroughHeightSlider,
     FlyThroughTimelineBar,
-    LayerCompositorOverlay,
     MapOverlayControls,
 )
 from src_new.clients.desktop_search.web_page import LoggingWebEnginePage
@@ -277,7 +276,6 @@ class MainWindow(QMainWindow):
         "Elevation Profile",
     }
     TOGGLE_ACTIONS: set[str] = {
-        LAYER_COMPOSITOR_LITERAL,
         "Comparator",
         "Distance / Azimuth",
         "Elevation Profile",
@@ -291,7 +289,6 @@ class MainWindow(QMainWindow):
         (
             "visualization",
             (
-                (LAYER_COMPOSITOR_LITERAL, "layer_compositor"),
                 ("Comparator", "comparator"),
                 ("Fly Through", "fly_through"),
             ),
@@ -441,9 +438,20 @@ class MainWindow(QMainWindow):
             self._on_elevation_profile_close
         )
 
-        # ── Map column: web_view (top) | profile panel (bottom) ───────────
+        # ── QStackedWidget canvas_stack for switching between Cesium (web_view) and pyqtgraph (lidar_viewer) ──
+        from qtpy.QtWidgets import QStackedWidget
+
+        from src_new.clients.desktop_search.ui.lidar_viewer import LiDARViewerWidget
+
+        self.canvas_stack = QStackedWidget(self)
+        self.canvas_stack.addWidget(self.web_view)
+
+        self.lidar_viewer = LiDARViewerWidget(self, controller=None)
+        self.canvas_stack.addWidget(self.lidar_viewer)
+
+        # ── Map column: canvas_stack (top) | profile panel (bottom) ───────────
         self._map_v_splitter = QSplitter(Qt.Orientation.Vertical, self)
-        self._map_v_splitter.addWidget(self.web_view)
+        self._map_v_splitter.addWidget(self.canvas_stack)
         self._map_v_splitter.addWidget(self.elevation_profile_panel)
         self._map_v_splitter.setCollapsible(0, False)
         self._map_v_splitter.setCollapsible(1, True)
@@ -475,6 +483,7 @@ class MainWindow(QMainWindow):
             else None,
         )
         self.panel.api_client = self.controller.api
+        self.lidar_viewer.controller = self.controller
         self.controller.project_metadata_changed.connect(self.set_project_info)
         self._last_search_params = {}
 
@@ -482,7 +491,6 @@ class MainWindow(QMainWindow):
             self._create_menu_bar()
 
 
-        self.compositor_overlay = LayerCompositorOverlay(self, self.controller)
         self.map_overlay_controls = MapOverlayControls(self, self.controller)
         self.fly_through_timeline_bar = FlyThroughTimelineBar(self, self.controller)
         self.fly_through_height_slider = FlyThroughHeightSlider(self, self.controller)
@@ -567,6 +575,37 @@ class MainWindow(QMainWindow):
             self.profile.deleteLater()
             
         super().closeEvent(event)
+
+    def set_canvas_index(self, index: int) -> None:
+        """Switch the central stacked widget view and toggle floating overlays accordingly."""
+        if not hasattr(self, "canvas_stack"):
+            return
+            
+        self.canvas_stack.setCurrentIndex(index)
+        
+        if index == 1:
+            # Native 3D viewer active - hide Cesium floating overlay widgets
+            if hasattr(self, "map_overlay_controls") and self.map_overlay_controls:
+                self.map_overlay_controls.hide()
+            if hasattr(self, "fly_through_timeline_bar") and self.fly_through_timeline_bar:
+                self.fly_through_timeline_bar.hide()
+            if hasattr(self, "fly_through_height_slider") and self.fly_through_height_slider:
+                self.fly_through_height_slider.hide()
+        else:
+            # Cesium active - show/restore the default floating overlays
+            if hasattr(self, "controller") and self.controller:
+                self.controller._run_js_call("requestSceneRender")
+            if hasattr(self, "map_overlay_controls") and self.map_overlay_controls:
+                self.map_overlay_controls.show()
+                self.map_overlay_controls.update_position()
+            if hasattr(self, "fly_through_timeline_bar") and self.fly_through_timeline_bar:
+                if getattr(self.fly_through_timeline_bar, "_active", False):
+                    self.fly_through_timeline_bar.show()
+                    self.fly_through_timeline_bar.update_position()
+            if hasattr(self, "fly_through_height_slider") and self.fly_through_height_slider:
+                if getattr(self.fly_through_height_slider, "_active", False):
+                    self.fly_through_height_slider.show()
+                    self.fly_through_height_slider.update_position()
 
     @staticmethod
     def _ensure_cesium_assets(web_assets_dir: Path) -> None:
@@ -685,14 +724,15 @@ class MainWindow(QMainWindow):
         self._refresh_toolbar_action_state()
         if hasattr(self, "controller") and not visible:
             self.controller.on_toolbar_group_disabled("visualization")
-            if hasattr(self, "compositor_overlay"):
-                self.compositor_overlay.hide()
+            pass
 
     def _set_measurement_tools_visible(self, visible: bool) -> None:
         """Show or hide measurement tools in the toolbar.
 
         Args:
             visible: True to show tools, False to hide.
+# TODO: Refactor for cognitive complexity
+# TODO: Refactor for cognitive complexity
         """
         self._measurement_tools_enabled = bool(visible)
         self._refresh_toolbar_action_state()
@@ -723,7 +763,7 @@ class MainWindow(QMainWindow):
             # Update AOI polygon visibility context
             is_special = any(
                 self.toolbar_actions.get(label).isChecked() 
-                for label in ["Comparator", LAYER_COMPOSITOR_LITERAL] 
+                for label in ["Comparator"] 
                 if self.toolbar_actions.get(label)
             )
             self.map_overlay_controls.set_special_mode(is_special)
@@ -736,25 +776,17 @@ class MainWindow(QMainWindow):
         if action_label == "Comparator" and checked:
             self._show_comparator_dropdown()
             return True
-        if action_label == LAYER_COMPOSITOR_LITERAL and checked:
-            self._show_layer_compositor_overlay()
-            return True
-        elif action_label == "Export":
+
+        if action_label == "Export":
             self._show_export_dropdown()
             return True
-        elif action_label == "Add Raster Layer":
+        if action_label == "Add Raster Layer":
             self.controller.add_raster_layers()
             return True
-        elif action_label == "Add Vector":
+        if action_label == "Add Vector":
             self.controller.add_vector_layers()
             return True
 
-        # --- State Sync Phase --- Special case: Layer Compositor toggled OFF
-        if action_label == LAYER_COMPOSITOR_LITERAL and not checked:
-            self.controller.disable_layer_compositor()
-            if hasattr(self, "compositor_overlay"):
-                self.compositor_overlay.hide()
-            return True
         return False
 
     def _handle_toolbar_exclusivity(self, action_label: str, action: QAction) -> None:
@@ -779,37 +811,7 @@ class MainWindow(QMainWindow):
                     # Tell controller the other tool is now OFF
                     self.controller.handle_toolbar_action(other_label, False)
 
-    def _show_layer_compositor_overlay(self) -> None:
-        """Show the layer compositor overlay for adjusting layer opacities."""
-        action = self.toolbar_actions.get(LAYER_COMPOSITOR_LITERAL)
-        if action is None:
-            return
 
-        layers = self.controller.available_swipe_layer_options()
-        if not layers:
-            self.panel.log("No searched layers available for compositor.")
-            action.setChecked(False)
-            return
-
-        # Save visibility snapshot before the mode modifies any layers
-        if hasattr(self, "compositor_overlay") and self.compositor_overlay:
-            if self.compositor_overlay._saved_visibility is None:
-                self.compositor_overlay._saved_visibility = {}
-                for path in self.controller._search_result_assets_by_path:
-                    self.compositor_overlay._saved_visibility[path] = bool(
-                        self.controller._search_layer_visibility.get(path, False)
-                    )
-
-        self.compositor_overlay.update_layers()
-        self.compositor_overlay.show()
-        self.compositor_overlay.raise_()
-        self.compositor_overlay.adjustSize()
-
-        self._position_compositor_overlay()
-        action.setChecked(True)
-
-        # Initialize compositor 2D view and fit all imagery assets to screen
-        self.compositor_overlay.initialize_compositor_view()
 
     def _create_menu_bar(self) -> None:
         menu_bar = self.menuBar()
@@ -933,7 +935,7 @@ class MainWindow(QMainWindow):
             event: Move event object.
         """
         super().moveEvent(event)
-        self._position_compositor_overlay()
+
         if hasattr(self, "map_overlay_controls") and self.map_overlay_controls.isVisible():
             self.map_overlay_controls.update_position()
         if (
@@ -956,8 +958,7 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
         if hasattr(self, "busy_overlay"):
             self.busy_overlay.resize(self.size())
-        if hasattr(self, "compositor_overlay") and self.compositor_overlay.isVisible():
-            self._position_compositor_overlay()
+
         if (
             hasattr(self, "map_overlay_controls")
             and self.map_overlay_controls.isVisible()
@@ -996,23 +997,10 @@ class MainWindow(QMainWindow):
     def _on_fly_through_playback_progress_changed(self, progress: float) -> None:
         if hasattr(self, "fly_through_timeline_bar"):
             self.fly_through_timeline_bar.set_progress(progress)
+# TODO: Refactor for cognitive complexity
 
-    def _position_compositor_overlay(self) -> None:
-        """Position the compositor overlay in the top-right corner of the window."""
-        if (
-            not hasattr(self, "compositor_overlay")
-            or not self.compositor_overlay.isVisible()
-        ):
-            return
-        w = self.compositor_overlay.width()
-        top_right = self.mapToGlobal(self.rect().topRight())
-        y_offset = 20
-        if (
-            hasattr(self, "map_overlay_controls")
-            and self.map_overlay_controls.isVisible()
-        ):
-            y_offset += self.map_overlay_controls.height() + 10
-        self.compositor_overlay.move(top_right.x() - w - 20, top_right.y() + y_offset)
+# TODO: Refactor for cognitive complexity
+
 
     def _show_comparator_dropdown(self) -> None:
         """Show the comparator layer selection dropdown dialog."""
@@ -1350,7 +1338,7 @@ class MainWindow(QMainWindow):
                 color: #ffffff;
             }
         """)
-        geotiff_act = menu.addAction("Export Asset as GeoTIFF")
+        geotiff_act = menu.addAction("Export Asset")
         pdf_act = menu.addAction("Export PDF")
 
         pos = (
@@ -1361,7 +1349,7 @@ class MainWindow(QMainWindow):
         chosen = menu.exec(pos)
 
         if chosen == geotiff_act:
-            self.controller.handle_toolbar_action("Export Asset as GeoTIFF")
+            self.controller.handle_toolbar_action("Export Asset")
         elif chosen == pdf_act:
             self.controller.handle_toolbar_action("Export PDF")
 
@@ -1421,7 +1409,7 @@ class MainWindow(QMainWindow):
                 is_enabled = False
 
             # 2. Visualization exclusivity (Comparator, Layer Compositor, Fly Through)
-            viz_exclusives = {"Comparator", "Layer Compositor", "Fly Through"}
+            viz_exclusives = {"Comparator", "Fly Through"}
             active_viz_tool = None
             for viz_tool in viz_exclusives:
                 other_action = self.toolbar_actions.get(viz_tool)

@@ -183,89 +183,107 @@
         newMin = currentRange.min;
         newMax = currentRange.max;
       }
-      
-      // Rebuild DEM drape with new rescale
-      if (activeDemDrapeUrl) {
-        const baseUrl = activeDemDrapeUrl.split("?")[0];
-        const newRescale = newMin.toFixed(1) + "," + newMax.toFixed(1);
-        
-        // Update the drape layer URL with new rescale
-        const newUrl = buildUrlWithQuery(baseUrl, {
-          rescale: newRescale,
-          colormap_name: this._getStretchColorMode()
-        });
-        
-        // Snapshot camera and properties for smooth swap
-        const oldDrapeLayer = activeDemDrapeLayer;
-        const wasVisible = oldDrapeLayer ? oldDrapeLayer.show : true;
-        const currentAlpha = oldDrapeLayer ? oldDrapeLayer.alpha : 1.0;
-        
-        // CRITICAL FIX: Get rectangle bounds from activeDemContext
-        const rectangle = activeDemContext.bounds ? createRectangle(activeDemContext.bounds) : null;
-        
-        // Add new drape layer with stretched values
-        const newDrapeLayer = viewer.imageryLayers.addImageryProvider(
-          new Cesium.UrlTemplateImageryProvider({
-            url: newUrl,
-            maximumLevel: 18,
-            minimumLevel: 0,
-            tilingScheme: new Cesium.WebMercatorTilingScheme(),
-            enablePickFeatures: false,
-            rectangle: rectangle
-          })
-        );
-        
-        // Restore visibility and properties
-        newDrapeLayer.show = wasVisible;
-        newDrapeLayer.alpha = currentAlpha;
-        newDrapeLayer._layerKey = activeDemContext.layerKey;
-        newDrapeLayer._layerName = activeDemContext.name;
-        
-        // SYNC FIX: Store stretch settings with calculated min/max for real-time coordination
-        // This ensures setDemColorMode can retrieve the exact stretch range
-        newDrapeLayer._stretchSettings = { 
-          type: "dem", 
-          method: method, 
-          params: Object.assign({}, params, { min: newMin, max: newMax })
-        };
-        
-        activeDemDrapeLayer = newDrapeLayer;
-        activeDemDrapeUrl = newUrl;
 
-        // Fast cleanup of old layer to avoid flicker while maintaining speed
-        if (oldDrapeLayer) {
-          setTimeout(() => {
-            if (viewer && viewer.imageryLayers && viewer.imageryLayers.contains(oldDrapeLayer)) {
-              viewer.imageryLayers.remove(oldDrapeLayer, false);
-            }
-          }, 120);
-        }
-        
-        // Update managed layers
-        managedImageryLayers.set(activeDemContext.layerKey, newDrapeLayer);
-        
-        // CRITICAL FIX: Ensure all other imagery layers remain visible
-        // When we rebuild the DEM drape, we must not affect other layers' visibility
-        for (const [key, imgLayer] of managedImageryLayers.entries()) {
-          if (key !== activeDemContext.layerKey && imgLayer && layerVisibilityState.has(key)) {
-            const shouldBeVisible = layerVisibilityState.get(key);
-            if (imgLayer.show !== shouldBeVisible) {
-              log("debug", "DEM stretch: Restoring visibility for layer " + key + " to " + shouldBeVisible);
-              imgLayer.show = shouldBeVisible;
-            }
+      // PERF FIX: Debounce the expensive URL rebuild to avoid tile thrashing.
+      // Slider drag fires 10-30 events/second; each previously spawned a new
+      // Cesium imagery provider and triggered a full tile re-download.
+      // We wait 300ms after the last event before committing the layer rebuild.
+      const self = this;
+      const pendingMin = newMin;
+      const pendingMax = newMax;
+      if (self._demStretchDebounceTimer) {
+        clearTimeout(self._demStretchDebounceTimer);
+        self._demStretchDebounceTimer = null;
+      }
+      self._demStretchDebounceTimer = setTimeout(function () {
+        self._demStretchDebounceTimer = null;
+        self._commitDemStretchRebuild(layer, method, params, pendingMin, pendingMax);
+      }, 300);
+    },
+
+    _commitDemStretchRebuild: function (layer, method, params, newMin, newMax) {
+      // Rebuild DEM drape with new rescale — only called after debounce settles
+      if (!activeDemDrapeUrl || !activeDemContext) return;
+
+      const baseUrl = activeDemDrapeUrl.split("?")[0];
+      const newRescale = newMin.toFixed(1) + "," + newMax.toFixed(1);
+      
+      // Update the drape layer URL with new rescale
+      const newUrl = buildUrlWithQuery(baseUrl, {
+        rescale: newRescale,
+        colormap_name: this._getStretchColorMode()
+      });
+      
+      // Snapshot camera and properties for smooth swap
+      const oldDrapeLayer = activeDemDrapeLayer;
+      const wasVisible = oldDrapeLayer ? oldDrapeLayer.show : true;
+      const currentAlpha = oldDrapeLayer ? oldDrapeLayer.alpha : 1.0;
+      
+      // CRITICAL FIX: Get rectangle bounds from activeDemContext
+      const rectangle = activeDemContext.bounds ? createRectangle(activeDemContext.bounds) : null;
+      
+      // Add new drape layer with stretched values
+      const newDrapeLayer = viewer.imageryLayers.addImageryProvider(
+        new Cesium.UrlTemplateImageryProvider({
+          url: newUrl,
+          maximumLevel: 18,
+          minimumLevel: 0,
+          tilingScheme: new Cesium.WebMercatorTilingScheme(),
+          enablePickFeatures: false,
+          rectangle: rectangle
+        })
+      );
+      
+      // Restore visibility and properties
+      newDrapeLayer.show = wasVisible;
+      newDrapeLayer.alpha = currentAlpha;
+      newDrapeLayer._layerKey = activeDemContext.layerKey;
+      newDrapeLayer._layerName = activeDemContext.name;
+      
+      // SYNC FIX: Store stretch settings with calculated min/max for real-time coordination
+      // This ensures setDemColorMode can retrieve the exact stretch range
+      newDrapeLayer._stretchSettings = { 
+        type: "dem", 
+        method: method, 
+        params: Object.assign({}, params, { min: newMin, max: newMax })
+      };
+      
+      activeDemDrapeLayer = newDrapeLayer;
+      activeDemDrapeUrl = newUrl;
+
+      // Fast cleanup of old layer to avoid flicker while maintaining speed
+      if (oldDrapeLayer) {
+        setTimeout(() => {
+          if (viewer && viewer.imageryLayers && viewer.imageryLayers.contains(oldDrapeLayer)) {
+            viewer.imageryLayers.remove(oldDrapeLayer, false);
+          }
+        }, 120);
+      }
+      
+      // Update managed layers
+      managedImageryLayers.set(activeDemContext.layerKey, newDrapeLayer);
+      
+      // CRITICAL FIX: Ensure all other imagery layers remain visible
+      // When we rebuild the DEM drape, we must not affect other layers' visibility
+      for (const [key, imgLayer] of managedImageryLayers.entries()) {
+        if (key !== activeDemContext.layerKey && imgLayer && layerVisibilityState.has(key)) {
+          const shouldBeVisible = layerVisibilityState.get(key);
+          if (imgLayer.show !== shouldBeVisible) {
+            log("debug", "DEM stretch: Restoring visibility for layer " + key + " to " + shouldBeVisible);
+            imgLayer.show = shouldBeVisible;
           }
         }
-        
-        // Reapply layer order
-        reapplyLayerOrderIfKnown();
-        
-        // SYNC FIX: Update colorbar to match new stretch range
-        if (typeof updateDemColorbar === "function") {
-          updateDemColorbar(newMin, newMax, activeDemContext.options);
-        }
-        
-        log("info", "DEM stretch applied: rescale=" + newRescale + " visible=" + wasVisible);
       }
+      
+      // Reapply layer order
+      reapplyLayerOrderIfKnown();
+      
+      // SYNC FIX: Update colorbar to match new stretch range
+      if (typeof updateDemColorbar === "function") {
+        updateDemColorbar(newMin, newMax, activeDemContext.options);
+      }
+      
+      log("info", "DEM stretch applied: rescale=" + newRescale + " visible=" + wasVisible);
     },
     
     updateRasterStretchParams: function (layerKey, params) {

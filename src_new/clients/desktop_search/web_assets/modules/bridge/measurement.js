@@ -27,12 +27,22 @@
   }
 
   function getGroundHeightAtLonLat(lon, lat) {
-    if (!viewer || !viewer.scene || !viewer.scene.globe) {
+    if (!viewer || !viewer.scene) {
       return 0;
     }
     try {
-      const height = viewer.scene.globe.getHeight(Cesium.Cartographic.fromDegrees(lon, lat));
-      return Number.isFinite(height) ? height : 0;
+      const carto = Cesium.Cartographic.fromDegrees(lon, lat);
+      if (typeof managedPointCloudLayers !== "undefined" && managedPointCloudLayers.size > 0) {
+        const sampledHeight = viewer.scene.sampleHeight(carto);
+        if (Cesium.defined(sampledHeight) && Number.isFinite(sampledHeight)) {
+          return sampledHeight;
+        }
+      }
+      if (viewer.scene.globe) {
+        const height = viewer.scene.globe.getHeight(carto);
+        return Number.isFinite(height) ? height : 0;
+      }
+      return 0;
     } catch (_) {
       return 0;
     }
@@ -91,7 +101,7 @@
       } catch (_) {}
       window.searchRectangleEntity = null;
     }
-    if (viewer && viewer.scene && viewer.scene.screenSpaceCameraController) {
+    if (viewer?.scene && viewer.scene.screenSpaceCameraController) {
       viewer.scene.screenSpaceCameraController.enableInputs = true;
     }
   }
@@ -105,7 +115,7 @@
     }
     if (typeof drawnPolygons !== "undefined" && Array.isArray(drawnPolygons)) {
       for (const poly of drawnPolygons) {
-        if (poly && poly._isAnnotationPoly) {
+        if (poly?._isAnnotationPoly) {
           const shouldShow = poly.visible && annotationVisibilityEnabled;
           if (poly.lineEntity) poly.lineEntity.show = shouldShow;
           if (poly.polygonEntity) poly.polygonEntity.show = shouldShow;
@@ -507,7 +517,7 @@
           horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
           verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
           pixelOffset: new Cesium.Cartesian2(0, -14),
-          heightReference: (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND, // Clamp to terrain surface
+          heightReference: (viewer?.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND, // Clamp to terrain surface
           scale: 1.0,
         },
       });
@@ -519,7 +529,7 @@
               color: Cesium.Color.fromCssColorString("#00e5ff"),
               outlineColor: Cesium.Color.TRANSPARENT,
             outlineWidth: 0,
-              heightReference: (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND, // Clamp to terrain surface
+              heightReference: (viewer?.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND, // Clamp to terrain surface
           }
       });
       const pt2 = viewer.entities.add({
@@ -529,7 +539,7 @@
               color: Cesium.Color.fromCssColorString("#00e5ff"),
               outlineColor: Cesium.Color.TRANSPARENT,
             outlineWidth: 0,
-              heightReference: (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND, // Clamp to terrain surface
+              heightReference: (viewer?.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND, // Clamp to terrain surface
           }
       });
 
@@ -617,15 +627,15 @@
     flyThroughPlaybackPaused = false;
     flyThroughPlaybackProgress = 0.0;
     flyThroughPlaybackLastTimestamp = 0;
-    if (viewer && viewer.camera) {
+    if (viewer?.camera) {
       viewer.camera.cancelFlight();
     }
-    if (viewer && viewer.scene && viewer.scene.screenSpaceCameraController) {
+    if (viewer?.scene && viewer.scene.screenSpaceCameraController) {
       viewer.scene.screenSpaceCameraController.enableInputs = true;
     }
     flyThroughStopRequested = true;
     flyThroughModeEnabled = false;
-    if (flyThroughOriginalView && viewer && viewer.camera) {
+    if (flyThroughOriginalView && viewer?.camera) {
       try {
         viewer.camera.setView({
           destination: flyThroughOriginalView.destination,

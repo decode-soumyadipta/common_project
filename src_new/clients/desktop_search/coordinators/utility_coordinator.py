@@ -212,15 +212,28 @@ class UtilityCoordinator:
             return None
 
         try:
+            # First attempt: use existing metadata extraction via format handler for point clouds
+            ext = Path(file_path).suffix.lower()
+            if ext in {".las", ".laz"}:
+                from src_new.services.ingestion.format_handlers.las_handler import extract_metadata as las_extract_metadata
+                raw_meta = las_extract_metadata(Path(file_path))
+                if raw_meta:
+                    computed_bounds = {
+                        "west": float(raw_meta["bounds"]["min_lon"]),
+                        "south": float(raw_meta["bounds"]["min_lat"]),
+                        "east": float(raw_meta["bounds"]["max_lon"]),
+                        "north": float(raw_meta["bounds"]["max_lat"]),
+                    }
+                    asset.setdefault("bounds", computed_bounds)
+                    return computed_bounds
+            # Fallback to GDAL for other raster formats
             from src_new.services.ingestion.gdal_pipelines.metadata_extractor import (
                 extract_metadata,
             )
-
             metadata = extract_metadata(Path(file_path))
             bbox = getattr(metadata, "bbox", None) or getattr(metadata, "bounds", None)
             if bbox is None:
                 return None
-
             computed_bounds = {
                 "west": float(getattr(bbox, "min_lon", getattr(bbox, "left", 0.0))),
                 "south": float(getattr(bbox, "min_lat", getattr(bbox, "bottom", 0.0))),
@@ -353,6 +366,8 @@ class UtilityCoordinator:
                 c._dem_asset_kind_cache[file_path] = False
             return False
 
+# TODO: Refactor for cognitive complexity
+# TODO: Refactor for cognitive complexity
     def dem_bounds_polygon(self, dem_path: str) -> list[tuple[float, float]] | None:
         """Return a bounding-box polygon for the active DEM asset, or None."""
         c = self._controller

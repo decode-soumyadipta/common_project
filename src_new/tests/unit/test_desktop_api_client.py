@@ -49,3 +49,10 @@ def test_desktop_api_client_calls_resolve_on_titiler_endpoints(mock_get: Mock, t
     expected_path = str(cog_path.resolve()).replace("\\", "/")
     assert expected_path in url_called
     assert "scene.j2k" not in url_called
+
+
+def test_desktop_api_client_tile_service_base_url() -> None:
+    from src_new.shared.config import settings
+    client = DesktopApiClient()
+    assert client.tile_service_base_url == settings.tile_service_url.rstrip("/")
+

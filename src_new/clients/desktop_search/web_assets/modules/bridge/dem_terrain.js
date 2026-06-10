@@ -5,6 +5,7 @@
   //   parseDemHeightRange, applyDemSceneSettings
   // ═══════════════════════════════════════════════════════════════════════════
 
+// TODO: Refactor this function to reduce its Cognitive Complexity from 113 to the 15 allowed.
   function applyDemLayer() {
     if (!viewer || !activeDemContext) return;
     
@@ -22,7 +23,15 @@
     const rasterQuery = activeDemContext.options && activeDemContext.options.query ? activeDemContext.options.query : {};
     const queryAlgorithm = String(rasterQuery.algorithm || "").toLowerCase();
     const queryColorMode = String(rasterQuery.colormap_name || "terrain").toLowerCase();
-    const currentMode = queryAlgorithm === "slope" ? "slope" : (queryAlgorithm === "aspect" ? "aspect" : queryColorMode);
+    // S3358: Extract nested ternary into sequential statements
+    let currentMode;
+    if (queryAlgorithm === "slope") {
+      currentMode = "slope";
+    } else if (queryAlgorithm === "aspect") {
+      currentMode = "aspect";
+    } else {
+      currentMode = queryColorMode;
+    }
     demVisual.colorMode = currentMode;
     activeDemContext.colorMode = currentMode;
 
@@ -122,9 +131,11 @@
           " minLevel=" + minLevel +
           " maxLevel=" + terrainMaxLevel);
 
+      // S2392: Declare providerToUse at outer scope to avoid binding outside its block
+      let providerToUse;
       if (demVisible) {
         log("info", "DEM_RENDER: Swapping to new terrain provider (DEM visible)");
-        var providerToUse = (viewer.scene.mode === Cesium.SceneMode.SCENE2D)
+        providerToUse = (viewer.scene.mode === Cesium.SceneMode.SCENE2D)
           ? new Cesium.EllipsoidTerrainProvider()
           : customTerrainProvider;
         _swapTerrainProviderLocked(providerToUse);
@@ -133,7 +144,7 @@
       }
     } else if (demVisible) {
       // Re-show after hide — reuse existing provider, no rebuild
-      var providerToUse = (viewer.scene.mode === Cesium.SceneMode.SCENE2D)
+      const providerToUse = (viewer.scene.mode === Cesium.SceneMode.SCENE2D)
         ? new Cesium.EllipsoidTerrainProvider()
         : activeDemTerrainProvider;
       if (viewer.terrainProvider !== providerToUse) {
@@ -156,7 +167,7 @@
       viewer.imageryLayers.remove(activeDemHillshadeLayer, false);
       
       // CRITICAL FIX: Remove old DEM hillshade layer from managedImageryLayers map
-      if (activeDemContext && activeDemContext.layerKey) {
+      if (activeDemContext?.layerKey) {
         managedImageryLayers.delete(activeDemContext.layerKey + ":hillshade");
       }
       
@@ -170,7 +181,7 @@
         activeDemDrapeLayer = null;
       }
       // CRITICAL: If there is an existing 2D drape layer in managedImageryLayers for this DEM, remove it first to avoid duplicates
-      if (activeDemContext && activeDemContext.layerKey) {
+      if (activeDemContext?.layerKey) {
         const existing2DLayer = managedImageryLayers.get(activeDemContext.layerKey);
         if (existing2DLayer && existing2DLayer !== activeDemDrapeLayer) {
           viewer.imageryLayers.remove(existing2DLayer, true);
@@ -245,7 +256,7 @@
       viewer.imageryLayers.remove(activeDemHillshadeLayer, false);
       
       // CRITICAL FIX: Remove old DEM hillshade layer from managedImageryLayers map
-      if (activeDemContext && activeDemContext.layerKey) {
+      if (activeDemContext?.layerKey) {
         managedImageryLayers.delete(activeDemContext.layerKey + ":hillshade");
       }
       
@@ -298,13 +309,13 @@
     if (defaultEarthLayer) {
       defaultEarthLayer.show = true;
     }
-    if (viewer && viewer.scene && viewer.scene.globe) {
+    if (viewer?.scene && viewer.scene.globe) {
       viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#1a2535");
     }
     if (typeof comparatorViewers !== "undefined" && Array.isArray(comparatorViewers)) {
       comparatorViewers.forEach(v => {
-        if (v && v.__defaultEarthLayer) v.__defaultEarthLayer.show = true;
-        if (v && v.scene && v.scene.globe) v.scene.globe.baseColor = Cesium.Color.fromCssColorString("#1a2535");
+        if (v?.__defaultEarthLayer) v.__defaultEarthLayer.show = true;
+        if (v?.scene && v.scene.globe) v.scene.globe.baseColor = Cesium.Color.fromCssColorString("#1a2535");
       });
     }
     
@@ -313,7 +324,7 @@
     log("info", "DEM_RENDER: Ensuring basemap at bottom (preserving user layer order)");
     
     // Step 1: Ensure basemap is at the very bottom (index 0) - this is essential
-    if (osmBasemapLayer && osmBasemapLayer.show && viewer.imageryLayers.indexOf(osmBasemapLayer) >= 0) {
+    if (osmBasemapLayer?.show && viewer.imageryLayers.indexOf(osmBasemapLayer) >= 0) {
       viewer.imageryLayers.lowerToBottom(osmBasemapLayer);
       log("info", "DEM_RENDER: OSM basemap at index 0 (bottom)");
     } else if (defaultEarthLayer && viewer.imageryLayers.indexOf(defaultEarthLayer) >= 0) {
@@ -586,7 +597,7 @@
       }
     };
     
-    if (options.options && options.options.query && options.options.query.rescale) {
+    if (options.options?.query?.rescale) {
       const parts = String(options.options.query.rescale).split(",");
       if (parts.length === 2) {
         this._rangeMin = parseFloat(parts[0]);
@@ -594,7 +605,7 @@
       }
     }
     
-    this._bounds = (options.options && options.options.bounds) ? normalizeBounds(options.options.bounds) : null;
+    this._bounds = (options.options?.bounds) ? normalizeBounds(options.options.bounds) : null;
     if (this._bounds) {
       try {
         this._boundsRadian = Cesium.Rectangle.fromDegrees(
@@ -611,6 +622,7 @@
       this._boundsRadian = null;
     }
   }
+// TODO: Refactor this function to reduce its Cognitive Complexity from 26 to the 15 allowed.
 
   OfflineCustomTerrainProvider.prototype.requestTileGeometry = function (x, y, level) {
     if (level > this._max) {
@@ -643,13 +655,14 @@
       log("info", "[TERRAIN_DEBUG] Request #" + window._terrainRequestCount + ": x=" + x + " y=" + y + " level=" + level);
     }
     
-    const self = this;
+    // S7740: avoid `const self = this` — use a named reference captured via closure at construction
+    const terrainProvider = this;
     const cacheKey = `${x}_${y}_${level}`;
-    if (self._tileCache && self._tileCache.has(cacheKey)) {
-      const cached = self._tileCache.get(cacheKey);
+    if (terrainProvider._tileCache && terrainProvider._tileCache.has(cacheKey)) {
+      const cached = terrainProvider._tileCache.get(cacheKey);
       // Move to end for LRU
-      self._tileCache.delete(cacheKey);
-      self._tileCache.set(cacheKey, cached);
+      terrainProvider._tileCache.delete(cacheKey);
+      terrainProvider._tileCache.set(cacheKey, cached);
       
       window._terrainResolveCount++;
       if (window._terrainResolveCount <= 30) {
@@ -674,12 +687,12 @@
           height: H,
           structure: { heightScale: 1.0, heightOffset: 0.0, elementsPerHeight: 1, stride: 1 }
         });
-        if (self._tileCache) {
-          if (self._tileCache.size >= self._maxCacheSize) {
-            const firstKey = self._tileCache.keys().next().value;
-            if (firstKey !== undefined) self._tileCache.delete(firstKey);
+        if (terrainProvider._tileCache) {
+          if (terrainProvider._tileCache.size >= terrainProvider._maxCacheSize) {
+            const firstKey = terrainProvider._tileCache.keys().next().value;
+            if (firstKey !== undefined) terrainProvider._tileCache.delete(firstKey);
           }
-          self._tileCache.set(cacheKey, flatData);
+          terrainProvider._tileCache.set(cacheKey, flatData);
         }
         
         window._terrainResolveCount++;
@@ -701,12 +714,12 @@
         if (window._terrainResolveCount <= 30) {
           log("info", "[TERRAIN_DEBUG] Resolve #" + window._terrainResolveCount + " (fetched): x=" + x + " y=" + y + " level=" + level);
         }
-        if (self._tileCache) {
-          if (self._tileCache.size >= self._maxCacheSize) {
-            const firstKey = self._tileCache.keys().next().value;
-            if (firstKey !== undefined) self._tileCache.delete(firstKey);
+        if (terrainProvider._tileCache) {
+          if (terrainProvider._tileCache.size >= terrainProvider._maxCacheSize) {
+            const firstKey = terrainProvider._tileCache.keys().next().value;
+            if (firstKey !== undefined) terrainProvider._tileCache.delete(firstKey);
           }
-          self._tileCache.set(cacheKey, data);
+          terrainProvider._tileCache.set(cacheKey, data);
         }
         originalResolve(data);
       };
@@ -720,14 +733,14 @@
         })
         .then(blob => {
           // Decode using worker pool
-          const tileRect = self.tilingScheme.tileXYToRectangle(x, y, level);
+          const tileRect = terrainProvider.tilingScheme.tileXYToRectangle(x, y, level);
           const tileRectDeg = {
             west: Cesium.Math.toDegrees(tileRect.west),
             south: Cesium.Math.toDegrees(tileRect.south),
             east: Cesium.Math.toDegrees(tileRect.east),
             north: Cesium.Math.toDegrees(tileRect.north)
           };
-          terrainDecodeWorkerPool.decode(blob, rMin, span, W, H, tileRectDeg, self._bounds)
+          terrainDecodeWorkerPool.decode(blob, rMin, span, W, H, tileRectDeg, terrainProvider._bounds)
             .then(output => {
               resolve(new Cesium.HeightmapTerrainData({
                 buffer: output,
@@ -755,6 +768,7 @@
                   height: H,
                   structure: { heightScale: 1.0, heightOffset: 0.0, elementsPerHeight: 1, stride: 1 }
                 }));
+// TODO: Refactor this function to reduce its Cognitive Complexity from 24 to the 15 allowed.
               }, 5000);
               
               img.onload = () => {
@@ -774,7 +788,7 @@
                   
                   // Hard-boundary clipping (main-thread fallback mirrors the worker logic).
                   // No tapering/blending — pixels outside dataset bounds get 0, inside get full height.
-                  const datasetBounds = self._bounds;
+                  const datasetBounds = terrainProvider._bounds;
                   const hasBoundsClip = !!(tileRectDeg && datasetBounds);
 
                   for (let r = 0; r < H; r++) {
@@ -872,6 +886,7 @@
     return (2.0 * 6378137.0 * Math.PI * 0.25) / (129.0 * Math.pow(2, level));
   };
   OfflineCustomTerrainProvider.prototype.getTileDataAvailable = function (x, y, level) {
+// TODO: Refactor this function to reduce its Cognitive Complexity from 93 to the 15 allowed.
     return level <= this._max;
   };
 
@@ -882,7 +897,7 @@
 
     const normalized = String(colormapName || "gray").toLowerCase();
     const query = activeDemContext.options.query;
-    const currentStretch = activeDemDrapeLayer && activeDemDrapeLayer._stretchSettings;
+    const currentStretch = activeDemDrapeLayer?._stretchSettings;
     const activeRange = getDemRescaleRangeForColorMode(normalized);
 
     if (normalized === "slope") {
@@ -895,7 +910,7 @@
       query.colormap_name = normalized;
       if (query.rescale) {
         // Keep the active stretch rescale already calculated and applied!
-      } else if (currentStretch && currentStretch.params && currentStretch.params.min !== undefined) {
+      } else if (currentStretch?.params && currentStretch.params.min !== undefined) {
         query.rescale = currentStretch.params.min.toFixed(1) + "," + currentStretch.params.max.toFixed(1);
       } else {
         query.rescale = `${activeRange.min.toFixed(1)},${activeRange.max.toFixed(1)}`;
@@ -943,7 +958,7 @@
             drapeProvider.readyPromise.then(function() {
               log("info", "DRAPE_DEBUG: provider.ready for " + activeDemContext.name + " newDrapeUrl=" + (String(newDrapeUrl).substring(0,200) + "..."));
               // Force a render once provider is ready so newly-styled tiles appear immediately
-              if (viewer && viewer.scene) viewer.scene.requestRender();
+              if (viewer?.scene) viewer.scene.requestRender();
             }, function(err) {
               log("error", "DRAPE_DEBUG: provider.ready FAILED for " + activeDemContext.name + " err=" + String(err));
             });
@@ -967,7 +982,7 @@
         activeDemDrapeLayer._layerName = activeDemContext.name;
         
         // SYNC FIX: Preserve stretch settings from old layer to new layer for real-time coordination
-        if (oldDrapeLayer && oldDrapeLayer._stretchSettings) {
+        if (oldDrapeLayer?._stretchSettings) {
           activeDemDrapeLayer._stretchSettings = oldDrapeLayer._stretchSettings;
           log("debug", "setDemColorMode: preserved stretch settings on new drape layer");
         }
@@ -981,7 +996,7 @@
           // Short timeouts caused brief gaps or the new tiles not appearing on slower machines.
           setTimeout(() => {
             try {
-              if (viewer && viewer.imageryLayers && viewer.imageryLayers.contains(oldDrapeLayer)) {
+              if (viewer?.imageryLayers && viewer.imageryLayers.contains(oldDrapeLayer)) {
                 viewer.imageryLayers.remove(oldDrapeLayer, false);
                 log("debug", "DRAPE_DEBUG: removed old drape layer for " + activeDemContext.name);
               }
@@ -994,7 +1009,7 @@
         // Re-apply the last known layer display order so imagery stays on top (or below)
         // without requiring a Python round-trip. This prevents color-mode changes from
         // breaking the layer stack the user explicitly arranged.
-        if (_lastKnownLayerOrder && _lastKnownLayerOrder.length > 0) {
+        if (_lastKnownLayerOrder?.length > 0) {
           // Small defer so the new provider settles before reordering
           setTimeout(function() {
             if (window.offlineGIS && window.offlineGIS.enforceLayerDisplayOrder) {
@@ -1006,7 +1021,7 @@
           if (activeDemDrapeLayer) viewer.imageryLayers.raiseToTop(activeDemDrapeLayer);
           if (activeDemHillshadeLayer) viewer.imageryLayers.raiseToTop(activeDemHillshadeLayer);
           for (const layer of managedImageryLayers.values()) {
-            if (layer && layer.show && viewer.imageryLayers.indexOf(layer) >= 0) {
+            if (layer?.show && viewer.imageryLayers.indexOf(layer) >= 0) {
               viewer.imageryLayers.raiseToTop(layer);
             }
           }
@@ -1023,7 +1038,7 @@
         // Removed camera locking to prevent jumping when changing color modes
 
         // OPTIMIZATION: Only render the affected viewer, not all comparator panes
-        if (viewer && viewer.scene) {
+        if (viewer?.scene) {
           viewer.scene.requestRender();
         }
         log("info", "setDemColorMode: Color mode swap complete, rendering main viewer only, colormap=" + normalized);
@@ -1049,14 +1064,14 @@
       // No active drape layer yet — do a full apply with camera lock
       // CRITICAL FIX (Bug 4): Prevent applyDemLayer from resetting camera
       // when changing style dropdown
-      if (viewer && viewer.camera) {
-        var is2D = (viewer.scene.mode === Cesium.SceneMode.SCENE2D);
-        var savedPos = viewer.camera.position.clone();
-        var savedHdg = viewer.camera.heading;
-        var savedPitch = viewer.camera.pitch;
-        var savedRoll = viewer.camera.roll;
+      if (viewer?.camera) {
+        let is2D = (viewer.scene.mode === Cesium.SceneMode.SCENE2D);
+        let savedPos = viewer.camera.position.clone();
+        let savedHdg = viewer.camera.heading;
+        let savedPitch = viewer.camera.pitch;
+        let savedRoll = viewer.camera.roll;
         
-        var savedFrustumWidth, savedFrustumLeft, savedFrustumRight, savedFrustumTop, savedFrustumBottom;
+        let savedFrustumWidth, savedFrustumLeft, savedFrustumRight, savedFrustumTop, savedFrustumBottom;
         if (is2D && viewer.camera.frustum) {
           savedFrustumWidth = viewer.camera.frustum.width;
           savedFrustumLeft = viewer.camera.frustum.left;
@@ -1065,11 +1080,12 @@
           savedFrustumBottom = viewer.camera.frustum.bottom;
         }
 
+// TODO: Refactor this function to reduce its Cognitive Complexity from 20 to the 15 allowed.
         applyDemLayer();
         
         // Lock camera for 5 frames to absorb async resets from layer changes
-        var framesLeft = 5;
-        var lockHandle = viewer.scene.postRender.addEventListener(function () {
+        let framesLeft = 5;
+        let lockHandle = viewer.scene.postRender.addEventListener(function () {
           if (is2D) {
             viewer.camera.position.x = savedPos.x;
             viewer.camera.position.y = savedPos.y;
@@ -1147,7 +1163,7 @@
       }
       if (typeof comparatorViewers !== "undefined" && Array.isArray(comparatorViewers)) {
         comparatorViewers.forEach(v => {
-          if (v && v.scene) {
+          if (v?.scene) {
             if (v.scene.requestRenderMode !== desiredMode) {
               v.scene.requestRenderMode = desiredMode;
             }
@@ -1249,6 +1265,7 @@
       // Capture coordinates synchronously before RAF executes
       lastClientX = event.clientX;
       lastClientY = event.clientY;
+// TODO: Refactor this function to reduce its Cognitive Complexity from 134 to the 15 allowed.
 
       if (wheelZoomRaf !== null) {
         return;
@@ -1481,6 +1498,7 @@
         currentScene.requestRenderMode = wasOnDemand;
         currentScene.requestRender();
       }, 200);
+// TODO: Refactor this function to reduce its Cognitive Complexity from 33 to the 15 allowed.
     };
 
     scheduleIdle();
@@ -1535,7 +1553,7 @@
         const reqUrl = String(this.url || "");
         
         const handleRejection = function(error) {
-          if (error && error.statusCode === 0 && typeof error.response === "string") {
+          if (error?.statusCode === 0 && typeof error.response === "string") {
             try {
               return JSON.parse(error.response);
             } catch (e) {
@@ -1693,17 +1711,23 @@
     viewer.scene.globe.showGroundAtmosphere = false;
     
     if (window._isHighEndGpu) {
-      // ── MAX CONFIG (NVIDIA / Quadro) ──────────────────────────────────────
+      // ── MAX CONFIG (NVIDIA / Quadro / Apple Silicon) ─────────────────────
       MAX_CONCURRENT_TERRAIN_DECODES = 8;   // Parallel terrain decodes for workstation
       viewer.resolutionScale = 1.0;          // Full native resolution
       viewer.scene.logarithmicDepthBuffer = false;
       viewer.scene.globe.depthTestAgainstTerrain = true;
-      viewer.scene.globe.tileCacheSize = 800; // Large cache for high-fidelity assets without GC stutters
+      viewer.scene.globe.tileCacheSize = 2500; // Raised to 2500 for workstation performance
       viewer.scene.globe.maximumScreenSpaceError = 1.0; // Static high-fidelity error threshold
       viewer.scene.globe.preloadAncestors = true;
       viewer.scene.globe.preloadSiblings = true;
       viewer.scene.globe.loadingDescendantLimit = 8;
       viewer.scene.globe.loadingQueueThreshold = 100;
+      
+      // RequestScheduler limits for dedicated GPU pipeline
+      if (Cesium.RequestScheduler) {
+        Cesium.RequestScheduler.maximumRequestsPerServer = 24;
+        Cesium.RequestScheduler.maximumRequests = 100;
+      }
       
       // NVIDIA GL hint
       if (viewer.scene.context && viewer.scene.context._gl) {
@@ -1711,21 +1735,27 @@
         gl.hint(gl.GENERATE_MIPMAP_HINT, gl.FASTEST);
       }
       
-      log("info", "[INIT MAX GPU CONFIG] Dedicated GPU detected — Extreme fidelity enabled");
+      log("info", "[INIT MAX GPU CONFIG] Dedicated GPU detected — Extreme fidelity enabled (cache=2500, maxRequests=100)");
     } else {
       // ── SAFE CONFIG (Intel integrated / unknown) ──────────────────────────
       MAX_CONCURRENT_TERRAIN_DECODES = 2;   // Slightly more parallel decodes for modern Intel
       viewer.resolutionScale = 1.0;          // Full native resolution to maintain imagery quality
       viewer.scene.logarithmicDepthBuffer = false;
       viewer.scene.globe.depthTestAgainstTerrain = true; // Essential for true 3D fidelity
-      viewer.scene.globe.tileCacheSize = 400;  // Optimized cache for smoother panning on Windows
+      viewer.scene.globe.tileCacheSize = 1000;  // Raised to 1000 for smoother panning
       viewer.scene.globe.maximumScreenSpaceError = 1.5;  // Static balanced error threshold
       viewer.scene.globe.preloadAncestors = true; // Enabled for smoother zoom transitions
       viewer.scene.globe.preloadSiblings = true;
       viewer.scene.globe.loadingDescendantLimit = 4;  // Faster tile loading
       viewer.scene.globe.loadingQueueThreshold = 100;
       
-      log("info", "[INIT SAFE INTEL CONFIG] Integrated GPU optimized for smooth performance (res=1.0 sse=3.0 cache=400)");
+      // RequestScheduler limits for integrated/slower GPU pipeline
+      if (Cesium.RequestScheduler) {
+        Cesium.RequestScheduler.maximumRequestsPerServer = 12;
+        Cesium.RequestScheduler.maximumRequests = 50;
+      }
+      
+      log("info", "[INIT SAFE INTEL CONFIG] Integrated GPU optimized for smooth performance (res=1.0 sse=1.5 cache=1000, maxRequests=50)");
     }
 
     scenePerfDefaults = {
@@ -1765,7 +1795,7 @@
         setStatus("GPU context lost - attempting recovery...");
         
         // Disable rendering during recovery
-        if (viewer && viewer.scene) {
+        if (viewer?.scene) {
           contextRestoreRenderMode = viewer.scene.requestRenderMode;
           viewer.scene.requestRenderMode = false;
           viewer.scene.requestRender();
@@ -1784,12 +1814,12 @@
         
         try {
           // Reinitialize scene after context restoration
-          if (viewer && viewer.scene) {
+          if (viewer?.scene) {
             // Force scene re-render
             viewer.scene.requestRenderMode = false;
             viewer.scene.requestRender();
             setTimeout(function() {
-              if (viewer && viewer.scene) {
+              if (viewer?.scene) {
                 viewer.scene.requestRenderMode = false;
                 viewer.scene.requestRender();
               }
@@ -1799,26 +1829,26 @@
             log("info", "Reloading active layers after context restoration");
             
             // Reload DEM if active
-            if (activeDemContext && activeDemContext.visible) {
+            if (activeDemContext?.visible) {
               log("info", "Reloading DEM layer: " + activeDemContext.name);
               applyDemLayer();
             }
             
             // Reload imagery layers
             for (const [layerKey, layer] of managedImageryLayers.entries()) {
-              if (layer && layer.show) {
+              if (layer?.show) {
                 log("info", "Reloading imagery layer: " + layerKey);
                 // Layer will be reloaded automatically by Cesium
               }
             }
             
             // Reload OSM basemap if visible
-            if (osmBasemapLayer && osmBasemapLayer.show) {
+            if (osmBasemapLayer?.show) {
               log("info", "Reloading OSM basemap");
               // OSM will be reloaded automatically by Cesium
             }
             
-            if (viewer && viewer.scene) {
+            if (viewer?.scene) {
               viewer.scene.requestRenderMode = contextRestoreRenderMode;
               viewer.scene.requestRender();
             }
@@ -1883,10 +1913,10 @@
     let lastErrorTime = 0;
     window.addEventListener("error", function (event) {
       // Ignore errors from Cesium.js itself
-      if (event && event.filename && event.filename.includes("Cesium.js")) {
+      if (event?.filename && event.filename.includes("Cesium.js")) {
         return;
       }
-      const msg = event && event.message ? event.message : "unknown";
+      const msg = event?.message ? event.message : "unknown";
       const now = Date.now();
       // Suppress duplicate errors within 1 second
       if (msg === lastErrorMessage && now - lastErrorTime < 1000) {
@@ -1894,12 +1924,12 @@
       }
       lastErrorMessage = msg;
       lastErrorTime = now;
-      const err = event && event.error ? event.error : null;
-      const stack = err && err.stack ? err.stack : "";
+      const err = event?.error ? event.error : null;
+      const stack = err?.stack ? err.stack : "";
       log("error", "Window error: " + msg + (stack ? " | " + stack : ""));
     });
     window.addEventListener("unhandledrejection", function (event) {
-      const reason = event && event.reason ? String(event.reason) : "unknown";
+      const reason = event?.reason ? String(event.reason) : "unknown";
       log("error", "Unhandled promise rejection: " + reason);
     });
 
@@ -1986,6 +2016,7 @@
         "morphStart oldMode=" +
           oldMode +
           " newMode=" +
+// TODO: Refactor this function to reduce its Cognitive Complexity from 25 to the 15 allowed.
           newMode +
           " currentSceneMode=" +
           currentSceneMode +
@@ -1994,6 +2025,9 @@
       );
     });
     viewer.scene.morphComplete.addEventListener(function () {
+      // Clear transition flag immediately to allow camera locking
+      window._is2DTo3DTransition = false;
+
       const resolvedMode = detectSceneMode();
       sceneDebug(
         "morphComplete resolvedMode=" +
@@ -2010,6 +2044,57 @@
       currentSceneMode = resolvedMode === "morphing" ? currentSceneMode : resolvedMode;
       syncSceneModeToggle(currentSceneMode);
       configureCameraControllerForMode(currentSceneMode);
+
+      const hasSavedState = window.offlineGIS && typeof window.offlineGIS.hasSavedCameraState === "function" && window.offlineGIS.hasSavedCameraState();
+
+      if (hasSavedState) {
+        sceneDebug("morphComplete: saved camera state found. Restoring camera position first.");
+        window.offlineGIS.restoreCameraAfterMorph();
+
+        // Perform terrain swaps after camera restoration so locking captures the correct coordinates
+        if (currentSceneMode === "2d") {
+          if (viewer.terrainProvider && !(viewer.terrainProvider instanceof Cesium.EllipsoidTerrainProvider)) {
+            viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+          }
+        } else if (currentSceneMode === "3d") {
+          if (activeDemTerrainProvider && activeDemContext && activeDemContext.visible !== false) {
+            if (viewer.terrainProvider !== activeDemTerrainProvider) {
+              _swapTerrainProviderLocked(activeDemTerrainProvider);
+            }
+            if (activeDemDrapeLayer) activeDemDrapeLayer.show = true;
+            if (activeDemHillshadeLayer) activeDemHillshadeLayer.show = true;
+            viewer.scene.globe.terrainExaggeration = Math.max(0.1, demVisual.exaggeration);
+            if (typeof viewer.scene.verticalExaggeration !== "undefined") {
+              viewer.scene.verticalExaggeration = Math.max(0.1, demVisual.exaggeration);
+            }
+          }
+        }
+
+        pendingFocusAfterMorph = false;
+        pendingFocusBounds = null;
+        pendingTerrainSceneAfterMorph = false;
+        return;
+      }
+
+      // If no saved state, perform terrain swaps before flying to focus bounds (which gets locked & deferred)
+      if (currentSceneMode === "2d") {
+        if (viewer.terrainProvider && !(viewer.terrainProvider instanceof Cesium.EllipsoidTerrainProvider)) {
+          viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+        }
+      } else if (currentSceneMode === "3d") {
+        if (activeDemTerrainProvider && activeDemContext && activeDemContext.visible !== false) {
+          if (viewer.terrainProvider !== activeDemTerrainProvider) {
+            _swapTerrainProviderLocked(activeDemTerrainProvider);
+          }
+          if (activeDemDrapeLayer) activeDemDrapeLayer.show = true;
+          if (activeDemHillshadeLayer) activeDemHillshadeLayer.show = true;
+          viewer.scene.globe.terrainExaggeration = Math.max(0.1, demVisual.exaggeration);
+          if (typeof viewer.scene.verticalExaggeration !== "undefined") {
+            viewer.scene.verticalExaggeration = Math.max(0.1, demVisual.exaggeration);
+          }
+        }
+      }
+
       if (pendingSceneModeAfterMorph) {
         const nextMode = pendingSceneModeAfterMorph;
         pendingSceneModeAfterMorph = null;
@@ -2028,6 +2113,7 @@
         startFlyThroughBounds(queuedBounds.west, queuedBounds.south, queuedBounds.east, queuedBounds.north);
         return;
       }
+
       if (pendingFocusAfterMorph) {
         pendingFocusAfterMorph = false;
         const bounds = pendingFocusBounds;
@@ -2036,17 +2122,8 @@
           if (currentSceneMode === "2d") {
             focusLoadedRegion2D(0.6);
           } else if (currentSceneMode === "3d") {
-            // CRITICAL FIX: Skip premature focus during 2D→3D terrain transition.
-            // The rAF in setSceneModeInternal already calls schedule3DFocusAfterMorph
-            // AFTER the terrain provider swap, so firing focusBoundsWithPadding here
-            // (before the swap) would race against the intercepted camera lock and
-            // leave the globe blank.  Let the rAF handle it.
-            if (!window._is2DTo3DTransition) {
-              if (window.offlineGIS && typeof window.offlineGIS.focusBoundsWithPadding === "function") {
-                window.offlineGIS.focusBoundsWithPadding(bounds.west, bounds.south, bounds.east, bounds.north, 1.2);
-              }
-            } else {
-              sceneDebug("morphComplete: skipping focusBoundsWithPadding during _is2DTo3DTransition — rAF handles it");
+            if (window.offlineGIS && typeof window.offlineGIS.focusBoundsWithPadding === "function") {
+              window.offlineGIS.focusBoundsWithPadding(bounds.west, bounds.south, bounds.east, bounds.north, 1.2);
             }
           }
         } else if (pendingTerrainSceneAfterMorph) {

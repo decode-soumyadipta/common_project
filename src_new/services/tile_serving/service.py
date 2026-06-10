@@ -29,6 +29,7 @@ import time
 
 from fastapi import FastAPI, Request
 
+from src_new.services.tile_serving.pointcloud_endpoints import router as pointcloud_router
 from src_new.services.tile_serving.tile_endpoints import router as tile_router
 from src_new.services.tile_serving.titiler_config import create_titiler_app
 from src_new.shared.auth.lan_security import LANSecurityMiddleware, get_bind_host
@@ -108,6 +109,10 @@ logger.debug("TiTiler sub-application mounted at /titiler.")
 # --------------------------------------------------------------------------- Custom tile endpoints router Provides: /tiles/{z}/{x}/{y}.png, /preview/{raster_id}, /metadata/{raster_id}, /health Requirement 11.5 ---------------------------------------------------------------------------
 app.include_router(tile_router)
 logger.debug("Custom tile_endpoints router included.")
+
+# --------------------------------------------------------------------------- Point-cloud 3D Tiles router (LAS/LAZ → Cesium 3D Tiles) ---------------------------------------------------------------------------
+app.include_router(pointcloud_router)
+logger.debug("Point-cloud 3D Tiles router included at /pointcloud.")
 
 # --------------------------------------------------------------------------- Startup / shutdown lifecycle events ---------------------------------------------------------------------------
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -81,8 +82,8 @@ class SingleFileUploadTask(QRunnable):
         self.setAutoDelete(True)
 
     def run(self) -> None:
-        """Execute the upload with one retry on failure."""
-        max_attempts = 2
+        """Execute the upload with retries on failure."""
+        max_attempts = 5
         last_error: Exception | None = None
 
         for attempt in range(1, max_attempts + 1):
@@ -126,12 +127,15 @@ class SingleFileUploadTask(QRunnable):
             except Exception as exc:
                 last_error = exc
                 if attempt < max_attempts:
+                    sleep_time = 1.5 ** attempt
                     logger.warning(
-                        "Upload attempt %d failed for %s: %s — retrying...",
+                        "Upload attempt %d failed for %s: %s — retrying in %.2fs...",
                         attempt,
                         self.file_path.name,
                         exc,
+                        sleep_time,
                     )
+                    time.sleep(sleep_time)
                 else:
                     logger.exception(
                         "Upload failed after %d attempts for %s",

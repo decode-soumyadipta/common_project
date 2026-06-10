@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 from datetime import datetime
+from typing import TYPE_CHECKING, Any, cast
 
-from qtpy.QtCore import QPointF, QSize, Qt
+from qtpy.QtCore import QPointF, QSize, Qt, QTimer
 from qtpy.QtGui import QBrush, QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from qtpy.QtWidgets import (
     QAbstractItemView,
@@ -15,7 +17,6 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
-from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from qtpy.QtCore import QTimer
     from qtpy.QtWidgets import QLabel
@@ -88,6 +89,60 @@ class ControlPanelSearchMixin:
         painter.end()
         return QIcon(pixmap)
 
+    def _create_inspect_3d_icon(self, size: int = 16, color_hex: str = "#2563eb") -> QIcon:
+        """Create a professional vector-drawn 3D cube / inspect icon."""
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        color = QColor(color_hex)
+        pen = QPen(color, 1.25)
+        pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+        painter.setPen(pen)
+        
+        cx = size / 2.0
+        cy = size / 2.0
+        r = size * 0.4
+        
+        # Draw isometric projection lines of a cube
+        v_top = QPointF(cx, cy - r)
+        v_bottom = QPointF(cx, cy + r)
+        v_left = QPointF(cx - r * 0.866, cy - r * 0.5)
+        v_right = QPointF(cx + r * 0.866, cy - r * 0.5)
+        v_center = QPointF(cx, cy)
+        v_bottom_left = QPointF(cx - r * 0.866, cy + r * 0.5)
+        v_bottom_right = QPointF(cx + r * 0.866, cy + r * 0.5)
+        
+        top_face = QPainterPath()
+        top_face.moveTo(v_top)
+        top_face.lineTo(v_left)
+        top_face.lineTo(v_center)
+        top_face.lineTo(v_right)
+        top_face.closeSubpath()
+        painter.drawPath(top_face)
+        
+        left_face = QPainterPath()
+        left_face.moveTo(v_left)
+        left_face.lineTo(v_center)
+        left_face.lineTo(v_bottom)
+        left_face.lineTo(v_bottom_left)
+        left_face.closeSubpath()
+        painter.drawPath(left_face)
+        
+        right_face = QPainterPath()
+        right_face.moveTo(v_right)
+        right_face.lineTo(v_center)
+        right_face.lineTo(v_bottom)
+        right_face.lineTo(v_bottom_right)
+        right_face.closeSubpath()
+        painter.drawPath(right_face)
+        
+        painter.end()
+        return QIcon(pixmap)
+
+
+
     def _on_search_table_item_clicked(self, item: QTableWidgetItem) -> None:
         row = item.row()
         # Focus on click for any data column (0-3), ignoring action buttons (4, 5)
@@ -98,6 +153,34 @@ class ControlPanelSearchMixin:
                 if file_path:
                     self.asset_focus_requested.emit(file_path)
 
+    def _on_search_table_double_clicked(self, index) -> None:
+        row = index.row()
+        file_item = self.search_results_table.item(row, 1)
+        if file_item is not None:
+            file_path = file_item.data(Qt.ItemDataRole.UserRole)
+            if file_path:
+                # Zoom/focus camera
+                self.asset_focus_requested.emit(file_path)
+                
+                # Highlight row cells (columns 0 to 3) in faded yellow
+                highlight_color = QColor("#fff2cc")
+                row_items_with_bg = []
+                for col in range(4):
+                    item = self.search_results_table.item(row, col)
+                    if item:
+                        original_bg = item.background()
+                        row_items_with_bg.append((item, original_bg))
+                        item.setBackground(highlight_color)
+                
+                def restore_bg():
+                    for item, bg in row_items_with_bg:
+                        with contextlib.suppress(Exception):
+                            item.setBackground(bg)
+                            
+                QTimer.singleShot(1500, restore_bg)
+
+# TODO: Refactor for cognitive complexity
+# TODO: Refactor for cognitive complexity
     def _calculate_all_visible_state(self, assets: list[dict], visibility_map: dict[str, bool]) -> bool:
         if not assets:
             return False
@@ -113,13 +196,13 @@ class ControlPanelSearchMixin:
                 img_vis.append(is_visible)
         if img_vis and not all(img_vis):
             return False
-        if dem_vis and not any(dem_vis):
-            return False
-        return True
+        return not (dem_vis and not any(dem_vis))
 
     def _sort_and_order_assets(self, assets: list[dict]) -> list[dict]:
         # Sort assets: Imagery first (top of list), DEM last (bottom of list)
+# TODO: Refactor for cognitive complexity
         def sort_key(asset):
+# TODO: Refactor for cognitive complexity
             kind = str(asset.get("kind") or "").lower()
             created_at = self._search_created_at_sort_key(asset.get("created_at"))
             is_dem = 1 if kind == "dem" else 0
@@ -428,9 +511,48 @@ class ControlPanelSearchMixin:
             self.search_results_table.setItem(row, 3, crs_item)
             toggle_container = QWidget()
             toggle_layout = QHBoxLayout(toggle_container)
-            toggle_layout.setContentsMargins(0, 0, 0, 0)
+            toggle_layout.setContentsMargins(4, 0, 4, 0)
+            toggle_layout.setSpacing(6)
             toggle_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
             toggle_layout.addWidget(toggle_button)
+
+            if kind == "POINT_CLOUD":
+                inspect_btn = QPushButton()
+                inspect_btn.setIcon(self._create_inspect_3d_icon())
+                inspect_btn.setIconSize(QSize(16, 16))
+                inspect_btn.setToolTip("Inspect in native 3D LiDAR Viewer")
+                inspect_btn.setFixedSize(28, 24)
+                inspect_btn.setStyleSheet(
+                    """
+                    QPushButton {
+                        background: transparent;
+                        border: 1px solid #d0d0d0;
+                        border-radius: 3px;
+                        padding: 0px;
+                    }
+                    QPushButton:hover {
+                        background: #f0f0f0;
+                        border: 1px solid #2563eb;
+                    }
+                    QPushButton:pressed {
+                        background: #e0e0e0;
+                    }
+                    """
+                )
+                
+                def make_inspect_handler(path, name):
+                    def handler():
+                        window = self.window()
+                        if hasattr(window, "set_canvas_index") and hasattr(window, "lidar_viewer"):
+                            window.set_canvas_index(1)
+                            window.lidar_viewer.load_las_file(path, name)
+                            self.log(f"Native LiDAR Inspection started: {name}")
+                    return handler
+                inspect_btn.clicked.connect(make_inspect_handler(normalized_path, file_name))
+                toggle_layout.addWidget(inspect_btn)
+
+
+
             self.search_results_table.setCellWidget(row, 4, toggle_container)
 
             # Red delete button (QGIS style)
@@ -659,6 +781,11 @@ class ControlPanelSearchMixin:
         header.geometriesChanged.connect(self._update_show_all_button_geometry)
         header.sectionResized.connect(lambda idx, old, new: self._update_show_all_button_geometry())
         self._update_show_all_button_geometry()
+        # FIX: Schedule delayed re-positioning so the button centres correctly after
+        # Qt finishes its initial column layout (sectionSize returns 0 until then).
+        from qtpy.QtCore import QTimer
+        QTimer.singleShot(100, self._update_show_all_button_geometry)
+        QTimer.singleShot(350, self._update_show_all_button_geometry)
 
     def _update_show_all_button_geometry(self) -> None:
         if not hasattr(self, "show_all_btn") or self.show_all_btn is None:
@@ -674,8 +801,14 @@ class ControlPanelSearchMixin:
         
         btn_w = 20
         btn_h = 20
+        # FIX: Guard against zero/negative column width during initial layout.
+        # When Qt hasn't measured the column yet, sectionSize returns 0 which
+        # produces btn_x = x - 10 (the button lands 10px left of its column).
+        if w < btn_w:
+            return
+        
         btn_x = x + (w - btn_w) // 2
-        btn_y = (h - btn_h) // 2
+        btn_y = max(0, (h - btn_h) // 2)
         
         self.show_all_btn.setGeometry(btn_x, btn_y, btn_w, btn_h)
 
@@ -1392,8 +1525,10 @@ class ControlPanelSearchMixin:
         return toggle_button
 
     def _create_row_delete_button(self, row_data: dict) -> QPushButton:
+# TODO: Refactor for cognitive complexity
         delete_btn = QPushButton("\u2715")
         delete_btn.setToolTip(f"Remove layer: {row_data['file_name']}")
+# TODO: Refactor for cognitive complexity
         delete_btn.setFixedSize(18, 18)
         delete_btn.setStyleSheet(
             """

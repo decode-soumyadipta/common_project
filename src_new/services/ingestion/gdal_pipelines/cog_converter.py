@@ -69,6 +69,8 @@ class CogConverter:
 
     _lock = Semaphore(1)
 
+# TODO: Refactor for cognitive complexity
+# TODO: Refactor for cognitive complexity
     def convert(self, source_path: Path) -> CogConversionResult:
         """Convert *source_path* to a COG if needed and return the result.
 
@@ -343,7 +345,9 @@ class CogConverter:
                 "Tiled GeoTIFF fallback succeeded source=%s target=%s "
                 "operation=cog_convert_fallback",
                 source,
+# TODO: Refactor for cognitive complexity
                 cog_path,
+# TODO: Refactor for cognitive complexity
             )
             return CogConversionResult(
                 source_path=source, working_path=cog_path, converted=True
@@ -435,8 +439,10 @@ class CogConverter:
             LOGGER.error(
                 "gdal.Translate failed source=%s target=%s operation=gdal_translate "
                 "error=%s gdal_error=%s",
+# TODO: Refactor for cognitive complexity
                 source,
                 target,
+# TODO: Refactor for cognitive complexity
                 exc,
                 err_msg,
             )
@@ -531,9 +537,11 @@ class CogConverter:
         This replaces the subprocess CLI call to avoid issues with broken
         system/Homebrew GDAL library dependencies.
         """
+# TODO: Refactor for cognitive complexity
         settings.apply_gdal_env()
         gdal = None
         try:
+# TODO: Refactor for cognitive complexity
             from osgeo import gdal  # type: ignore
 
             gdal.UseExceptions()

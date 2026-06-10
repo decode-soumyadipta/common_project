@@ -3,18 +3,18 @@
     if (window.OfflineGISUtils && typeof window.OfflineGISUtils.measureTextWidth === "function") {
       return window.OfflineGISUtils.measureTextWidth(text, font);
     }
-    var canvas = measureTextWidth._canvas || (measureTextWidth._canvas = document.createElement("canvas"));
-    var context = canvas.getContext("2d");
+    let canvas = measureTextWidth._canvas || (measureTextWidth._canvas = document.createElement("canvas"));
+    let context = canvas.getContext("2d");
     context.font = font || "14px sans-serif";
     return context.measureText(text || "").width;
   }
 
   function readLabelText(labelEntity) {
     if (!labelEntity || !labelEntity.label) return "";
-    var textVal = labelEntity.label.text;
+    let textVal = labelEntity.label.text;
     if (!textVal) return "";
     if (typeof textVal.getValue === "function") {
-      var julianDate = (typeof Cesium !== "undefined" && Cesium.JulianDate) 
+      let julianDate = (typeof Cesium !== "undefined" && Cesium.JulianDate) 
                        ? Cesium.JulianDate.now() 
                        : ((typeof cesium !== "undefined" && cesium.JulianDate) ? cesium.JulianDate.now() : null);
       return String(textVal.getValue(julianDate) || "");
@@ -196,12 +196,13 @@
         }
         requestSceneRender();
       },
+// TODO: Refactor this function to reduce its Cognitive Complexity from 52 to the 15 allowed.
       realignMarkersToTerrain: function () {
-        if (viewer && viewer.scene && viewer.scene.globe) {
+        if (viewer?.scene && viewer.scene.globe) {
           // Realign search result markers
           for (let index = 0; index < searchResultMarkerEntities.length; index += 1) {
             const entity = searchResultMarkerEntities[index];
-            if (entity && entity.position) {
+            if (entity?.position) {
               const positionVal = entity.position.getValue(Cesium.JulianDate.now());
               if (positionVal) {
                 const cartographic = Cesium.Cartographic.fromCartesian(positionVal);
@@ -223,7 +224,7 @@
           if (typeof annotationEntities !== "undefined" && Array.isArray(annotationEntities)) {
             for (let i = 0; i < annotationEntities.length; i++) {
               const entity = annotationEntities[i];
-              if (entity && entity._annotationRole === "text-label" && entity.position) {
+              if (entity?._annotationRole === "text-label" && entity.position) {
                 const positionVal = entity.position.getValue(Cesium.JulianDate.now());
                 if (positionVal) {
                   const cartographic = Cesium.Cartographic.fromCartesian(positionVal);
@@ -248,6 +249,7 @@
       clearSearchResultMarkers: function () {
         clearSearchResultMarkerEntities();
         requestSceneRender();
+// TODO: Refactor this function to reduce its Cognitive Complexity from 23 to the 15 allowed.
       },
       addTextLabel: function (lon, lat, text, optHeight) {
         if (!viewer) return;
@@ -268,7 +270,7 @@
         }
         if (!anchorPosition) {
           // Use saved height if provided (restore path), otherwise sample terrain
-          var h = 0.0;
+          let h = 0.0;
           if (typeof optHeight === "number" && Number.isFinite(optHeight)) {
             h = optHeight;
           } else {
@@ -288,8 +290,8 @@
         // visible, so we must NOT have Cesium independently re-clamp each button entity.
         function makeBoundPositionCallback() {
           return new Cesium.CallbackProperty(function () {
-            if (labelEntity && labelEntity.position) {
-              var pos = labelEntity.position.getValue(Cesium.JulianDate.now());
+            if (labelEntity?.position) {
+              let pos = labelEntity.position.getValue(Cesium.JulianDate.now());
               if (pos) return pos;
             }
             return anchorPosition;
@@ -312,7 +314,7 @@
             pixelOffset: new Cesium.Cartesian2(0, 0),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
-            heightReference: (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
+            heightReference: (viewer?.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.5),
             // No disableDepthTestDistance — DEM must occlude labels on far side of terrain.
           },
@@ -330,15 +332,15 @@
             height: 18,
             color: Cesium.Color.WHITE.withAlpha(0.5),
             pixelOffset: new Cesium.CallbackProperty(function () {
-              var w = measureTextWidth(readLabelText(labelEntity), "bold 18px 'Segoe UI', 'Helvetica Neue', sans-serif");
-              var distance = Cesium.Cartesian3.distance(viewer.camera.position, anchorPosition);
-              var scale = 1.0;
+              let w = measureTextWidth(readLabelText(labelEntity), "bold 18px 'Segoe UI', 'Helvetica Neue', sans-serif");
+              let distance = Cesium.Cartesian3.distance(viewer.camera.position, anchorPosition);
+              let scale = 1.0;
               if (distance <= 2500.0) {
                 scale = 1.0;
               } else if (distance >= 1800000.0) {
                 scale = 0.5;
               } else {
-                var t = (distance - 2500.0) / (1800000.0 - 2500.0);
+                let t = (distance - 2500.0) / (1800000.0 - 2500.0);
                 scale = 1.0 + t * (0.5 - 1.0);
               }
               return new Cesium.Cartesian2((-24 - w / 2) * scale, 0);
@@ -363,15 +365,15 @@
             height: 18,
             color: Cesium.Color.WHITE.withAlpha(0.7),
             pixelOffset: new Cesium.CallbackProperty(function () {
-              var w = measureTextWidth(readLabelText(labelEntity), "bold 18px 'Segoe UI', 'Helvetica Neue', sans-serif");
-              var distance = Cesium.Cartesian3.distance(viewer.camera.position, anchorPosition);
-              var scale = 1.0;
+              let w = measureTextWidth(readLabelText(labelEntity), "bold 18px 'Segoe UI', 'Helvetica Neue', sans-serif");
+              let distance = Cesium.Cartesian3.distance(viewer.camera.position, anchorPosition);
+              let scale = 1.0;
               if (distance <= 2500.0) {
                 scale = 1.0;
               } else if (distance >= 1800000.0) {
                 scale = 0.5;
               } else {
-                var t = (distance - 2500.0) / (1800000.0 - 2500.0);
+                let t = (distance - 2500.0) / (1800000.0 - 2500.0);
                 scale = 1.0 + t * (0.5 - 1.0);
               }
               return new Cesium.Cartesian2((24 + w / 2) * scale, 0);
@@ -432,7 +434,7 @@
         if (annotationEntities.length > 0) {
           // Each annotation has 4 entities: anchor, label, edit, delete
           const last = annotationEntities[annotationEntities.length - 1];
-          if (last && last._annotationRole) {
+          if (last?._annotationRole) {
             const targetId = last._annotationId;
             const toRemove = [];
             for (let i = annotationEntities.length - 1; i >= 0; i--) {
@@ -493,13 +495,42 @@
           log("info", "Cancel active distance draw");
           cancelled = true;
         }
-        if (searchDrawMode === "polygon" && !searchPolygonLocked) {
+        if (searchDrawMode === "polygon") {
+          // BUG FIX: Removed !searchPolygonLocked guard. Escape = explicit user intent.
+          // Previously, if a polygon was finalized (locked=true) then the user started
+          // a new draw and pressed Escape, the cancel block was skipped entirely —
+          // leaving stale polygon points in searchPolygonPoints, causing ghost geometry
+          // to appear on the next draw and freezing the frame via stale CallbackProperties.
           searchPolygonPoints.length = 0;
           searchCursorPoint = null;
+          searchPolygonLocked = false; // Always unlock: Escape is an explicit cancel
           if (window.OfflineGISRuntime && typeof window.OfflineGISRuntime.setSearchCursorPoint === "function") {
             window.OfflineGISRuntime.setSearchCursorPoint(null);
           }
-          updateSearchPolygonPreview();
+          // Physically remove and null stale preview entities so their CallbackProperty
+          // closures stop running sampleTerrainHeightsForPath every render frame.
+          // Just hiding them (show=false) via CallbackProperty still executes per frame.
+          try {
+            if (window.searchPreviewLineEntity && viewer) {
+              try { viewer.entities.remove(window.searchPreviewLineEntity); } catch (_) {}
+              window.searchPreviewLineEntity = null;
+            }
+            if (window.searchPreviewPolygonEntity && viewer) {
+              try { viewer.entities.remove(window.searchPreviewPolygonEntity); } catch (_) {}
+              window.searchPreviewPolygonEntity = null;
+            }
+            if (window.searchAreaLabelEntity && viewer) {
+              try { viewer.entities.remove(window.searchAreaLabelEntity); } catch (_) {}
+              window.searchAreaLabelEntity = null;
+            }
+            if (window.searchCursorEntity && viewer) {
+              try { viewer.entities.remove(window.searchCursorEntity); } catch (_) {}
+              window.searchCursorEntity = null;
+            }
+          } catch (_cleanupErr) {
+            // Non-fatal: log and continue
+            log("warn", "cancelActiveDraw: preview entity cleanup error: " + _cleanupErr);
+          }
           searchDrawMode = "none";
           setSearchCursorEnabled(false);
           updatePolygonPreviewVisibility();
@@ -507,7 +538,7 @@
           setStatus("Polygon drawing cancelled.");
           log("info", "Cancel active polygon draw");
           cancelled = true;
-          if (viewer && viewer.scene && viewer.scene.screenSpaceCameraController) {
+          if (viewer?.scene && viewer.scene.screenSpaceCameraController) {
             viewer.scene.screenSpaceCameraController.enableInputs = true;
           }
         }
@@ -526,7 +557,7 @@
           setStatus("Box drawing cancelled.");
           log("info", "Cancel active rectangle draw");
           cancelled = true;
-          if (viewer && viewer.scene && viewer.scene.screenSpaceCameraController) {
+          if (viewer?.scene && viewer.scene.screenSpaceCameraController) {
             viewer.scene.screenSpaceCameraController.enableInputs = true;
           }
           requestSceneRender();
@@ -547,7 +578,7 @@
           log("info", "Cancel active fly through draw");
           cancelled = true;
         }
-        if (viewer && viewer.scene && viewer.scene.screenSpaceCameraController) {
+        if (viewer?.scene && viewer.scene.screenSpaceCameraController) {
           viewer.scene.screenSpaceCameraController.enableInputs = true;
         }
         return cancelled;
@@ -579,7 +610,8 @@
         if (!viewer || !viewer.imageryLayers) return;
         const numAlpha = Math.max(0.0, Math.min(1.0, Number(alpha) || 0.0));
         
-        const layer = managedImageryLayers.get(layerKey);
+        const normalizedKey = String(layerKey || "").replace(/\\/g, "/");
+        const layer = managedImageryLayers.get(normalizedKey);
         if (layer) {
           // Guard: the DEM drape and hillshade layers are stored in managedImageryLayers
           // for layer-ordering, but the compositor opacity slider must NEVER touch them.
@@ -587,13 +619,32 @@
           // those are managed by Display Settings, not the compositor.
           const isDemDrape      = (layer === activeDemDrapeLayer);
           const isDemHillshade  = (layer === activeDemHillshadeLayer);
-          if (isDemDrape || isDemHillshade) {
-            log("debug", "setLayerAlpha: skipping DEM layer " + (isDemDrape ? "drape" : "hillshade") + " key=" + layerKey);
+          const isDemKey        = (activeDemContext && normalizedKey === activeDemContext.layerKey) || normalizedKey.endsWith(":hillshade");
+          if (isDemDrape || isDemHillshade || isDemKey) {
+            log("debug", "setLayerAlpha: skipping DEM layer drape/hillshade key=" + normalizedKey);
             return;
           }
           layer.alpha = numAlpha;
         }
         requestSceneRender();
+      },
+
+      // Hide/show DEM drape & hillshade during Layer Compositor mode.
+      // When active=true the DEM layers are suppressed so that reducing imagery
+      // opacity reveals the basemap (not the terrain colorisation below).
+      setDemLayersInCompositorMode: function (active) {
+        const suppress = Boolean(active);
+        if (activeDemDrapeLayer) {
+          activeDemDrapeLayer.show = !suppress &&
+            (activeDemContext && activeDemContext.visible !== false);
+        }
+        if (activeDemHillshadeLayer) {
+          activeDemHillshadeLayer.show = !suppress &&
+            (activeDemContext && activeDemContext.visible !== false &&
+             activeDemHillshadeLayer.alpha > 0.01);
+        }
+        requestSceneRender();
+        log("info", "setDemLayersInCompositorMode: suppress=" + suppress);
       },
 
       setQualitySettings: function (settings) {
@@ -804,6 +855,7 @@
             container.classList.remove("measure-profile-cursor-active");
           }
         }
+// TODO: Refactor this function to reduce its Cognitive Complexity from 17 to the 15 allowed.
         log("debug", "Profile cursor mode=" + String(Boolean(enabled)));
       },
       drawProfileStartMarker: function (lon, lat) {
@@ -831,7 +883,7 @@
         const cyan = Cesium.Color.fromCssColorString("#00e5ff");
         window._profileStartEntity = viewer.entities.add({
           position: Cesium.Cartesian3.fromDegrees(Number(lon), Number(lat)),
-          point: { pixelSize: 9, color: cyan, outlineColor: Cesium.Color.BLACK, outlineWidth: 1.5, heightReference: (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND },
+          point: { pixelSize: 9, color: cyan, outlineColor: Cesium.Color.BLACK, outlineWidth: 1.5, heightReference: (viewer?.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND },
           label: {
             text: "A",
             font: "bold 11px sans-serif",
@@ -840,7 +892,7 @@
             outlineColor: Cesium.Color.BLACK,
             outlineWidth: 2,
             pixelOffset: new Cesium.Cartesian2(10, -10),
-            heightReference: (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
+            heightReference: (viewer?.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
           },
         });
         // Store start coords — preview line is recreated on every mouse move
@@ -892,7 +944,7 @@
           searchDrawMode = "none";
           setSearchCursorEnabled(false);
           updatePolygonPreviewVisibility();
-          if (viewer && viewer.scene && viewer.scene.screenSpaceCameraController) {
+          if (viewer?.scene && viewer.scene.screenSpaceCameraController) {
             viewer.scene.screenSpaceCameraController.enableInputs = true;
           }
           // Removed DOM update
@@ -955,5 +1007,32 @@
       },
       syncSearchResultMarkerVisibility: function () {
         syncSearchResultMarkerVisibility();
+      },
+      sampleHeightsAlongLine: function (lon1, lat1, lon2, lat2, numSamples) {
+        if (!viewer) return [];
+        const startCartographic = Cesium.Cartographic.fromDegrees(lon1, lat1);
+        const endCartographic = Cesium.Cartographic.fromDegrees(lon2, lat2);
+        
+        // Geodesic interpolation
+        const geodesic = new Cesium.EllipsoidGeodesic(startCartographic, endCartographic);
+        const totalDistance = geodesic.surfaceDistance;
+        
+        const heights = [];
+        for (let i = 0; i < numSamples; i++) {
+          const fraction = i / (numSamples - 1);
+          const distance = fraction * totalDistance;
+          const carto = geodesic.interpolateUsingSurfaceDistance(distance);
+          
+          // Sample height from scene (which clamps to tilesets/pointclouds/terrain)
+          const height = viewer.scene.sampleHeight(carto);
+          if (Cesium.defined(height) && Number.isFinite(height)) {
+            heights.push(height);
+          } else {
+            // Fallback to globe terrain height
+            const terrainHeight = viewer.scene.globe.getHeight(carto);
+            heights.push(Number.isFinite(terrainHeight) ? terrainHeight : 0.0);
+          }
+        }
+        return heights;
       },
   });

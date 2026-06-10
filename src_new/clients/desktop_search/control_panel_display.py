@@ -15,6 +15,11 @@ class ControlPanelDisplayMixin:
         self.contrast_value.setText(f"{contrast_scale:.2f}x")
         self.pitch_value.setText(f"{pitch_degrees} deg")
         self.dem_hillshade_value.setText(f"{hillshade_percent}%")
+        
+        if hasattr(self, "pc_point_size_slider"):
+            self.pc_point_size_value.setText(f"{self.pc_point_size_slider.value()} px")
+        if hasattr(self, "pc_z_offset_slider"):
+            self.pc_z_offset_value.setText(f"{self.pc_z_offset_slider.value()} m")
 
     @Slot(float, float, float)
     def update_camera_info(self, scale_denominator: float, heading_deg: float, pitch_deg: float) -> None:

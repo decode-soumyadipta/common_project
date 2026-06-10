@@ -115,7 +115,7 @@
   const emitLoadingProgress = bridgeUtils.emitLoadingProgress || function () {};
   const requestSceneRender = bridgeUtils.requestSceneRender || function () {
     // Fallback: directly trigger a render frame if viewer is available
-    if (viewer && viewer.scene) {
+    if (viewer?.scene) {
       viewer.scene.requestRender();
     }
   };
@@ -178,7 +178,7 @@
   };
   const parseDemHeightRange = bridgeUtils.parseDemHeightRange || function (options) {
     const defaultRange = { min: -500.0, max: 9000.0 };
-    const query = options && options.query ? options.query : null;
+    const query = options?.query ? options.query : null;
     if (!query || typeof query.rescale !== "string") {
       return defaultRange;
     }
@@ -190,7 +190,7 @@
   };
 
   const getDemTerrainHeightFallback = function () {
-    if (typeof activeDemContext !== "undefined" && activeDemContext && activeDemContext.options && activeDemContext.options.query) {
+    if (typeof activeDemContext !== "undefined" && activeDemContext?.options && activeDemContext.options.query) {
       const rescale = activeDemContext.options.query.rescale;
       if (typeof rescale === "string") {
         const parts = rescale.split(",").map(Number);
@@ -208,7 +208,7 @@
   };
 
   function getActiveDemColorMode() {
-    return String((activeDemContext && activeDemContext.colorMode) || demVisual.colorMode || "terrain").toLowerCase();
+    return String((activeDemContext?.colorMode) || demVisual.colorMode || "terrain").toLowerCase();
   }
 
   function getDemRescaleRangeForColorMode(colorMode) {
@@ -228,14 +228,14 @@
     return { min: -500.0, max: 9000.0 };
   }
 
-  var flyThroughCursorCartesian = null;
+  let flyThroughCursorCartesian = null;
 
   function liftFlyThroughPoint(cartesian) {
     if (!cartesian) {
       return null;
     }
     const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
-    const terrainHeight = viewer && viewer.scene && viewer.scene.globe
+    const terrainHeight = viewer?.scene && viewer.scene.globe
       ? viewer.scene.globe.getHeight(cartographic)
       : null;
     const baseHeight = Number.isFinite(terrainHeight)
@@ -654,10 +654,10 @@
     window._flyThroughLastPitch = null;
 
     const restoreView = function () {
-      if (viewer && viewer.scene && viewer.scene.screenSpaceCameraController) {
+      if (viewer?.scene && viewer.scene.screenSpaceCameraController) {
         viewer.scene.screenSpaceCameraController.enableInputs = true;
       }
-      if (flyThroughOriginalView && viewer && viewer.camera) {
+      if (flyThroughOriginalView && viewer?.camera) {
         try {
           viewer.camera.setView({
             destination: flyThroughOriginalView.destination,
@@ -678,7 +678,7 @@
       requestSceneRender();
     };
 
-    if (flyThroughOriginalView && viewer && viewer.camera) {
+    if (flyThroughOriginalView && viewer?.camera) {
       viewer.camera.flyTo({
         destination: flyThroughOriginalView.destination,
         orientation: flyThroughOriginalView.orientation,
@@ -697,14 +697,14 @@
 
     if (mousePos) {
       // Use depth pick when available for stable terrain clamping.
-      var cartesian = null;
+      let cartesian = null;
       if (viewer.scene.pickPositionSupported) {
         try {
           cartesian = viewer.scene.pickPosition(mousePos);
         } catch (_) {}
       }
       if (!cartesian) {
-        var ray = viewer.camera.getPickRay(mousePos);
+        let ray = viewer.camera.getPickRay(mousePos);
         if (ray) {
           cartesian = viewer.scene.globe.pick(ray, viewer.scene);
         }
@@ -713,9 +713,9 @@
         cartesian = viewer.camera.pickEllipsoid(mousePos, viewer.scene.globe.ellipsoid);
       }
       if (cartesian) {
-        var carto = Cesium.Cartographic.fromCartesian(cartesian);
-        var terrainHeight = viewer.scene.globe.getHeight(carto);
-        var height = (terrainHeight !== undefined && terrainHeight !== null)
+        let carto = Cesium.Cartographic.fromCartesian(cartesian);
+        let terrainHeight = viewer.scene.globe.getHeight(carto);
+        let height = (terrainHeight !== undefined && terrainHeight !== null)
           ? terrainHeight
           : carto.height;
         flyThroughCursorCartesian = Cesium.Cartesian3.fromRadians(
@@ -854,6 +854,7 @@
   const DEFAULT_3D_PITCH_RAD = Cesium.Math.toRadians(-35.0); // default oblique view for DEM
   const layerDefinitions = new Map();
   const layerVisibilityState = new Map();
+  const managedPointCloudLayers = new Map();
   const tileErrorSeen = new Set();
   const layerErrorCounts = new Map();
   // DEM rendering uses imagery-only pipeline (colormap + hillshade on EllipsoidTerrainProvider)
@@ -1054,7 +1055,17 @@
             : searchOverlayVisible;
         },
         setSearchDrawMode: function (value) {
+          const prev = searchDrawMode;
           searchDrawMode = value;
+          // BUG FIX: When starting a new polygon draw, always reset the locked state
+          // and clear stale points. Previously the locked flag from a finalized polygon
+          // would persist into the new draw session, causing Escape to silently fail and
+          // new click-points to stack on top of the old polygon's ghost points.
+          if (value === "polygon" && prev !== "polygon") {
+            searchPolygonLocked = false;
+            searchPolygonPoints.length = 0;
+            searchCursorPoint = null;
+          }
         },
         setSearchCursorPoint: function (value) {
           searchCursorPoint = value;
@@ -1182,6 +1193,7 @@
     }
   }
 
+// TODO: Refactor this function to reduce its Cognitive Complexity from 22 to the 15 allowed.
   function getCartesianFromViewer(targetViewer, screenPosition) {
     if (!targetViewer || !screenPosition || !targetViewer.scene) {
       return null;
@@ -1349,16 +1361,16 @@
     if (!comparatorModeEnabled) {
       return;
     }
-    var idx = (typeof paneIdx === "number") ? paneIdx : comparatorViewers.indexOf(sourceViewer);
-    var targetViewer = sourceViewer || comparatorViewers[0];
+    let idx = (typeof paneIdx === "number") ? paneIdx : comparatorViewers.indexOf(sourceViewer);
+    let targetViewer = sourceViewer || comparatorViewers[0];
     if (!targetViewer || !targetViewer.canvas) {
       return;
     }
-    var center = new Cesium.Cartesian2(
+    let center = new Cesium.Cartesian2(
       targetViewer.canvas.clientWidth * 0.5,
       targetViewer.canvas.clientHeight * 0.5,
     );
-    var lonLat = getLonLatFromViewer(targetViewer, center);
+    let lonLat = getLonLatFromViewer(targetViewer, center);
     if (lonLat) {
       emitMouseCoordinates(lonLat.lon, lonLat.lat);
     }
@@ -1376,6 +1388,7 @@
     }
     return null;
   }
+// TODO: Refactor this function to reduce its Cognitive Complexity from 48 to the 15 allowed.
 
   function projectCartesianToViewer(targetViewer, worldCartesian) {
     if (!targetViewer || !worldCartesian) {
@@ -1408,9 +1421,8 @@
                 // above-ellipsoid offset so the point isn't occluded by terrain.
                 height = 100.0;
               }
-            } else {
-              height = 0.0;
             }
+            // S4165: else branch (height = 0.0) is redundant — height is already 0.0
           }
           carto.height = height;
           const projectedCart = Cesium.Cartographic.toCartesian(carto, ellipsoid);
@@ -1599,7 +1611,7 @@
     state.lastSourceHeightRad = height;
     state.lastSourceCenterLon = Number(center.longitude);
     state.lastSourceCenterLat = Number(center.latitude);
-    const cameraHeight = sourceViewer && sourceViewer.camera && sourceViewer.camera.positionCartographic && Number.isFinite(sourceViewer.camera.positionCartographic.height)
+    const cameraHeight = sourceViewer?.camera && sourceViewer.camera.positionCartographic && Number.isFinite(sourceViewer.camera.positionCartographic.height)
       ? Number(sourceViewer.camera.positionCartographic.height)
       : NaN;
     state.lastSourceCameraHeightM = Number.isFinite(cameraHeight) ? cameraHeight : NaN;
@@ -1782,7 +1794,7 @@
     }
 
     const sourceState = getComparatorSyncStateForViewer(sourceViewer);
-    const sourceCameraHeight = sourceViewer && sourceViewer.camera && sourceViewer.camera.positionCartographic && Number.isFinite(sourceViewer.camera.positionCartographic.height)
+    const sourceCameraHeight = sourceViewer?.camera && sourceViewer.camera.positionCartographic && Number.isFinite(sourceViewer.camera.positionCartographic.height)
       ? Number(sourceViewer.camera.positionCartographic.height)
       : NaN;
     const previousSourceCameraHeight = sourceState && Number.isFinite(sourceState.lastSourceCameraHeightM)
@@ -1846,7 +1858,7 @@
       if (sourceViewer) {
         updateComparatorCenterReadout(sourceViewer);
       }
-      if (targetViewer && targetViewer.scene) {
+      if (targetViewer?.scene) {
         targetViewer.scene.requestRender();
       }
     }
@@ -1855,12 +1867,12 @@
   function bindComparatorSyncHandlers() {
     // Wire camera-change and mousemove for all active comparator panes.
     // Uses comparatorViewers[] array — works for 2, 3, or 4 panes.
-    var _numActive = comparatorViewers.filter(Boolean).length;
-    for (var _bi = 0; _bi < _numActive; _bi++) {
+    let _numActive = comparatorViewers.filter(Boolean).length;
+    for (let _bi = 0; _bi < _numActive; _bi++) {
       (function(idx) {
-        var v = comparatorViewers[idx];
+        let v = comparatorViewers[idx];
         if (!v) return;
-        var container = document.getElementById("comparatorViewer" + idx);
+        let container = document.getElementById("comparatorViewer" + idx);
         if (!container) return;
 
         // Camera change → update coords readout for this pane
@@ -1886,6 +1898,7 @@
         }
 
         let lastMouseMoveTime = 0;
+// TODO: Refactor this function to reduce its Cognitive Complexity from 16 to the 15 allowed.
         const MOUSE_MOVE_THROTTLE_MS = 16;
 
         const mouseMoveListener = function (event) {
@@ -1902,31 +1915,31 @@
           if (now - lastMouseMoveTime < MOUSE_MOVE_THROTTLE_MS) return;
           lastMouseMoveTime = now;
 
-          var srcCartesian = getCartesianFromViewer(v, srcPos);
-          var srcLonLat = srcCartesian ? cartesianToLonLat(srcCartesian) : null;
+          let srcCartesian = getCartesianFromViewer(v, srcPos);
+          let srcLonLat = srcCartesian ? cartesianToLonLat(srcCartesian) : null;
 
-          var projectedCartesian = srcCartesian || (srcLonLat
+          let projectedCartesian = srcCartesian || (srcLonLat
             ? Cesium.Cartesian3.fromDegrees(Number(srcLonLat.lon), Number(srcLonLat.lat))
             : null);
 
           // Update crosshair on every pane EXCEPT the source pane.
           // The source pane uses the native OS crosshair cursor (set via CSS cursor:crosshair),
           // so drawing an overlay there would create a double-cursor effect.
-          var _total = comparatorViewers.filter(Boolean).length;
-          for (var _pi = 0; _pi < _total; _pi++) {
+          let _total = comparatorViewers.filter(Boolean).length;
+          for (let _pi = 0; _pi < _total; _pi++) {
             if (_pi === idx) {
               // Source pane: always hide overlay — native cursor handles this pane
-              var srcCrosshair = document.querySelector("#comparatorPane" + _pi + " .comparatorCrosshair");
+              let srcCrosshair = document.querySelector("#comparatorPane" + _pi + " .comparatorCrosshair");
               if (srcCrosshair) srcCrosshair.style.display = "none";
               continue;
             }
 
-            var targetV = comparatorViewers[_pi];
-            var crosshair = document.querySelector("#comparatorPane" + _pi + " .comparatorCrosshair");
+            let targetV = comparatorViewers[_pi];
+            let crosshair = document.querySelector("#comparatorPane" + _pi + " .comparatorCrosshair");
             if (!crosshair || !targetV) continue;
 
             // Project the geo-coordinate into the target pane's screen space
-            var screenPos = projectedCartesian ? projectCartesianToViewer(targetV, projectedCartesian) : null;
+            let screenPos = projectedCartesian ? projectCartesianToViewer(targetV, projectedCartesian) : null;
             applyCrosshairScreenPosition(crosshair, targetV, screenPos);
           }
 
@@ -1937,9 +1950,9 @@
 
         const mouseLeaveListener = function () {
           // Hide overlay crosshairs in all panes when mouse leaves
-          var _total = comparatorViewers.filter(Boolean).length;
-          for (var _pi = 0; _pi < _total; _pi++) {
-            var crosshair = document.querySelector("#comparatorPane" + _pi + " .comparatorCrosshair");
+          let _total = comparatorViewers.filter(Boolean).length;
+          for (let _pi = 0; _pi < _total; _pi++) {
+            let crosshair = document.querySelector("#comparatorPane" + _pi + " .comparatorCrosshair");
             if (crosshair) {
               crosshair.style.display = "none";
             }
@@ -1957,18 +1970,18 @@
   }
 
   function getComparatorPaneViewer(paneKey) {
-    var idx = resolveComparatorPaneIndex(paneKey);
+    let idx = resolveComparatorPaneIndex(paneKey);
     return (Array.isArray(comparatorViewers) && comparatorViewers[idx]) || null;
   }
 
   function getComparatorPaneLayerType(paneKey) {
-    var idx = resolveComparatorPaneIndex(paneKey);
-    var v = Array.isArray(comparatorViewers) ? comparatorViewers[idx] : null;
+    let idx = resolveComparatorPaneIndex(paneKey);
+    let v = Array.isArray(comparatorViewers) ? comparatorViewers[idx] : null;
     if (!v) return null;
-    var key = v.__comparatorLayerKey || null;
+    let key = v.__comparatorLayerKey || null;
     if (!key) return null;
-    var def = layerDefinitions.get(key);
-    return (def && def.type) ? String(def.type) : null;
+    let def = layerDefinitions.get(key);
+    return (def?.type) ? String(def.type) : null;
   }
 
   function getComparatorPaneVisual(paneKey) {
@@ -1981,12 +1994,12 @@
   }
 
   function setComparatorPaneSelectionStyles(selectedPane) {
-    var _numActive = comparatorViewers.filter(Boolean).length;
-    var selectedIndex = resolveComparatorPaneIndex(selectedPane);
-    for (var _ssi = 0; _ssi < 4; _ssi++) {
-      var pane = document.getElementById("comparatorPane" + _ssi);
+    let _numActive = comparatorViewers.filter(Boolean).length;
+    let selectedIndex = resolveComparatorPaneIndex(selectedPane);
+    for (let _ssi = 0; _ssi < 4; _ssi++) {
+      let pane = document.getElementById("comparatorPane" + _ssi);
       if (!pane) continue;
-      var isSelected = (_ssi === selectedIndex) && (_ssi < _numActive);
+      let isSelected = (_ssi === selectedIndex) && (_ssi < _numActive);
       pane.classList.toggle("selected", isSelected);
     }
   }
@@ -2033,10 +2046,10 @@
   }
 
   function bindComparatorPaneSelectionHandlers() {
-    var _numActive = comparatorViewers.filter(Boolean).length;
-    for (var _si = 0; _si < _numActive; _si++) {
+    let _numActive = comparatorViewers.filter(Boolean).length;
+    for (let _si = 0; _si < _numActive; _si++) {
       (function(idx) {
-        var pane = document.getElementById("comparatorPane" + idx);
+        let pane = document.getElementById("comparatorPane" + idx);
         if (!pane || pane.dataset.selectionBound) return;
         pane.dataset.selectionBound = "1";
         pane.addEventListener("pointerdown", function () {
@@ -2053,7 +2066,7 @@
       baseQuery.colormap_name = String(demState.colorMode || baseQuery.colormap_name || "gray");
       return buildUrlWithQuery(definition.xyzUrl, baseQuery);
     }
-    return String((definition && definition.drapeUrl) || "");
+    return String((definition?.drapeUrl) || "");
   }
 
   function buildComparatorDemHillshadeUrl(definition, demState) {
@@ -2071,7 +2084,7 @@
       }
       return buildUrlWithQuery(definition.xyzUrl, query);
     }
-    return String((definition && definition.hillshadeUrl) || "");
+    return String((definition?.hillshadeUrl) || "");
   }
 
   function logComparatorLayerStack(targetViewer, paneKey, context) {
@@ -2084,8 +2097,8 @@
       const isPrimary = layer === targetViewer.__comparatorPrimaryLayer;
       const isHillshade = layer === targetViewer.__comparatorHillshadeLayer;
       const role = isPrimary ? "primary" : (isHillshade ? "hillshade" : "background");
-      const alpha = Number(layer && layer.alpha);
-      const show = layer && layer.show === false ? "hidden" : "shown";
+      const alpha = Number(layer?.alpha);
+      const show = layer?.show === false ? "hidden" : "shown";
       rows.push(`#${idx}:${role}:${show}:alpha=${Number.isFinite(alpha) ? alpha.toFixed(2) : "n/a"}`);
     }
     log("debug", `Comparator layer stack pane=${paneKey} context=${context} :: ${rows.join(" | ")}`);
@@ -2227,16 +2240,16 @@
       // On Windows/ANGLE the scene mode transition is async — we need to wait
       // at least one frame before lookAt works correctly.
       if (rectangle) {
-        var _demRect = rectangle;
-        var _demViewer = targetViewer;
-        var _demPaneKey = paneKey;
+        let _demRect = rectangle;
+        let _demViewer = targetViewer;
+        let _demPaneKey = paneKey;
         function _applyDemCamera() {
           if (!_demViewer || !_demViewer.scene) return;
-          var pitch = getComparatorDemPitchRadians();
-          var centerLon = (_demRect.west + _demRect.east) * 0.5;
-          var centerLat = (_demRect.south + _demRect.north) * 0.5;
-          var centerCarto = new Cesium.Cartographic(centerLon, centerLat);
-          var terrainHeight = undefined;
+          let pitch = getComparatorDemPitchRadians();
+          let centerLon = (_demRect.west + _demRect.east) * 0.5;
+          let centerLat = (_demRect.south + _demRect.north) * 0.5;
+          let centerCarto = new Cesium.Cartographic(centerLon, centerLat);
+          let terrainHeight = undefined;
           if (_demViewer.scene.globe && typeof _demViewer.scene.globe.getHeight === "function") {
             const h = _demViewer.scene.globe.getHeight(centerCarto);
             if (typeof h === "number" && Number.isFinite(h)) {
@@ -2251,8 +2264,8 @@
           if (_demViewer.scene.globe && typeof _demViewer.scene.globe.terrainExaggeration === "number") {
             terrainHeight *= _demViewer.scene.globe.terrainExaggeration;
           }
-          var sphere = Cesium.BoundingSphere.fromRectangle3D(_demRect, Cesium.Ellipsoid.WGS84, terrainHeight);
-          var range = Math.max(sphere.radius * 1.9, 900.0);
+          let sphere = Cesium.BoundingSphere.fromRectangle3D(_demRect, Cesium.Ellipsoid.WGS84, terrainHeight);
+          let range = Math.max(sphere.radius * 1.9, 900.0);
           log("debug", "COMP_DEM pane=" + _demPaneKey +
             " applying camera pitch=" + Cesium.Math.toDegrees(pitch).toFixed(1) +
             "° range=" + range.toFixed(0) + "m" +
@@ -2303,8 +2316,8 @@
     targetViewer.__comparatorPrimaryLayer = layer;
 
     // Re-enforce 2D after a short delay — Windows/ANGLE can revert the mode
-    var _imgViewer = targetViewer;
-    var _imgPaneKey = paneKey;
+    let _imgViewer = targetViewer;
+    let _imgPaneKey = paneKey;
     function _enforce2D() {
       if (!_imgViewer || !_imgViewer.scene) return;
       if (_imgViewer.scene.mode !== Cesium.SceneMode.SCENE2D) {
@@ -2333,7 +2346,7 @@
   function resolveComparatorLayerKeys() {
     // Prefer the explicitly selected keys (set via setComparatorLayers).
     // This guarantees pane count == 2.
-    if (swipeComparatorExplicitKeys && swipeComparatorExplicitKeys.length >= 2) {
+    if (swipeComparatorExplicitKeys?.length >= 2) {
       return swipeComparatorExplicitKeys.slice(0, 2);
     }
     // Legacy fallback: use left/right pair if only those two are available
@@ -2367,7 +2380,7 @@
     const groups = {};
     if (typeof annotationEntities !== "undefined" && Array.isArray(annotationEntities)) {
       for (const ent of annotationEntities) {
-        if (ent && ent._annotationId) {
+        if (ent?._annotationId) {
           const id = ent._annotationId;
           if (!groups[id]) {
             groups[id] = {};
@@ -2448,7 +2461,7 @@
         const coords = [];
         if (mainEnt.polyline && mainEnt.polyline.positions) {
           const positions = mainEnt.polyline.positions.getValue(Cesium.JulianDate.now());
-          if (positions && positions.length) {
+          if (positions?.length) {
             for (const pos of positions) {
               const carto = Cesium.Cartographic.fromCartesian(pos);
               if (carto) {
@@ -2468,7 +2481,7 @@
     const polygons = [];
     if (typeof drawnPolygons !== "undefined" && Array.isArray(drawnPolygons)) {
       for (const poly of drawnPolygons) {
-        if (poly && poly._isAnnotationPoly) {
+        if (poly?._isAnnotationPoly) {
           const coords = (poly.points || []).map(function (p) {
             let h = 0.0;
             if (p.cartesian) {

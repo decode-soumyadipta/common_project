@@ -197,6 +197,10 @@ def get_format_handler(file_extension: str) -> object | None:
         from src_new.services.ingestion.format_handlers import mbtiles_handler
         return mbtiles_handler
 
+    if ext in {".las", ".laz"}:
+        from src_new.services.ingestion.format_handlers import las_handler
+        return las_handler
+
     return None
 
 

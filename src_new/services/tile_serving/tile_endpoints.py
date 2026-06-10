@@ -37,7 +37,7 @@ import time
 from collections import OrderedDict
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Path as FastAPIPath, Query
 from fastapi.responses import Response
 
 from src_new.shared.config import settings
@@ -248,12 +248,24 @@ def _resolve_raster_path(raster_id: str) -> Path:
     candidate = data_root / raster_id
     if candidate.is_file():
         resolved = candidate.resolve()
+        if resolved.suffix.lower() in (".las", ".laz"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported raster format '{resolved.suffix}' for tile rendering.",
+            )
         # For non-MBTiles raster formats, prefer a COG sibling if available
         if resolved.suffix.lower() != ".mbtiles":
             cog_sibling = resolved.parent / f"{resolved.stem}.cog.tif"
             if cog_sibling.is_file():
                 return cog_sibling.resolve()
         return resolved
+
+    # Try exact match with .cog.tif replacement for raster_id
+    if not raster_id.endswith(".mbtiles"):
+        r_path = Path(raster_id)
+        cog_candidate = candidate.with_name(f"{r_path.stem}.cog.tif")
+        if cog_candidate.is_file():
+            return cog_candidate.resolve()
 
     # 2. Stem match: search recursively for a file whose stem == raster_id
     for ext in (".tif", ".tiff", ".jp2", ".j2k", ".j2c", ".mbtiles"):
@@ -266,11 +278,21 @@ def _resolve_raster_path(raster_id: str) -> Path:
                     return cog_sibling.resolve()
             return resolved
 
+    # Define matching logic that handles both original names/stems and converted COG naming conventions
+    r_stem = Path(raster_id).stem
+    def is_match(found: Path) -> bool:
+        if found.name == raster_id or found.stem == raster_id:
+            return True
+        f_stem = found.stem
+        if f_stem.endswith(".cog"):
+            f_stem = f_stem[:-4]
+        return f_stem == r_stem or f_stem == raster_id
+
     # 3. Search in uploads folder first (much faster than full rglob)
     uploads_dir = data_root / "uploads"
     if uploads_dir.is_dir():
         for found in uploads_dir.rglob("*"):
-            if found.is_file() and (found.stem == raster_id or found.name == raster_id):
+            if found.is_file() and is_match(found):
                 resolved = found.resolve()
                 if resolved.suffix.lower() != ".mbtiles":
                     cog_sibling = resolved.parent / f"{resolved.stem}.cog.tif"
@@ -283,7 +305,7 @@ def _resolve_raster_path(raster_id: str) -> Path:
         # Ignore common non-data folders to avoid severe performance degradation
         if any(p in found.parts for p in (".git", ".venv", "venv", ".pytest_cache", "__pycache__", "node_modules", "src_new")):
             continue
-        if found.is_file() and (found.stem == raster_id or found.name == raster_id):
+        if found.is_file() and is_match(found):
             resolved = found.resolve()
             if resolved.suffix.lower() != ".mbtiles":
                 cog_sibling = resolved.parent / f"{resolved.stem}.cog.tif"
@@ -805,9 +827,10 @@ async def get_tile(
             },
         )
 
+    safe_colormap = colormap.replace("\n", "").replace("\r", "") if colormap else None
     logger.debug(
         "Serving tile z=%d x=%d y=%d from %s (contrast=%.2f brightness=%.2f colormap=%s)",
-        z, x, y, raster_path, contrast, brightness, colormap,
+        z, x, y, raster_path, contrast, brightness, safe_colormap,
     )
 
     tile_data = _read_tile_from_cog(raster_path, z, x, y, tile_size=TILE_SIZE)
@@ -870,7 +893,7 @@ async def get_tile(
     },
 )
 async def get_preview(
-    raster_id: str,
+    raster_id: Annotated[str, FastAPIPath(description="Raster identifier (UUID or filename stem)")],
     contrast: Annotated[
         float,
         Query(
@@ -903,7 +926,7 @@ async def get_preview(
     """
     raster_path = _resolve_raster_path(raster_id)
     logger.debug(
-        "Serving preview for raster_id=%s from %s", raster_id, raster_path
+        "Serving preview for raster_id=%s from %s", raster_path.name, raster_path
     )
 
     preview_data = _read_preview_from_raster(raster_path, preview_size=TILE_SIZE_PREVIEW)
@@ -912,18 +935,18 @@ async def get_preview(
         preview_data = _apply_contrast_brightness(preview_data, contrast, brightness)
 
     if colormap is not None and _PIL_AVAILABLE and _RASTERIO_AVAILABLE:
+        safe_cmap_preview = colormap.replace("\n", "").replace("\r", "") if colormap else ""
         try:
             import matplotlib.cm as _cm  # type: ignore[import]
             import matplotlib.colors as _mcolors  # type: ignore[import]
 
-            cmap = _cm.get_cmap(colormap)
+            cmap = _cm.get_cmap(safe_cmap_preview)
             band = preview_data[0].astype("float32") / 255.0
             rgba = (_mcolors.to_rgba_array(cmap(band.ravel())) * 255).astype("uint8")
             rgba = rgba.reshape(preview_data.shape[1], preview_data.shape[2], 4)
             preview_data = np.transpose(rgba, (2, 0, 1))
         except Exception as exc:
-            safe_cmap = colormap.replace("\n", "").replace("\r", "") if colormap else ""
-            logger.warning("Failed to apply colormap '%s': %s", safe_cmap, exc)
+            logger.warning("Failed to apply colormap '%s': %s", safe_cmap_preview, exc)
 
     png_bytes = _array_to_png(preview_data)
     return Response(

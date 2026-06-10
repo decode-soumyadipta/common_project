@@ -96,11 +96,11 @@ class ExportCoordinator:
             c.panel.log(f"GeoPackage export failed: {e!s}")
             QMessageBox.critical(c.panel, EXPORT_ERROR_LITERAL, f"Failed to export GeoPackage:\n{e!s}")
 
-    def export_geotiff(self) -> None:
-        """Export individual searched assets as GeoTIFF using a minimalist dialog."""
+    def export_asset(self) -> None:
+        """Export individual searched assets using a minimalist dialog."""
         c = self._controller
         assets = list(c._search_result_assets_by_path.values())
-        dialog = ExportGeoTiffDialog(
+        dialog = ExportAssetDialog(
             c.panel,
             assets,
             resolve_source_path=c._find_best_file_version,
@@ -310,7 +310,7 @@ class ExportCoordinator:
             logger = logging.getLogger("desktop.export")
             logger.exception("PDF export failed")
             c.panel.log(f"PDF export failed: {e!s}")
-            QMessageBox.critical(c.panel, "Export Error", f"Failed to export PDF:\n{e!s}")
+            QMessageBox.critical(c.panel, EXPORT_ERROR_LITERAL, f"Failed to export PDF:\n{e!s}")
 
 
     def _get_visible_search_assets(self) -> list[dict]:
@@ -593,7 +593,7 @@ class ExportCoordinator:
                         "Failed to export user vector layer %s: %s", layer_name, ve
                     )
 
-class GeoTiffExportThread(QThread):
+class AssetExportThread(QThread):
     progress = Signal(int)
     finished = Signal(bool, str)
 
@@ -630,8 +630,8 @@ class GeoTiffExportThread(QThread):
 
             export_src = self.src_path
             
-            # If the resolved source file is already a GeoTIFF, perform a fast direct copy
-            if export_src.lower().endswith((".tif", ".tiff")):
+            # If the resolved source file is already a GeoTIFF or LAS/LAZ, perform a fast direct copy
+            if export_src.lower().endswith((".tif", ".tiff", ".las", ".laz")):
                 self.progress.emit(10)
                 shutil.copy2(export_src, self.dest_path)
                 self.progress.emit(100)
@@ -679,7 +679,7 @@ class GeoTiffExportThread(QThread):
             self.finished.emit(False, str(e))
 
 
-class ExportGeoTiffDialog(QDialog):
+class ExportAssetDialog(QDialog):
     def __init__(self, parent, assets, resolve_source_path=None):
         super().__init__(parent)
         self.assets = assets
@@ -689,7 +689,7 @@ class ExportGeoTiffDialog(QDialog):
         self.init_ui()
 
     def init_ui(self):
-        self.setWindowTitle("Export Assets as GeoTIFF")
+        self.setWindowTitle("Export Assets")
         self.resize(600, 400)
         self.setMinimumSize(500, 300)
         
@@ -838,12 +838,21 @@ class ExportGeoTiffDialog(QDialog):
             return
 
         # Determine suggestion file name
-        sugg_name = Path(file_name).with_suffix(".tif").name
+        lower_path = file_path.lower()
+        if lower_path.endswith((".las", ".laz")):
+            sugg_name = file_name if file_name.lower().endswith((".las", ".laz")) else Path(file_name).with_suffix(Path(file_path).suffix).name
+            filter_str = "LiDAR Files (*.las *.laz);;All Files (*)"
+            title_str = "Save LiDAR Asset"
+        else:
+            sugg_name = file_name if file_name.lower().endswith((".tif", ".tiff")) else Path(file_name).with_suffix(".tif").name
+            filter_str = "GeoTIFF (*.tif *.tiff);;All Files (*)"
+            title_str = "Save Raster Asset"
+
         dest_path, _ = QFileDialog.getSaveFileName(
             self,
-            "Save GeoTIFF",
+            title_str,
             sugg_name,
-            "GeoTIFF (*.tif *.tiff)"
+            filter_str
         )
         if not dest_path:
             return
@@ -853,9 +862,9 @@ class ExportGeoTiffDialog(QDialog):
             try:
                 export_src = self._resolve_source_path(file_path)
             except Exception:
-                export_src = GeoTiffExportThread._resolve_export_source(file_path)
+                export_src = AssetExportThread._resolve_export_source(file_path)
         else:
-            export_src = GeoTiffExportThread._resolve_export_source(file_path)
+            export_src = AssetExportThread._resolve_export_source(file_path)
 
         if not Path(export_src).exists():
             QMessageBox.critical(
@@ -880,7 +889,7 @@ class ExportGeoTiffDialog(QDialog):
             existing.requestInterruption()
             existing.wait(30000)
 
-        thread = GeoTiffExportThread(export_src, dest_path)
+        thread = AssetExportThread(export_src, dest_path)
         thread.progress.connect(progress_bar.setValue)
         thread.progress.connect(lambda val: status_label.setText("Exporting..."))
         
@@ -892,7 +901,7 @@ class ExportGeoTiffDialog(QDialog):
             else:
                 status_label.setStyleSheet("color: #ff3b30; font-weight: bold;")
                 status_label.setText("Failed")
-                QMessageBox.critical(self, EXPORT_ERROR_LITERAL, f"Failed to export asset as GeoTIFF:\n{err_msg}")
+                QMessageBox.critical(self, EXPORT_ERROR_LITERAL, f"Failed to export asset:\n{err_msg}")
                 button.setEnabled(True)
             # Move reference to finished_threads to prevent premature GC/crash
             thread_obj = self.threads.pop(thread_key, None)

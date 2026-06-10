@@ -14,6 +14,9 @@ dependencies:
   - shapely=2.0.7         # Geometry operations
   - scipy                 # Elevation profile interpolation, terrain analysis
   - numpy                 # Numerical arrays
+  - pyqtgraph             # For native 3D point cloud rendering
+  - pyopengl              # Required by pyqtgraph for 3D views
+  - laspy                 # LAS/LAZ point cloud parsing
 
   # ── pip packages (everything not available on conda-forge for py3.11) ──
   - pip:

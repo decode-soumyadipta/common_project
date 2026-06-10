@@ -2,23 +2,194 @@
     if (window.OfflineGISUtils && typeof window.OfflineGISUtils.measureTextWidth === "function") {
       return window.OfflineGISUtils.measureTextWidth(text, font);
     }
-    var canvas = measureTextWidth._canvas || (measureTextWidth._canvas = document.createElement("canvas"));
-    var context = canvas.getContext("2d");
+    let canvas = measureTextWidth._canvas || (measureTextWidth._canvas = document.createElement("canvas"));
+    let context = canvas.getContext("2d");
     context.font = font || "14px sans-serif";
     return context.measureText(text || "").width;
   }
 
   function readLabelText(labelEntity) {
     if (!labelEntity || !labelEntity.label) return "";
-    var textVal = labelEntity.label.text;
+    let textVal = labelEntity.label.text;
     if (!textVal) return "";
     if (typeof textVal.getValue === "function") {
-      var julianDate = (typeof Cesium !== "undefined" && Cesium.JulianDate) 
+      let julianDate = (typeof Cesium !== "undefined" && Cesium.JulianDate) 
                        ? Cesium.JulianDate.now() 
                        : ((typeof cesium !== "undefined" && cesium.JulianDate) ? cesium.JulianDate.now() : null);
       return String(textVal.getValue(julianDate) || "");
     }
     return String(textVal || "");
+  }
+
+  window.currentPointCloudStyle = "rgb";
+  window.currentPointCloudPointSize = 2.0;
+  window.currentPointCloudHeightOffset = 0.0;
+
+  function updatePointCloudStyle(tileset) {
+    if (!tileset) return;
+    if (!tileset.boundingSphere) {
+      return;
+    }
+    let styleObj = {};
+    const mode = window.currentPointCloudStyle || "rgb";
+    const size = window.currentPointCloudPointSize || 2.0;
+
+    if (mode === "white") {
+      styleObj.color = "color('white')";
+    } else if (mode === "orange") {
+      styleObj.color = "color('orange')";
+    } else if (mode === "teal") {
+      styleObj.color = "color('teal')";
+    } else if (mode === "ramp") {
+      const center = tileset.boundingSphere.center;
+      const ellipsoid = viewer.scene.globe.ellipsoid || Cesium.Ellipsoid.WGS84;
+      const normal = ellipsoid.geodeticSurfaceNormal(center);
+      const r = tileset.boundingSphere.radius || 100.0;
+      
+      const heightExpr = `(\${POSITION}[0] * ${normal.x} + \${POSITION}[1] * ${normal.y} + \${POSITION}[2] * ${normal.z}) - (${center.x * normal.x + center.y * normal.y + center.z * normal.z})`;
+      
+      styleObj.color = {
+        conditions: [
+          [`(${heightExpr}) > ${r * 0.6}`, 'color("#ff0000")'],
+          [`(${heightExpr}) > ${r * 0.4}`, 'color("#ff7f00")'],
+          [`(${heightExpr}) > ${r * 0.2}`, 'color("#ffff00")'],
+          [`(${heightExpr}) > 0.0`, 'color("#00ff00")'],
+          [`(${heightExpr}) > ${-r * 0.2}`, 'color("#00ffff")'],
+          [`(${heightExpr}) > ${-r * 0.4}`, 'color("#0000ff")'],
+          ['true', 'color("#8b00ff")']
+        ]
+      };
+    }
+
+    styleObj.pointSize = String(size);
+    tileset.style = new Cesium.Cesium3DTileStyle(styleObj);
+  }
+
+  function updatePointCloudHeightOffset(tileset, offsetValue) {
+    if (!tileset) return;
+    if (!tileset.boundingSphere) {
+      // If the tileset is not ready, wait and retry
+      if (!tileset._isWaitingForReady) {
+        tileset._isWaitingForReady = true;
+        let attempts = 0;
+        const interval = setInterval(function () {
+          attempts++;
+          if (tileset.boundingSphere) {
+            clearInterval(interval);
+            tileset._isWaitingForReady = false;
+            updatePointCloudHeightOffset(tileset, offsetValue);
+            requestSceneRender();
+          } else if (attempts > 50) {
+            clearInterval(interval);
+            tileset._isWaitingForReady = false;
+          }
+        }, 100);
+      }
+      return;
+    }
+
+    if (!tileset._originalModelMatrix) {
+      tileset._originalModelMatrix = Cesium.Matrix4.clone(tileset.modelMatrix || Cesium.Matrix4.IDENTITY);
+    }
+
+    if (tileset._autoAlignOffset === undefined) {
+      // Set to 0 temporarily to prevent duplicate async requests
+      tileset._autoAlignOffset = 0.0;
+      
+      const center = tileset.boundingSphere.center;
+      const ellipsoid = viewer.scene.globe.ellipsoid || Cesium.Ellipsoid.WGS84;
+      const cartographic = ellipsoid.cartesianToCartographic(center);
+      
+      // Try synchronous getHeight first
+      let terrainHeight = 0.0;
+      if (viewer.scene.globe && typeof viewer.scene.globe.getHeight === "function") {
+        terrainHeight = viewer.scene.globe.getHeight(cartographic) || 0.0;
+      }
+      
+      if (terrainHeight > 0.01) {
+        if (viewer.scene.globe && typeof viewer.scene.globe.terrainExaggeration === "number") {
+          terrainHeight *= viewer.scene.globe.terrainExaggeration;
+        }
+        tileset._autoAlignOffset = terrainHeight - cartographic.height;
+        log("info", "Sync auto-aligned point cloud tileset. Center height: " + cartographic.height + ", Terrain height: " + terrainHeight + ", Offset: " + tileset._autoAlignOffset);
+        applyOffset();
+      } else {
+        const terrainProvider = viewer.terrainProvider;
+        const isEllipsoid = (terrainProvider instanceof Cesium.EllipsoidTerrainProvider) || 
+                            (terrainProvider && terrainProvider.constructor && terrainProvider.constructor.name === "EllipsoidTerrainProvider");
+        
+        if (isEllipsoid) {
+          tileset._autoAlignOffset = -cartographic.height;
+          log("info", "Ellipsoid terrain auto-aligned point cloud tileset. Center height: " + cartographic.height + ", Offset: " + tileset._autoAlignOffset);
+          applyOffset();
+        } else if (terrainProvider && typeof Cesium.sampleTerrainMostDetailed === "function") {
+          log("info", "Sampling terrain asynchronously for point cloud auto-alignment...");
+          try {
+            Cesium.sampleTerrainMostDetailed(terrainProvider, [cartographic])
+              .then(function (samples) {
+                if (samples && samples[0] && typeof samples[0].height === "number") {
+                  let asyncHeight = samples[0].height;
+                  if (viewer.scene.globe && typeof viewer.scene.globe.terrainExaggeration === "number") {
+                    asyncHeight *= viewer.scene.globe.terrainExaggeration;
+                  }
+                  tileset._autoAlignOffset = asyncHeight - cartographic.height;
+                  log("info", "Async auto-aligned point cloud tileset. Center height: " + cartographic.height + ", Terrain height: " + asyncHeight + ", Offset: " + tileset._autoAlignOffset);
+                  applyOffset();
+                  requestSceneRender();
+                } else {
+                  runFallback();
+                }
+              })
+              .catch(function (error) {
+                log("warn", "Async terrain sampling failed, trying DEM fallback: " + error);
+                runFallback();
+              });
+          } catch (error) {
+            log("warn", "Async terrain sampling threw synchronous error, trying DEM fallback: " + error);
+            runFallback();
+          }
+        } else {
+          runFallback();
+        }
+      }
+
+      function runFallback() {
+        let fallbackHeight = 0.0;
+        if (window.offlineGIS && typeof window.offlineGIS.getDemTerrainHeightFallback === "function") {
+          fallbackHeight = window.offlineGIS.getDemTerrainHeightFallback() || 0.0;
+        }
+        if (fallbackHeight > 0.01) {
+          if (viewer.scene.globe && typeof viewer.scene.globe.terrainExaggeration === "number") {
+            fallbackHeight *= viewer.scene.globe.terrainExaggeration;
+          }
+          tileset._autoAlignOffset = fallbackHeight - cartographic.height;
+          log("info", "DEM fallback auto-aligned point cloud tileset. Center height: " + cartographic.height + ", Terrain height: " + fallbackHeight + ", Offset: " + tileset._autoAlignOffset);
+          applyOffset();
+          requestSceneRender();
+        } else {
+          // If fallback fails or returns 0.0, assume flat ellipsoid alignment
+          tileset._autoAlignOffset = -cartographic.height;
+          log("info", "Fallback failed or returned 0, snapped to ellipsoid. Offset: " + tileset._autoAlignOffset);
+          applyOffset();
+          requestSceneRender();
+        }
+      }
+    } else {
+      applyOffset();
+    }
+
+    function applyOffset() {
+      const center = tileset.boundingSphere.center;
+      const ellipsoid = viewer.scene.globe.ellipsoid || Cesium.Ellipsoid.WGS84;
+      const normal = ellipsoid.geodeticSurfaceNormal(center);
+      
+      // Total vertical offset is auto-alignment offset + manual slider offset
+      const totalOffset = (tileset._autoAlignOffset || 0.0) + Number(offsetValue || 0.0);
+      
+      const translation = Cesium.Cartesian3.multiplyByScalar(normal, totalOffset, new Cesium.Cartesian3());
+      const translationMatrix = Cesium.Matrix4.fromTranslation(translation);
+      tileset.modelMatrix = Cesium.Matrix4.multiply(translationMatrix, tileset._originalModelMatrix, new Cesium.Matrix4());
+    }
   }
 
   window.offlineGIS = window.offlineGIS || {};
@@ -118,8 +289,8 @@
           viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
           
           // Continuous render for 2.0s post-snap so tiles finish loading
-          var t = 0;
-          var iv = setInterval(function() {
+          let t = 0;
+          let iv = setInterval(function() {
             if (!viewer || !viewer.scene) { clearInterval(iv); return; }
             viewer.scene.requestRender();
             t += 100;
@@ -133,7 +304,7 @@
           log("info", "Instant focus bounds west=" + west + " south=" + south + " east=" + east + " north=" + north);
         } catch(e) {
           log("error", "instantFocusBounds failed: " + e);
-          if (viewer && viewer.scene) {
+          if (viewer?.scene) {
             viewer.scene.requestRenderMode = true;
           }
         }
@@ -146,6 +317,37 @@
           duration: 2.0,
         });
         log("info", "Fly-to lon=" + lon + " lat=" + lat);
+      },
+      flyToLocation: function (options) {
+        if (!viewer || !viewer.camera) return;
+        try {
+          const lon = Number(options.longitude);
+          const lat = Number(options.latitude);
+          const height = Number(options.height);
+          const heading = Number(options.heading) || 0.0;
+          const pitch = Number(options.pitch) || -35.0;
+          const roll = Number(options.roll) || 0.0;
+          const duration = Number(options.duration) || 2.0;
+
+          viewer.camera.cancelFlight();
+          viewer.camera.flyTo({
+            destination: Cesium.Cartesian3.fromDegrees(lon, lat, height),
+            orientation: {
+              heading: Cesium.Math.toRadians(heading),
+              pitch: Cesium.Math.toRadians(pitch),
+              roll: Cesium.Math.toRadians(roll)
+            },
+            duration: duration
+          });
+          log("info", "flyToLocation complete: lon=" + lon + " lat=" + lat + " height=" + height);
+        } catch (e) {
+          log("error", "flyToLocation failed: " + e);
+        }
+      },
+      setCameraPitch: function (degrees) {
+        if (typeof this.setPitch === "function") {
+          return this.setPitch(degrees);
+        }
       },
       flyToBounds: function (west, south, east, north) {
         if (!viewer) return;
@@ -162,8 +364,8 @@
             complete: function() {
               if (!viewer || !viewer.scene) return;
               viewer.scene.requestRenderMode = wasRequestRenderMode;
-              var t = 0;
-              var iv = setInterval(function() {
+              let t = 0;
+              let iv = setInterval(function() {
                 if (!viewer || !viewer.scene) { clearInterval(iv); return; }
                 viewer.scene.requestRender();
                 t += 100;
@@ -171,7 +373,7 @@
               }, 100);
             },
             cancel: function() {
-              if (viewer && viewer.scene) {
+              if (viewer?.scene) {
                 viewer.scene.requestRenderMode = wasRequestRenderMode;
                 viewer.scene.requestRender();
               }
@@ -208,8 +410,8 @@
           complete: function() {
             if (!viewer || !viewer.scene) return;
             // Hold continuous render for 1.5s post-flight so tiles finish loading
-            var t = 0;
-            var iv = setInterval(function() {
+            let t = 0;
+            let iv = setInterval(function() {
               if (!viewer || !viewer.scene) { clearInterval(iv); return; }
               viewer.scene.requestRender();
               t += 100;
@@ -217,7 +419,7 @@
             }, 100);
           },
           cancel: function() {
-            if (viewer && viewer.scene) {
+            if (viewer?.scene) {
               viewer.scene.requestRenderMode = true;
               viewer.scene.requestRender();
             }
@@ -244,7 +446,7 @@
             destination: rect,
             duration: 1.2,
             complete: function() {
-              if (viewer && viewer.scene) {
+              if (viewer?.scene) {
                 viewer.scene.requestRenderMode = true;
                 viewer.scene.requestRender();
               }
@@ -277,8 +479,8 @@
           duration: 1.2,
           complete: function() {
             if (!viewer || !viewer.scene) return;
-            var t = 0;
-            var iv = setInterval(function() {
+            let t = 0;
+            let iv = setInterval(function() {
               if (!viewer || !viewer.scene) { clearInterval(iv); return; }
               viewer.scene.requestRender();
               t += 100;
@@ -286,7 +488,7 @@
             }, 100);
           },
           cancel: function() {
-            if (viewer && viewer.scene) {
+            if (viewer?.scene) {
               viewer.scene.requestRenderMode = true;
               viewer.scene.requestRender();
             }
@@ -316,13 +518,13 @@
             destination: rect,
             duration: 1.8,
             complete: function() {
-              if (viewer && viewer.scene) {
+              if (viewer?.scene) {
                 viewer.scene.requestRenderMode = wasRequestRenderMode;
                 viewer.scene.requestRender();
               }
             },
             cancel: function() {
-              if (viewer && viewer.scene) {
+              if (viewer?.scene) {
                 viewer.scene.requestRenderMode = wasRequestRenderMode;
                 viewer.scene.requestRender();
               }
@@ -353,13 +555,13 @@
           ),
           duration: 1.8, // Slightly longer duration for multi-asset focus
           complete: function() {
-            if (viewer && viewer.scene) {
+            if (viewer?.scene) {
               viewer.scene.requestRenderMode = wasRequestRenderMode;
               viewer.scene.requestRender();
             }
           },
           cancel: function() {
-            if (viewer && viewer.scene) {
+            if (viewer?.scene) {
               viewer.scene.requestRenderMode = wasRequestRenderMode;
               viewer.scene.requestRender();
             }
@@ -441,6 +643,7 @@
       flyThroughBounds: function (west, south, east, north) {
         startFlyThroughBounds(west, south, east, north);
       },
+// TODO: Refactor this function to reduce its Cognitive Complexity from 57 to the 15 allowed.
       addTileLayer: async function (name, xyzUrl, kind, options) {
         if (!viewer) return;
         log(
@@ -459,9 +662,9 @@
             ? options.layer_key
             : "imagery:" + String(name || "layer");
         layerKey = String(layerKey).replace(/\\/g, "/");
-        const replaceExisting = !(options && options.replace_existing === false);
+        const replaceExisting = !(options?.replace_existing === false);
         const isDem =
-          (options && options.is_dem === true) ||
+          (options?.is_dem === true) ||
           String(kind || "").toLowerCase() === "dem" ||
           String(name || "").toLowerCase().includes("dem");
         if (isDem && viewer.scene.mode !== Cesium.SceneMode.SCENE2D) {
@@ -470,7 +673,7 @@
         }
         if (replaceExisting) {
           // Keep DEM terrain unless explicitly requested to clear it.
-          if (options && options.clear_dem === true) {
+          if (options?.clear_dem === true) {
             clearDemTerrainMode();
           }
           clearManagedImageryLayers();
@@ -480,10 +683,10 @@
         // query parameter value via encodeURIComponent.  This prevents Cesium's
         // UrlTemplateImageryProvider from double-encoding already-encoded sequences
         // like %20 (space) → %2520, which would make GDAL fail to find the file.
-        const extraQuery = options && options.query ? options.query : {};
+        const extraQuery = options?.query ? options.query : {};
         const providerUrl = buildUrlWithQuery(xyzUrl, extraQuery);
         log("debug", "Imagery URL construction baseUrl=" + xyzUrl + " finalUrl=" + providerUrl);
-        const bounds = options && options.bounds ? options.bounds : null;
+        const bounds = options?.bounds ? options.bounds : null;
         const normalizedBounds = normalizeBounds(bounds);
         if (normalizedBounds) {
           setActiveTileBounds(normalizedBounds);
@@ -501,7 +704,7 @@
         const maxLevel = options && Number.isInteger(options.maxzoom) ? options.maxzoom : 26;
         const existingLayer = managedImageryLayers.get(layerKey);
         if (existingLayer) {
-          if (existingLayer.imageryProvider && existingLayer.imageryProvider.url === providerUrl && !(options && options.force_rebuild === true)) {
+          if (existingLayer.imageryProvider && existingLayer.imageryProvider.url === providerUrl && !(options?.force_rebuild === true)) {
             existingLayer.show = true;
             viewer.imageryLayers.raiseToTop(existingLayer);
             activeImageryLayer = existingLayer;
@@ -638,7 +841,7 @@
         // This allows user reordering to work properly without conflicts
         
         // Step 1: Ensure basemap is at bottom (essential for proper rendering)
-        if (osmBasemapLayer && osmBasemapLayer.show && viewer.imageryLayers.indexOf(osmBasemapLayer) >= 0) {
+        if (osmBasemapLayer?.show && viewer.imageryLayers.indexOf(osmBasemapLayer) >= 0) {
           viewer.imageryLayers.lowerToBottom(osmBasemapLayer);
         } else if (defaultEarthLayer && viewer.imageryLayers.indexOf(defaultEarthLayer) >= 0) {
           viewer.imageryLayers.lowerToBottom(defaultEarthLayer);
@@ -678,7 +881,7 @@
           const renderDelays = [50, 150, 300, 600, 1000];
           renderDelays.forEach((delay, index) => {
             setTimeout(function() {
-              if (viewer && viewer.scene) {
+              if (viewer?.scene) {
                 viewer.scene.requestRender();
               }
             }, delay);
@@ -686,7 +889,7 @@
           
           // Additional check for tile loading after initial burst
           setTimeout(function() {
-            if (viewer && viewer.imageryLayers && activeImageryLayer) {
+            if (viewer?.imageryLayers && activeImageryLayer) {
               const layerIndex = viewer.imageryLayers.indexOf(activeImageryLayer);
               
               // Force one more render if layer is still active
@@ -704,7 +907,7 @@
           minLevel: minLevel,
           maxLevel: maxLevel,
           bounds: normalizedBounds,
-          query: options && options.query ? options.query : {},
+          query: options?.query ? options.query : {},
           xyzUrl: xyzUrl,
         });
         layerVisibilityState.set(layerKey, true);
@@ -737,7 +940,7 @@
         if (!viewer) return;
         if (viewer.scene.mode === Cesium.SceneMode.SCENE2D) {
           log("info", "addDemLayer: Scene is in 2D mode, loading DEM as a 2D tile layer.");
-          var opts = options || {};
+          let opts = options || {};
           opts.is_dem = true;
           window.offlineGIS.addTileLayer(name, xyzUrl, "dem", opts);
           return;
@@ -751,7 +954,7 @@
             " options=" +
             JSON.stringify(options || {})
         );
-        const replaceExisting = !(options && options.replace_existing === false);
+        const replaceExisting = !(options?.replace_existing === false);
         const layerKey =
           options && typeof options.layer_key === "string" && options.layer_key
             ? options.layer_key
@@ -767,13 +970,13 @@
         // When apply_scene_mode=false, the Python side manages mode transitions
         // separately, and calling setSceneModeInternal here would start a second
         // competing terrain swap that cancels the first one's pending camera action.
-        const applySceneMode = !(options && options.apply_scene_mode === false);
+        const applySceneMode = !(options?.apply_scene_mode === false);
         if (applySceneMode) {
           setSceneModeInternal("3d");
         }
         setSceneModeControlEnabled(true);
         syncSceneModeToggle("3d");
-        const normalizedBounds = normalizeBounds(options && options.bounds ? options.bounds : null);
+        const normalizedBounds = normalizeBounds(options?.bounds ? options.bounds : null);
         if (normalizedBounds) {
           setActiveTileBounds(normalizedBounds);
         }
@@ -854,7 +1057,7 @@
       // The pane count is exactly len(allKeys), preventing ghost panes.
       setComparatorAllLayers: function (allKeysJson) {
         try {
-          var parsed = JSON.parse(allKeysJson);
+          let parsed = JSON.parse(allKeysJson);
           if (Array.isArray(parsed) && parsed.length >= 2) {
             swipeComparatorExplicitKeys  = parsed.map(function(k) { return String(k || ""); }).filter(Boolean);
             swipeComparatorLeftLayerKey  = swipeComparatorExplicitKeys[0] || null;
@@ -1054,7 +1257,7 @@
         // errors on some Intel GPUs when imagery layers are swapped.
         window.requestAnimationFrame(() => {
             window._basemapToggleInProgress = false;
-            if (viewer && viewer.scene) {
+            if (viewer?.scene) {
               viewer.scene.requestRender();
             }
         });
@@ -1086,11 +1289,11 @@
 
           if (activeDemHillshadeLayer) {
             activeDemHillshadeLayer.alpha = demVisual.hillshadeAlpha;
-            const demVisible = activeDemContext && activeDemContext.visible !== false;
+            const demVisible = activeDemContext?.visible !== false;
             activeDemHillshadeLayer.show = demVisible && demVisual.hillshadeAlpha > 0.01;
           }
 
-          if (viewer && viewer.scene) {
+          if (viewer?.scene) {
             viewer.scene.requestRender();
           }
         }, VISUAL_UPDATE_DEBOUNCE_MS);
@@ -1119,7 +1322,7 @@
           imageryVisual.brightness = nextBrightness;
           imageryVisual.contrast = nextContrast;
 
-          const visibleManagedLayers = Array.from(managedImageryLayers.values()).filter((layer) => layer && layer.show);
+          const visibleManagedLayers = Array.from(managedImageryLayers.values()).filter((layer) => layer?.show);
           if (visibleManagedLayers.length > 0) {
             for (const layer of visibleManagedLayers) {
               layer.brightness = nextBrightness;
@@ -1300,6 +1503,7 @@
       clearLineDrawPreview: function () {
         lineDrawStart = null;
         clearLineDrawPreview();
+// TODO: Refactor this function to reduce its Cognitive Complexity from 25 to the 15 allowed.
       },
       addAnnotation: function (text, lon, lat, optHeight) {
         if (!viewer) return;
@@ -1319,7 +1523,7 @@
         }
         if (!anchorPosition) {
           // Use saved height if provided (restore path), otherwise sample terrain
-          var h = 0.0;
+          let h = 0.0;
           if (typeof optHeight === "number" && Number.isFinite(optHeight)) {
             h = optHeight;
           } else {
@@ -1337,7 +1541,7 @@
             color: Cesium.Color.fromCssColorString("#f2c94c"),
             outlineColor: Cesium.Color.fromCssColorString("#1d1d1d"),
             outlineWidth: 1,
-            heightReference: (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
+            heightReference: (viewer?.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
 
           },
         });
@@ -1360,7 +1564,7 @@
             pixelOffset: new Cesium.Cartesian2(12, -8),
             horizontalOrigin: Cesium.HorizontalOrigin.LEFT,
             verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-            heightReference: (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
+            heightReference: (viewer?.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1800000.0, 0.45),
             translucencyByDistance: new Cesium.NearFarScalar(3000.0, 1.0, 2400000.0, 0.62),
 
@@ -1375,8 +1579,8 @@
         // Shared position callback — buttons track the anchor entity's terrain-clamped position.
         function makeAnchorBoundCallback() {
           return new Cesium.CallbackProperty(function () {
-            if (anchorEntity && anchorEntity.position) {
-              var pos = anchorEntity.position.getValue(Cesium.JulianDate.now());
+            if (anchorEntity?.position) {
+              let pos = anchorEntity.position.getValue(Cesium.JulianDate.now());
               if (pos) return pos;
             }
             return anchorPosition;
@@ -1391,15 +1595,15 @@
             height: 17,
             color: Cesium.Color.WHITE.withAlpha(0.42),
             pixelOffset: new Cesium.CallbackProperty(function () {
-              var w = measureTextWidth(readLabelText(labelEntity), "600 15px Arial, Helvetica, sans-serif");
-              var distance = Cesium.Cartesian3.distance(viewer.camera.position, anchorPosition);
-              var scale = 1.0;
+              let w = measureTextWidth(readLabelText(labelEntity), "600 15px Arial, Helvetica, sans-serif");
+              let distance = Cesium.Cartesian3.distance(viewer.camera.position, anchorPosition);
+              let scale = 1.0;
               if (distance <= 2500.0) {
                 scale = 1.0;
               } else if (distance >= 1700000.0) {
                 scale = 0.5;
               } else {
-                var t = (distance - 2500.0) / (1700000.0 - 2500.0);
+                let t = (distance - 2500.0) / (1700000.0 - 2500.0);
                 scale = 1.0 + t * (0.5 - 1.0);
               }
               return new Cesium.Cartesian2((52 + w) * scale, -17 * scale);
@@ -1425,15 +1629,15 @@
             height: 17,
             color: Cesium.Color.WHITE.withAlpha(0.62),
             pixelOffset: new Cesium.CallbackProperty(function () {
-              var w = measureTextWidth(readLabelText(labelEntity), "600 15px Arial, Helvetica, sans-serif");
-              var distance = Cesium.Cartesian3.distance(viewer.camera.position, anchorPosition);
-              var scale = 1.0;
+              let w = measureTextWidth(readLabelText(labelEntity), "600 15px Arial, Helvetica, sans-serif");
+              let distance = Cesium.Cartesian3.distance(viewer.camera.position, anchorPosition);
+              let scale = 1.0;
               if (distance <= 2500.0) {
                 scale = 1.0;
               } else if (distance >= 1700000.0) {
                 scale = 0.5;
               } else {
-                var t = (distance - 2500.0) / (1700000.0 - 2500.0);
+                let t = (distance - 2500.0) / (1700000.0 - 2500.0);
                 scale = 1.0 + t * (0.5 - 1.0);
               }
               return new Cesium.Cartesian2((72 + w) * scale, -17 * scale);
@@ -1465,6 +1669,7 @@
         requestSceneRender();
         window.requestAnimationFrame(requestSceneRender);
         log("info", "Annotation added lon=" + lon + " lat=" + lat);
+// TODO: Refactor this function to reduce its Cognitive Complexity from 32 to the 15 allowed.
       },
 
       addLineAnnotation: function (coords, text) {
@@ -1480,8 +1685,8 @@
         let lastLat = null;
         for (let i = 0; i < coords.length; i++) {
           const pt = coords[i] || [];
-          const lon = Number(Array.isArray(pt) ? pt[0] : pt && pt.lon);
-          const lat = Number(Array.isArray(pt) ? pt[1] : pt && pt.lat);
+          const lon = Number(Array.isArray(pt) ? pt[0] : pt?.lon);
+          const lat = Number(Array.isArray(pt) ? pt[1] : pt?.lat);
           if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
           if (lon < -180 || lon > 180 || lat < -90 || lat > 90) continue;
           // Skip duplicate/near-duplicate consecutive vertices to avoid degenerate segments.
@@ -1495,8 +1700,8 @@
           }
           // Use saved height from 3rd element if available (restore path),
           // otherwise sample terrain
-          var savedH = Array.isArray(pt) && pt.length >= 3 ? Number(pt[2]) : NaN;
-          var h;
+          let savedH = Array.isArray(pt) && pt.length >= 3 ? Number(pt[2]) : NaN;
+          let h;
           if (Number.isFinite(savedH)) {
             h = savedH;
           } else {
@@ -1543,21 +1748,21 @@
             style: Cesium.LabelStyle.FILL_AND_OUTLINE,
             font: "600 14px Arial, Helvetica, sans-serif",
             pixelOffset: new Cesium.CallbackProperty(function () {
-              var distance = Cesium.Cartesian3.distance(viewer.camera.position, midPos);
-              var scale = 1.0;
+              let distance = Cesium.Cartesian3.distance(viewer.camera.position, midPos);
+              let scale = 1.0;
               if (distance <= 2500.0) {
                 scale = 1.0;
               } else if (distance >= 1700000.0) {
                 scale = 0.5;
               } else {
-                var t = (distance - 2500.0) / (1700000.0 - 2500.0);
+                let t = (distance - 2500.0) / (1700000.0 - 2500.0);
                 scale = 1.0 + t * (0.5 - 1.0);
               }
               return new Cesium.Cartesian2(0, -14 * scale);
             }, false),
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-            heightReference: (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
+            heightReference: (viewer?.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
             scaleByDistance: new Cesium.NearFarScalar(2500.0, 1.0, 1700000.0, 0.5),
 
           },
@@ -1569,8 +1774,8 @@
         // Buttons track label entity position (mirrors point annotation tight-coupling pattern)
         function makeLabelBoundCallback() {
           return new Cesium.CallbackProperty(function () {
-            if (labelEntity && labelEntity.position) {
-              var pos = labelEntity.position.getValue(Cesium.JulianDate.now());
+            if (labelEntity?.position) {
+              let pos = labelEntity.position.getValue(Cesium.JulianDate.now());
               if (pos) return pos;
             }
             return midPos;
@@ -1585,15 +1790,15 @@
             height: 17,
             color: Cesium.Color.WHITE.withAlpha(0.42),
             pixelOffset: new Cesium.CallbackProperty(function () {
-              var w = measureTextWidth(readLabelText(labelEntity), "600 14px Arial, Helvetica, sans-serif");
-              var distance = Cesium.Cartesian3.distance(viewer.camera.position, midPos);
-              var scale = 1.0;
+              let w = measureTextWidth(readLabelText(labelEntity), "600 14px Arial, Helvetica, sans-serif");
+              let distance = Cesium.Cartesian3.distance(viewer.camera.position, midPos);
+              let scale = 1.0;
               if (distance <= 2500.0) {
                 scale = 1.0;
               } else if (distance >= 1700000.0) {
                 scale = 0.5;
               } else {
-                var t = (distance - 2500.0) / (1700000.0 - 2500.0);
+                let t = (distance - 2500.0) / (1700000.0 - 2500.0);
                 scale = 1.0 + t * (0.5 - 1.0);
               }
               return new Cesium.Cartesian2((-18 - w / 2) * scale, -24 * scale);
@@ -1619,15 +1824,15 @@
             height: 17,
             color: Cesium.Color.WHITE.withAlpha(0.62),
             pixelOffset: new Cesium.CallbackProperty(function () {
-              var w = measureTextWidth(readLabelText(labelEntity), "600 14px Arial, Helvetica, sans-serif");
-              var distance = Cesium.Cartesian3.distance(viewer.camera.position, midPos);
-              var scale = 1.0;
+              let w = measureTextWidth(readLabelText(labelEntity), "600 14px Arial, Helvetica, sans-serif");
+              let distance = Cesium.Cartesian3.distance(viewer.camera.position, midPos);
+              let scale = 1.0;
               if (distance <= 2500.0) {
                 scale = 1.0;
               } else if (distance >= 1700000.0) {
                 scale = 0.5;
               } else {
-                var t = (distance - 2500.0) / (1700000.0 - 2500.0);
+                let t = (distance - 2500.0) / (1700000.0 - 2500.0);
                 scale = 1.0 + t * (0.5 - 1.0);
               }
               return new Cesium.Cartesian2((18 + w / 2) * scale, -24 * scale);
@@ -1658,5 +1863,150 @@
         }
         requestSceneRender();
         log("info", "Line annotation added with " + cleanCoords.length + " point(s)");
+      },
+
+      addPointCloudLayer: function (name, tilesetUrl, options) {
+        if (!viewer) return;
+        log(
+          "info",
+          "addPointCloudLayer request name=" +
+            String(name || "") +
+            " url=" +
+            String(tilesetUrl || "") +
+            " options=" +
+            JSON.stringify(options || {})
+        );
+
+        let layerKey =
+          options && typeof options.layer_key === "string" && options.layer_key
+            ? options.layer_key
+            : "pointcloud:" + String(name || "layer");
+        layerKey = String(layerKey).replace(/\\/g, "/");
+
+        const replaceExisting = !(options?.replace_existing === false);
+
+        if (replaceExisting) {
+          if (typeof clearManagedImageryLayers === "function") {
+            clearManagedImageryLayers();
+          }
+          if (typeof clearDemTerrainMode === "function") {
+            clearDemTerrainMode();
+          }
+          if (typeof clearManagedPointCloudLayers === "function") {
+            clearManagedPointCloudLayers();
+          }
+        }
+
+        // Clean up if there is an existing point cloud layer with the same key
+        const existing = managedPointCloudLayers.get(layerKey);
+        if (existing) {
+          try {
+            viewer.scene.primitives.remove(existing);
+          } catch (e) {
+            log("error", "Error removing existing point cloud: " + e);
+          }
+          managedPointCloudLayers.delete(layerKey);
+        }
+
+        // Save metadata definition
+        layerDefinitions.set(layerKey, {
+          type: "point_cloud",
+          name: name,
+          url: tilesetUrl,
+          bounds: options?.bounds || null
+        });
+        layerVisibilityState.set(layerKey, true);
+
+        // Load Cesium3DTileset
+        let tileset;
+        const maxMemory = window._isHighEndGpu ? 2048 : 1024;
+        const tilesetOptions = {
+          url: tilesetUrl,
+          maximumMemoryUsage: maxMemory
+        };
+
+        if (typeof Cesium.Cesium3DTileset.fromUrl === "function") {
+          // Promise-based for modern CesiumJS versions
+          Cesium.Cesium3DTileset.fromUrl(tilesetUrl, { maximumMemoryUsage: maxMemory })
+            .then(function (loadedTileset) {
+              tileset = loadedTileset;
+              viewer.scene.primitives.add(tileset);
+              managedPointCloudLayers.set(layerKey, tileset);
+              
+              updatePointCloudStyle(tileset);
+              updatePointCloudHeightOffset(tileset, window.currentPointCloudHeightOffset || 0.0);
+              
+              log("info", "3D Tileset point cloud loaded successfully: " + name + " (maxMemory=" + maxMemory + "MB)");
+              requestSceneRender();
+            }, function (error) {
+              log("error", "Failed to load 3D Tileset: " + error);
+            });
+        } else {
+          // Constructor-based for older CesiumJS versions
+          tileset = new Cesium.Cesium3DTileset(tilesetOptions);
+          viewer.scene.primitives.add(tileset);
+          managedPointCloudLayers.set(layerKey, tileset);
+          
+          if (tileset.readyPromise) {
+            tileset.readyPromise
+              .then(function (loaded) {
+                updatePointCloudStyle(loaded);
+                updatePointCloudHeightOffset(loaded, window.currentPointCloudHeightOffset || 0.0);
+                
+                log("info", "3D Tileset point cloud loaded successfully (legacy): " + name);
+                requestSceneRender();
+              }, function (error) {
+                log("error", "Failed to load legacy 3D Tileset: " + error);
+              });
+          } else {
+            log("info", "3D Tileset point cloud added (no readyPromise): " + name);
+            updatePointCloudStyle(tileset);
+            updatePointCloudHeightOffset(tileset, window.currentPointCloudHeightOffset || 0.0);
+            requestSceneRender();
+          }
+        }
+
+        // Point clouds look best in 3D mode. Switch to 3D mode.
+        if (typeof setSceneModeInternal === "function") {
+          setSceneModeInternal("3d");
+        }
+        if (typeof setSceneModeControlEnabled === "function") {
+          setSceneModeControlEnabled(true);
+        }
+        if (typeof syncSceneModeToggle === "function") {
+          syncSceneModeToggle("3d");
+        }
+
+        requestSceneRender();
+      },
+
+      setPointCloudStyle: function (mode) {
+        window.currentPointCloudStyle = mode;
+        if (typeof managedPointCloudLayers !== "undefined") {
+          managedPointCloudLayers.forEach(function (tileset) {
+            updatePointCloudStyle(tileset);
+          });
+        }
+        requestSceneRender();
+      },
+
+      setPointCloudPointSize: function (size) {
+        window.currentPointCloudPointSize = Number(size);
+        if (typeof managedPointCloudLayers !== "undefined") {
+          managedPointCloudLayers.forEach(function (tileset) {
+            updatePointCloudStyle(tileset);
+          });
+        }
+        requestSceneRender();
+      },
+
+      setPointCloudHeightOffset: function (offset) {
+        window.currentPointCloudHeightOffset = Number(offset);
+        if (typeof managedPointCloudLayers !== "undefined") {
+          managedPointCloudLayers.forEach(function (tileset) {
+            updatePointCloudHeightOffset(tileset, window.currentPointCloudHeightOffset);
+          });
+        }
+        requestSceneRender();
       },
   });

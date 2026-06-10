@@ -13,8 +13,7 @@
           viewer.scene.globe.tileCacheSize = 800; // Optimized tile caching
           viewer.scene.globe.loadingQueueThreshold = 100;
           viewer.scene.globe.loadingDescendantLimit = 8;
-          // FIX: requestRenderMode disabled to prevent auto-blurring and shaking
-          viewer.scene.requestRenderMode = false;
+          viewer.scene.requestRenderMode = true;
           
           log("info", "EVENT_DRIVEN: Applied terabyte-scale performance optimizations");
         }
@@ -91,8 +90,7 @@
         log("info", "EVENT_DRIVEN: Applying terabyte-scale optimizations");
         
         // Ultra-high performance rendering settings
-        // FIX: requestRenderMode disabled to prevent auto-blurring
-        viewer.scene.requestRenderMode = false;
+        viewer.scene.requestRenderMode = true;
         viewer.scene.maximumRenderTimeChange = 0.0;
         viewer.scene.globe.maximumScreenSpaceError = opts.screenSpaceError || (window._isHighEndGpu ? 1.0 : 1.5);
         viewer.scene.globe.tileCacheSize = opts.tileCacheSize || 800;
@@ -137,8 +135,7 @@
         
         if (isEnabled) {
           // Enable event-driven optimizations
-          // FIX: requestRenderMode disabled to prevent auto-blurring
-          viewer.scene.requestRenderMode = false;
+          viewer.scene.requestRenderMode = true;
           viewer.scene.maximumRenderTimeChange = 0.0;
           
           // Performance monitoring disabled for smooth performance (from smooth implementation)
@@ -146,7 +143,7 @@
           log("info", "EVENT_DRIVEN: Performance monitoring disabled for smooth performance");
         } else {
           // Restore default rendering mode
-          viewer.scene.requestRenderMode = false;
+          viewer.scene.requestRenderMode = true;
           viewer.scene.globe.maximumScreenSpaceError = window._isHighEndGpu ? 1.0 : 1.5;
           
           log("info", "EVENT_DRIVEN: Restored default rendering mode");

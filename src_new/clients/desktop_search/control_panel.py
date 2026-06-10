@@ -637,6 +637,7 @@ class ControlPanel(
             QHeaderView.ResizeToContents,  # Drag handle column
         )
         self.search_results_table.itemClicked.connect(self._on_search_table_item_clicked)
+        self.search_results_table.doubleClicked.connect(self._on_search_table_double_clicked)
         self.search_results_table.horizontalHeader().setSectionResizeMode(
             1,
             QHeaderView.Stretch,  # File name
@@ -660,11 +661,11 @@ class ControlPanel(
 
         # Set specific column widths
         self.search_results_table.setColumnWidth(0, 30)  # Drag handle
-        self.search_results_table.setColumnWidth(1, 220)  # File name
-        self.search_results_table.setColumnWidth(2, 78)  # Kind
-        self.search_results_table.setColumnWidth(3, 96)  # CRS
-        self.search_results_table.setColumnWidth(4, 60)  # View
-        self.search_results_table.setColumnWidth(5, 60)  # Delete
+        self.search_results_table.setColumnWidth(1, 160)  # File name
+        self.search_results_table.setColumnWidth(2, 60)  # Kind
+        self.search_results_table.setColumnWidth(3, 80)  # CRS
+        self.search_results_table.setColumnWidth(4, 110)  # Actions / View
+        self.search_results_table.setColumnWidth(5, 40)  # Delete
         self.search_results_table.verticalHeader().setVisible(False)
         self.search_results_table.verticalHeader().setDefaultSectionSize(30)
         self.search_results_table.setVerticalScrollBarPolicy(
@@ -888,6 +889,32 @@ class ControlPanel(
         self.dem_color_mode_combo.addItem("Color relief", "terrain")
         self.dem_color_mode_combo.addItem("Slope map (deg)", "slope")
         self.dem_color_mode_combo.setCurrentIndex(0)
+
+        self.pc_color_mode_combo = QComboBox()
+        self.pc_color_mode_combo.addItem("Asset Colors (RGB)", "rgb")
+        self.pc_color_mode_combo.addItem("Elevation Ramp", "ramp")
+        self.pc_color_mode_combo.addItem("Solid White", "white")
+        self.pc_color_mode_combo.addItem("Solid Orange", "orange")
+        self.pc_color_mode_combo.addItem("Solid Teal", "teal")
+        self.pc_color_mode_combo.setCurrentIndex(0)
+
+        self.pc_point_size_slider = QSlider(Qt.Orientation.Horizontal)
+        self.pc_point_size_slider.setRange(1, 10)
+        self.pc_point_size_slider.setValue(2)
+        self.pc_point_size_value = QLabel()
+        self.pc_point_size_value.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        self.pc_point_size_value.setMinimumWidth(64)
+
+        self.pc_z_offset_slider = QSlider(Qt.Orientation.Horizontal)
+        self.pc_z_offset_slider.setRange(-2000, 2000)
+        self.pc_z_offset_slider.setValue(0)
+        self.pc_z_offset_value = QLabel()
+        self.pc_z_offset_value.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        self.pc_z_offset_value.setMinimumWidth(64)
         self.rgb_view_mode_combo = QComboBox()
         self.rgb_view_mode_combo.addItem("3D Terrain Scene", "3d")
         self.rgb_view_mode_combo.addItem("2D Map View", "2d")
@@ -943,21 +970,49 @@ class ControlPanel(
         view_layout.addSpacing(8)
 
         # DEM-specific controls (initially hidden)
-        dem_label = QLabel("<b>Terrain (DEM)</b>")
-        view_layout.addWidget(dem_label)
+        self.dem_label = QLabel("<b>Terrain (DEM)</b>")
+        view_layout.addWidget(self.dem_label)
         hillshade_layout = QHBoxLayout()
-        hillshade_layout.addWidget(QLabel("Hillshade:"))
+        self.dem_hillshade_lbl = QLabel("Hillshade:")
+        hillshade_layout.addWidget(self.dem_hillshade_lbl)
         hillshade_layout.addWidget(self.dem_hillshade_slider, 1)
         hillshade_layout.addWidget(self.dem_hillshade_value)
         view_layout.addLayout(hillshade_layout)
         dem_color_layout = QHBoxLayout()
-        dem_color_layout.addWidget(QLabel("Style:"))
+        self.dem_color_lbl = QLabel("Style:")
+        dem_color_layout.addWidget(self.dem_color_lbl)
         dem_color_layout.addWidget(self.dem_color_mode_combo, 1)
         view_layout.addLayout(dem_color_layout)
         dem_stretch_layout = QHBoxLayout()
-        dem_stretch_layout.addWidget(QLabel("Stretch:"))
+        self.dem_stretch_lbl = QLabel("Stretch:")
+        dem_stretch_layout.addWidget(self.dem_stretch_lbl)
         dem_stretch_layout.addWidget(self.dem_stretch_mode_combo, 1)
         view_layout.addLayout(dem_stretch_layout)
+
+        view_layout.addSpacing(8)
+
+        # LiDAR controls
+        self.pc_label = QLabel("<b>Point Cloud (LiDAR)</b>")
+        view_layout.addWidget(self.pc_label)
+        pc_color_layout = QHBoxLayout()
+        self.pc_color_lbl = QLabel("Color Mode:")
+        pc_color_layout.addWidget(self.pc_color_lbl)
+        pc_color_layout.addWidget(self.pc_color_mode_combo, 1)
+        view_layout.addLayout(pc_color_layout)
+
+        pc_size_layout = QHBoxLayout()
+        self.pc_size_lbl = QLabel("Point Size:")
+        pc_size_layout.addWidget(self.pc_size_lbl)
+        pc_size_layout.addWidget(self.pc_point_size_slider, 1)
+        pc_size_layout.addWidget(self.pc_point_size_value)
+        view_layout.addLayout(pc_size_layout)
+
+        pc_z_layout = QHBoxLayout()
+        self.pc_z_lbl = QLabel("Z-Offset:")
+        pc_z_layout.addWidget(self.pc_z_lbl)
+        pc_z_layout.addWidget(self.pc_z_offset_slider, 1)
+        pc_z_layout.addWidget(self.pc_z_offset_value)
+        view_layout.addLayout(pc_z_layout)
 
         view_layout.addStretch()
 
@@ -966,6 +1021,8 @@ class ControlPanel(
             self.contrast_slider,
             self.pitch_slider,
             self.dem_hillshade_slider,
+            self.pc_point_size_slider,
+            self.pc_z_offset_slider,
         ):
             slider.valueChanged.connect(self._update_display_value_labels)
         self._update_display_value_labels()

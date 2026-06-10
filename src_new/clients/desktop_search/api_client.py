@@ -38,6 +38,10 @@ class DesktopApiClient:
     def titiler_base_url(self) -> str:
         return self._titiler_base
 
+    @property
+    def tile_service_base_url(self) -> str:
+        return settings.tile_service_url.rstrip("/")
+
     def api_ready(self) -> bool:
         try:
             response = httpx.get(f"{self._base_url}/health", timeout=2.0)

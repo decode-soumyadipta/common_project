@@ -54,7 +54,6 @@ class SearchResultsCoordinator:
             for path, is_visible in c._search_layer_visibility.items()
             if is_visible
         }
-        bool(previously_visible_paths)
         c._search_result_assets_by_path = {}
         local_missing_count = 0
 
@@ -121,7 +120,7 @@ class SearchResultsCoordinator:
         )
 
         desired_aoi_visible = (
-            bool(c.panel.search_aoi_visible_check.isChecked())
+            c.panel.search_aoi_visible_check.isChecked()
             if hasattr(c.panel, "search_aoi_visible_check")
             else True
         )

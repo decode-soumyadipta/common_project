@@ -31,6 +31,7 @@ class RasterKind(StrEnum):
     JPEG2000 = "jpeg2000"
     MBTILES = "mbtiles"
     DEM = "dem"
+    POINT_CLOUD = "point_cloud"
     UNKNOWN = "unknown"
 
 
@@ -82,11 +83,11 @@ class RasterMetadata(BaseModel):
         description="Geographic bounding box of the raster in WGS 84 (EPSG:4326).",
     )
     resolution_x: float = Field(
-        gt=0.0,
+        ge=0.0,
         description="Pixel width in the raster's native CRS units.",
     )
     resolution_y: float = Field(
-        gt=0.0,
+        ge=0.0,
         description="Pixel height in the raster's native CRS units (always positive).",
     )
     width: int = Field(

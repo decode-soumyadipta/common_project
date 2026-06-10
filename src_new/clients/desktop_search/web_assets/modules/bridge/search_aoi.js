@@ -82,10 +82,159 @@
 
   const comparatorPolygonEntities = { left: [], right: [] };
 
+  let _cameraStateBeforeMorph = null;
+
+  function hasSavedCameraState() {
+    return _cameraStateBeforeMorph !== null;
+  }
+
+  function restoreCameraAfterMorph() {
+    if (!_cameraStateBeforeMorph) return;
+    const saved = _cameraStateBeforeMorph;
+    _cameraStateBeforeMorph = null;
+    
+    try {
+      viewer.camera.cancelFlight();
+      
+      const safeRange = Math.max(saved.range, 100.0);
+      
+      if (viewer.scene.mode === Cesium.SceneMode.SCENE2D) {
+        // In 2D mode, set view directly to the point on the flat map using setView to prevent flight cancels/zoom bugs
+        sceneDebug("restoreCameraAfterMorph (2D): setting view to center: lon=" + saved.lon.toFixed(4) + 
+                   " lat=" + saved.lat.toFixed(4) + " range/height=" + safeRange.toFixed(0));
+        viewer.camera.setView({
+          destination: Cesium.Cartesian3.fromDegrees(saved.lon, saved.lat, safeRange),
+          orientation: {
+            heading: saved.heading,
+            pitch: Cesium.Math.toRadians(-90.0), // Always look straight down in 2D
+            roll: 0.0
+          }
+        });
+      } else {
+        // In 3D mode, set view using lookAt + lookAtTransform(IDENTITY) to preserve pitch and range exactly
+        let targetPitch = saved.pitch;
+        if (targetPitch > Cesium.Math.toRadians(-15.0)) {
+          targetPitch = Cesium.Math.toRadians(-35.0);
+        }
+        
+        let targetHeight = saved.height || 0.0;
+        if (targetHeight === 0.0 && activeDemTerrainProvider && activeDemContext && activeDemContext.visible !== false) {
+          const fallback = (window.offlineGIS && typeof window.offlineGIS.getDemTerrainHeightFallback === "function")
+              ? window.offlineGIS.getDemTerrainHeightFallback()
+              : 0.0;
+          let exag = 1.0;
+          if (viewer.scene.globe && typeof viewer.scene.globe.terrainExaggeration === "number") {
+            exag = viewer.scene.globe.terrainExaggeration;
+          }
+          targetHeight = fallback * exag;
+        }
+
+        sceneDebug("restoreCameraAfterMorph (3D): setting view: lon=" + saved.lon.toFixed(4) + 
+                   " lat=" + saved.lat.toFixed(4) + " targetHeight=" + targetHeight.toFixed(1) +
+                   " range=" + safeRange.toFixed(0) + 
+                   " pitch=" + Cesium.Math.toDegrees(targetPitch).toFixed(1) + "°");
+                   
+        const targetCartesian = Cesium.Cartesian3.fromDegrees(saved.lon, saved.lat, targetHeight);
+        viewer.camera.lookAt(
+          targetCartesian,
+          new Cesium.HeadingPitchRange(saved.heading, targetPitch, safeRange)
+        );
+        // Unbind the camera transform lock to allow regular panning controls
+        viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+      }
+      
+      // Explicitly ensure user map panning/zooming controls are active
+      if (viewer?.scene?.screenSpaceCameraController) {
+        viewer.scene.screenSpaceCameraController.enableInputs = true;
+      }
+      requestSceneRender();
+    } catch (err) {
+      if (viewer?.scene?.screenSpaceCameraController) {
+        viewer.scene.screenSpaceCameraController.enableInputs = true;
+      }
+      sceneDebug("restoreCameraAfterMorph failed: " + err);
+    }
+  }
+
   function updateComparatorPolygons(visible) {
     if (searchPolygonController) {
       searchPolygonController.updateComparatorPolygons(visible);
     }
+  }
+
+  function handleMorphTo2D() {
+    sceneDebug("setSceneModeInternal morphTo2D begin pendingFocus=" + String(pendingFocusAfterMorph));
+    viewer.scene.morphTo2D(1.0);
+    currentSceneMode = "2d";
+    applySceneModePerformanceHints("2d");
+    syncSceneModeToggle("2d");
+    if (comparatorModeEnabled && typeof comparatorViewers !== "undefined" && Array.isArray(comparatorViewers)) {
+      comparatorViewers.forEach(v => setComparatorViewerModeByType(v));
+    }
+    updateBasemapBlendForCurrentMode();
+    
+    window.requestAnimationFrame(function () {
+      if (window._activeCompositorBounds && window.offlineGIS && typeof window.offlineGIS.lockCameraToCompositorAsset === "function") {
+        window.offlineGIS.lockCameraToCompositorAsset(window._activeCompositorBounds);
+      } else if (_cameraStateBeforeMorph) {
+        sceneDebug("handleMorphTo2D: deferring camera restoration to morphComplete");
+      } else {
+        const bounds = activeTileBounds || lastLoadedBounds;
+        if (bounds) {
+          if (typeof focusLoadedRegion2D === "function") {
+            focusLoadedRegion2D(1.0);
+          }
+        }
+      }
+      requestSceneRender();
+    });
+
+    requestSceneRender();
+    window.requestAnimationFrame(requestSceneRender);
+    setStatus("2D map mode active.");
+    log("info", "Scene mode switched to 2D from 3D");
+  }
+
+  function handleMorphTo3D() {
+    sceneDebug("setSceneModeInternal morphTo3D begin pendingFocus=" + String(pendingFocusAfterMorph));
+    viewer.scene.morphTo3D(1.0);
+    currentSceneMode = "3d";
+
+    applySceneModePerformanceHints("3d");
+    syncSceneModeToggle("3d");
+    if (comparatorModeEnabled && typeof comparatorViewers !== "undefined" && Array.isArray(comparatorViewers)) {
+      comparatorViewers.forEach(v => setComparatorViewerModeByType(v));
+    }
+    updateBasemapBlendForCurrentMode();
+
+    if (cameraOrbitPitch < MIN_3D_PITCH_RAD || Math.abs(cameraOrbitPitch - Cesium.Math.toRadians(-90.0)) < Cesium.Math.toRadians(5.0)) {
+      cameraOrbitPitch = DEFAULT_3D_PITCH_RAD;
+      sceneDebug("setSceneModeInternal: clamped pitch to default 3D pitch " + Cesium.Math.toDegrees(cameraOrbitPitch).toFixed(1) + "°");
+    }
+
+    window.requestAnimationFrame(function () {
+      if (window.offlineGIS && typeof window.offlineGIS.logCameraState === "function") {
+        window.offlineGIS.logCameraState("At requestAnimationFrame of morphTo3D");
+      }
+
+      if (_cameraStateBeforeMorph) {
+        sceneDebug("handleMorphTo3D: deferring camera restoration to morphComplete");
+      }
+
+      if (window._activeCompositorBounds && window.offlineGIS && typeof window.offlineGIS.lockCameraToCompositorAsset === "function") {
+        window.offlineGIS.lockCameraToCompositorAsset(window._activeCompositorBounds);
+      } else if (!_cameraStateBeforeMorph) {
+        const bounds = activeTileBounds || lastLoadedBounds;
+        if (bounds) {
+          schedule3DFocusAfterMorph(1.0);
+        }
+      }
+      requestSceneRender();
+    });
+
+    requestSceneRender();
+    setStatus("3D globe mode active.");
+    log("info", "Scene mode switched to 3D from 2D");
   }
 
   function setSceneModeInternal(mode) {
@@ -118,7 +267,6 @@
       try {
         viewer.scene.completeMorph();
       } catch (_err) {
-        // Ignore completeMorph failures and continue with queueing below.
       }
       actualMode = detectSceneMode();
       sceneDebug("setSceneModeInternal after completeMorph actualMode=" + actualMode);
@@ -153,102 +301,72 @@
     pendingFocusAfterMorph = Boolean(preferredBounds);
     pendingTerrainSceneAfterMorph = normalized === "3d" && Boolean(preferredBounds);
     configureCameraControllerForMode(normalized);
-    if (normalized === "2d") {
-      sceneDebug("setSceneModeInternal morphTo2D begin pendingFocus=" + String(pendingFocusAfterMorph));
-      
-      // Note: No EllipsoidTerrainProvider swap needed here. Maximum 2D zoom-out
-      // clamp in dem_terrain.js prevents out-of-bounds quadtree projection errors.
 
-      // Instant morph (0-duration) to avoid lag and frame drops
-      viewer.scene.morphTo2D(0.0);
-      currentSceneMode = "2d";
-      applySceneModePerformanceHints("2d");
-      syncSceneModeToggle("2d");
-      if (comparatorModeEnabled && typeof comparatorViewers !== "undefined" && Array.isArray(comparatorViewers)) {
-        comparatorViewers.forEach(v => setComparatorViewerModeByType(v));
-      }
-      updateBasemapBlendForCurrentMode();
-      
-      // Focus on active asset after morph in 2D
-      window.requestAnimationFrame(function () {
-        if (viewer.terrainProvider && !(viewer.terrainProvider instanceof Cesium.EllipsoidTerrainProvider)) {
-          viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
-        }
-        if (window._activeCompositorBounds && window.offlineGIS && typeof window.offlineGIS.lockCameraToCompositorAsset === "function") {
-          window.offlineGIS.lockCameraToCompositorAsset(window._activeCompositorBounds);
+    if (viewer && viewer.camera) {
+      try {
+        if (viewer.scene.mode === Cesium.SceneMode.SCENE2D) {
+          // In 2D mode, the camera is looking straight down, so unproject the camera position cartesian to get accurate coordinates
+          const projection = viewer.scene.mapProjection || new Cesium.GeographicProjection();
+          const carto = projection.unproject(viewer.camera.position);
+          if (carto && Number.isFinite(carto.longitude)) {
+            _cameraStateBeforeMorph = {
+              lon: Cesium.Math.toDegrees(carto.longitude),
+              lat: Cesium.Math.toDegrees(carto.latitude),
+              height: 0.0,
+              range: Number.isFinite(carto.height) ? carto.height : 100000.0,
+              heading: Number.isFinite(viewer.camera.heading) ? viewer.camera.heading : 0.0,
+              pitch: Cesium.Math.toRadians(-90.0)
+            };
+            sceneDebug("setSceneModeInternal (2D pre-save): saved camera look-at target lon=" +
+              _cameraStateBeforeMorph.lon.toFixed(4) + " lat=" + _cameraStateBeforeMorph.lat.toFixed(4) +
+              " range=" + _cameraStateBeforeMorph.range.toFixed(0));
+          }
         } else {
-          const bounds = activeTileBounds || lastLoadedBounds;
-          if (bounds) {
-            if (typeof focusLoadedRegion2D === "function") {
-              focusLoadedRegion2D(1.0);
+          // In 3D / CV modes, perform ray picking to find look-at target on globe/terrain
+          let targetCartesian = null;
+          const centerPos = new Cesium.Cartesian2(viewer.canvas.clientWidth / 2, viewer.canvas.clientHeight / 2);
+          const ray = viewer.camera.getPickRay(centerPos);
+          if (ray && viewer.scene.globe) {
+            targetCartesian = viewer.scene.globe.pick(ray, viewer.scene);
+          }
+          if (!targetCartesian) {
+            targetCartesian = viewer.camera.pickEllipsoid(centerPos);
+          }
+          if (!targetCartesian) {
+            targetCartesian = viewer.camera.position;
+          }
+
+          if (targetCartesian) {
+            const targetCarto = Cesium.Cartographic.fromCartesian(targetCartesian);
+            let range = Cesium.Cartesian3.distance(viewer.camera.position, targetCartesian);
+            if (!Number.isFinite(range) || range < 10.0) {
+              const camCarto = viewer.camera.positionCartographic;
+              range = camCarto ? camCarto.height : 100000.0;
             }
+            _cameraStateBeforeMorph = {
+              lon: Cesium.Math.toDegrees(targetCarto.longitude),
+              lat: Cesium.Math.toDegrees(targetCarto.latitude),
+              height: targetCarto.height,
+              range: range,
+              heading: Number.isFinite(viewer.camera.heading) ? viewer.camera.heading : 0.0,
+              pitch: Number.isFinite(viewer.camera.pitch) ? viewer.camera.pitch : Cesium.Math.toRadians(-90.0)
+            };
+            sceneDebug("setSceneModeInternal (3D pre-save): saved camera look-at target lon=" +
+              _cameraStateBeforeMorph.lon.toFixed(4) + " lat=" + _cameraStateBeforeMorph.lat.toFixed(4) +
+              " range=" + _cameraStateBeforeMorph.range.toFixed(0) + " pitch=" + Cesium.Math.toDegrees(_cameraStateBeforeMorph.pitch).toFixed(1));
           }
         }
-        requestSceneRender();
-      });
-
-      // Force immediate re-render after instant morph
-      requestSceneRender();
-      window.requestAnimationFrame(requestSceneRender);
-      setStatus("2D map mode active.");
-      log("info", "Scene mode switched to 2D from 3D");
-      return;
-    }
-    sceneDebug("setSceneModeInternal morphTo3D begin pendingFocus=" + String(pendingFocusAfterMorph));
-    // Instant morph (0-duration) to avoid lag and frame drops
-    viewer.scene.morphTo3D(0.0);
-    currentSceneMode = "3d";
-
-    applySceneModePerformanceHints("3d");
-    syncSceneModeToggle("3d");
-    if (comparatorModeEnabled && typeof comparatorViewers !== "undefined" && Array.isArray(comparatorViewers)) {
-      comparatorViewers.forEach(v => setComparatorViewerModeByType(v));
-    }
-    updateBasemapBlendForCurrentMode();
-
-    // CRITICAL FIX (Bug 1+2): Ensure 3D always has perspective pitch.
-    // Clamp pitch so 3D never looks like 2D (top-down).  Default to -35°.
-    if (cameraOrbitPitch < MIN_3D_PITCH_RAD || Math.abs(cameraOrbitPitch - Cesium.Math.toRadians(-90.0)) < Cesium.Math.toRadians(5.0)) {
-      cameraOrbitPitch = DEFAULT_3D_PITCH_RAD;
-      sceneDebug("setSceneModeInternal: clamped pitch to default 3D pitch " + Cesium.Math.toDegrees(cameraOrbitPitch).toFixed(1) + "°");
+      } catch (_saveErr) {
+        _cameraStateBeforeMorph = null;
+        sceneDebug("setSceneModeInternal: failed to save pre-morph camera state: " + _saveErr);
+      }
     }
 
-    // After morphTo3D, re-attach terrain provider and focus on active asset.
-    // morphTo3D(0) resets the terrain provider — we must restore it.
-    window.requestAnimationFrame(function () {
-      if (window.offlineGIS && typeof window.offlineGIS.logCameraState === "function") {
-        window.offlineGIS.logCameraState("At requestAnimationFrame of morphTo3D");
-      }
-
-
-
-      if (activeDemTerrainProvider && activeDemContext && activeDemContext.visible !== false) {
-        if (viewer.terrainProvider !== activeDemTerrainProvider) {
-          _swapTerrainProviderLocked(activeDemTerrainProvider);
-        }
-        if (activeDemDrapeLayer) activeDemDrapeLayer.show = true;
-        if (activeDemHillshadeLayer) activeDemHillshadeLayer.show = true;
-        viewer.scene.globe.terrainExaggeration = Math.max(0.1, demVisual.exaggeration);
-        // Also set verticalExaggeration for Cesium 1.90+ compatibility
-        if (typeof viewer.scene.verticalExaggeration !== "undefined") {
-          viewer.scene.verticalExaggeration = Math.max(0.1, demVisual.exaggeration);
-        }
-      }
-      if (window._activeCompositorBounds && window.offlineGIS && typeof window.offlineGIS.lockCameraToCompositorAsset === "function") {
-        window.offlineGIS.lockCameraToCompositorAsset(window._activeCompositorBounds);
-      } else {
-        // Focus on active asset after morph with 3D pitch
-        const bounds = activeTileBounds || lastLoadedBounds;
-        if (bounds) {
-          schedule3DFocusAfterMorph(1.0);
-        }
-      }
-      requestSceneRender();
-    });
-
-    requestSceneRender();
-    setStatus("3D globe mode active.");
-    log("info", "Scene mode switched to 3D from 2D");
+    if (normalized === "2d") {
+      handleMorphTo2D();
+    } else {
+      handleMorphTo3D();
+    }
   }
 
   function startFlyThroughBounds(west, south, east, north) {
@@ -341,4 +459,6 @@
   window.offlineGIS = window.offlineGIS || {};
   Object.assign(window.offlineGIS, {
     setSceneModeInternal: setSceneModeInternal,
+    hasSavedCameraState: hasSavedCameraState,
+    restoreCameraAfterMorph: restoreCameraAfterMorph,
   });

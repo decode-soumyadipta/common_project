@@ -448,11 +448,11 @@ class DesktopController(QObject):
         self._camera.flyto_asset_bounds(asset, kind)
 
 
-    def search_assets_by_coordinate(self) -> None:
+    def search_assets_by_coordinate(self, *args, **kwargs) -> None:
         """Search assets by coordinate using server-side metadata processing."""
         self._search.search_assets_by_coordinate_event_driven()
 
-    def search_assets_from_drawn_geometry(self) -> None:
+    def search_assets_from_drawn_geometry(self, *args, **kwargs) -> None:
         """Search assets from drawn geometry using server-side processing."""
         self._search.search_assets_from_drawn_geometry_event_driven()
 
@@ -466,7 +466,7 @@ class DesktopController(QObject):
     def set_search_draw_mode(self, mode: str | bool | None = None) -> None:
         self._search.set_search_draw_mode(mode)
 
-    def finish_search_polygon(self) -> None:
+    def finish_search_polygon(self, *args, **kwargs) -> None:
         self._search.finish_search_polygon()
 
     def clear_search_geometry(self, *args, **kwargs) -> None:
@@ -612,7 +612,7 @@ class DesktopController(QObject):
         """Update coordinate inputs from polygon payload."""
         self._sync_focus.update_coordinate_inputs_from_polygon(payload)
 
-    def browse_files(self) -> None:
+    def browse_files(self, *args, **kwargs) -> None:
         self._asset.browse_files()
 
     def add_raster_layers(self) -> None:
@@ -755,10 +755,10 @@ class DesktopController(QObject):
     def _refresh_vector_layers_ui(self) -> None:
         self.panel.update_vector_layers(list(self._vector_layers.values()))
 
-    def clear_file_selection(self) -> None:
+    def clear_file_selection(self, *args, **kwargs) -> None:
         self._asset.clear_file_selection()
 
-    def enqueue_selected_files(self) -> None:
+    def enqueue_selected_files(self, *args, **kwargs) -> None:
         self._asset.enqueue_selected_files()
 
     def _start_ingest_monitoring(self, job_id: str) -> None:
@@ -769,7 +769,7 @@ class DesktopController(QObject):
         """Delete an asset."""
         self._asset.delete_asset(asset_data)
 
-    def refresh_assets(self) -> None:
+    def refresh_assets(self, *args, **kwargs) -> None:
         """Refresh the assets list."""
         self._asset.refresh_assets()
 
@@ -887,7 +887,7 @@ class DesktopController(QObject):
     def _fly_through_asset_event_driven(self, asset: dict) -> bool:
         return self._asset_loading._fly_through_asset_event_driven(asset)
 
-    def apply_rgb_view_mode(self) -> None:
+    def apply_rgb_view_mode(self, *args, **kwargs) -> None:
         self._viz.apply_rgb_view_mode()
 
     def _on_visual_slider_changed(self, _value: int) -> None:
@@ -904,6 +904,17 @@ class DesktopController(QObject):
 
     def _on_dem_color_mode_changed(self, _index: int) -> None:
         self._viz.apply_dem_color_mode(log_to_panel=True)
+
+    def _on_pc_color_mode_changed(self, _index: int) -> None:
+        mode = self.panel.pc_color_mode_combo.currentData()
+        self.panel.log(f"Point Cloud Color Mode changed to: {self.panel.pc_color_mode_combo.currentText()}")
+        self._run_js_call("setPointCloudStyle", mode)
+
+    def _on_pc_point_size_changed(self, _value: int) -> None:
+        self._run_js_call("setPointCloudPointSize", _value)
+
+    def _on_pc_z_offset_changed(self, _value: int) -> None:
+        self._run_js_call("setPointCloudHeightOffset", float(_value))
 
     def apply_visual_settings(self, log_to_panel: bool = True) -> None:
         self._viz.apply_visual_settings(log_to_panel=log_to_panel)
@@ -950,17 +961,14 @@ class DesktopController(QObject):
 
 
     def on_map_click(self, lon: float, lat: float) -> None:
-        window = self.panel.window()
-        if hasattr(window, "compositor_overlay") and window.compositor_overlay:
-            if window.compositor_overlay.handle_map_click(lon, lat):
-                return
-
         if getattr(self, "_comparator_picker_active", False):
             if self._handle_comparator_map_click(lon, lat):
                 return
 
         self._event.on_map_click(lon, lat)
 
+# TODO: Refactor for cognitive complexity
+# TODO: Refactor for cognitive complexity
     def _handle_comparator_map_click(self, lon: float, lat: float) -> bool:
         from pathlib import Path
 
@@ -1404,44 +1412,7 @@ class DesktopController(QObject):
     def _toolbar_toggle_swipe_comparator(self, enabled: bool | None = None) -> bool:
         return self._comparator._toolbar_toggle_swipe_comparator(enabled=enabled)
 
-    def disable_layer_compositor(self) -> None:
-        self._run_js_call("setSwipeComparator", False)
-        window = self.panel.window()
-        if hasattr(window, "compositor_overlay") and window.compositor_overlay:
-            window.compositor_overlay.restore_pre_compositor_state()
-        self.panel.log("Layer Compositor disabled.")
 
-    def apply_layer_compositor_settings(
-        self, enable_swipe: bool, swipe_paths: list[str], layer_alphas: dict[str, float]
-    ) -> bool:
-        for path, alpha in layer_alphas.items():
-            # Call directly — the JS setLayerAlpha handles unknown keys gracefully.
-            # The old `if asset:` guard blocked calls for freshly added layers.
-            self._run_js_call("setLayerAlpha", path, alpha)
-
-        if enable_swipe and len(swipe_paths) >= 2:
-            left_path, right_path = swipe_paths[0], swipe_paths[1]
-            left_asset = self._search_result_assets_by_path.get(left_path) or {}
-            right_asset = self._search_result_assets_by_path.get(right_path) or {}
-            left_label = str(
-                left_asset.get("file_name") or Path(left_path).name or "Layer A"
-            )
-            right_label = str(
-                right_asset.get("file_name") or Path(right_path).name or "Layer B"
-            )
-            self._run_js_call(
-                "setSwipeComparatorLayers",
-                left_path,
-                right_path,
-                left_label,
-                right_label,
-            )
-            self._run_js_call("setSwipeComparator", True)
-        else:
-            self._run_js_call("setSwipeComparator", False)
-
-        self.panel.log("Layer compositor settings applied.")
-        return True
 
     def _toolbar_zoom_to_asset(self, file_path: str) -> None:
         """Zoom/Focus on a specific asset instantly."""
@@ -1743,8 +1714,8 @@ class DesktopController(QObject):
     def _toolbar_export_pdf(self) -> None:
         self._export.export_pdf()
 
-    def _toolbar_export_geotiff(self) -> None:
-        self._export.export_geotiff()
+    def _toolbar_export_asset(self) -> None:
+        self._export.export_asset()
 
     def _toolbar_save_project(self) -> None:
         self._project_io.save_project()

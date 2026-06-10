@@ -199,59 +199,63 @@ export function initializeViewer(containerId, options = {}) {
  * @param {Function} log - Logging function
  * @returns {Object} GPU information { renderer: string, isHighEnd: boolean }
  */
+function getGLRenderer() {
+  try {
+    const canvas = document.createElement('canvas');
+    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    if (!gl) return null;
+    const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+    if (!debugInfo) return null;
+    return gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function checkHighEnd(r) {
+  return r.includes("nvidia") || r.includes("rtx") || r.includes("gtx") ||
+         r.includes("quadro") || (r.includes("amd") && r.includes("radeon rx")) ||
+         r.includes("apple") || r.includes("m1") || r.includes("m2") ||
+         r.includes("m3") || r.includes("m4") || r.includes("m5");
+}
+
+function checkEntryWorkstation(r) {
+  if (!r.includes("quadro")) return false;
+  const entryModels = [
+    "quadro 1000",
+    "quadro p1000",
+    "quadro t1000",
+    "quadro p620",
+    "quadro p600",
+    "quadro t600",
+    "quadro t400",
+    "quadro k620",
+    "quadro k1200",
+    "quadro m1200",
+  ];
+  return entryModels.some((model) => r.includes(model));
+}
+
 function detectGPU(log) {
   const gpuInfo = {
     renderer: "Unknown",
     isHighEnd: false,
     isEntryWorkstation: false
   };
-  
-  try {
-    const canvas = document.createElement('canvas');
-    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-    if (gl) {
-      const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
-      if (debugInfo) {
-        const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
-        if (renderer) {
-          gpuInfo.renderer = renderer;
-          const r = renderer.toLowerCase();
-          // Detect dedicated GPUs (NVIDIA, AMD Radeon RX/Pro) or high-performance Apple Silicon
-          if (r.indexOf("nvidia") !== -1 || r.indexOf("rtx") !== -1 || r.indexOf("gtx") !== -1 ||
-              r.indexOf("quadro") !== -1 || (r.indexOf("amd") !== -1 && r.indexOf("radeon rx") !== -1) ||
-              r.indexOf("apple") !== -1 || r.indexOf("m1") !== -1 || r.indexOf("m2") !== -1 ||
-              r.indexOf("m3") !== -1 || r.indexOf("m4") !== -1 || r.indexOf("m5") !== -1) {
-            gpuInfo.isHighEnd = true;
-          }
-          if (r.indexOf("quadro") !== -1) {
-            const entryModels = [
-              "quadro 1000",
-              "quadro p1000",
-              "quadro t1000",
-              "quadro p620",
-              "quadro p600",
-              "quadro t600",
-              "quadro t400",
-              "quadro k620",
-              "quadro k1200",
-              "quadro m1200",
-            ];
-            gpuInfo.isEntryWorkstation = entryModels.some((model) => r.indexOf(model) !== -1);
-          }
-        }
-      }
-    }
-  } catch (e) {
-    if (log) {
-      log("warn", "Failed to detect GPU renderer: " + e);
-    }
+
+  const renderer = getGLRenderer();
+  if (renderer) {
+    gpuInfo.renderer = renderer;
+    const r = renderer.toLowerCase();
+    gpuInfo.isHighEnd = checkHighEnd(r);
+    gpuInfo.isEntryWorkstation = checkEntryWorkstation(r);
   }
-  
+
   if (log) {
     const tier = gpuInfo.isEntryWorkstation ? "Entry Workstation" : (gpuInfo.isHighEnd ? "High-End" : "Integrated/Unknown");
     log("info", "GPU Detected: " + gpuInfo.renderer + " (" + tier + ")");
   }
-  
+
   return gpuInfo;
 }
 

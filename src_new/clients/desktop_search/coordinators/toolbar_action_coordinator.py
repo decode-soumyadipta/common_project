@@ -12,8 +12,6 @@ class ToolbarActionCoordinator:
     ) -> bool | None:
         c = self._controller
         handlers = {
-            # Layer Compositor is orchestrated by MainWindow, but keep a mapped handler label here to preserve toolbar contract coverage.
-            "Layer Compositor": lambda: None,
             "Comparator": c._toolbar_toggle_comparator,
             "Distance / Azimuth": c._toolbar_measure_distance,
             "Elevation Profile": c._toolbar_elevation_profile,
@@ -29,8 +27,8 @@ class ToolbarActionCoordinator:
             "Add Vector": c.add_vector_layers,
             "Add Raster Layer": c.add_raster_layers,
             "Save Project": c._toolbar_save_project,
-            "Export": c._toolbar_export_geotiff,
-            "Export Asset as GeoTIFF": c._toolbar_export_geotiff,
+            "Export": c._toolbar_export_asset,
+            "Export Asset": c._toolbar_export_asset,
             "Export PDF": c._toolbar_export_pdf,
         }
         handler = handlers.get(action_label)

@@ -230,13 +230,21 @@ class DisplaySettingsCoordinator:
     def apply_display_control_mode(self) -> None:
         """Apply display control mode based on visible layers."""
         c = self._controller
+        has_point_cloud = any(
+            c._search_layer_visibility.get(path, False) and (
+                str(path).lower().endswith((".las", ".laz")) or (isinstance(asset, dict) and asset.get("kind") == "point_cloud")
+            )
+            for path, asset in c._search_result_assets_by_path.items()
+        )
         dem_visible = any(
             c._search_layer_visibility.get(path, False) and c._is_dem_asset(asset)
             for path, asset in c._search_result_assets_by_path.items()
         )
         imagery_visible = any(
             c._search_layer_visibility.get(path, False)
-            and (not c._is_dem_asset(asset))
+            and (not c._is_dem_asset(asset)) and not (
+                str(path).lower().endswith((".las", ".laz")) or (isinstance(asset, dict) and asset.get("kind") == "point_cloud")
+            )
             for path, asset in c._search_result_assets_by_path.items()
         )
         if c._explicit_dem_layer_visible:
@@ -266,22 +274,48 @@ class DisplaySettingsCoordinator:
         ).lower()
         is_2d_mode = current_scene_mode == "2d"
 
-        # DEM controls: enabled when DEM is visible
-        for widget in (
+        # DEM controls: show/hide and enable/disable
+        dem_widgets = [
+            getattr(c.panel, "dem_label", None),
+            getattr(c.panel, "dem_hillshade_lbl", None),
             c.panel.dem_hillshade_slider,
+            c.panel.dem_hillshade_value,
+            getattr(c.panel, "dem_color_lbl", None),
             c.panel.dem_color_mode_combo,
+            getattr(c.panel, "dem_stretch_lbl", None),
             getattr(c.panel, "dem_stretch_mode_combo", None),
-        ):
+        ]
+        for widget in dem_widgets:
             if widget is not None:
-                if widget is c.panel.dem_hillshade_slider or widget is c.panel.dem_color_mode_combo:
+                widget.setVisible(dem_visible)
+                if widget in (c.panel.dem_hillshade_slider, c.panel.dem_color_mode_combo):
                     widget.setEnabled(dem_visible)
-                else:
+                elif widget is getattr(c.panel, "dem_stretch_mode_combo", None):
                     widget.setEnabled(dem_visible and not comparator_active)
+                else:
+                    widget.setEnabled(dem_visible)
 
-        self._set_dem_slope_option_enabled(not comparator_active)
+        self._set_dem_slope_option_enabled(dem_visible and not comparator_active)
 
-        # Camera controls: pitch slider enabled in ALL 3D modes with any layer Rotation works in both 2D and 3D (heading rotation valid in 2D Cesium)
-        any_layer_visible = dem_visible or imagery_visible
+        # Point cloud controls: show/hide and enable/disable
+        pc_widgets = [
+            getattr(c.panel, "pc_label", None),
+            getattr(c.panel, "pc_color_lbl", None),
+            c.panel.pc_color_mode_combo,
+            getattr(c.panel, "pc_size_lbl", None),
+            c.panel.pc_point_size_slider,
+            c.panel.pc_point_size_value,
+            getattr(c.panel, "pc_z_lbl", None),
+            c.panel.pc_z_offset_slider,
+            c.panel.pc_z_offset_value,
+        ]
+        for widget in pc_widgets:
+            if widget is not None:
+                widget.setVisible(has_point_cloud)
+                widget.setEnabled(has_point_cloud)
+
+        # Camera controls: pitch slider enabled in ALL 3D modes with any layer Rotation works in both 2D and 3D
+        any_layer_visible = dem_visible or imagery_visible or has_point_cloud
         c.panel.pitch_slider.setEnabled(any_layer_visible and not is_2d_mode)
         for widget in (
             c.panel.rotate_left_btn,

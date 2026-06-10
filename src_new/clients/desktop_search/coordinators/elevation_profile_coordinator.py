@@ -41,9 +41,15 @@ class ElevationProfileCoordinator:
     def activate(self) -> bool:
         """Start elevation profile mode. Returns True if activated."""
         dem_path = self._c._selected_dem_path()
-        if not dem_path:
+        has_point_cloud = any(
+            self._c._search_layer_visibility.get(path, False) and (
+                str(path).lower().endswith((".las", ".laz")) or (isinstance(asset, dict) and asset.get("kind") == "point_cloud")
+            )
+            for path, asset in self._c._search_result_assets_by_path.items()
+        )
+        if not dem_path and not has_point_cloud:
             self._c.panel.log(
-                "Select or show a DEM layer first, then click Elevation Profile."
+                "Select or show a DEM layer or Point Cloud first, then click Elevation Profile."
             )
             return False
 
@@ -148,13 +154,28 @@ class ElevationProfileCoordinator:
         import httpx
 
         dem_path = self._c._selected_dem_path()
-        if not dem_path:
-            self._c.panel.log("No DEM asset selected.")
-            return
+        has_point_cloud = any(
+            self._c._search_layer_visibility.get(path, False) and (
+                str(path).lower().endswith((".las", ".laz")) or (isinstance(asset, dict) and asset.get("kind") == "point_cloud")
+            )
+            for path, asset in self._c._search_result_assets_by_path.items()
+        )
 
         samples = int(self._c._default_profile_samples)
         points = self._clicks[-2:]
         (lon1, lat1), (lon2, lat2) = points[0], points[1]
+
+        if not dem_path and has_point_cloud:
+            js_code = f"window.offlineGIS.sampleHeightsAlongLine({lon1}, {lat1}, {lon2}, {lat2}, {samples})"
+            self._c.web_view.page().runJavaScript(
+                js_code,
+                lambda res: self._on_pc_profile_result_received(res, lon1, lat1, lon2, lat2)
+            )
+            return
+
+        if not dem_path:
+            self._c.panel.log("No DEM asset selected.")
+            return
 
         # Check if points lie within DEM bounds and alert the user if outside
         dem_asset = None
@@ -169,8 +190,8 @@ class ElevationProfileCoordinator:
                     bounds.get("west", 0.0), bounds.get("south", 0.0),
                     bounds.get("east", 0.0), bounds.get("north", 0.0)
                 )
-                pts_inside = [west <= pt[0] <= east and south <= pt[1] <= north for pt in points]
-                if not any(pts_inside):
+                pts_inside = any(west <= pt[0] <= east and south <= pt[1] <= north for pt in points)
+                if not pts_inside:
                     self._c.panel.log(
                         f"⚠️ Both points are outside the selected DEM — "
                         f"DEM covers lon [{west:.4f}–{east:.4f}] lat [{south:.4f}–{north:.4f}]. "
@@ -252,8 +273,32 @@ class ElevationProfileCoordinator:
             # Find the map-column vertical splitter and give the profile panel ~260px
             main_win = self._c.web_view.window()
             v_splitter = getattr(main_win, "_map_v_splitter", None)
-            if v_splitter is not None:
-                total = v_splitter.height()
-                profile_h = 260
-                map_h = max(total - profile_h, 200)
-                v_splitter.setSizes([map_h, profile_h])
+        if v_splitter is not None:
+            total = v_splitter.height()
+            profile_h = 260
+            map_h = max(total - profile_h, 200)
+            v_splitter.setSizes([map_h, profile_h])
+
+    def _on_pc_profile_result_received(self, res: list | None, lon1: float, lat1: float, lon2: float, lat2: float) -> None:
+        if not res:
+            self._c.panel.log("Elevation profile: no data sampled from point cloud.")
+            return
+
+        values = [float(v) for v in res if v is not None]
+        self._c._last_profile_values = values
+        distance_m = self._geodesic_distance_m(lon1, lat1, lon2, lat2)
+
+        # Draw the profile line on the Cesium globe
+        self._c._run_js_call("drawProfileLine", lon1, lat1, lon2, lat2)
+
+        # Show/update the Qt profile panel
+        self._show_panel(values, distance_m, lon1, lat1, lon2, lat2)
+
+        if values:
+            vmin = min(values)
+            vmax = max(values)
+            self._c.panel.log(
+                f"Elevation Profile (Point Cloud): {len(values)} samples  "
+                f"Min: {vmin:.1f} m  Max: {vmax:.1f} m  "
+                f"Length: {distance_m / 1000:.2f} km"
+            )

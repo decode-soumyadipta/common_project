@@ -137,12 +137,22 @@
   }
 
   function getGroundHeightAtLonLat(lon, lat) {
-    if (!viewer || !viewer.scene || !viewer.scene.globe) {
+    if (!viewer || !viewer.scene) {
       return 0;
     }
     try {
-      const height = viewer.scene.globe.getHeight(Cesium.Cartographic.fromDegrees(lon, lat));
-      return Number.isFinite(height) ? height : 0;
+      const carto = Cesium.Cartographic.fromDegrees(lon, lat);
+      if (typeof managedPointCloudLayers !== "undefined" && managedPointCloudLayers.size > 0) {
+        const sampledHeight = viewer.scene.sampleHeight(carto);
+        if (Cesium.defined(sampledHeight) && Number.isFinite(sampledHeight)) {
+          return sampledHeight;
+        }
+      }
+      if (viewer.scene.globe) {
+        const height = viewer.scene.globe.getHeight(carto);
+        return Number.isFinite(height) ? height : 0;
+      }
+      return 0;
     } catch (_) {
       return 0;
     }
@@ -242,7 +252,7 @@
         horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
         verticalOrigin: Cesium.VerticalOrigin.CENTER,
         pixelOffset: new Cesium.Cartesian2(0, 0),
-        heightReference: (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
+        heightReference: (viewer?.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
         scale: 0.75,
         show: new Cesium.CallbackProperty(function () {
           return (searchDrawMode === "rectangle" || searchRectangleLocked) && getSearchOverlayVisible() && !searchRectangleLocked;
@@ -339,7 +349,7 @@
           horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
           verticalOrigin: Cesium.VerticalOrigin.CENTER,
           pixelOffset: new Cesium.Cartesian2(0, 0),
-          heightReference: (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
+          heightReference: (viewer?.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
           scale: 0.75,
           show: new Cesium.CallbackProperty(function () {
             return Boolean(window.searchAoiBounds) && getSearchOverlayVisible();
@@ -404,13 +414,13 @@
       // This prevents black screens when using requestRenderMode=true
       viewer.scene.requestRender();
       setTimeout(function() { 
-        if (viewer && viewer.scene) viewer.scene.requestRender(); 
+        if (viewer?.scene) viewer.scene.requestRender(); 
       }, 50);
       setTimeout(function() { 
-        if (viewer && viewer.scene) viewer.scene.requestRender(); 
+        if (viewer?.scene) viewer.scene.requestRender(); 
       }, 150);
       setTimeout(function() { 
-        if (viewer && viewer.scene) viewer.scene.requestRender(); 
+        if (viewer?.scene) viewer.scene.requestRender(); 
       }, 300);
     });
 
@@ -524,6 +534,7 @@
   function adjustScreenSpaceErrorDynamically() {
     const interacting = (typeof isInteracting !== "undefined" ? isInteracting : false);
 
+// TODO: Refactor this function to reduce its Cognitive Complexity from 23 to the 15 allowed.
     function adjustViewerSSE(v, isComp) {
       if (!v || !v.camera || !v.scene || !v.scene.globe) return;
 
@@ -595,7 +606,7 @@
     if (!viewer) return;
     const picked = position ? viewer.scene.pick(position) : null;
     let hoveredEntity = null;
-    if (picked && picked.id && picked.id.billboard) {
+    if (picked?.id && picked.id.billboard) {
       hoveredEntity = picked.id;
     }
 
@@ -636,7 +647,7 @@
         // Step 2 → settle back to hovered scale (1.2x) after 150 ms
         _markerBumpTimer = setTimeout(function () {
           _markerBumpTimer = null;
-          if (lastHoveredMarker === hoveredEntity && hoveredEntity.billboard) {
+          if (lastHoveredMarker === hoveredEntity?.billboard) {
             hoveredEntity.billboard.scale = origScale * 1.2;
             requestSceneRender();
           }
@@ -656,7 +667,7 @@
     
     // Track LEFT_DOWN to detect clicks vs drags
     handler.setInputAction(function (movement) {
-      if (movement && movement.position) {
+      if (movement?.position) {
         mouseDownPosition = {
           x: movement.position.x,
           y: movement.position.y
@@ -701,6 +712,7 @@
       }
     }, Cesium.ScreenSpaceEventType.LEFT_DOWN);
     
+// TODO: Refactor this function to reduce its Cognitive Complexity from 171 to the 15 allowed.
     // Handle LEFT_UP - only process as click if mouse didn't move much
     handler.setInputAction(function (movement) {
       if (searchDrawMode === "rectangle" && searchRectangleStartPoint) {
@@ -709,7 +721,7 @@
       }
 
       // Check if this was a click (minimal movement) or a drag (significant movement)
-      if (mouseDownPosition && movement && movement.position) {
+      if (mouseDownPosition && movement?.position) {
         const dx = Math.abs(movement.position.x - mouseDownPosition.x);
         const dy = Math.abs(movement.position.y - mouseDownPosition.y);
         const distance = Math.sqrt(dx * dx + dy * dy);
@@ -723,8 +735,8 @@
       
       mouseDownPosition = null;
       
-      const picked = movement && movement.position ? viewer.scene.pick(movement.position) : null;
-      if (picked && picked.id && picked.id._searchResultMarker === true) {
+      const picked = movement?.position ? viewer.scene.pick(movement.position) : null;
+      if (picked?.id && picked.id._searchResultMarker === true) {
         const filePath = picked.id._assetFilePath;
         const currentDisplayed = picked.id._assetDisplayed;
         const nextDisplayed = !currentDisplayed;
@@ -748,12 +760,12 @@
         requestSceneRender();
         return;
       }
-      if (picked && picked.id && picked.id._annotationRole === "edit") {
+      if (picked?.id && picked.id._annotationRole === "edit") {
         if (renameAnnotationFromEditIcon(picked.id)) {
           return;
         }
       }
-      if (picked && picked.id && picked.id._annotationRole === "delete") {
+      if (picked?.id && picked.id._annotationRole === "delete") {
         var delE = picked.id;
         var delTargets = [delE._annotationAnchorEntity, delE._annotationLabelEntity, delE._annotationEditEntity, delE];
         for (var di = 0; di < delTargets.length; di++) {
@@ -769,14 +781,14 @@
         return;
       }
       // Polygon edit (rename)
-      if (picked && picked.id && picked.id._polyRole === "edit") {
+      if (picked?.id && picked.id._polyRole === "edit") {
         var polyId = picked.id._polyRecordId;
         var polys = drawnPolygons;
         for (var pi = 0; pi < polys.length; pi++) {
           if (polys[pi].id === polyId && polys[pi].nameLabelEntity) {
             var curName = polys[pi].label || "Polygon " + polyId;
             var newName = prompt("Rename polygon:", curName);
-            if (newName && newName.trim()) {
+            if (newName?.trim()) {
               var trimmedName = newName.trim();
               polys[pi].label = trimmedName;
               polys[pi].nameLabelEntity.label.text = trimmedName;
@@ -811,7 +823,7 @@
         return;
       }
       // Polygon delete
-      if (picked && picked.id && picked.id._polyRole === "delete") {
+      if (picked?.id && picked.id._polyRole === "delete") {
         var delPolyId = picked.id._polyRecordId;
         for (var pj = drawnPolygons.length - 1; pj >= 0; pj--) {
           if (drawnPolygons[pj].id === delPolyId) {
@@ -841,7 +853,7 @@
       let lonLat = null;
       let clickCartesian = null;
 
-      if (movement && movement.position) {
+      if (movement?.position) {
         clickCartesian = getCartesianFromViewer(viewer, movement.position);
 
         if (clickCartesian) {
@@ -915,7 +927,7 @@
                 color: Cesium.Color.fromCssColorString("#00e5ff"),
                 outlineColor: Cesium.Color.WHITE,
                 outlineWidth: 2,
-                heightReference: (viewer && viewer.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
+                heightReference: (viewer?.scene && viewer.scene.mode === Cesium.SceneMode.SCENE2D) ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
               },
             });
             requestSceneRender();
@@ -975,10 +987,11 @@
 
       emitMapClick(lon, lat);
       log("debug", "Map click lon=" + lon.toFixed(6) + " lat=" + lat.toFixed(6));
+// TODO: Refactor this function to reduce its Cognitive Complexity from 121 to the 15 allowed.
     }, Cesium.ScreenSpaceEventType.LEFT_UP);
 
     handler.setInputAction(function (movement) {
-      if (movement && movement.endPosition) {
+      if (movement?.endPosition) {
         if (window.OfflineGISCursorControls) {
           window.OfflineGISCursorControls.lastSearchCursorScreenPosition = movement.endPosition;
         }
@@ -1005,7 +1018,7 @@
       }
       
       // Update rectangle draw preview
-      if (searchDrawMode === "rectangle" && searchRectangleStartPoint && !searchRectangleLocked && movement && movement.endPosition) {
+      if (searchDrawMode === "rectangle" && searchRectangleStartPoint && !searchRectangleLocked && movement?.endPosition) {
         let currentCartesian = getCartesianFromViewer(viewer, movement.endPosition);
         if (currentCartesian) {
           const lonLat = cartesianToLonLat(currentCartesian);
@@ -1134,7 +1147,7 @@
             }
             window._profileCursorFrac = frac;
             // Emit to Python so the Qt panel can draw the cursor crosshair
-            if (bridge && bridge.on_profile_cursor && Number.isFinite(frac)) {
+            if (bridge?.on_profile_cursor && Number.isFinite(frac)) {
               bridge.on_profile_cursor(frac);
             }
             requestSceneRender();
@@ -1149,13 +1162,13 @@
           window.OfflineGISCursorControls && window.OfflineGISCursorControls.lastSearchCursorScreenPosition
         );
       }
-      if (movement && movement.endPosition) {
+      if (movement?.endPosition) {
         updateMeasureCursorOverlay(movement.endPosition);
       }
-      if (movement && movement.endPosition) {
+      if (movement?.endPosition) {
         lastMousePosition = movement.endPosition;
       }
-      if (flyThroughModeEnabled && flyThroughPoints.length > 0 && movement && movement.endPosition) {
+      if (flyThroughModeEnabled && flyThroughPoints.length > 0 && movement?.endPosition) {
         updateFlyThroughPreview(movement.endPosition);
       }
       if (searchDrawMode !== "polygon" || searchPolygonPoints.length === 0) {
@@ -1165,7 +1178,7 @@
       // Update at most 60fps (every ~16ms) to prevent lag on rapid mouse movements
       let polygonLonLat = null;
       let polygonCartesian = null;
-      if (movement && movement.endPosition) {
+      if (movement?.endPosition) {
         polygonCartesian = getCartesianFromViewer(viewer, movement.endPosition);
         if (polygonCartesian) {
           polygonLonLat = cartesianToLonLat(polygonCartesian);
@@ -1220,7 +1233,7 @@
       }
       if (searchDrawMode === "rectangle") {
         if (searchRectangleStartPoint) {
-          if (movement && movement.position) {
+          if (movement?.position) {
             let releaseCartesian = null;
             if (viewer.scene.pickPositionSupported) {
               try {
@@ -1301,7 +1314,7 @@
         hoveredAnnotationDeleteEntity = null;
       }
       // Clear status bar coordinates when cursor leaves the map
-      if (bridge && bridge.on_mouse_coordinates) {
+      if (bridge?.on_mouse_coordinates) {
         bridge.on_mouse_coordinates(0, 0);
       }
     });

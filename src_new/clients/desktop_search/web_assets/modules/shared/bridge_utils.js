@@ -20,7 +20,7 @@
     const fn = console[level] || console.log;
     fn("[offlineGIS]", message);
     const bridge = getBridge();
-    if (bridge && bridge.js_log) {
+    if (bridge?.js_log) {
       bridge.js_log(level, String(message));
     }
   }
@@ -32,14 +32,14 @@
 
   function emitMapClick(lon, lat) {
     const bridge = getBridge();
-    if (bridge && bridge.on_map_click && Number.isFinite(lon) && Number.isFinite(lat)) {
+    if (bridge?.on_map_click && Number.isFinite(lon) && Number.isFinite(lat)) {
       bridge.on_map_click(lon, lat);
     }
   }
 
   function emitMeasurementUpdated(meters) {
     const bridge = getBridge();
-    if (bridge && bridge.on_measurement && Number.isFinite(meters)) {
+    if (bridge?.on_measurement && Number.isFinite(meters)) {
       bridge.on_measurement(meters);
     }
   }
@@ -52,19 +52,20 @@
 
   function requestSceneRender() {
     const viewer = getViewer();
-    if (viewer && viewer.scene && typeof viewer.scene.requestRender === "function") {
+    if (viewer?.scene && typeof viewer.scene.requestRender === "function") {
       viewer.scene.requestRender();
     }
     const comparatorViewers = getComparatorViewers();
     if (Array.isArray(comparatorViewers)) {
       comparatorViewers.forEach(function (v) {
-        if (v && v.scene) {
+        if (v?.scene) {
           v.scene.requestRender();
         }
       });
     }
   }
 
+// TODO: Refactor this function to reduce its Cognitive Complexity from 29 to the 15 allowed.
   function setComparatorWindowsVisible(visible) {
     const root = document.getElementById("comparatorWindows");
     const map = document.getElementById("cesiumContainer");
@@ -82,7 +83,7 @@
       // Re-enable live render loop for comparator viewers when shown
       if (Array.isArray(comparatorViewers)) {
         comparatorViewers.forEach(function (v) {
-          if (v && v.scene) {
+          if (v?.scene) {
             v.scene.requestRenderMode = false;       // live rendering while visible
             v.scene.maximumRenderTimeChange = 0;
           }
@@ -91,7 +92,7 @@
       const resizeAndRender = function () {
         if (Array.isArray(comparatorViewers)) {
           comparatorViewers.forEach(function (v) {
-            if (v && v.scene) {
+            if (v?.scene) {
               try {
                 v.resize();
               } catch (_error) {}
@@ -111,7 +112,7 @@
       // consume no GPU/CPU while hidden — preventing the lag in normal mode.
       if (Array.isArray(comparatorViewers)) {
         comparatorViewers.forEach(function (v) {
-          if (v && v.scene) {
+          if (v?.scene) {
             v.scene.requestRenderMode = true;
             v.scene.maximumRenderTimeChange = Infinity;
           }
@@ -124,10 +125,10 @@
       // all to full visibility so images always show over the DEM correctly.
       try {
         const viewer = getViewer();
-        if (viewer && viewer.imageryLayers) {
-          for (var _li = 0; _li < viewer.imageryLayers.length; _li++) {
-            var _lay = viewer.imageryLayers.get(_li);
-            if (_lay && _lay.alpha < 1.0) {
+        if (viewer?.imageryLayers) {
+          for (let _li = 0; _li < viewer.imageryLayers.length; _li++) {
+            let _lay = viewer.imageryLayers.get(_li);
+            if (_lay?.alpha < 1.0) {
               _lay.alpha = 1.0;
             }
             if (_lay) _lay.show = true;
@@ -194,7 +195,7 @@
 
   function parseDemHeightRange(options) {
     const defaultRange = { min: -500.0, max: 9000.0 };
-    const query = options && options.query ? options.query : null;
+    const query = options?.query ? options.query : null;
     if (!query || typeof query.rescale !== "string") {
       return defaultRange;
     }
@@ -326,7 +327,7 @@
     const viewer = getViewer();
     const normalizedKey = String(key || "default");
     const state = rubberBandLineStates.get(normalizedKey);
-    if (state && state.entity && viewer && viewer.entities) {
+    if (state?.entity && viewer?.entities) {
       try {
         if (viewer.entities.contains(state.entity)) {
           viewer.entities.remove(state.entity);
@@ -484,7 +485,7 @@
 
   function emitSearchResultVisibilityToggled(filePath, visible) {
     const bridge = getBridge();
-    if (bridge && bridge.on_search_result_visibility_toggled) {
+    if (bridge?.on_search_result_visibility_toggled) {
       bridge.on_search_result_visibility_toggled(filePath, visible);
     }
   }

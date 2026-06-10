@@ -138,6 +138,8 @@ class ComparatorCoordinator:
     def _auto_enable_second_swipe_imagery_layer(self) -> bool:
         return self._auto_enable_second_comparator_imagery_layer()
 
+# TODO: Refactor for cognitive complexity
+# TODO: Refactor for cognitive complexity
     def apply_comparator_selection(self, selected_paths: list[str]) -> bool:
         import json as _json
         c = self._controller
@@ -203,7 +205,9 @@ class ComparatorCoordinator:
         return self._toolbar_toggle_comparator(enabled=True)
 
     def apply_swipe_comparator_selection(self, selected_paths: list[str]) -> bool:
+# TODO: Refactor for cognitive complexity
         return self.apply_comparator_selection(selected_paths)
+# TODO: Refactor for cognitive complexity
 
     def _restore_pre_comparator_visibility(self) -> None:
         c = self._controller

@@ -62,7 +62,7 @@ router = APIRouter(tags=["ingestion"])
 
 # --------------------------------------------------------------------------- Supported file extensions (mirrors src_new/shared/constants.py) ---------------------------------------------------------------------------
 
-_SUPPORTED_EXTENSIONS = {".tif", ".tiff", ".jp2", ".j2k", ".mbtiles"}
+_SUPPORTED_EXTENSIONS = {".tif", ".tiff", ".jp2", ".j2k", ".mbtiles", ".las", ".laz"}
 
 # --------------------------------------------------------------------------- In-memory ingestion status store (In production this would be backed by the database / a job queue) ---------------------------------------------------------------------------
 
@@ -450,40 +450,58 @@ def upload_raster(
 
     _ingestion_status[raster_id]["progress"] = 0.3
 
-    # --- 4. GDAL metadata extraction ---
-    extract_metadata = get_metadata_extractor()
-    try:
-        metadata = extract_metadata(saved_path)
-        # Assign the raster_id we generated (extractor creates its own id)
-        metadata = metadata.model_copy(
-            update={
-                "raster_id": raster_id,
-                "tags": tags or "",
-                "description": description or "",
-                "upload_date": datetime.now(UTC),
-            }
+    # --- 4. Metadata extraction ---
+    if ext in {".las", ".laz"}:
+        # Use the LAS format handler directly; do not fall back to GDAL.
+        if handler is None:
+            raise ValueError("Point cloud format handler not registered.")
+        raw_meta = handler.extract_metadata(saved_path)
+        from src_new.shared.models.raster_metadata import RasterKind, RasterMetadata
+        metadata = RasterMetadata(
+            raster_id=raster_id,
+            file_path=str(saved_path.resolve()),
+            file_name=saved_path.name,
+            kind=RasterKind.POINT_CLOUD,
+            crs=raw_meta["crs"],
+            bbox=BoundingBox(
+                min_lon=raw_meta["bounds"]["min_lon"],
+                min_lat=raw_meta["bounds"]["min_lat"],
+                max_lon=raw_meta["bounds"]["max_lon"],
+                max_lat=raw_meta["bounds"]["max_lat"],
+            ),
+            resolution_x=raw_meta["resolution_x"],
+            resolution_y=raw_meta["resolution_y"],
+            width=raw_meta["width"],
+            height=raw_meta["height"],
+            tags=tags or "",
+            description=description or "",
+            upload_date=datetime.now(UTC),
         )
-    except FileNotFoundError as exc:
-        _ingestion_status[raster_id].update(
-            {"status": "failed", "progress": 0.0, "error": str(exc)}
-        )
-        logger.error("POST /upload — file not found after save: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    except Exception as exc:
-        error_msg = str(exc)
-        _ingestion_status[raster_id].update(
-            {"status": "failed", "progress": 0.0, "error": error_msg}
-        )
-        logger.error(
-            "POST /upload — GDAL metadata extraction failed for '%s': %s",
-            filename,
-            exc,
-            exc_info=True,
-        )
-        raise HTTPException(
-            status_code=500,
-            detail=f"Metadata extraction failed: {error_msg}",
-        ) from exc
+    else:
+        # Fallback to GDAL for raster formats
+        extract_metadata = get_metadata_extractor()
+        try:
+            metadata = extract_metadata(saved_path)
+            # Assign the raster_id we generated (extractor creates its own id)
+            metadata = metadata.model_copy(
+                update={
+                    "raster_id": raster_id,
+                    "tags": tags or "",
+                    "description": description or "",
+                    "upload_date": datetime.now(UTC),
+                }
+            )
+        except Exception as exc:
+            # Preserve existing error handling
+            error_msg = str(exc)
+            _ingestion_status[raster_id].update({"status": "failed", "progress": 0.0, "error": error_msg})
+            logger.error(
+                "POST /upload — metadata extraction failed for '%s': %s",
+                filename,
+                exc,
+                exc_info=True,
+            )
+            raise HTTPException(status_code=500, detail=f"Metadata extraction failed: {error_msg}") from exc
 
     _ingestion_status[raster_id]["progress"] = 0.5
 
@@ -509,6 +527,13 @@ def upload_raster(
                 metadata = metadata.model_copy(
                     update={"file_path": str(cog_result.working_path.resolve())}
                 )
+                # Clean up original uploaded file to conserve disk space
+                if saved_path != cog_result.working_path:
+                    try:
+                        saved_path.unlink(missing_ok=True)
+                        logger.info("Deleted original uploaded file after successful COG conversion to save space: %s", saved_path.name)
+                    except Exception as unlink_exc:
+                        logger.warning("Failed to delete original uploaded file: %s", unlink_exc)
             else:
                 if cog_result.working_path != saved_path:
                     # Reusing existing COG
@@ -516,6 +541,12 @@ def upload_raster(
                     metadata = metadata.model_copy(
                         update={"file_path": str(cog_result.working_path.resolve())}
                     )
+                    # Clean up newly uploaded file since we are reusing the existing COG
+                    try:
+                        saved_path.unlink(missing_ok=True)
+                        logger.info("Deleted redundant uploaded file after reusing existing COG: %s", saved_path.name)
+                    except Exception as unlink_exc:
+                        logger.warning("Failed to delete redundant uploaded file: %s", unlink_exc)
                 else:
                     from src_new.shared.config import settings
                     if settings.ingest_enable_cog_conversion and not CogConverter._looks_like_cog(saved_path):

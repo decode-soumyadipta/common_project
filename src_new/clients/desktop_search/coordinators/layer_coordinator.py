@@ -249,6 +249,8 @@ class LayerCoordinator:
             # Always clear the in-progress flag
             c._visibility_sync_in_progress = False
 
+# TODO: Refactor for cognitive complexity
+# TODO: Refactor for cognitive complexity
     def toggle_search_results_visibility_batch(self, file_paths: list[str], visible: bool) -> None:
         """Toggle visibility of a list of search result layers concurrently with a single-pass sync."""
         c = self._controller

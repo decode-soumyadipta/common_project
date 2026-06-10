@@ -115,6 +115,8 @@ class MeasurementCoordinator:
         c._measurement_history.clear()
         c.panel.clear_measurement_result_entries()
 
+# TODO: Refactor for cognitive complexity
+# TODO: Refactor for cognitive complexity
     def selected_dem_path(self) -> str | None:
         c = self._controller
         selected = c._selected_asset()

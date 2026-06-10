@@ -53,6 +53,15 @@ class SignalCoordinator:
         c.panel.dem_color_mode_combo.currentIndexChanged.connect(
             c._on_dem_color_mode_changed
         )
+        c.panel.pc_color_mode_combo.currentIndexChanged.connect(
+            c._on_pc_color_mode_changed
+        )
+        c.panel.pc_point_size_slider.valueChanged.connect(
+            c._on_pc_point_size_changed
+        )
+        c.panel.pc_z_offset_slider.valueChanged.connect(
+            c._on_pc_z_offset_changed
+        )
         self._connect_button(
             c.panel.apply_rgb_view_mode_btn.clicked,
             "Apply RGB View Mode",

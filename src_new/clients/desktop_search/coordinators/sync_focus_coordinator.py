@@ -85,6 +85,7 @@ class SyncFocusCoordinator:
                 c._run_js_call("enforceLayerDisplayOrder", ordered_keys)
 
             c._apply_display_control_mode()
+            c._rendering.update_canvas_view_stack()
         finally:
             # Always clear the in-progress flag
             c._event_driven_sync_in_progress = False
@@ -241,6 +242,7 @@ class SyncFocusCoordinator:
                 c._run_js_call("enforceLayerDisplayOrder", ordered_keys)
 
             c._apply_display_control_mode()
+            c._rendering.update_canvas_view_stack()
             _logger.debug("DEBUG: _sync_search_visibility_layers completed\n")
         finally:
             # Always clear the in-progress flag

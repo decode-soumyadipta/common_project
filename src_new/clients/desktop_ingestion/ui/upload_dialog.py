@@ -35,12 +35,13 @@ from src_new.shared.config import settings
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- Supported file extensions (mirrors src_new/shared/constants.py) ---------------------------------------------------------------------------
-_SUPPORTED_EXTENSIONS = (".tif", ".tiff", ".j2k", ".jp2", ".mbtiles")
+_SUPPORTED_EXTENSIONS = (".tif", ".tiff", ".j2k", ".jp2", ".mbtiles", ".las", ".laz")
 _FILE_FILTER = (
-    "Geospatial Files (*.tif *.tiff *.j2k *.jp2 *.mbtiles);;"
+    "Geospatial Files (*.tif *.tiff *.j2k *.jp2 *.mbtiles *.las *.laz);;"
     "GeoTIFF (*.tif *.tiff);;"
     "JPEG2000 (*.j2k *.jp2);;"
     "MBTiles (*.mbtiles);;"
+    "Point Cloud (*.las *.laz);;"
     "All Files (*)"
 )
 

@@ -45,6 +45,8 @@ class IngestCoordinator:
                 return True
         return False
 
+# TODO: Refactor for cognitive complexity
+# TODO: Refactor for cognitive complexity
     def poll_active_ingest_job(self) -> None:
         """Poll the active ingestion job for progress updates."""
         c = self._controller

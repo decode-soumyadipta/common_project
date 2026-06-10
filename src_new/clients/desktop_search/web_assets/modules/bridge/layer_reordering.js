@@ -101,20 +101,33 @@
           }
         }
 
-        // ── Step 3: Always pin basemap to the bottom ──
-        if (osmBasemapLayer && imageryLayers.indexOf(osmBasemapLayer) >= 0) {
-          imageryLayers.lowerToBottom(osmBasemapLayer);
-        }
-        if (defaultEarthLayer && imageryLayers.indexOf(defaultEarthLayer) >= 0) {
-          imageryLayers.lowerToBottom(defaultEarthLayer);
-        }
-
+        // ── Step 3: Layer stack adjustment for DEM / Basemaps ──
         if (forceDemToTop) {
+          if (osmBasemapLayer && imageryLayers.indexOf(osmBasemapLayer) >= 0) {
+            imageryLayers.lowerToBottom(osmBasemapLayer);
+          }
+          if (defaultEarthLayer && imageryLayers.indexOf(defaultEarthLayer) >= 0) {
+            imageryLayers.lowerToBottom(defaultEarthLayer);
+          }
           if (activeDemDrapeLayer && imageryLayers.indexOf(activeDemDrapeLayer) >= 0) {
             imageryLayers.raiseToTop(activeDemDrapeLayer);
           }
           if (activeDemHillshadeLayer && imageryLayers.indexOf(activeDemHillshadeLayer) >= 0) {
             imageryLayers.raiseToTop(activeDemHillshadeLayer);
+          }
+        } else {
+          // If forceDemToTop is false, ensure DEM drape/hillshade are below all other layers
+          if (activeDemHillshadeLayer && imageryLayers.indexOf(activeDemHillshadeLayer) >= 0) {
+            imageryLayers.lowerToBottom(activeDemHillshadeLayer);
+          }
+          if (activeDemDrapeLayer && imageryLayers.indexOf(activeDemDrapeLayer) >= 0) {
+            imageryLayers.lowerToBottom(activeDemDrapeLayer);
+          }
+          if (defaultEarthLayer && imageryLayers.indexOf(defaultEarthLayer) >= 0) {
+            imageryLayers.lowerToBottom(defaultEarthLayer);
+          }
+          if (osmBasemapLayer && imageryLayers.indexOf(osmBasemapLayer) >= 0) {
+            imageryLayers.lowerToBottom(osmBasemapLayer);
           }
         }
 
